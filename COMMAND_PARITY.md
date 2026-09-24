@@ -79,7 +79,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Angle Bisector | Partial: original fixture and generated ray cross-opened |
 | Circle by Center+Radius | Pending |
 | Arc on Circle | Pending |
-| Arc through 3 Points | Pending |
+| Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Pending |
 | Locus | Pending |
 

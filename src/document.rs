@@ -26,6 +26,7 @@ pub enum Kind {
     Parallel(usize, usize),
     Perpendicular(usize, usize),
     Circle(usize, usize),
+    CircleBySegment(usize, usize),
     Bisector(usize, usize, usize),
     ThreePointArc(usize, usize, usize),
     Intersection(usize, usize),
@@ -112,6 +113,10 @@ fn header(kind: u16) -> [u8; 28] {
         ],
         3 => [
             3, 0, 0, 0, 0, 0, 3, 0, 28, 0, 0x22, 1, 0, 0x80, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
+        4 => [
+            4, 0, 0, 0, 0, 0, 3, 0, 28, 0, 0x22, 1, 0, 0x80, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         5 => [
@@ -442,6 +447,7 @@ impl Document {
                     }
                     (2, _, [a, b]) => Kind::Segment(*a, *b),
                     (3, _, [a, b]) => Kind::Circle(*a, *b),
+                    (4, _, [a, b]) => Kind::CircleBySegment(*a, *b),
                     (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
                     (6, _, [a, b]) => Kind::Parallel(*a, *b),
                     (7, _, [a, b, c]) => Kind::Bisector(*a, *b, *c),
@@ -451,7 +457,10 @@ impl Document {
                             .get(a.saturating_sub(1))
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
-                                matches!(object.kind, Kind::Circle(_, _))
+                                matches!(
+                                    object.kind,
+                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+                                )
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 1)
@@ -461,7 +470,10 @@ impl Document {
                             .get(a.saturating_sub(1))
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
-                                matches!(object.kind, Kind::Circle(_, _))
+                                matches!(
+                                    object.kind,
+                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+                                )
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 0)
@@ -684,11 +696,23 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
-        let Kind::Circle(center_id, radius_id) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
+        let (center_id, radius) = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Circle(center, radius_point) => {
+                let center_position = self.position(center)?;
+                (
+                    center,
+                    center_position.distance(self.position(radius_point)?),
+                )
+            }
+            Kind::CircleBySegment(center, segment) => {
+                let Kind::Segment(a, b) = self.objects.get(segment.checked_sub(1)?)?.kind else {
+                    return None;
+                };
+                (center, self.position(a)?.distance(self.position(b)?))
+            }
+            _ => return None,
         };
         let center = self.position(center_id)?;
-        let radius = center.distance(self.position(radius_id)?);
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
@@ -747,6 +771,7 @@ impl Document {
                 | Kind::Parallel(a, b)
                 | Kind::Perpendicular(a, b)
                 | Kind::Circle(a, b)
+                | Kind::CircleBySegment(a, b)
                 | Kind::Intersection(a, b)
                 | Kind::LineCircleIntersection(a, b, _)
                 | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
@@ -771,6 +796,16 @@ impl Document {
                 && matches!(o.kind,Kind::Parallel(point,_)|Kind::Perpendicular(point,_) if self.position(point).is_none())
             {
                 return Err(format!("Invalid anchor point in object {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::CircleBySegment(center,segment)
+                    if self.position(center).is_none()
+                    || !matches!(self.objects.get(segment.saturating_sub(1)).map(|o| &o.kind),Some(Kind::Segment(_, _))))
+            {
+                return Err(format!(
+                    "Invalid center or radius segment in circle {}",
+                    o.id
+                ));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Intersection(a,b) if self.line_points(a).is_none() || self.line_points(b).is_none())
@@ -868,6 +903,7 @@ impl Document {
                 }
                 Kind::Segment(a, b) => (2, vec![a, b]),
                 Kind::Circle(a, b) => (3, vec![a, b]),
+                Kind::CircleBySegment(a, b) => (4, vec![a, b]),
                 Kind::Perpendicular(a, b) => (5, vec![a, b]),
                 Kind::Parallel(a, b) => (6, vec![a, b]),
                 Kind::Bisector(a, b, c) => (7, vec![a, b, c]),
@@ -976,6 +1012,7 @@ mod tests {
             "points",
             "segment",
             "circle",
+            "circle_center_radius",
             "middle_point",
             "line",
             "line_intersection",
@@ -1352,5 +1389,41 @@ mod tests {
         assert_ne!(reopened.arc_points(id, 32), document.arc_points(id, 32));
         document.move_point(mid, Point { x: 0., y: 0. });
         assert!(document.arc_points(id, 32).is_none());
+    }
+    #[test]
+    fn circle_by_segment_matches_original_and_updates() {
+        let original =
+            Document::open(Path::new("tests/fixtures/circle_center_radius.gsp")).unwrap();
+        assert_eq!(original.objects[4].kind, Kind::CircleBySegment(4, 3));
+        assert!(!original.partial_view);
+        assert!(original.circle_points(5).is_some());
+        let bytes = fs::read("tests/fixtures/circle_center_radius.gsp").unwrap();
+        let object_headers: Vec<_> = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x7d0)
+            .collect();
+        assert_eq!(&bytes[object_headers[4].data.clone()], &header(4));
+
+        let mut document = Document::new();
+        let a = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = document.add(Kind::Free(Point { x: 5., y: 0. }));
+        let center = document.add(Kind::Free(Point { x: 10., y: 10. }));
+        let segment = document.add(Kind::Segment(a, b));
+        let circle = document.add(Kind::CircleBySegment(center, segment));
+        assert_eq!(
+            document.circle_points(circle),
+            Some((Point { x: 10., y: 10. }, 5.))
+        );
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(
+            reopened.circle_points(circle),
+            document.circle_points(circle)
+        );
+        document.move_point(b, Point { x: 7., y: 0. });
+        assert_eq!(
+            document.circle_points(circle),
+            Some((Point { x: 10., y: 10. }, 7.))
+        );
     }
 }

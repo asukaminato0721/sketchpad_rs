@@ -186,10 +186,10 @@ impl GeometryRenderer {
                 }
             }
             match o.kind {
-                Kind::Circle(a, b) => {
-                    if let (Some(a), Some(b)) = (doc.position(a), doc.position(b)) {
+                Kind::Circle(_, _) | Kind::CircleBySegment(_, _) => {
+                    if let Some((a, radius)) = doc.circle_points(o.id) {
                         let c = vp.screen(a);
-                        let r = (a.distance(b) as f32 * vp.scale).abs();
+                        let r = (radius as f32 * vp.scale).abs();
                         if r > 0.5 && r < 100000. {
                             let n = ((r * 0.45) as usize).clamp(32, 256);
                             for i in 0..n {

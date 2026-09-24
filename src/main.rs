@@ -158,12 +158,9 @@ impl Editor {
                     (p - (a + ab * t)).length()
                 } else {
                     match o.kind {
-                        Kind::Circle(a, b) => {
-                            let (a, b) = (
-                                v.screen(self.doc.position(a)?),
-                                v.screen(self.doc.position(b)?),
-                            );
-                            ((p - a).length() - (b - a).length()).abs()
+                        Kind::Circle(_, _) | Kind::CircleBySegment(_, _) => {
+                            let (center, radius) = self.doc.circle_points(o.id)?;
+                            ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                         }
                         Kind::ThreePointArc(_, _, _) => {
                             let points = self.doc.arc_points(o.id, 96)?;
@@ -305,6 +302,34 @@ impl Editor {
             Kind::Parallel(points[0], lines[0])
         };
         let id = self.doc.add(kind);
+        self.select_only(id);
+    }
+    fn circle_by_segment(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let selected = &self.selection_order;
+        let centers: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|id| self.doc.position(*id).is_some())
+            .collect();
+        let segments: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|id| {
+                matches!(
+                    self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                    Some(Kind::Segment(_, _))
+                )
+            })
+            .collect();
+        if selected.len() != 2 || centers.len() != 1 || segments.len() != 1 {
+            self.status = "Select one center point and one radius segment".into();
+            return;
+        }
+        let id = self.doc.add(Kind::CircleBySegment(centers[0], segments[0]));
         self.select_only(id);
     }
     fn intersection(&mut self) {
@@ -467,6 +492,10 @@ impl Editor {
                     }
                     if ui.button("Circle by Center and Point").clicked() {
                         self.pair(1);
+                        ui.close();
+                    }
+                    if ui.button("Circle by Center and Radius Segment").clicked() {
+                        self.circle_by_segment();
                         ui.close();
                     }
                     if ui.button("Midpoint").clicked() {
