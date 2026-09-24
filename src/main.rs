@@ -32,29 +32,63 @@ enum OutputAction {
 }
 
 fn pdf_from_svg(svg: &str) -> Result<Vec<u8>, String> {
-    let mut process = Command::new("rsvg-convert")
-        .arg("--format=pdf")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    process
-        .stdin
-        .take()
-        .ok_or("Missing PDF converter stdin")?
-        .write_all(svg.as_bytes())
-        .map_err(|error| error.to_string())?;
-    let output = process
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    let path = temporary_pdf_path("convert");
+    let result = (|| -> Result<Vec<u8>, String> {
+        let mut process = Command::new("rsvg-convert")
+            .arg("--format=pdf")
+            .arg(format!("--output={}", path.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        process
+            .stdin
+            .take()
+            .ok_or("Missing PDF converter stdin")?
+            .write_all(svg.as_bytes())
+            .map_err(|error| error.to_string())?;
+        let output = process
+            .wait_with_output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        let pdf = std::fs::read(&path).map_err(|error| error.to_string())?;
+        if !pdf.starts_with(b"%PDF-") {
+            return Err("PDF converter returned invalid output".into());
+        }
+        Ok(pdf)
+    })();
+    let _ = std::fs::remove_file(path);
+    result
+}
+fn temporary_pdf_path(purpose: &str) -> PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "sketchpad-{purpose}-{}-{unique}.pdf",
+        std::process::id()
+    ))
+}
+#[cfg(test)]
+mod pdf_tests {
+    use super::*;
+    #[test]
+    fn converts_visible_page_svg_to_pdf_when_converter_is_available() {
+        if Command::new("rsvg-convert")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let pdf = pdf_from_svg("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"><circle cx=\"10\" cy=\"10\" r=\"5\"/></svg>").unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
+        assert!(pdf.len() > 100);
     }
-    if !output.stdout.starts_with(b"%PDF-") {
-        return Err("PDF converter returned invalid output".into());
-    }
-    Ok(output.stdout)
 }
 struct Editor {
     doc: Document,
@@ -191,14 +225,7 @@ impl Editor {
             }
             return;
         }
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "sketchpad-print-{}-{unique}.pdf",
-            std::process::id()
-        ));
+        let path = temporary_pdf_path("print");
         if let Err(error) = std::fs::write(&path, pdf) {
             self.status = format!("Print failed: {error}");
             return;
