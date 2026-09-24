@@ -1,0 +1,8 @@
+# Triangle with a 3-4-5 side ratio, scaled to raw Sketchpad coordinates.
+point 150 120
+point 270 120
+point 270 210
+polygon 1 2 3
+save /tmp/sketchpad_polygon.gsp
+perimeter 4
+save /tmp/sketchpad_polygon_perimeter.gsp

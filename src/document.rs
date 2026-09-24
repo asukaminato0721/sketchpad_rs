@@ -22,6 +22,7 @@ impl Kind {
             self,
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
+                | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
                 | Kind::CircleRadius(_)
                 | Kind::CircleArea(_)
@@ -31,6 +32,9 @@ impl Kind {
         )
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Kind::Polygon(vertices) = self {
+            return vertices.clone();
+        }
         match *self {
             Kind::Free(_) | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
@@ -38,6 +42,7 @@ impl Kind {
             | Kind::PointOnArc(host, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
             | Kind::SegmentLength(host)
+            | Kind::PolygonPerimeter(host)
             | Kind::CircleCircumference(host)
             | Kind::CircleRadius(host)
             | Kind::CircleArea(host)
@@ -68,16 +73,21 @@ impl Kind {
             | Kind::AngleMeasurement(a, b, c) => {
                 vec![a, b, c]
             }
+            Kind::Polygon(_) => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::Polygon(vertices) = self {
+            return Kind::Polygon(vertices.iter().map(|&id| m(id)).collect());
+        }
         match *self {
             Kind::Free(p) => Kind::Free(p),
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
+            Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
             Kind::CircleRadius(a) => Kind::CircleRadius(m(a)),
             Kind::CircleArea(a) => Kind::CircleArea(m(a)),
@@ -112,6 +122,7 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
+            Kind::Polygon(_) => unreachable!(),
         }
     }
 }
@@ -123,6 +134,7 @@ pub enum Kind {
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
     SegmentLength(usize),
+    PolygonPerimeter(usize),
     CircleCircumference(usize),
     CircleRadius(usize),
     CircleArea(usize),
@@ -144,6 +156,7 @@ pub enum Kind {
     Perpendicular(usize, usize),
     Circle(usize, usize),
     CircleBySegment(usize, usize),
+    Polygon(Vec<usize>),
     Bisector(usize, usize, usize),
     ThreePointArc(usize, usize, usize),
     ArcOnCircle(usize, usize, usize),
@@ -263,6 +276,10 @@ fn header(kind: u16) -> [u8; 28] {
         7 => [
             7, 0, 0, 0, 0, 0, 2, 0, 44, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
+        8 => [
+            8, 0, 0, 0, 0, 0, 4, 0, 53, 0, 0x21, 1, 0xff, 0x80, 0, 0, 0xff, 0x7f, 0x39, 0x20, 0, 0,
+            0, 0, 0, 0, 0, 0,
         ],
         15 => [
             15, 0, 0, 0, 0, 0, 1, 0, 10, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
@@ -617,11 +634,14 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46) => {
+                    0x0903 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
                                 &include_bytes!("../assets/distance_measurement_group.bin")[64..96]
+                            }
+                            39 => {
+                                &include_bytes!("../assets/perimeter_measurement_group.bin")[60..92]
                             }
                             40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [60..92],
@@ -643,13 +663,15 @@ impl Document {
                                     matches!(i, 12..=15 | 22 | 30 | 31) || actual == expected
                                 });
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46) => {
+                    0x07d8 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
                             }
                             37 => &include_bytes!("../assets/distance_measurement_group.bin")
                                 [104..106],
+                            39 => &include_bytes!("../assets/perimeter_measurement_group.bin")
+                                [100..102],
                             40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [100..102],
                             41 => {
@@ -683,7 +705,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46)
+                    && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
@@ -713,6 +735,12 @@ impl Document {
                             && objects.get(b - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
                         Kind::PointDistance(*a, *b)
+                    }
+                    (39, _, [host])
+                        if measurement_format && measurement_style
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Polygon(_))) =>
+                    {
+                        Kind::PolygonPerimeter(*host)
                     }
                     (40, _, [host])
                         if measurement_format && measurement_style
@@ -849,6 +877,12 @@ impl Document {
                     (2, _, [a, b]) => Kind::Segment(*a, *b),
                     (3, _, [a, b]) => Kind::Circle(*a, *b),
                     (4, _, [a, b]) => Kind::CircleBySegment(*a, *b),
+                    (8, _, vertices)
+                        if vertices.len() >= 3
+                            && vertices.iter().all(|&id| objects.get(id - 1).is_some_and(|o| is_point_kind(&o.kind))) =>
+                    {
+                        Kind::Polygon(vertices.to_vec())
+                    }
                     (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
                     (6, _, [a, b]) => Kind::Parallel(*a, *b),
                     (7, _, [a, b, c]) => Kind::Bisector(*a, *b, *c),
@@ -1244,6 +1278,44 @@ impl Document {
             return None;
         };
         Some(self.position(a)?.distance(self.position(b)?) / 37.79527559055118)
+    }
+    pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::Polygon(vertices) = &object.kind else {
+            return None;
+        };
+        vertices
+            .iter()
+            .map(|&vertex| self.position(vertex))
+            .collect()
+    }
+    pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
+        let points = self.polygon_points(id)?;
+        if points.len() < 3 {
+            return None;
+        }
+        let perimeter = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .take(points.len())
+            .map(|(a, b)| a.distance(*b))
+            .sum::<f64>();
+        perimeter
+            .is_finite()
+            .then_some(perimeter / 37.79527559055118)
+    }
+    pub fn perimeter_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::PolygonPerimeter(polygon) = object.kind else {
+            return None;
+        };
+        self.polygon_perimeter_cm(polygon)
     }
     pub fn circle_circumference_cm(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
@@ -1718,6 +1790,16 @@ impl Document {
                     return Err(format!("Invalid segment host in midpoint {}", o.id));
                 }
             }
+            if i >= self.source_count
+                && let Kind::Polygon(vertices) = &o.kind
+            {
+                if vertices.len() < 3
+                    || vertices.iter().collect::<BTreeSet<_>>().len() != vertices.len()
+                    || self.polygon_points(o.id).is_none()
+                {
+                    return Err(format!("Invalid polygon {}", o.id));
+                }
+            }
             if matches!(o.kind, Kind::SegmentLength(_))
                 && self
                     .segment_length_cm(o.id)
@@ -1731,6 +1813,13 @@ impl Document {
                     .is_none_or(|value| !value.is_finite())
             {
                 return Err(format!("Invalid points in distance measurement {}", o.id));
+            }
+            if matches!(o.kind, Kind::PolygonPerimeter(_))
+                && self
+                    .perimeter_cm(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid polygon in perimeter measurement {}", o.id));
             }
             if matches!(o.kind, Kind::CircleCircumference(_))
                 && self
@@ -2021,6 +2110,16 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::PolygonPerimeter(polygon) = o.kind {
+                let mut group = *include_bytes!("../assets/perimeter_measurement_group.bin");
+                group[48..52].copy_from_slice(&(polygon as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::CircleCircumference(circle) = o.kind {
                 let mut group = *include_bytes!("../assets/circumference_measurement_group.bin");
                 group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
@@ -2105,6 +2204,7 @@ impl Document {
                 Kind::Segment(a, b) => (2, vec![a, b]),
                 Kind::Circle(a, b) => (3, vec![a, b]),
                 Kind::CircleBySegment(a, b) => (4, vec![a, b]),
+                Kind::Polygon(ref vertices) => (8, vertices.clone()),
                 Kind::Perpendicular(a, b) => (5, vec![a, b]),
                 Kind::Parallel(a, b) => (6, vec![a, b]),
                 Kind::Bisector(a, b, c) => (7, vec![a, b, c]),
@@ -2313,6 +2413,11 @@ mod tests {
             "wine_arc_length",
             "wine_moved_arc_length",
             "wine_arc_measurements_on_circle",
+            "wine_segment_slope",
+            "wine_point_ratio",
+            "wine_moved_ratio",
+            "wine_polygon_perimeter",
+            "wine_moved_generated_polygon_perimeter",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2330,6 +2435,61 @@ mod tests {
         assert_eq!(d.position(m), Some(Point { x: 20., y: 30. }));
         let reopened = Document::from_bytes(&d.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(m), d.position(m));
+    }
+    #[test]
+    fn polygon_perimeter_matches_original_and_updates_after_drag() {
+        let original =
+            Document::open(Path::new("tests/fixtures/wine_polygon_perimeter.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::Polygon(vec![1, 2, 3]));
+        assert_eq!(original.objects[4].kind, Kind::PolygonPerimeter(4));
+        assert!((original.perimeter_cm(5).unwrap() - 9.525).abs() < 0.001);
+        let edited = Document::open(Path::new(
+            "tests/fixtures/wine_moved_generated_polygon_perimeter.gsp",
+        ))
+        .unwrap();
+        assert_eq!(edited.objects[4].kind, Kind::PolygonPerimeter(4));
+        assert!((edited.perimeter_cm(5).unwrap() - 10.64).abs() < 0.01);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 270., y: 120. }));
+        let c = doc.add(Kind::Free(Point { x: 270., y: 210. }));
+        let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+        let perimeter = doc.add(Kind::PolygonPerimeter(polygon));
+        assert_eq!(doc.objects[polygon - 1].kind.dependencies(), vec![a, b, c]);
+        assert_eq!(
+            doc.objects[perimeter - 1].kind.dependencies(),
+            vec![polygon]
+        );
+        let path =
+            std::env::temp_dir().join(format!("sketchpad_polygon_{}.gsp", std::process::id()));
+        doc.save_to(&path).unwrap();
+        let mut reopened = Document::open(&path).unwrap();
+        assert_eq!(
+            reopened.objects[polygon - 1].kind,
+            Kind::Polygon(vec![a, b, c])
+        );
+        assert!((reopened.perimeter_cm(perimeter).unwrap() - 9.525).abs() < 0.001);
+        reopened.checkpoint();
+        assert!(reopened.move_point(c, Point { x: 310., y: 210. }));
+        let changed = reopened.perimeter_cm(perimeter).unwrap();
+        assert!((changed - 10.64).abs() < 0.01);
+        reopened.undo();
+        assert!((reopened.perimeter_cm(perimeter).unwrap() - 9.525).abs() < 0.001);
+        reopened.redo();
+        assert!((reopened.perimeter_cm(perimeter).unwrap() - changed).abs() < 1e-9);
+        reopened.save_to(&path).unwrap();
+        let saved = Document::open(&path).unwrap();
+        assert!((saved.perimeter_cm(perimeter).unwrap() - changed).abs() < 1e-9);
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn invalid_new_polygon_does_not_serialize() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 20., y: 0. }));
+        doc.add(Kind::Polygon(vec![a, b, a]));
+        assert!(doc.encode().is_err());
     }
     #[test]
     fn undo_redo() {

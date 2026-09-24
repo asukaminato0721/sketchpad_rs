@@ -339,6 +339,38 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
+                        Kind::Polygon(_) => {
+                            let points = self.doc.polygon_points(o.id)?;
+                            let points: Vec<_> =
+                                points.into_iter().map(|point| v.screen(point)).collect();
+                            let inside = points
+                                .iter()
+                                .zip(points.iter().cycle().skip(1))
+                                .take(points.len())
+                                .fold(false, |inside, (a, b)| {
+                                    inside
+                                        ^ ((a.y > p.y) != (b.y > p.y)
+                                            && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+                                });
+                            if inside {
+                                0.
+                            } else {
+                                points
+                                    .iter()
+                                    .zip(points.iter().cycle().skip(1))
+                                    .take(points.len())
+                                    .map(|(a, b)| {
+                                        let ab = *b - *a;
+                                        let t = if ab.length_sq() < 1e-6 {
+                                            0.
+                                        } else {
+                                            ((p - *a).dot(ab) / ab.length_sq()).clamp(0., 1.)
+                                        };
+                                        (p - (*a + ab * t)).length()
+                                    })
+                                    .min_by(f32::total_cmp)?
+                            }
+                        }
                         _ => return None,
                     }
                 };
@@ -452,6 +484,24 @@ impl Editor {
         let id = self.doc.add(Kind::PointDistance(a, b));
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
+    }
+    fn measure_perimeter(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [polygon] = self.selection_order.as_slice() else {
+            self.status = "Select one polygon interior to measure".into();
+            return;
+        };
+        let polygon = *polygon;
+        if self.doc.polygon_perimeter_cm(polygon).is_none() {
+            self.status = "Select one polygon interior to measure".into();
+            return;
+        }
+        let id = self.doc.add(Kind::PolygonPerimeter(polygon));
+        self.select_only(id);
+        self.status = format!("Measured perimeter of polygon {polygon}");
     }
     fn measure_angle(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
@@ -723,6 +773,20 @@ impl Editor {
         }
         let id = self.doc.add(Kind::CircleBySegment(centers[0], segments[0]));
         self.select_only(id);
+    }
+    fn polygon_interior(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let vertices = self.selection_order.clone();
+        if vertices.len() < 3 || vertices.iter().any(|&id| self.doc.position(id).is_none()) {
+            self.status = "Select at least three points in polygon order".into();
+            return;
+        }
+        let id = self.doc.add(Kind::Polygon(vertices));
+        self.select_only(id);
+        self.status = format!("Constructed polygon interior {id}");
     }
     fn point_on_object(&mut self) {
         if self.doc.partial_view {
@@ -1136,6 +1200,10 @@ impl Editor {
                         self.arc_on_circle();
                         ui.close();
                     }
+                    if ui.button("Polygon Interior").clicked() {
+                        self.polygon_interior();
+                        ui.close();
+                    }
                     if ui.button("Parallel Line").clicked() {
                         self.derived_line(false);
                         ui.close();
@@ -1152,6 +1220,10 @@ impl Editor {
                     }
                     if ui.button("Distance").clicked() {
                         self.measure_distance();
+                        ui.close();
+                    }
+                    if ui.button("Perimeter").clicked() {
+                        self.measure_perimeter();
                         ui.close();
                     }
                     if ui.button("Circumference").clicked() {
@@ -1361,6 +1433,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Distance = {distance:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(perimeter) = self.doc.perimeter_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Perimeter = {perimeter:.2} cm"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

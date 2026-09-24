@@ -114,13 +114,13 @@ The release gate is every sketch and document command verified after editing, sa
 | Arc Angle | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Arc Length | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Ratio | Pending |
+| Ratio | Pending: original three-collinear-point record and live update captured |
 | Value of Point | Pending |
 | Coordinates | Pending |
 | Abscissa (x) | Pending |
 | Ordinate (y) | Pending |
 | Coordinate Distance | Pending |
-| Slope | Pending |
+| Slope | Pending: original command creates a coordinate system and a two-reference measurement |
 | Equation | Pending |
 
 ## Number

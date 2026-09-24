@@ -261,6 +261,25 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::CircleArea(circle));
                     println!("line {}: area -> object {id}", index + 1);
                 }
+                "polygon" => {
+                    let vertices = rest
+                        .split_whitespace()
+                        .map(|part| {
+                            part.parse::<usize>()
+                                .map_err(|_| "invalid polygon vertex ID")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if vertices.len() < 3 {
+                        return Err("polygon requires at least three point IDs".into());
+                    }
+                    let id = document.add(Kind::Polygon(vertices));
+                    println!("line {}: polygon -> object {id}", index + 1);
+                }
+                "perimeter" => {
+                    let polygon: usize = rest.parse().map_err(|_| "invalid polygon ID")?;
+                    let id = document.add(Kind::PolygonPerimeter(polygon));
+                    println!("line {}: perimeter -> object {id}", index + 1);
+                }
                 "arc_angle" => {
                     let arc: usize = rest.parse().map_err(|_| "invalid arc ID")?;
                     let id = document.add(Kind::ArcAngle(arc));

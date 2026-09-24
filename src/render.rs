@@ -118,6 +118,22 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 svg.push_str("\"/>\n");
             }
         }
+        if let Some(points) = doc.polygon_points(o.id) {
+            let vertices = points
+                .into_iter()
+                .map(|point| {
+                    let at = vp.screen(point);
+                    format!("{},{}", at.x, at.y)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(
+                svg,
+                "<polygon points=\"{}\" fill=\"#f6ad60\" fill-opacity=\"0.35\"/>",
+                vertices
+            )
+            .unwrap();
+        }
     }
     svg.push_str("</g>\n<g fill=\"#176bd6\">\n");
     for o in doc
@@ -155,6 +171,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 r.min.x + 12.,
                 r.min.y + 28. + row as f32 * 20.,
                 distance
+            )
+            .unwrap();
+            row += 1;
+        }
+        if let Some(perimeter) = doc.perimeter_cm(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Perimeter = {:.2} cm</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                perimeter
             )
             .unwrap();
             row += 1;
@@ -271,6 +298,60 @@ impl Mesh {
             );
         }
     }
+    fn polygon(&mut self, points: &[Pos2], outline: [f32; 4]) {
+        if points.len() < 3 {
+            return;
+        }
+        let cross =
+            |a: Pos2, b: Pos2, c: Pos2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        let signed_area: f32 = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .take(points.len())
+            .map(|(a, b)| a.x * b.y - b.x * a.y)
+            .sum();
+        let winding = signed_area.signum();
+        let mut remaining: Vec<usize> = (0..points.len()).collect();
+        while remaining.len() >= 3 {
+            let mut ear = None;
+            for i in 0..remaining.len() {
+                let a = points[remaining[(i + remaining.len() - 1) % remaining.len()]];
+                let b = points[remaining[i]];
+                let c = points[remaining[(i + 1) % remaining.len()]];
+                if cross(a, b, c) * winding <= 1e-4 {
+                    continue;
+                }
+                let has_inner = remaining.iter().enumerate().any(|(j, &vertex)| {
+                    if j == i
+                        || j == (i + 1) % remaining.len()
+                        || j == (i + remaining.len() - 1) % remaining.len()
+                    {
+                        return false;
+                    }
+                    let p = points[vertex];
+                    cross(a, b, p) * winding >= -1e-4
+                        && cross(b, c, p) * winding >= -1e-4
+                        && cross(c, a, p) * winding >= -1e-4
+                });
+                if !has_inner {
+                    ear = Some(i);
+                    self.tri(a, b, c, [0.96, 0.58, 0.22, 0.35]);
+                    break;
+                }
+            }
+            let Some(index) = ear else {
+                break;
+            };
+            remaining.remove(index);
+        }
+        for (a, b) in points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .take(points.len())
+        {
+            self.line(*a, *b, 2., outline);
+        }
+    }
 }
 pub struct GeometryRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -385,6 +466,15 @@ impl GeometryRenderer {
                         for pair in points.windows(2) {
                             mesh.line(vp.screen(pair[0]), vp.screen(pair[1]), 2., col);
                         }
+                    }
+                }
+                Kind::Polygon(_) => {
+                    if let Some(points) = doc.polygon_points(o.id) {
+                        let screen = points
+                            .into_iter()
+                            .map(|point| vp.screen(point))
+                            .collect::<Vec<_>>();
+                        mesh.polygon(&screen, col);
                     }
                 }
                 _ => {}
