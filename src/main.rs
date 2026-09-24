@@ -1,8 +1,10 @@
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::function_records::SimpleFunction;
+use sketchpad_rs::graph::GridForm;
+use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
-use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
+use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, VisualStyle};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{
     collections::HashMap,
@@ -102,6 +104,11 @@ enum CircleMeasure {
     Radius,
     Area,
 }
+#[derive(Clone, Copy)]
+enum TraceMark {
+    Point(Point, RgbColor),
+    Segment(Point, Point, RgbColor),
+}
 struct Editor {
     doc: Document,
     clipboard: Option<Clipboard>,
@@ -109,6 +116,9 @@ struct Editor {
     tool: Tool,
     pending: Option<usize>,
     selection_order: Vec<usize>,
+    marked_center: Option<usize>,
+    marked_mirror: Option<usize>,
+    trace_marks: Vec<TraceMark>,
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
@@ -139,6 +149,9 @@ impl Editor {
             tool: Tool::Select,
             pending: None,
             selection_order: Vec::new(),
+            marked_center: None,
+            marked_mirror: None,
+            trace_marks: Vec::new(),
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
@@ -168,19 +181,14 @@ impl Editor {
             .doc
             .objects
             .iter()
-            .filter(|o| {
-                o.page == self.doc.active_page
-                    && o.visible
-                    && !o.deleted
-                    && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
-            })
+            .filter(|o| self.doc.is_displayed(o.id))
             .filter_map(|o| self.doc.position(o.id))
             .collect();
         for object in self
             .doc
             .objects
             .iter()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+            .filter(|o| self.doc.is_displayed(o.id))
         {
             if let Kind::PlainText { rect, .. } = &object.kind {
                 pts.push(Point {
@@ -368,12 +376,7 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| {
-                o.page == self.doc.active_page
-                    && o.visible
-                    && !o.deleted
-                    && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
-            })
+            .filter(|o| self.doc.is_displayed(o.id))
             .filter_map(|o| {
                 self.doc
                     .position(o.id)
@@ -385,18 +388,14 @@ impl Editor {
     }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page
-                && object.visible
-                && !object.deleted
+            self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::Image { png, transform }
                     if sketchpad_rs::render::picture_hit(v, png, *transform, p))
         }) {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page
-                && object.visible
-                && !object.deleted
+            self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::PlainText { rect, .. }
                     if egui::Rect::from_two_pos(
                         v.screen(Point { x: rect.left.into(), y: rect.top.into() }),
@@ -406,18 +405,14 @@ impl Editor {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page
-                && object.visible
-                && !object.deleted
+            self.doc.is_displayed(object.id)
                 && sketchpad_rs::render::number_screen_rect(v, &object.kind)
                     .is_some_and(|rect| rect.contains(p))
         }) {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page
-                && object.visible
-                && !object.deleted
+            self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
                     if sketchpad_rs::render::action_button_rect(v, *anchor, label).contains(p))
         }) {
@@ -430,7 +425,7 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+            .filter(|o| self.doc.is_displayed(o.id))
             .filter_map(|o| {
                 let distance = if let Some((a, b, mode)) = self.doc.line_points(o.id) {
                     let (a, b) = (v.screen(a), v.screen(b));
@@ -534,7 +529,7 @@ impl Editor {
         {
             return self.doc.add(kind);
         }
-        self.doc.add(Kind::Free(v.world(p)))
+        self.doc.add(Kind::Free(self.doc.snap_point(v.world(p))))
     }
     fn select_only(&mut self, id: usize) {
         self.doc.selected.clear();
@@ -1298,11 +1293,29 @@ impl Editor {
             self.status = "Reflection on this document cannot be saved safely".into();
             return;
         }
-        if self.selection_order.len() != 2 {
-            self.status = "Select a point, then a mirror line".into();
+        let (source, mirror) = match self.selection_order.as_slice() {
+            [source, mirror] => (*source, *mirror),
+            [source] => match self.marked_mirror {
+                Some(mirror) => (*source, mirror),
+                None => {
+                    self.status = "Select a point or circle and mark a mirror line".into();
+                    return;
+                }
+            },
+            _ => {
+                self.status = "Select a point or circle, then a mirror line".into();
+                return;
+            }
+        };
+        if self
+            .doc
+            .objects
+            .get(mirror - 1)
+            .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
+        {
+            self.status = "Marked mirror line is unavailable".into();
             return;
         }
-        let (source, mirror) = (self.selection_order[0], self.selection_order[1]);
         if self.doc.line_points(mirror).is_none() {
             self.status = "Select a point or circle, then a mirror line".into();
             return;
@@ -1318,20 +1331,63 @@ impl Editor {
         let id = self.doc.add(kind);
         self.select_only(id);
     }
+    fn mark_center_selected(&mut self) {
+        let [id] = self.selection_order.as_slice() else {
+            self.status = "Select one point to mark as center".into();
+            return;
+        };
+        if self.doc.position(*id).is_none() {
+            self.status = "Select one point to mark as center".into();
+            return;
+        }
+        self.marked_center = Some(*id);
+        self.status = format!("Marked point {id} as center");
+    }
+    fn mark_mirror_selected(&mut self) {
+        let [id] = self.selection_order.as_slice() else {
+            self.status = "Select one straight object to mark as mirror".into();
+            return;
+        };
+        if self.doc.line_points(*id).is_none() {
+            self.status = "Select one straight object to mark as mirror".into();
+            return;
+        }
+        self.marked_mirror = Some(*id);
+        self.status = format!("Marked object {id} as mirror");
+    }
     fn dilate_selected(&mut self) {
         if self.doc.partial_view {
             self.status = "Dilation on this document cannot be saved safely".into();
             return;
         }
-        if self.selection_order.len() != 2
-            || !self.dilation_factor.is_finite()
-            || self.dilation_factor == 0.
-        {
+        if !self.dilation_factor.is_finite() || self.dilation_factor == 0. {
             self.status =
                 "Select a point or circle, then a center point; use a nonzero ratio".into();
             return;
         }
-        let (source, center) = (self.selection_order[0], self.selection_order[1]);
+        let (source, center) = match self.selection_order.as_slice() {
+            [source, center] => (*source, *center),
+            [source] => match self.marked_center {
+                Some(center) => (*source, center),
+                None => {
+                    self.status = "Select a source and mark a center point".into();
+                    return;
+                }
+            },
+            _ => {
+                self.status = "Select a point or circle, then a center point".into();
+                return;
+            }
+        };
+        if self
+            .doc
+            .objects
+            .get(center - 1)
+            .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
+        {
+            self.status = "Marked center point is unavailable".into();
+            return;
+        }
         if self.doc.position(center).is_none() {
             self.status = "Select a point or circle, then a center point".into();
             return;
@@ -1352,11 +1408,33 @@ impl Editor {
             self.status = "Rotation on this document cannot be saved safely".into();
             return;
         }
-        if self.selection_order.len() != 2 || !self.rotation_angle.is_finite() {
+        if !self.rotation_angle.is_finite() {
             self.status = "Select a source point, then a center point; use a finite angle".into();
             return;
         }
-        let (source, center) = (self.selection_order[0], self.selection_order[1]);
+        let (source, center) = match self.selection_order.as_slice() {
+            [source, center] => (*source, *center),
+            [source] => match self.marked_center {
+                Some(center) => (*source, center),
+                None => {
+                    self.status = "Select a source and mark a center point".into();
+                    return;
+                }
+            },
+            _ => {
+                self.status = "Select a source point, then a center point".into();
+                return;
+            }
+        };
+        if self
+            .doc
+            .objects
+            .get(center - 1)
+            .is_none_or(|o| o.deleted || o.page != self.doc.active_page)
+        {
+            self.status = "Marked center point is unavailable".into();
+            return;
+        }
         if self.doc.position(source).is_none() || self.doc.position(center).is_none() {
             self.status = "Select a source point, then a center point".into();
             return;
@@ -1365,6 +1443,33 @@ impl Editor {
             .doc
             .add(Kind::RotatedPoint(source, center, self.rotation_angle));
         self.select_only(id);
+    }
+    fn capture_traces(&mut self) {
+        for object in self
+            .doc
+            .objects
+            .iter()
+            .filter(|o| o.tracing && o.visible && !o.deleted && o.page == self.doc.active_page)
+        {
+            let color = match object.visual_style {
+                Some(VisualStyle::Point { color, .. } | VisualStyle::Stroke { color, .. }) => color,
+                _ => RgbColor {
+                    red: 23,
+                    green: 107,
+                    blue: 214,
+                },
+            };
+            if let Some(point) = self.doc.position(object.id) {
+                self.trace_marks.push(TraceMark::Point(point, color));
+            } else if matches!(object.kind, Kind::Segment(_, _))
+                && let Some((a, b, LineMode::Segment)) = self.doc.line_points(object.id)
+            {
+                self.trace_marks.push(TraceMark::Segment(a, b, color));
+            }
+        }
+        if self.trace_marks.len() > 8192 {
+            self.trace_marks.drain(..self.trace_marks.len() - 8192);
+        }
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         if !root.ctx().egui_wants_keyboard_input() && self.pending_action.is_none() {
@@ -1700,6 +1805,42 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Graph", |ui| {
+                    if ui.button("Plot Value on Axis").clicked() {
+                        let source = self.doc.selected.iter().copied().find(|&id| {
+                            self.doc
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
+                        });
+                        let axis = self.doc.selected.iter().copied().find(|&id| {
+                            self.doc
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, _)))
+                        });
+                        self.status = match source {
+                            Some(source) => match self.doc.plot_parameter_on_axis(source, axis) {
+                                Ok(id) => format!("Plotted axis value {id}"),
+                                Err(error) => error,
+                            },
+                            None => "Select a parameter to plot".into(),
+                        };
+                        ui.close();
+                    }
+                    if ui.button("Plot Points as (x, y)").clicked() {
+                        match self.doc.plot_default_parameter(PlotPointsMode::Cartesian) {
+                            Ok(id) => self.status = format!("Plotted point {id}"),
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Plot Points as (r, θ)").clicked() {
+                        match self.doc.plot_default_parameter(PlotPointsMode::Polar) {
+                            Ok(id) => self.status = format!("Plotted point {id}"),
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
                     if ui.button("Plot New Function…").clicked() {
                         self.function_dialog = Some(true);
                         ui.close();
@@ -1708,12 +1849,41 @@ impl Editor {
                         self.define_coordinate_system();
                         ui.close();
                     }
-                    let mut visible = self
-                        .doc
-                        .grid_visible
-                        .get(self.doc.active_page)
-                        .copied()
-                        .unwrap_or(false);
+                    ui.add_enabled_ui(self.doc.active_coordinate_system().is_some(), |ui| {
+                        ui.menu_button("Grid Form", |ui| {
+                            for (form, label) in [
+                                (GridForm::Polar, "Polar"),
+                                (GridForm::Square, "Square"),
+                                (GridForm::Rectangular, "Rectangular"),
+                            ] {
+                                if ui
+                                    .selectable_label(
+                                        self.doc.grid_form[self.doc.active_page] == form,
+                                        label,
+                                    )
+                                    .clicked()
+                                {
+                                    if let Err(error) = self.doc.set_grid_form(form) {
+                                        self.status = error;
+                                    }
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            let trigonometric = self.doc.axis_trigonometric();
+                            if ui
+                                .selectable_label(trigonometric, "Trigonometric X Axis")
+                                .clicked()
+                            {
+                                if let Err(error) = self.doc.set_axis_trigonometric(!trigonometric)
+                                {
+                                    self.status = error;
+                                }
+                                ui.close();
+                            }
+                        });
+                    });
+                    let mut visible = self.doc.grid_enabled();
                     if ui
                         .add_enabled(
                             self.doc.active_coordinate_system().is_some(),
@@ -1724,8 +1894,38 @@ impl Editor {
                         self.doc.set_grid_visible(visible);
                         ui.close();
                     }
+                    let mut dotted = self.doc.grid_dotted[self.doc.active_page];
+                    if ui
+                        .add_enabled(
+                            self.doc.active_coordinate_system().is_some(),
+                            egui::Checkbox::new(&mut dotted, "Dotted Grid"),
+                        )
+                        .changed()
+                    {
+                        self.doc.set_grid_dotted(dotted);
+                        ui.close();
+                    }
+                    let mut snap = self.doc.snap_points[self.doc.active_page];
+                    if ui
+                        .add_enabled(
+                            self.doc.active_coordinate_system().is_some(),
+                            egui::Checkbox::new(&mut snap, "Snap Points"),
+                        )
+                        .changed()
+                    {
+                        self.doc.set_snap_points(snap);
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Transform", |ui| {
+                    if ui.button("Mark Center").clicked() {
+                        self.mark_center_selected();
+                        ui.close();
+                    }
+                    if ui.button("Mark Mirror").clicked() {
+                        self.mark_mirror_selected();
+                        ui.close();
+                    }
                     if ui.button("Translate by Angle and Distance…").clicked() {
                         self.translate_dialog = true;
                         ui.close();
@@ -1878,6 +2078,32 @@ impl Editor {
                         self.doc.show_all_hidden();
                         ui.close();
                     }
+                    let tracing = !self.doc.selected.is_empty()
+                        && self
+                            .doc
+                            .selected
+                            .iter()
+                            .all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.tracing));
+                    if ui
+                        .button(if tracing {
+                            "Stop Tracing"
+                        } else {
+                            "Trace Objects"
+                        })
+                        .clicked()
+                    {
+                        self.status = match self.doc.set_selected_tracing(!tracing) {
+                            Ok(0) => "Select at least one point or segment".into(),
+                            Ok(count) => format!("Updated tracing on {count} object(s)"),
+                            Err(error) => error,
+                        };
+                        ui.close();
+                    }
+                    if ui.button("Erase Traces").clicked() {
+                        self.trace_marks.clear();
+                        self.status = "Erased traces".into();
+                        ui.close();
+                    }
                     if ui.button("Fit Sketch").clicked() {
                         self.fit();
                         ui.close();
@@ -1934,6 +2160,15 @@ impl Editor {
                 ui.label("New text");
                 ui.text_edit_multiline(&mut self.text_draft);
                 ui.label("Click the sketch to place it.");
+            }
+            if self.marked_center.is_some() || self.marked_mirror.is_some() {
+                ui.separator();
+                if let Some(id) = self.marked_center {
+                    ui.label(format!("Marked center: {id}"));
+                }
+                if let Some(id) = self.marked_mirror {
+                    ui.label(format!("Marked mirror: {id}"));
+                }
             }
             if let Some(id) = self.doc.selected.iter().next().copied() {
                 if self.inspected != Some(id) {
@@ -2025,6 +2260,7 @@ impl Editor {
                             if matches!(
                                 self.doc.objects[id - 1].kind,
                                 Kind::Free(_)
+                                    | Kind::GraphVerticalUnit(_, _)
                                     | Kind::Image { .. }
                                     | Kind::PlainText { .. }
                                     | Kind::Parameter(_)
@@ -2062,6 +2298,7 @@ impl Editor {
                                 };
                                 self.doc.checkpoint();
                                 self.dragging = Some(id);
+                                self.capture_traces();
                             }
                         }
                     }
@@ -2092,6 +2329,7 @@ impl Editor {
                         } else {
                             self.doc.move_point(id, vp.world(p));
                         }
+                        self.capture_traces();
                     }
                 }
                 if response.drag_stopped() {
@@ -2101,6 +2339,29 @@ impl Editor {
                     if let Some(p) = response.interact_pointer_pos() {
                         let multi = ui.input(|i| i.modifiers.shift);
                         self.click(&vp, p, multi);
+                    }
+                }
+                for mark in &self.trace_marks {
+                    match *mark {
+                        TraceMark::Point(at, color) => {
+                            let at = vp.screen(at);
+                            if r.contains(at) {
+                                ui.painter().circle_filled(
+                                    at,
+                                    2.,
+                                    egui::Color32::from_rgb(color.red, color.green, color.blue),
+                                );
+                            }
+                        }
+                        TraceMark::Segment(a, b, color) => {
+                            ui.painter().line_segment(
+                                [vp.screen(a), vp.screen(b)],
+                                egui::Stroke::new(
+                                    1.,
+                                    egui::Color32::from_rgb(color.red, color.green, color.blue),
+                                ),
+                            );
+                        }
                     }
                 }
                 for object in self.doc.objects.iter().filter(|object| {
@@ -2220,12 +2481,12 @@ impl Editor {
                         );
                     }
                 }
-                for o in self.doc.objects.iter().filter(|o| {
-                    o.page == self.doc.active_page
-                        && o.visible
-                        && !o.deleted
-                        && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
-                }) {
+                for o in self
+                    .doc
+                    .objects
+                    .iter()
+                    .filter(|o| self.doc.is_displayed(o.id))
+                {
                     if o.label.is_none()
                         && let Some(p) = self.doc.position(o.id)
                     {
@@ -2240,6 +2501,15 @@ impl Editor {
                             );
                         }
                     }
+                }
+                for (at, label) in sketchpad_rs::render::trigonometric_axis_labels(&self.doc, &vp) {
+                    ui.painter().text(
+                        at,
+                        egui::Align2::CENTER_TOP,
+                        label,
+                        egui::FontId::proportional(11.),
+                        egui::Color32::from_rgb(36, 48, 61),
+                    );
                 }
                 let mut row = 0;
                 for object in self.doc.objects.iter().filter(|object| {
@@ -2544,6 +2814,79 @@ impl Editor {
         viewport
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn traced_point_and_segment_capture_motion_until_erased() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 20., y: 30. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 80., y: 30. }));
+        let segment = editor.doc.add(Kind::Segment(a, b));
+        editor.doc.selected.extend([a, segment]);
+        assert_eq!(editor.doc.set_selected_tracing(true).unwrap(), 2);
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 2);
+        assert!(editor.doc.move_point(a, Point { x: 35., y: 45. }));
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 4);
+        assert!(matches!(
+            editor.trace_marks[2],
+            TraceMark::Point(Point { x: 35., y: 45. }, _)
+        ));
+        assert!(matches!(
+            editor.trace_marks[3],
+            TraceMark::Segment(Point { x: 35., y: 45. }, _, _)
+        ));
+        editor.trace_marks.clear();
+        assert!(editor.trace_marks.is_empty());
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 2);
+        editor.trace_marks.clear();
+        editor.doc.set_selected_tracing(false).unwrap();
+        editor.capture_traces();
+        assert!(editor.trace_marks.is_empty());
+    }
+
+    #[test]
+    fn marked_center_and_mirror_drive_transforms_without_changing_source_records() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let source = editor.doc.add(Kind::Free(Point { x: 30., y: 0. }));
+        let axis_point = editor.doc.add(Kind::Free(Point { x: 0., y: 40. }));
+        let mirror = editor.doc.add(Kind::Line(center, axis_point));
+        let before = editor.doc.encode().unwrap();
+
+        editor.select_only(center);
+        editor.mark_center_selected();
+        editor.select_only(mirror);
+        editor.mark_mirror_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+
+        editor.select_only(source);
+        editor.rotation_angle = 90.;
+        editor.rotate_selected();
+        assert!(
+            matches!(editor.doc.objects.last().unwrap().kind, Kind::RotatedPoint(s, c, 90.) if s == source && c == center)
+        );
+
+        editor.select_only(source);
+        editor.dilation_factor = 2.;
+        editor.dilate_selected();
+        assert!(
+            matches!(editor.doc.objects.last().unwrap().kind, Kind::ScaledPoint(s, c, 2.) if s == source && c == center)
+        );
+
+        editor.select_only(source);
+        editor.reflect_selected();
+        assert!(
+            matches!(editor.doc.objects.last().unwrap().kind, Kind::ReflectedPoint(s, m) if s == source && m == mirror)
+        );
+        assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     let doc = match args.get(1).map(PathBuf::from) {

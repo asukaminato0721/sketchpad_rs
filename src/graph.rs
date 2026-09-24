@@ -17,6 +17,31 @@ pub struct CoordinateFrame {
     pub y_unit: GraphPoint,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridForm {
+    Polar,
+    Square,
+    Rectangular,
+}
+
+impl GridForm {
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Polar => 0,
+            Self::Square => 1,
+            Self::Rectangular => 2,
+        }
+    }
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Polar),
+            1 => Some(Self::Square),
+            2 => Some(Self::Rectangular),
+            _ => None,
+        }
+    }
+}
+
 impl CoordinateFrame {
     pub fn world(self, x: f64, y: f64) -> Option<GraphPoint> {
         let point = GraphPoint {
@@ -74,7 +99,12 @@ pub enum GraphObject {
     /// Code 58: an axis through two points. `axis` is 1 for X, 0 for Y.
     Axis { start: usize, end: usize, axis: u32 },
     /// Code 61: the coordinate system joining two axes.
-    CoordinateSystem { x_axis: usize, y_axis: usize },
+    CoordinateSystem {
+        x_axis: usize,
+        y_axis: usize,
+        form: GridForm,
+        dotted: bool,
+    },
     /// Code 87: a slope value relative to a coordinate system.
     Slope { line: usize, coordinates: usize },
 }
@@ -87,21 +117,20 @@ impl GraphObject {
                 horizontal_unit, ..
             } => vec![horizontal_unit],
             Self::Axis { start, end, .. } => vec![start, end],
-            Self::CoordinateSystem { x_axis, y_axis } => vec![x_axis, y_axis],
+            Self::CoordinateSystem { x_axis, y_axis, .. } => vec![x_axis, y_axis],
             Self::Slope { line, coordinates } => vec![line, coordinates],
         }
     }
 }
 
-/// Observed page-level grid visibility flag. Only interpret it when the page
-/// also has a decoded coordinate-system object: pages without a grid use zero.
-pub fn grid_visible(page_record_payload: &[u8]) -> Option<bool> {
+/// Page-level Snap Points flag, observed by dragging a free point in Sketchpad.
+pub fn snap_points(page_record_payload: &[u8]) -> Option<bool> {
     if page_record_payload.len() != 36 {
         return None;
     }
     match page_record_payload[10] {
-        0 => Some(true),
-        1 => Some(false),
+        0 => Some(false),
+        1 => Some(true),
         _ => None,
     }
 }
@@ -137,14 +166,14 @@ pub fn decode_graph_object(
             origin: *origin,
             step: fixed_step(records, 52)?,
         }),
-        (54, [horizontal_unit]) => Some(GraphObject::VerticalUnit {
+        (54 | 55, [horizontal_unit]) => Some(GraphObject::VerticalUnit {
             horizontal_unit: *horizontal_unit,
-            step: fixed_step(records, 54)?,
+            step: fixed_step(records, code)?,
         }),
         (58, [start, end]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
             let axis = u32_le(payload)?;
-            (axis <= 1).then_some(GraphObject::Axis {
+            matches!(axis, 0 | 1 | 0x1_0001).then_some(GraphObject::Axis {
                 start: *start,
                 end: *end,
                 axis,
@@ -152,10 +181,17 @@ pub fn decode_graph_object(
         }
         (61, [x_axis, y_axis]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0904)?.1;
-            (payload == [1, 0, 0, 0, 0, 0, 0, 0]).then_some(GraphObject::CoordinateSystem {
-                x_axis: *x_axis,
-                y_axis: *y_axis,
-            })
+            (payload.len() == 8
+                && GridForm::from_code(payload[0]).is_some()
+                && payload[1] == 0
+                && payload[2] <= 1
+                && payload[3..] == [0; 5])
+                .then_some(GraphObject::CoordinateSystem {
+                    x_axis: *x_axis,
+                    y_axis: *y_axis,
+                    form: GridForm::from_code(payload[0])?,
+                    dotted: payload[2] == 1,
+                })
         }
         (87, [line, coordinates]) => {
             let format = records.iter().find(|(kind, _)| *kind == 0x0903)?.1;
@@ -221,6 +257,101 @@ pub fn coordinate_system_groups(first_id: usize, origin: GraphPoint) -> Result<V
         offset = end + length % 2;
     }
     Ok(groups)
+}
+
+pub fn set_coordinate_system_style(
+    group: &mut [u8],
+    form: GridForm,
+    dotted: bool,
+) -> Result<(), String> {
+    let mut offset = 0;
+    while offset + 8 <= group.len() {
+        let length = u32_le(&group[offset..offset + 4]).ok_or("Invalid graph record")? as usize;
+        let kind = u32_le(&group[offset + 4..offset + 8]).ok_or("Invalid graph record")?;
+        let payload = offset + 8;
+        let end = payload.checked_add(length).ok_or("Graph record overflow")?;
+        if end > group.len() {
+            return Err("Invalid graph record length".into());
+        }
+        if kind == 0x0904 {
+            if length != 8
+                || GridForm::from_code(group[payload]).is_none()
+                || group[payload + 1] != 0
+                || group[payload + 2] > 1
+                || group[payload + 3..end] != [0; 5]
+            {
+                return Err("Unsupported coordinate-system grid record".into());
+            }
+            group[payload] = form.code();
+            group[payload + 2] = u8::from(dotted);
+            return Ok(());
+        }
+        offset = end + length % 2;
+    }
+    Err("Missing coordinate-system grid record".into())
+}
+
+pub fn set_vertical_unit_form(group: &mut [u8], form: GridForm, step: f64) -> Result<(), String> {
+    if !step.is_finite() || step <= 0.0 {
+        return Err("Invalid vertical graph unit".into());
+    }
+    let code: u16 = if form == GridForm::Rectangular {
+        55
+    } else {
+        54
+    };
+    let mut offset = 0;
+    let mut header = false;
+    let mut constraint = false;
+    while offset + 8 <= group.len() {
+        let length = u32_le(&group[offset..offset + 4]).ok_or("Invalid graph record")? as usize;
+        let kind = u32_le(&group[offset + 4..offset + 8]).ok_or("Invalid graph record")?;
+        let payload = offset + 8;
+        let end = payload.checked_add(length).ok_or("Graph record overflow")?;
+        if end > group.len() {
+            return Err("Invalid graph record length".into());
+        }
+        if kind == 0x07d0 {
+            if length != 28 {
+                return Err("Invalid vertical unit header".into());
+            }
+            group[payload..payload + 2].copy_from_slice(&code.to_le_bytes());
+            header = true;
+        } else if kind == 0x07d3 {
+            if length != 12 {
+                return Err("Invalid vertical unit constraint".into());
+            }
+            group[payload..payload + 2].copy_from_slice(&code.to_le_bytes());
+            group[payload + 4..payload + 12].copy_from_slice(&step.to_le_bytes());
+            constraint = true;
+        }
+        offset = end + length % 2;
+    }
+    (header && constraint)
+        .then_some(())
+        .ok_or("Incomplete vertical unit group".into())
+}
+
+pub fn set_x_axis_trigonometric(group: &mut [u8], trigonometric: bool) -> Result<(), String> {
+    let mut offset = 0;
+    while offset + 8 <= group.len() {
+        let length = u32_le(&group[offset..offset + 4]).ok_or("Invalid graph record")? as usize;
+        let kind = u32_le(&group[offset + 4..offset + 8]).ok_or("Invalid graph record")?;
+        let payload = offset + 8;
+        let end = payload.checked_add(length).ok_or("Graph record overflow")?;
+        if end > group.len() {
+            return Err("Invalid graph record length".into());
+        }
+        if kind == 0x0905 {
+            if length != 4 || !matches!(group[payload..end], [1, 0, 0, 0] | [1, 0, 1, 0]) {
+                return Err("Unsupported X-axis format".into());
+            }
+            group[payload + 2] = u8::from(trigonometric);
+            return Ok(());
+        }
+        offset = end + length % 2;
+    }
+    Err("Missing X-axis format record".into())
 }
 
 /// Original-app slope group. The line and frame IDs must refer to objects on
@@ -320,7 +451,9 @@ mod tests {
             decoded[8],
             Some(GraphObject::CoordinateSystem {
                 x_axis: 6,
-                y_axis: 8
+                y_axis: 8,
+                form: GridForm::Square,
+                dotted: false,
             })
         );
         assert_eq!(
@@ -414,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn page_grid_visibility_matches_original_toggle() {
+    fn page_snap_flag_matches_original_toggle() {
         fn page_record(bytes: &[u8]) -> &[u8] {
             let mut offset = 4;
             loop {
@@ -426,10 +559,10 @@ mod tests {
                 offset += 8 + length + length % 2;
             }
         }
-        let shown = include_bytes!("../tests/fixtures/graph_defined_coordinate_system.gsp");
-        let hidden = include_bytes!("../tests/fixtures/graph_hidden_grid.gsp");
-        assert_eq!(grid_visible(page_record(shown)), Some(true));
-        assert_eq!(grid_visible(page_record(hidden)), Some(false));
+        let normal = include_bytes!("../tests/fixtures/graph_defined_coordinate_system.gsp");
+        let snapped = include_bytes!("../tests/fixtures/graph_snap_points_original.gsp");
+        assert_eq!(snap_points(page_record(normal)), Some(false));
+        assert_eq!(snap_points(page_record(snapped)), Some(true));
     }
 
     #[test]

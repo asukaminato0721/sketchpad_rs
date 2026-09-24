@@ -203,12 +203,10 @@ fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, P
 }
 
 fn grid_lines(doc: &Document, vp: &Viewport) -> Vec<(Pos2, Pos2)> {
-    if !doc
-        .grid_visible
-        .get(doc.active_page)
-        .copied()
-        .unwrap_or(false)
-    {
+    if !doc.grid_visible() {
+        return Vec::new();
+    }
+    if doc.grid_form[doc.active_page] == crate::graph::GridForm::Polar {
         return Vec::new();
     }
     let mut lines = Vec::new();
@@ -293,6 +291,156 @@ fn grid_lines(doc: &Document, vp: &Viewport) -> Vec<(Pos2, Pos2)> {
     lines
 }
 
+fn polar_grid(doc: &Document, vp: &Viewport) -> (Vec<Vec<Pos2>>, Vec<Pos2>) {
+    if !doc.grid_visible() || doc.grid_form[doc.active_page] != crate::graph::GridForm::Polar {
+        return (Vec::new(), Vec::new());
+    }
+    let Some(frame) = doc
+        .active_coordinate_system()
+        .and_then(|id| doc.graph_frame(id))
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut radius: f64 = 0.0;
+    for corner in [
+        vp.rect.left_top(),
+        vp.rect.right_top(),
+        vp.rect.left_bottom(),
+        vp.rect.right_bottom(),
+    ] {
+        let at = vp.world(corner);
+        if let Some(point) = frame.coordinates(crate::graph::GraphPoint { x: at.x, y: at.y }) {
+            radius = radius.max(point.x.hypot(point.y));
+        }
+    }
+    if !radius.is_finite() {
+        return (Vec::new(), Vec::new());
+    }
+    let radius = radius.ceil().min(200.) as usize;
+    let mut paths = Vec::new();
+    let mut dots = Vec::new();
+    for r in 1..=radius {
+        let mut circle = Vec::with_capacity(97);
+        for sample in 0..=96 {
+            let angle = std::f64::consts::TAU * sample as f64 / 96.;
+            if let Some(at) = frame.world(r as f64 * angle.cos(), r as f64 * angle.sin()) {
+                circle.push(vp.screen(Point { x: at.x, y: at.y }));
+            }
+        }
+        if circle.len() == 97 {
+            paths.push(circle);
+        }
+        for spoke in 0..24 {
+            let angle = std::f64::consts::TAU * spoke as f64 / 24.;
+            if let Some(at) = frame.world(r as f64 * angle.cos(), r as f64 * angle.sin()) {
+                let screen = vp.screen(Point { x: at.x, y: at.y });
+                if vp.rect.contains(screen) {
+                    dots.push(screen);
+                }
+            }
+        }
+    }
+    let origin = vp.screen(Point {
+        x: frame.origin.x,
+        y: frame.origin.y,
+    });
+    for spoke in 0..24 {
+        let angle = std::f64::consts::TAU * spoke as f64 / 24.;
+        if let Some(at) = frame.world(radius as f64 * angle.cos(), radius as f64 * angle.sin()) {
+            paths.push(vec![origin, vp.screen(Point { x: at.x, y: at.y })]);
+        }
+    }
+    (paths, dots)
+}
+
+fn grid_points(doc: &Document, vp: &Viewport) -> Vec<Pos2> {
+    if doc.grid_form[doc.active_page] == crate::graph::GridForm::Polar {
+        return polar_grid(doc, vp).1;
+    }
+    let lines = grid_lines(doc, vp);
+    let mut points = Vec::new();
+    for (index, (a, b)) in lines.iter().enumerate() {
+        let u = *b - *a;
+        for (c, d) in &lines[index + 1..] {
+            let v = *d - *c;
+            let determinant = u.x * v.y - u.y * v.x;
+            if determinant.abs() < 1e-4 {
+                continue;
+            }
+            let w = *c - *a;
+            let t = (w.x * v.y - w.y * v.x) / determinant;
+            let s = (w.x * u.y - w.y * u.x) / determinant;
+            if (-1e-4..=1.0001).contains(&t) && (-1e-4..=1.0001).contains(&s) {
+                let point = *a + u * t;
+                if vp.rect.contains(point) {
+                    points.push(point);
+                }
+            }
+        }
+    }
+    points
+}
+
+pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String)> {
+    if !doc.axis_trigonometric() {
+        return Vec::new();
+    }
+    let Some(frame_id) = doc.active_coordinate_system() else {
+        return Vec::new();
+    };
+    let Kind::CoordinateSystem(x_axis, _) = doc.objects[frame_id - 1].kind else {
+        return Vec::new();
+    };
+    if !doc.is_displayed(x_axis) {
+        return Vec::new();
+    }
+    let Some(frame) = doc.graph_frame(frame_id) else {
+        return Vec::new();
+    };
+    let origin = vp.screen(Point {
+        x: frame.origin.x,
+        y: frame.origin.y,
+    });
+    let Some(next) = frame.world(std::f64::consts::PI, 0.) else {
+        return Vec::new();
+    };
+    let spacing = vp
+        .screen(Point {
+            x: next.x,
+            y: next.y,
+        })
+        .distance(origin);
+    if !spacing.is_finite() || spacing <= 0. {
+        return Vec::new();
+    }
+    let interval = (45. / spacing).ceil().max(1.) as i32;
+    let mut labels = Vec::new();
+    for multiple in -64_i32..=64 {
+        if multiple == 0 || multiple % interval != 0 {
+            continue;
+        }
+        let Some(at) = frame.world(multiple as f64 * std::f64::consts::PI, 0.) else {
+            continue;
+        };
+        let at = vp.screen(Point { x: at.x, y: at.y }) + egui::vec2(0., 8.);
+        if !vp.rect.contains(at) {
+            continue;
+        }
+        let magnitude = multiple.abs();
+        let label = format!(
+            "{}{}π",
+            if multiple < 0 { "−" } else { "" },
+            if magnitude == 1 {
+                String::new()
+            } else {
+                magnitude.to_string()
+            }
+        );
+        labels.push((at, label));
+    }
+    labels
+}
+
 pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     if doc.partial_view {
         return Err("This document contains objects that cannot be exported yet".into());
@@ -317,7 +465,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     for object in doc
         .objects
         .iter()
-        .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
+        .filter(|object| doc.is_displayed(object.id))
     {
         if let Kind::Image { png, transform } = &object.kind {
             let (width, height) = crate::image_records::ImageFile::png_size(png)?;
@@ -333,20 +481,35 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
-    for (a, b) in grid_lines(doc, vp) {
-        writeln!(
-            svg,
-            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-            a.x, a.y, b.x, b.y
-        )
-        .unwrap();
+    if doc.grid_dotted[doc.active_page] {
+        for point in grid_points(doc, vp) {
+            writeln!(
+                svg,
+                "<circle cx=\"{}\" cy=\"{}\" r=\"1.2\" fill=\"#d4dbe1\" stroke=\"none\"/>",
+                point.x, point.y
+            )
+            .unwrap();
+        }
+    } else {
+        for (a, b) in grid_lines(doc, vp) {
+            writeln!(
+                svg,
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+                a.x, a.y, b.x, b.y
+            )
+            .unwrap();
+        }
+        for path in polar_grid(doc, vp).0 {
+            let points = path
+                .iter()
+                .map(|point| format!("{},{}", point.x, point.y))
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(svg, "<polyline points=\"{points}\"/>").unwrap();
+        }
     }
     svg.push_str("</g>\n<g fill=\"none\" stroke=\"#24303d\" stroke-width=\"2\">\n");
-    for o in doc
-        .objects
-        .iter()
-        .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
-    {
+    for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
         {
@@ -428,14 +591,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("</g>\n<g fill=\"#176bd6\">\n");
-    for o in doc
-        .objects
-        .iter()
-        .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
-    {
-        if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) {
-            continue;
-        }
+    for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
             let (radius, color) = match o.visual_style {
@@ -453,11 +609,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
-    for object in doc
-        .objects
-        .iter()
-        .filter(|o| o.page == doc.active_page && o.visible && !o.deleted)
-    {
+    for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Kind::PlainText { text, rect } = &object.kind {
             let at = vp.screen(Point {
                 x: rect.left.into(),
@@ -508,7 +660,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     for object in doc
         .objects
         .iter()
-        .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
+        .filter(|object| doc.is_displayed(object.id))
     {
         if let Some(length) = doc.segment_length_cm(object.id) {
             writeln!(
@@ -673,13 +825,16 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     for object in doc
         .objects
         .iter()
-        .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
+        .filter(|object| doc.is_displayed(object.id))
     {
         if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
             let box_rect = action_button_rect(vp, *anchor, label);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
             writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
         }
+    }
+    for (at, label) in trigonometric_axis_labels(doc, vp) {
+        writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y + 11.).unwrap();
     }
     svg.push_str("</svg>\n");
     Ok(svg)
@@ -906,12 +1061,28 @@ impl GeometryRenderer {
         let dark = [0.14, 0.18, 0.24, 1.];
         let blue = [0.09, 0.42, 0.84, 1.];
         let selected = [0.94, 0.32, 0.10, 1.];
-        for (a, b) in grid_lines(doc, vp) {
-            mesh.line(a, b, 1., [0.78, 0.83, 0.88, 1.]);
+        if doc.grid_dotted[doc.active_page] {
+            for point in grid_points(doc, vp) {
+                mesh.line(
+                    point + egui::vec2(-1., 0.),
+                    point + egui::vec2(1., 0.),
+                    2.,
+                    [0.78, 0.83, 0.88, 1.],
+                );
+            }
+        } else {
+            for (a, b) in grid_lines(doc, vp) {
+                mesh.line(a, b, 1., [0.78, 0.83, 0.88, 1.]);
+            }
+            for path in polar_grid(doc, vp).0 {
+                for pair in path.windows(2) {
+                    mesh.line(pair[0], pair[1], 1., [0.78, 0.83, 0.88, 1.]);
+                }
+            }
         }
         // Draw paths first and points last.
         for o in &doc.objects {
-            if !o.visible || o.deleted || o.page != doc.active_page {
+            if !doc.is_displayed(o.id) {
                 continue;
             }
             let col = if doc.selected.contains(&o.id) {
@@ -1001,10 +1172,7 @@ impl GeometryRenderer {
             }
         }
         for o in &doc.objects {
-            if !o.visible || o.deleted || o.page != doc.active_page {
-                continue;
-            }
-            if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) {
+            if !doc.is_displayed(o.id) {
                 continue;
             }
             if let Some(p) = doc.position(o.id) {
@@ -1075,6 +1243,82 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dotted_grid_exports_intersection_points() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_dotted_grid_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        assert!(grid_points(&doc, &vp).len() > 40);
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(svg.matches("r=\"1.2\"").count() > 40);
+        assert_eq!(svg.matches("<line x1=").count(), 2);
+    }
+    #[test]
+    fn hidden_coordinate_system_does_not_draw_its_axes_or_origin() {
+        let mut doc = Document::new();
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        doc.set_grid_visible(false);
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(!svg.contains("<line "));
+        assert!(!svg.contains("<circle "));
+    }
+    #[test]
+    fn polar_grid_draws_rings_and_rectangular_unit_is_visible() {
+        let polar = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_polar_grid_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let rectangular = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_rectangular_grid_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&polar, &vp).unwrap();
+        assert!(svg.matches("<polyline ").count() > 24);
+        assert!(!polar.is_displayed(4));
+        assert!(rectangular.is_displayed(4));
+        let svg = svg_page(&rectangular, &vp).unwrap();
+        assert!(svg.matches("<circle ").count() >= 3);
+    }
+    #[test]
+    fn trigonometric_axis_labels_are_placed_at_pi_multiples() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_trigonometric_axis_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let labels = trigonometric_axis_labels(&doc, &vp);
+        assert_eq!(labels.len(), 2);
+        assert!(labels.iter().any(|(_, text)| text == "−π"));
+        assert!(labels.iter().any(|(_, text)| text == "π"));
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(svg.contains(">−π</text>"));
+        assert!(svg.contains(">π</text>"));
+    }
     #[test]
     fn svg_uses_saved_point_stroke_and_polygon_styles() {
         let doc = Document::from_bytes(

@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 
+#[allow(dead_code)]
 #[path = "table_records.rs"]
 mod table_records;
 
@@ -340,8 +341,7 @@ mod tests {
         let made = append_t1_plot(base, PlotPointsMode::Cartesian, [1, 8]).unwrap();
         let last = decode_group(&made[last_group(&made).unwrap()]).unwrap();
         assert_eq!(last.stored, [1., 1.]);
-        let two_rows =
-            include_bytes!("../tests/fixtures/plot_points_table_two_rows_base.gsp");
+        let two_rows = include_bytes!("../tests/fixtures/plot_points_table_two_rows_base.gsp");
         assert!(append_t1_plot(two_rows, PlotPointsMode::Cartesian, [1, 8]).is_ok());
         assert!(append_t1_plot(base, PlotPointsMode::Cartesian, [2, 8]).is_err());
         assert!(append_t1_plot(&made, PlotPointsMode::Cartesian, [1, 8]).is_err());

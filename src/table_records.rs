@@ -398,6 +398,11 @@ impl TableGroup {
         let rows = row_count.checked_sub(2).ok_or("Invalid table row count")?;
         let mut normalized = bytes.to_vec();
         normalized[10] &= !1;
+        // A two-row table saved after Plot Points has an observed `t` in
+        // the penultimate padding byte of 0x090d. It is outside the row text.
+        if rows == 2 && normalized[rs[2].end - 2] == b't' && normalized[rs[2].end - 1] == 0 {
+            normalized[rs[2].end - 2] = 0;
+        }
         if normalized != canonical_table(source, anchor, rows)? {
             return Err("Unsupported one-column table variant".into());
         }

@@ -2,6 +2,8 @@
 
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
+use sketchpad_rs::graph::GridForm;
+use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
@@ -336,6 +338,82 @@ fn replay(path: &str) -> Result<(), String> {
                         _ => return Err("expected show_grid on or off".into()),
                     };
                     document.set_grid_visible(visible);
+                }
+                "snap_points" => {
+                    let enabled = match rest {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("expected snap_points on or off".into()),
+                    };
+                    document.set_snap_points(enabled);
+                }
+                "dotted_grid" => {
+                    let dotted = match rest {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("expected dotted_grid on or off".into()),
+                    };
+                    document.set_grid_dotted(dotted);
+                }
+                "grid_form" => {
+                    let form = match rest {
+                        "polar" => GridForm::Polar,
+                        "square" => GridForm::Square,
+                        "rectangular" => GridForm::Rectangular,
+                        _ => return Err("expected grid_form polar|square|rectangular".into()),
+                    };
+                    document.set_grid_form(form)?;
+                }
+                "trigonometric_axis" => {
+                    let enabled = match rest {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("expected trigonometric_axis on or off".into()),
+                    };
+                    document.set_axis_trigonometric(enabled)?;
+                }
+                "trace" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, value] = parts.as_slice() else {
+                        return Err("expected trace ID on|off".into());
+                    };
+                    let id: usize = id.parse().map_err(|_| "invalid trace object ID")?;
+                    let tracing = match *value {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("expected trace ID on|off".into()),
+                    };
+                    document.selected.clear();
+                    document.selected.insert(id);
+                    if document.set_selected_tracing(tracing)? != 1 {
+                        return Err("trace target did not change".into());
+                    }
+                }
+                "plot_points" => {
+                    let mode = match rest {
+                        "cartesian" => PlotPointsMode::Cartesian,
+                        "polar" => PlotPointsMode::Polar,
+                        _ => return Err("expected plot_points cartesian or polar".into()),
+                    };
+                    let id = document.plot_default_parameter(mode)?;
+                    println!("line {}: plot_points -> object {id}", index + 1);
+                }
+                "plot_axis" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let source: usize = parts
+                        .first()
+                        .ok_or("expected plot_axis SOURCE [AXIS]")?
+                        .parse()
+                        .map_err(|_| "invalid plot source ID")?;
+                    let axis = parts
+                        .get(1)
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid axis ID"))
+                        .transpose()?;
+                    if parts.len() > 2 {
+                        return Err("expected plot_axis SOURCE [AXIS]".into());
+                    }
+                    let id = document.plot_parameter_on_axis(source, axis)?;
+                    println!("line {}: plot_axis -> object {id}", index + 1);
                 }
                 "slope" => {
                     let line: usize = rest.parse().map_err(|_| "invalid line ID")?;
@@ -735,6 +813,7 @@ fn replay(path: &str) -> Result<(), String> {
                         document.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                         Some(
                             Kind::Free(_)
+                                | Kind::GraphVerticalUnit(_, _)
                                 | Kind::PointOnSegment(_, _)
                                 | Kind::PointOnCircle(_, _, _)
                                 | Kind::PointOnArc(_, _)
