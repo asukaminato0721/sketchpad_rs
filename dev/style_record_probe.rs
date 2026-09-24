@@ -2,14 +2,15 @@
 //!
 //! Usage:
 //!   style_record_probe point-rgb INPUT.gsp OUTPUT.gsp R G B
+//!   style_record_probe circle-rgb INPUT.gsp OUTPUT.gsp R G B
 //!   style_record_probe segment-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
 
 #[path = "../src/style_records.rs"]
 mod style_records;
 
 use style_records::{
-    LinePattern, LineWidth, PointColor, SegmentLineStyle, point_color, segment_line_style,
-    set_point_color, set_segment_line_style,
+    LinePattern, LineWidth, RgbColor, SegmentLineStyle, circle_color, point_color,
+    segment_line_style, set_circle_color, set_point_color, set_segment_line_style,
 };
 
 fn main() -> Result<(), String> {
@@ -36,7 +37,16 @@ fn main() -> Result<(), String> {
             match args[1].as_str() {
                 "point-rgb" if point_color(payload).is_some() && args.len() == 7 => {
                     let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
-                    set_point_color(payload, PointColor {
+                    set_point_color(payload, RgbColor {
+                        red: channel(4)?,
+                        green: channel(5)?,
+                        blue: channel(6)?,
+                    })?;
+                    changed = true;
+                }
+                "circle-rgb" if circle_color(payload).is_some() && args.len() == 7 => {
+                    let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
+                    set_circle_color(payload, RgbColor {
                         red: channel(4)?,
                         green: channel(5)?,
                         blue: channel(6)?,

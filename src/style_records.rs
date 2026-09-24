@@ -43,21 +43,21 @@ pub fn set_point_style(payload: &mut [u8], style: PointStyle) -> Result<(), Stri
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PointColor {
+pub struct RgbColor {
     pub red: u8,
     pub green: u8,
     pub blue: u8,
 }
 
-pub fn point_color(payload: &[u8]) -> Option<PointColor> {
-    is_point_header(payload).then_some(PointColor {
+pub fn point_color(payload: &[u8]) -> Option<RgbColor> {
+    is_point_header(payload).then_some(RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
     })
 }
 
-pub fn set_point_color(payload: &mut [u8], color: PointColor) -> Result<(), String> {
+pub fn set_point_color(payload: &mut [u8], color: RgbColor) -> Result<(), String> {
     if !is_point_header(payload) {
         return Err("Expected a point object header".into());
     }
@@ -65,17 +65,38 @@ pub fn set_point_color(payload: &mut [u8], color: PointColor) -> Result<(), Stri
     Ok(())
 }
 
-pub fn segment_color(payload: &[u8]) -> Option<PointColor> {
-    is_segment_header(payload).then_some(PointColor {
+pub fn segment_color(payload: &[u8]) -> Option<RgbColor> {
+    is_segment_header(payload).then_some(RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
     })
 }
 
-pub fn set_segment_color(payload: &mut [u8], color: PointColor) -> Result<(), String> {
+pub fn set_segment_color(payload: &mut [u8], color: RgbColor) -> Result<(), String> {
     if !is_segment_header(payload) {
         return Err("Expected a segment object header".into());
+    }
+    payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
+    Ok(())
+}
+
+fn is_circle_header(payload: &[u8]) -> bool {
+    (payload.len() == 16 || payload.len() == 28)
+        && u16::from_le_bytes([payload[0], payload[1]]) == 3
+}
+
+pub fn circle_color(payload: &[u8]) -> Option<RgbColor> {
+    is_circle_header(payload).then_some(RgbColor {
+        red: payload[12],
+        green: payload[13],
+        blue: payload[14],
+    })
+}
+
+pub fn set_circle_color(payload: &mut [u8], color: RgbColor) -> Result<(), String> {
+    if !is_circle_header(payload) {
+        return Err("Expected a circle object header".into());
     }
     payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
     Ok(())
@@ -198,11 +219,11 @@ mod tests {
         let red = first_point_header(include_bytes!("../tests/fixtures/point.gsp"));
         let orange = first_point_header(include_bytes!("../tests/fixtures/style_orange_point.gsp"));
         let blue = first_point_header(include_bytes!("../tests/fixtures/style_blue_point.gsp"));
-        assert_eq!(point_color(red), Some(PointColor { red: 255, green: 0, blue: 0 }));
-        assert_eq!(point_color(orange), Some(PointColor { red: 255, green: 128, blue: 0 }));
-        assert_eq!(point_color(blue), Some(PointColor { red: 0, green: 0, blue: 255 }));
+        assert_eq!(point_color(red), Some(RgbColor { red: 255, green: 0, blue: 0 }));
+        assert_eq!(point_color(orange), Some(RgbColor { red: 255, green: 128, blue: 0 }));
+        assert_eq!(point_color(blue), Some(RgbColor { red: 0, green: 0, blue: 255 }));
         let mut edited = red.to_vec();
-        set_point_color(&mut edited, PointColor { red: 0, green: 0, blue: 255 }).unwrap();
+        set_point_color(&mut edited, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
         assert_eq!(point_color(&edited), point_color(blue));
         edited[12..15].copy_from_slice(&red[12..15]);
         assert_eq!(edited, red);
@@ -245,13 +266,41 @@ mod tests {
     fn original_segment_color_menu_writes_rgb_bytes() {
         let navy = first_segment_header(include_bytes!("../tests/fixtures/style_medium_solid_line.gsp"));
         let blue = first_segment_header(include_bytes!("../tests/fixtures/style_blue_line.gsp"));
-        assert_eq!(segment_color(navy), Some(PointColor { red: 0, green: 0, blue: 128 }));
-        assert_eq!(segment_color(blue), Some(PointColor { red: 0, green: 0, blue: 255 }));
+        assert_eq!(segment_color(navy), Some(RgbColor { red: 0, green: 0, blue: 128 }));
+        assert_eq!(segment_color(blue), Some(RgbColor { red: 0, green: 0, blue: 255 }));
         let mut edited = navy.to_vec();
-        set_segment_color(&mut edited, PointColor { red: 0, green: 0, blue: 255 }).unwrap();
+        set_segment_color(&mut edited, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
         assert_eq!(segment_color(&edited), segment_color(blue));
         edited[12..15].copy_from_slice(&navy[12..15]);
         assert_eq!(edited, navy);
+    }
+
+    #[test]
+    fn original_circle_color_menu_writes_rgb_bytes() {
+        let green = first_circle_header(include_bytes!("../tests/fixtures/style_green_circle.gsp"));
+        let blue = first_circle_header(include_bytes!("../tests/fixtures/style_blue_circle.gsp"));
+        assert_eq!(circle_color(green), Some(RgbColor { red: 0, green: 128, blue: 0 }));
+        assert_eq!(circle_color(blue), Some(RgbColor { red: 0, green: 0, blue: 255 }));
+        let mut edited = green.to_vec();
+        set_circle_color(&mut edited, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
+        assert_eq!(circle_color(&edited), circle_color(blue));
+        edited[12..15].copy_from_slice(&green[12..15]);
+        assert_eq!(edited, green);
+    }
+
+    fn first_circle_header(bytes: &[u8]) -> &[u8] {
+        assert_eq!(&bytes[..4], b"GSP4");
+        let mut offset = 4;
+        while offset < bytes.len() {
+            let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let kind = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
+            let payload = &bytes[offset + 8..offset + 8 + length];
+            if kind == 0x07d0 && is_circle_header(payload) {
+                return payload;
+            }
+            offset += 8 + length + length % 2;
+        }
+        panic!("fixture has no circle header");
     }
 
     fn first_segment_header(bytes: &[u8]) -> &[u8] {

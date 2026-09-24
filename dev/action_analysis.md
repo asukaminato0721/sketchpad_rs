@@ -59,13 +59,35 @@ Show label. This means the observed original UI does not preserve an English
 button label through a toggle, even though the generated English label is
 accepted when opened.
 
+## Native integration and cross-open verification
+
+The document model now decodes code-62 buttons as a target dependency, Hide or
+Show action, label, and screen anchor. It preserves the original six-record
+group, updates source groups in place, and writes new groups from the original
+template. Edit > Action Buttons > Hide/Show creates a button for the selected
+object. The same viewport rectangle is used for drawing and click hit testing;
+clicking toggles target visibility and the button's next action. SVG export
+also includes the button. `tests/replay_action.txt` covers creation, activation,
+save/reopen, and undo.
+
+`tests/fixtures/action_port_generated.gsp` is the native writer's new English
+Hide Segment button. The original Sketchpad 5 opened it and a click at
+`(105,85)` hid segment object 3. Its saved file,
+`tests/fixtures/action_port_wine_clicked.gsp`, has 88 records, a hidden segment,
+and a Show button with the original application's Chinese label. The port
+reopens it with `partial_view=false`; all action fixtures reencode byte for
+byte. The native window was launched in an isolated Xvfb display, but that
+environment did not expose a visible window for manual screenshot inspection.
+
 ## Scope and remaining work
 
 The parser intentionally recognizes only code-62 Hide/Show groups with the
 observed six-record layout and action subtype `(0 or 1, 7)`. Other Action
 Button commands, multiple targets, alternate label payloads, and insertion
-into arbitrary pages need their own probes. The shared document model and UI
-have not yet been connected to `src/action_records.rs`.
+into arbitrary pages need their own probes. The writer currently refuses
+button insertion in a multipage document. A saved button's label may change
+only when its encoded byte length stays fixed, so opaque trailing bytes and
+following object offsets remain valid.
 
 Standalone tests:
 

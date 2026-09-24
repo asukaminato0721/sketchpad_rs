@@ -28,3 +28,5 @@ Changing the same original-app point from red to orange and blue changed only it
 `dev/style_record_probe.rs` applies the observed fields to a GSP copy. A Rust-patched blue point opened, displayed blue, and saved in Sketchpad 5. A Rust-patched thick dashed segment likewise opened, displayed the expected line, and saved. Both saved files passed the port's byte-exact `gsp_probe verify` check.
 
 The same RGB field occurs in a code-2 segment header: the port's default segment was navy `(0, 0, 128)`, and Display > Color > Blue changed its object-header bytes 12–14 to `(0, 0, 255)`. `tests/fixtures/style_blue_line.gsp` is the original-app save. The `segment_color` helpers are restricted to code-2 headers; other object codes need their own verification.
+
+A code-3 circle also uses payload bytes 12–14: the generated default circle was green `(0, 128, 0)`, and the original Display > Color > Blue saved `(0, 0, 255)` in `tests/fixtures/style_blue_circle.gsp`. The Rust `circle_color` helper then produced a blue-circle file that opened, displayed blue, and saved in Sketchpad 5. The helper rejects other object codes.

@@ -1,5 +1,7 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
+use crate::text_object::{self, TextRect};
+use crate::text_records::LabelAux;
 use std::{
     collections::BTreeSet,
     fs,
@@ -43,7 +45,7 @@ impl Kind {
             return vertices.clone();
         }
         match *self {
-            Kind::Free(_) | Kind::Unsupported(_) => vec![],
+            Kind::Free(_) | Kind::PlainText { .. } | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
@@ -112,6 +114,7 @@ impl Kind {
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
+            Kind::PlainText { ref text, rect } => Kind::PlainText { text: text.clone(), rect },
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
@@ -172,6 +175,7 @@ pub enum Kind {
         anchor: (i16, i16),
     },
     Free(Point),
+    PlainText { text: String, rect: TextRect },
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
@@ -230,6 +234,7 @@ pub struct Object {
     pub point_offset: Option<usize>,
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
+    pub label: Option<LabelAux>,
 }
 #[derive(Clone, Debug)]
 pub struct Clipboard {
@@ -678,6 +683,10 @@ impl Document {
             let mut measurement_format = false;
             let mut measurement_style = false;
             let mut graph_records: Vec<(u32, Vec<u8>)> = Vec::new();
+            let mut label: Option<LabelAux> = None;
+            let mut rich_text: Option<Vec<u8>> = None;
+            let mut text_box: Option<Vec<u8>> = None;
+            let mut text_style = false;
             i += 1;
             while i < rs.len() && rs[i].kind != 0x7d7 {
                 let r = &rs[i];
@@ -686,6 +695,13 @@ impl Document {
                     graph_records.push((r.kind, d.to_vec()));
                 }
                 match r.kind {
+                    0x07d5 if code == 0 => match LabelAux::parse(d) {
+                        Ok(value) => label = Some(value),
+                        Err(_) => safe = false,
+                    },
+                    0x08fc if code == 0 => rich_text = Some(d.to_vec()),
+                    0x0898 if code == 0 => text_box = Some(d.to_vec()),
+                    0x07d8 if code == 0 => text_style = d == [0, 0],
                     0x899 if d.len() == 16 => {
                         point = Some(Point {
                             x: f64_at(d, 0),
@@ -768,6 +784,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
+                    && !(code == 0 && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898))
                     && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 58 | 61 | 87)
@@ -864,7 +881,14 @@ impl Document {
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
-                    (0, Some(p), _) => Kind::Free(p),
+                    (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
+                    (0, None, []) if rich_text.is_some() && text_box.is_some()
+                        && text_style && label.is_none() => {
+                        match text_object::decode_plain_text(rich_text.as_ref().unwrap(), text_box.as_ref().unwrap()) {
+                            Ok((text, rect)) => Kind::PlainText { text, rect },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
                     (36, _, [host])
                         if measurement_format && measurement_style
                             && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _))) =>
@@ -1073,6 +1097,7 @@ impl Document {
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
             }
+            if label.is_some() && !is_point_kind(&kind) { safe = false; }
             objects.push(Object {
                 id: objects.len() + 1,
                 page,
@@ -1083,6 +1108,7 @@ impl Document {
                 point_offset,
                 constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
+                label,
             });
             if matches!(objects.last().map(|o| &o.kind), Some(Kind::Unsupported(_))) {
                 safe = false;
@@ -1181,6 +1207,7 @@ impl Document {
             point_offset: None,
             constraint_offset: None,
             header_offset: None,
+            label: None,
         });
         id
     }
@@ -1335,6 +1362,7 @@ impl Document {
                 point_offset: None,
                 constraint_offset: None,
                 header_offset: None,
+                label: None,
             });
             ids[*old_id] = id;
             created.push(id);
@@ -3055,7 +3083,7 @@ mod tests {
         assert!(doc.objects[2].visible);
         doc.redo();
         assert!(!doc.objects[2].visible);
-        let wine =
+        let mut wine =
             Document::open(Path::new("tests/fixtures/action_port_wine_clicked.gsp")).unwrap();
         assert!(!wine.partial_view);
         assert!(!wine.objects[2].visible);
@@ -3066,6 +3094,20 @@ mod tests {
                 ..
             }
         ));
+        wine.activate_hide_show_button(4).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("sketchpad_action_{}.gsp", std::process::id()));
+        wine.save_to(&path).unwrap();
+        let port_saved = Document::open(&path).unwrap();
+        assert!(port_saved.objects[2].visible);
+        assert!(matches!(
+            port_saved.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Hide,
+                ..
+            }
+        ));
+        fs::remove_file(path).unwrap();
     }
     #[test]
     fn polygon_perimeter_matches_original_and_updates_after_drag() {
