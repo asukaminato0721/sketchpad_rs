@@ -116,10 +116,10 @@ The release gate is every sketch and document command verified after editing, sa
 | Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Ratio | Partial: signed point ratio, dynamic projection after drag, SVG, generated positive and negative files opened in Sketchpad 5 |
 | Value of Point | Pending |
-| Coordinates | Pending |
-| Abscissa (x) | Pending |
-| Ordinate (y) | Pending |
-| Coordinate Distance | Pending |
+| Coordinates | Partial: Cartesian point pair updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; complex names/formats pending |
+| Abscissa (x) | Partial: Cartesian x value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
+| Ordinate (y) | Partial: Cartesian y value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
+| Coordinate Distance | Partial: Cartesian two-point value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
 | Slope | Partial: Cartesian frame and segment slope, live update, generated file edited in Sketchpad 5 |
 | Equation | Pending |
 
@@ -127,11 +127,11 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Number Menu &gt; New Parameter | Pending |
-| Number Menu &gt; Calculate | Pending |
-| Number Menu &gt; Tabulate | Pending |
-| Number Menu &gt; Add Table Data | Pending |
-| Number Menu &gt; Remove Table Data | Pending |
+| Number Menu &gt; New Parameter | Partial: default t₁ value, move and save/reopen; original file cross-opened |
+| Number Menu &gt; Calculate | Partial: literal 2+3 expression, move and save/reopen; original file cross-opened |
+| Number Menu &gt; Tabulate | Partial: one-column table for default t₁, save/reopen and original cross-open; other sources pending |
+| Number Menu &gt; Add Table Data | Partial: add default t₁ snapshot row, save/reopen; other table kinds pending |
+| Number Menu &gt; Remove Table Data | Partial: remove last t₁ snapshot row, save/reopen; other table kinds pending |
 | Number Menu &gt; New Function | Partial: Cartesian `x` and `x²` definitions save and cross-open; other expressions pending |
 | Number Menu &gt; Define Derivative Function | Pending |
 | Number Menu &gt; Define Function from Drawing or Picture | Pending |

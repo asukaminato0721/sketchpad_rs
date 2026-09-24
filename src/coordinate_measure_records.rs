@@ -263,6 +263,26 @@ pub fn encode_group(kind: CoordinateMeasureKind, references: &[u32]) -> Result<V
     Ok(output)
 }
 
+/// The observed pair readout stores one literal ASCII point name in its rich text.
+/// Keep the record lengths fixed; reject names outside that layout.
+pub fn set_coordinates_name(group: &mut [u8], name: &str) -> Result<(), String> {
+    if decode_group(group)?.kind != CoordinateMeasureKind::Coordinates {
+        return Err("Expected a Coordinates readout".into());
+    }
+    let [letter] = name.as_bytes() else {
+        return Err("Coordinates readout requires a one-letter ASCII point name".into());
+    };
+    if !letter.is_ascii_alphabetic() {
+        return Err("Coordinates readout requires a one-letter ASCII point name".into());
+    }
+    let marker = b"<T1xA>";
+    let positions = group.windows(marker.len()).enumerate().filter(|(_, window)| *window == marker).map(|(at, _)| at).collect::<Vec<_>>();
+    if positions.len() != 1 { return Err("Coordinates readout name template changed".into()); }
+    group[positions[0] + 4] = *letter;
+    decode_group(group)?;
+    Ok(())
+}
+
 /// A reproducible writer proof against the original nine-object frame fixture.
 pub fn encode_on_original_base(
     kind: CoordinateMeasureKind,

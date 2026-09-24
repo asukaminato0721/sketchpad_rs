@@ -1,6 +1,7 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
+use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use std::{env, fs, path::Path};
@@ -346,6 +347,29 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::SlopeMeasurement(line, frame));
                     println!("line {}: slope -> object {id}", index + 1);
                 }
+                "coordinates" | "abscissa" | "ordinate" | "coordinate_distance" => {
+                    let kind = match command {
+                        "coordinates" => CoordinateMeasureKind::Coordinates,
+                        "abscissa" => CoordinateMeasureKind::Abscissa,
+                        "ordinate" => CoordinateMeasureKind::Ordinate,
+                        _ => CoordinateMeasureKind::CoordinateDistance,
+                    };
+                    let ids = rest.split_whitespace().map(|s| s.parse::<usize>().map_err(|_| "invalid point ID")).collect::<Result<Vec<_>, _>>()?;
+                    let (first, second) = match ids.as_slice() {
+                        [first] if kind != CoordinateMeasureKind::CoordinateDistance => (*first, None),
+                        [first, second] if kind == CoordinateMeasureKind::CoordinateDistance => (*first, Some(*second)),
+                        _ => return Err("expected one point ID or two for coordinate_distance".into()),
+                    };
+                    if document.position(first).is_none() || second.is_some_and(|id| document.position(id).is_none()) {
+                        return Err("coordinate measurement requires point IDs".into());
+                    }
+                    let frame = match document.active_coordinate_system() {
+                        Some(frame) => frame,
+                        None => document.add_default_coordinate_system(Point { x: 199., y: 125. })?,
+                    };
+                    let id = document.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
                 "function" => {
                     let expression = sketchpad_rs::function_records::SimpleFunction::parse(rest)?;
                     let id = document.add_function_definition(expression)?;
@@ -673,14 +697,22 @@ fn replay(path: &str) -> Result<(), String> {
                             "small" => PointStyle::Small,
                             "medium" => PointStyle::Medium,
                             "thick" => PointStyle::Large,
-                            _ => return Err("point_style expects dot, small, medium, or thick".into()),
+                            _ => {
+                                return Err(
+                                    "point_style expects dot, small, medium, or thick".into()
+                                );
+                            }
                         })?,
                         "line_width" => document.set_selected_line_width(match *value {
                             "hairline" => LineWidth::Hairline,
                             "thin" => LineWidth::Thin,
                             "medium" => LineWidth::Medium,
                             "thick" => LineWidth::Thick,
-                            _ => return Err("line_width expects hairline, thin, medium, or thick".into()),
+                            _ => {
+                                return Err(
+                                    "line_width expects hairline, thin, medium, or thick".into()
+                                );
+                            }
                         })?,
                         "line_pattern" => document.set_selected_line_pattern(match *value {
                             "solid" => LinePattern::Solid,
@@ -693,7 +725,8 @@ fn replay(path: &str) -> Result<(), String> {
                             if hex.len() != 6 {
                                 return Err("color expects six hexadecimal RGB digits".into());
                             }
-                            let rgb = u32::from_str_radix(hex, 16).map_err(|_| "invalid RGB color")?;
+                            let rgb =
+                                u32::from_str_radix(hex, 16).map_err(|_| "invalid RGB color")?;
                             document.set_selected_color(RgbColor {
                                 red: (rgb >> 16) as u8,
                                 green: (rgb >> 8) as u8,

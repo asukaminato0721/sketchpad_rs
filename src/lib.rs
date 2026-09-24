@@ -1,4 +1,5 @@
 pub mod action_records;
+pub mod coordinate_measure_records;
 pub mod document;
 pub mod function_records;
 pub mod graph;

@@ -1,8 +1,11 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
+use crate::coordinate_measure_records::{self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::image_records::ImageFile;
-use crate::style_records::{self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle};
+use crate::style_records::{
+    self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
+};
 use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
@@ -37,6 +40,7 @@ impl Kind {
                 | Kind::CircleArea(_)
                 | Kind::AngleMeasurement(_, _, _)
                 | Kind::SlopeMeasurement(_, _)
+                | Kind::CoordinateMeasurement { .. }
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
         )
@@ -47,6 +51,12 @@ impl Kind {
         }
         if let Kind::Polygon(vertices) = self {
             return vertices.clone();
+        }
+        if let Kind::CoordinateMeasurement { first, second, frame, .. } = self {
+            let mut ids = vec![*first];
+            if let Some(second) = second { ids.push(*second); }
+            ids.push(*frame);
+            return ids;
         }
         match *self {
             Kind::Free(_)
@@ -103,6 +113,7 @@ impl Kind {
             Kind::PointRatio(a, b, c) => vec![a, b, c],
             Kind::Polygon(_) => unreachable!(),
             Kind::HideShowButton { .. } => unreachable!(),
+            Kind::CoordinateMeasurement { .. } => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
@@ -123,6 +134,9 @@ impl Kind {
         }
         if let Kind::Polygon(vertices) = self {
             return Kind::Polygon(vertices.iter().map(|&id| m(id)).collect());
+        }
+        if let Kind::CoordinateMeasurement { kind, first, second, frame } = self {
+            return Kind::CoordinateMeasurement { kind: *kind, first: m(*first), second: second.map(m), frame: m(*frame) };
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
@@ -188,6 +202,7 @@ impl Kind {
             Kind::Unsupported(code) => Kind::Unsupported(code),
             Kind::Polygon(_) => unreachable!(),
             Kind::HideShowButton { .. } => unreachable!(),
+            Kind::CoordinateMeasurement { .. } => unreachable!(),
         }
     }
 }
@@ -220,6 +235,7 @@ pub enum Kind {
     GraphAxis(usize, usize, u32),
     CoordinateSystem(usize, usize),
     SlopeMeasurement(usize, usize),
+    CoordinateMeasurement { kind: CoordinateMeasureKind, first: usize, second: Option<usize>, frame: usize },
     FunctionDefinition(SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
     SegmentLength(usize),
@@ -460,24 +476,60 @@ fn is_circle_kind(kind: &Kind) -> bool {
 }
 
 fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
-    let red = RgbColor { red: 255, green: 0, blue: 0 };
-    let navy = RgbColor { red: 0, green: 0, blue: 128 };
-    let green = RgbColor { red: 0, green: 128, blue: 0 };
-    let line = SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid };
+    let red = RgbColor {
+        red: 255,
+        green: 0,
+        blue: 0,
+    };
+    let navy = RgbColor {
+        red: 0,
+        green: 0,
+        blue: 128,
+    };
+    let green = RgbColor {
+        red: 0,
+        green: 128,
+        blue: 0,
+    };
+    let line = SegmentLineStyle {
+        width: LineWidth::Medium,
+        pattern: LinePattern::Solid,
+    };
     match kind {
-        Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _)
-        | Kind::PointOnArc(_, _) | Kind::PolarTranslatedPoint(_, _, _, _)
-        | Kind::ReflectedPoint(_, _) | Kind::ScaledPoint(_, _, _)
-        | Kind::RotatedPoint(_, _, _) | Kind::Midpoint(_, _)
-        | Kind::Intersection(_, _) | Kind::LineCircleIntersection(_, _, _)
-        | Kind::CircleCircleIntersection(_, _, _) => Some(VisualStyle::Point { shape: PointStyle::Medium, color: red }),
-        Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-        | Kind::Parallel(_, _) | Kind::Perpendicular(_, _)
+        Kind::Free(_)
+        | Kind::PointOnSegment(_, _)
+        | Kind::PointOnCircle(_, _, _)
+        | Kind::PointOnArc(_, _)
+        | Kind::PolarTranslatedPoint(_, _, _, _)
+        | Kind::ReflectedPoint(_, _)
+        | Kind::ScaledPoint(_, _, _)
+        | Kind::RotatedPoint(_, _, _)
+        | Kind::Midpoint(_, _)
+        | Kind::Intersection(_, _)
+        | Kind::LineCircleIntersection(_, _, _)
+        | Kind::CircleCircleIntersection(_, _, _) => Some(VisualStyle::Point {
+            shape: PointStyle::Medium,
+            color: red,
+        }),
+        Kind::Segment(_, _)
+        | Kind::Line(_, _)
+        | Kind::Ray(_, _)
+        | Kind::Parallel(_, _)
+        | Kind::Perpendicular(_, _)
         | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),
-        Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-        | Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)
-        | Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
-        Kind::Polygon(_) => Some(VisualStyle::Polygon { color: RgbColor { red: 255, green: 128, blue: 0 } }),
+        Kind::Circle(_, _)
+        | Kind::CircleBySegment(_, _)
+        | Kind::ReflectedCircle(_, _)
+        | Kind::ScaledCircle(_, _, _)
+        | Kind::ThreePointArc(_, _, _)
+        | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
+        Kind::Polygon(_) => Some(VisualStyle::Polygon {
+            color: RgbColor {
+                red: 255,
+                green: 128,
+                blue: 0,
+            },
+        }),
         _ => None,
     }
 }
@@ -873,6 +925,8 @@ impl Document {
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 58 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
+                    && !(matches!(code, 49 | 65 | 66 | 86)
+                        && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
@@ -893,6 +947,11 @@ impl Document {
                 safe = false;
             }
             let action_group = action_group.ok().flatten();
+            let coordinate_group = matches!(code, 49 | 65 | 66 | 86)
+                .then(|| coordinate_measure_records::decode_group(&b[group_start..rs[i].data.end]))
+                .transpose();
+            if coordinate_group.is_err() { safe = false; }
+            let coordinate_group = coordinate_group.ok().flatten();
             let graph_borrowed = graph_records
                 .iter()
                 .map(|(kind, payload)| (*kind, payload.as_slice()))
@@ -955,6 +1014,18 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (49 | 65 | 66, _, [first, frame]) if coordinate_group.as_ref().is_some_and(|g| {
+                        g.references == vec![(*first - page_base) as u32, (*frame - page_base) as u32]
+                    }) && objects.get(first - 1).is_some_and(|o| is_point_kind(&o.kind))
+                        && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        Kind::CoordinateMeasurement { kind: coordinate_group.as_ref().unwrap().kind, first: *first, second: None, frame: *frame }
+                    }
+                    (86, _, [first, second, frame]) if coordinate_group.as_ref().is_some_and(|g| {
+                        g.references == vec![(*first - page_base) as u32, (*second - page_base) as u32, (*frame - page_base) as u32]
+                    }) && [first, second].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| is_point_kind(&o.kind)))
+                        && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        Kind::CoordinateMeasurement { kind: CoordinateMeasureKind::CoordinateDistance, first: *first, second: Some(*second), frame: *frame }
+                    }
                     (0, None, []) if is_image => {
                         let picture = image_file.as_ref().unwrap();
                         Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
@@ -1672,6 +1743,35 @@ impl Document {
         self.graph_frame(frame)?
             .slope(GraphPoint { x: a.x, y: a.y }, GraphPoint { x: b.x, y: b.y })
     }
+    pub fn coordinate_measure_value(&self, id: usize) -> Option<CoordinateMeasureValue> {
+        let Kind::CoordinateMeasurement { kind, first, second, frame } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let graph_frame = self.graph_frame(frame)?;
+        let to_screen = |point: Point| ScreenPoint { x: point.x, y: point.y };
+        let basis = CoordinateBasis {
+            origin: to_screen(Point { x: graph_frame.origin.x, y: graph_frame.origin.y }),
+            x_unit: to_screen(Point { x: graph_frame.x_unit.x, y: graph_frame.x_unit.y }),
+            y_unit: to_screen(Point { x: graph_frame.y_unit.x, y: graph_frame.y_unit.y }),
+        };
+        coordinate_measure_records::evaluate(kind, basis, to_screen(self.position(first)?), second.and_then(|id| self.position(id)).map(to_screen))
+    }
+    pub fn coordinate_measure_text(&self, id: usize) -> Option<String> {
+        let Kind::CoordinateMeasurement { kind, first, .. } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let name = self.coordinate_point_name(first)?;
+        let value = self.coordinate_measure_value(id)?;
+        match (kind, value) {
+            (CoordinateMeasureKind::Coordinates, CoordinateMeasureValue::Pair(p)) => Some(format!("{name}: ({:.2}, {:.2})", p.x, p.y)),
+            (CoordinateMeasureKind::Abscissa, CoordinateMeasureValue::Scalar(x)) => Some(format!("x_{name} = {x:.2}")),
+            (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(y)) => Some(format!("y_{name} = {y:.2}")),
+            (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(d)) => Some(format!("Coordinate Distance = {d:.2}")),
+            _ => None,
+        }
+    }
+    fn coordinate_point_name(&self, first: usize) -> Option<String> {
+        Some(self.objects.get(first - 1)?.label.as_ref().and_then(|label| label.name_utf8().ok()).map(str::to_owned).unwrap_or_else(|| {
+            let ordinal = self.objects.iter().take(first).filter(|object| is_point_kind(&object.kind)).count();
+            if (1..=26).contains(&ordinal) { ((b'A' + ordinal as u8 - 1) as char).to_string() } else { format!("Point {first}") }
+        }))
+    }
     pub fn dependencies_of(&self, id: usize) -> Option<Vec<usize>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let mut dependencies = object.kind.dependencies();
@@ -1836,14 +1936,21 @@ impl Document {
         if self.partial_view {
             return Err("Cannot edit styles in a sketch with unsupported records safely".into());
         }
-        let changes: Vec<_> = self.objects.iter().filter_map(|object| {
-            if object.deleted || object.page != self.active_page || !self.selected.contains(&object.id) {
-                return None;
-            }
-            let old = object.visual_style?;
-            let new = update(old)?;
-            (new != old).then_some((object.id, new))
-        }).collect();
+        let changes: Vec<_> = self
+            .objects
+            .iter()
+            .filter_map(|object| {
+                if object.deleted
+                    || object.page != self.active_page
+                    || !self.selected.contains(&object.id)
+                {
+                    return None;
+                }
+                let old = object.visual_style?;
+                let new = update(old)?;
+                (new != old).then_some((object.id, new))
+            })
+            .collect();
         if !changes.is_empty() {
             self.checkpoint();
             for (id, style) in &changes {
@@ -1860,22 +1967,30 @@ impl Document {
     }
     pub fn set_selected_line_width(&mut self, width: LineWidth) -> Result<usize, String> {
         self.update_selected_visual_style(|style| match style {
-            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke { line: SegmentLineStyle { width, ..line }, color }),
+            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke {
+                line: SegmentLineStyle { width, ..line },
+                color,
+            }),
             _ => None,
         })
     }
     pub fn set_selected_line_pattern(&mut self, pattern: LinePattern) -> Result<usize, String> {
         self.update_selected_visual_style(|style| match style {
-            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke { line: SegmentLineStyle { pattern, ..line }, color }),
+            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke {
+                line: SegmentLineStyle { pattern, ..line },
+                color,
+            }),
             _ => None,
         })
     }
     pub fn set_selected_color(&mut self, color: RgbColor) -> Result<usize, String> {
-        self.update_selected_visual_style(|style| Some(match style {
-            VisualStyle::Point { shape, .. } => VisualStyle::Point { shape, color },
-            VisualStyle::Stroke { line, .. } => VisualStyle::Stroke { line, color },
-            VisualStyle::Polygon { .. } => VisualStyle::Polygon { color },
-        }))
+        self.update_selected_visual_style(|style| {
+            Some(match style {
+                VisualStyle::Point { shape, .. } => VisualStyle::Point { shape, color },
+                VisualStyle::Stroke { line, .. } => VisualStyle::Stroke { line, color },
+                VisualStyle::Polygon { .. } => VisualStyle::Polygon { color },
+            })
+        })
     }
     pub fn show_all_hidden(&mut self) {
         if !self
@@ -2600,6 +2715,12 @@ impl Document {
         Ok(out)
     }
     pub fn can_save(&self) -> Result<(), String> {
+        // An untouched source document can be copied byte for byte even when
+        // its geometry cannot yet be evaluated by this port. Revalidate once
+        // anything has changed before serializing an edited document.
+        if !self.dirty {
+            return Ok(());
+        }
         if self.image_read_only && self.dirty {
             return Err("Cropped or multi-resource picture content is read-only".into());
         }
@@ -2803,6 +2924,16 @@ impl Document {
                     || self.graph_frame(frame).is_none()
                 {
                     return Err(format!("Invalid slope measurement {}", o.id));
+                }
+            }
+            if let Kind::CoordinateMeasurement { kind, first, second, frame } = o.kind {
+                let point_ok = |id: usize| self.objects.get(id.saturating_sub(1)).is_some_and(|object| !object.deleted && object.page == o.page && is_point_kind(&object.kind));
+                if !point_ok(first) || second.is_some_and(|id| !point_ok(id))
+                    || (kind == CoordinateMeasureKind::CoordinateDistance) != second.is_some()
+                    || !matches!(self.objects.get(frame.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _)))
+                    || self.coordinate_measure_value(o.id).is_none()
+                {
+                    return Err(format!("Invalid coordinate measurement {}", o.id));
                 }
             }
             if matches!(o.kind, Kind::PolygonPerimeter(_))
@@ -3084,6 +3215,9 @@ impl Document {
         Ok(Some(group))
     }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
+        if !self.dirty {
+            return Ok(self.original.clone());
+        }
         self.can_save()?;
         let rs = records(&self.original)?;
         let mut out = self.original.clone();
@@ -3172,7 +3306,8 @@ impl Document {
             page_index += 1;
         }
         if self.objects.len() == self.source_count {
-            return self.patch_visual_styles(self.patch_text_and_labels(self.compact_deleted(out)?)?);
+            return self
+                .patch_visual_styles(self.patch_text_and_labels(self.compact_deleted(out)?)?);
         }
         let preamble = rs
             .iter()
@@ -3292,6 +3427,21 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::CoordinateMeasurement { kind, first, second, frame } = o.kind {
+                let mut refs = vec![u32::try_from(first).map_err(|_| "Too many objects")?];
+                if let Some(second) = second { refs.push(u32::try_from(second).map_err(|_| "Too many objects")?); }
+                refs.push(u32::try_from(frame).map_err(|_| "Too many objects")?);
+                let mut group = coordinate_measure_records::encode_group(kind, &refs)?;
+                if kind == CoordinateMeasureKind::Coordinates {
+                    let name = self.coordinate_point_name(first).ok_or("Missing coordinate point")?;
+                    coordinate_measure_records::set_coordinates_name(&mut group, &name)?;
+                }
+                let format_offset = if second.is_some() { 68 } else { 64 };
+                Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
+                if !o.visible { group[10] |= 1; }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -3526,7 +3676,7 @@ impl Document {
             .find(|o| {
                 matches!(
                     o.kind,
-                    Kind::FunctionDefinition(_) | Kind::FunctionPlot(_, _, _, _, _)
+                    Kind::FunctionDefinition(_) | Kind::FunctionPlot(_, _, _, _, _) | Kind::CoordinateMeasurement { .. }
                 )
             })
             .map(|o| o.id);
@@ -3570,10 +3720,16 @@ impl Document {
     }
     fn patch_visual_styles(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
-        let survivors: Vec<_> = self.objects.iter().filter(|object| !object.deleted).collect();
+        let survivors: Vec<_> = self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect();
         let mut ordinal = 0;
         for record in rs.iter().filter(|record| record.kind == 0x07d0) {
-            let object = survivors.get(ordinal).ok_or("Object group count mismatch")?;
+            let object = survivors
+                .get(ordinal)
+                .ok_or("Object group count mismatch")?;
             ordinal += 1;
             if let Some(style) = object.visual_style {
                 style_records::set_visual_style(&mut bytes[record.data.clone()], style)
@@ -3748,24 +3904,52 @@ mod tests {
     #[test]
     fn source_point_style_undoes_and_survives_save() {
         let mut document = Document::from_bytes(
-            include_bytes!("../tests/fixtures/style_blue_point.gsp"), None,
-        ).unwrap();
+            include_bytes!("../tests/fixtures/style_blue_point.gsp"),
+            None,
+        )
+        .unwrap();
         document.selected.insert(1);
-        assert_eq!(document.set_selected_point_style(PointStyle::Large).unwrap(), 1);
-        assert_eq!(document.objects[0].visual_style, Some(VisualStyle::Point {
-            shape: PointStyle::Large, color: RgbColor { red: 0, green: 0, blue: 255 },
-        }));
+        assert_eq!(
+            document
+                .set_selected_point_style(PointStyle::Large)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            document.objects[0].visual_style,
+            Some(VisualStyle::Point {
+                shape: PointStyle::Large,
+                color: RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255
+                },
+            })
+        );
         document.undo();
-        assert!(matches!(document.objects[0].visual_style, Some(VisualStyle::Point { shape: PointStyle::Medium, .. })));
+        assert!(matches!(
+            document.objects[0].visual_style,
+            Some(VisualStyle::Point {
+                shape: PointStyle::Medium,
+                ..
+            })
+        ));
         document.redo();
         let check = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
-        assert_eq!(check.objects[0].visual_style, document.objects[0].visual_style);
+        assert_eq!(
+            check.objects[0].visual_style,
+            document.objects[0].visual_style
+        );
         assert_eq!(check.objects[0].kind, document.objects[0].kind);
-        let path = std::env::temp_dir().join(format!("sketchpad-style-point-{}.gsp", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("sketchpad-style-point-{}.gsp", std::process::id()));
         document.save_to(&path).unwrap();
         let reopened = Document::open(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(reopened.objects[0].visual_style, document.objects[0].visual_style);
+        assert_eq!(
+            reopened.objects[0].visual_style,
+            document.objects[0].visual_style
+        );
         assert!(!reopened.partial_view);
     }
 
@@ -3776,24 +3960,62 @@ mod tests {
         let b = document.add(Kind::Free(Point { x: 200., y: 120. }));
         let segment = document.add(Kind::Segment(a, b));
         document.selected.insert(segment);
-        assert_eq!(document.set_selected_line_width(LineWidth::Thick).unwrap(), 1);
-        assert_eq!(document.set_selected_line_pattern(LinePattern::Dashed).unwrap(), 1);
-        assert_eq!(document.set_selected_color(RgbColor { red: 0, green: 0, blue: 255 }).unwrap(), 1);
+        assert_eq!(
+            document.set_selected_line_width(LineWidth::Thick).unwrap(),
+            1
+        );
+        assert_eq!(
+            document
+                .set_selected_line_pattern(LinePattern::Dashed)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            document
+                .set_selected_color(RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255
+                })
+                .unwrap(),
+            1
+        );
         document.selected.clear();
         document.selected.insert(a);
-        document.set_selected_point_style(PointStyle::Small).unwrap();
+        document
+            .set_selected_point_style(PointStyle::Small)
+            .unwrap();
         let copied = document.copy_selected().unwrap();
         let pasted = document.paste(&copied).unwrap();
-        assert_eq!(document.objects[pasted[0] - 1].visual_style, document.objects[a - 1].visual_style);
-        let path = std::env::temp_dir().join(format!("sketchpad-style-segment-{}.gsp", std::process::id()));
+        assert_eq!(
+            document.objects[pasted[0] - 1].visual_style,
+            document.objects[a - 1].visual_style
+        );
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad-style-segment-{}.gsp",
+            std::process::id()
+        ));
         document.save_to(&path).unwrap();
         let reopened = Document::open(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(reopened.objects[segment - 1].visual_style, Some(VisualStyle::Stroke {
-            line: SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Dashed },
-            color: RgbColor { red: 0, green: 0, blue: 255 },
-        }));
-        assert_eq!(reopened.objects[pasted[0] - 1].visual_style, document.objects[a - 1].visual_style);
+        assert_eq!(
+            reopened.objects[segment - 1].visual_style,
+            Some(VisualStyle::Stroke {
+                line: SegmentLineStyle {
+                    width: LineWidth::Thick,
+                    pattern: LinePattern::Dashed
+                },
+                color: RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255
+                },
+            })
+        );
+        assert_eq!(
+            reopened.objects[pasted[0] - 1].visual_style,
+            document.objects[a - 1].visual_style
+        );
     }
     #[test]
     fn imported_picture_moves_undoes_and_survives_save() {
@@ -5483,5 +5705,54 @@ mod tests {
             edited.function_plot_points(plot, 3).unwrap()[1],
             Point { x: 228., y: 140. }
         );
+    }
+    #[test]
+    fn coordinate_measurements_decode_track_drag_and_reopen() {
+        for (source, kind, expected) in [
+            (include_bytes!("../tests/fixtures/coordinate_measure_menu257.gsp").as_slice(), CoordinateMeasureKind::Coordinates, -1.296458333333333),
+            (include_bytes!("../tests/fixtures/coordinate_measure_menu274.gsp").as_slice(), CoordinateMeasureKind::Abscissa, -1.296458333333333),
+            (include_bytes!("../tests/fixtures/coordinate_measure_menu291.gsp").as_slice(), CoordinateMeasureKind::Ordinate, 0.132291666666667),
+            (include_bytes!("../tests/fixtures/coordinate_measure_menu308.gsp").as_slice(), CoordinateMeasureKind::CoordinateDistance, 1.3032),
+        ] {
+            let mut doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), source);
+            let Kind::CoordinateMeasurement { kind: actual, first: 1, frame: 9, .. } = doc.objects[9].kind else { panic!("measurement not decoded") };
+            assert_eq!(actual, kind);
+            let before = doc.coordinate_measure_value(10).unwrap();
+            let scalar = match before { CoordinateMeasureValue::Pair(p) => p.x, CoordinateMeasureValue::Scalar(v) => v };
+            assert!((scalar - expected).abs() < 0.01);
+            doc.checkpoint();
+            assert!(doc.move_point(1, Point { x: 170., y: 100. }));
+            assert_ne!(doc.coordinate_measure_value(10), Some(before));
+            doc.undo();
+            assert_eq!(doc.coordinate_measure_value(10), Some(before));
+            doc.redo();
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.coordinate_measure_value(10), doc.coordinate_measure_value(10));
+        }
+    }
+
+    #[test]
+    fn new_coordinate_measurements_serialize_with_valid_marker_and_references() {
+        let mut doc = Document::from_bytes(include_bytes!("../tests/fixtures/coordinate_measure_base.gsp"), None).unwrap();
+        let frame = doc.active_coordinate_system().unwrap();
+        for (kind, first, second) in [
+            (CoordinateMeasureKind::Coordinates, 1, None),
+            (CoordinateMeasureKind::Abscissa, 2, None),
+            (CoordinateMeasureKind::Ordinate, 2, None),
+            (CoordinateMeasureKind::CoordinateDistance, 1, Some(4)),
+        ] {
+            doc.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+        }
+        let bytes = doc.encode().unwrap();
+        let marker = records(&bytes).unwrap().into_iter().find(|r| r.kind == 0x2328).unwrap();
+        assert_eq!(u32_at(&bytes, marker.data.start), 13);
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 13);
+        assert_eq!(reopened.coordinate_measure_text(11).as_deref(), Some("x_B = 1.35"));
+        assert!(matches!(reopened.coordinate_measure_value(13), Some(CoordinateMeasureValue::Scalar(v)) if (v-1.30).abs()<0.01));
     }
 }

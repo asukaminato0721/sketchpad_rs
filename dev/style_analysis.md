@@ -54,3 +54,11 @@ The supplied and sibling fixtures for center-and-segment circles (code `4`), sca
 ## Polygon interior color
 
 The code-8 polygon interior header has RGB `(255, 128, 0)` in payload bytes 12–14. `polygon_color` edits only those three bytes for code-8 headers. A Rust-patched blue polygon opened as a blue filled triangle in Sketchpad 5, saved, and reopened in the port with five supported objects and `partial=false`. The source polygon's label and perimeter measurement remained intact.
+
+## Native integration and cross-open
+
+`Object.visual_style` now holds decoded point, stroke, or polygon style. Source and newly constructed objects keep that state through undo/redo, copy/paste, and save/reopen. The writer patches only the recognized object-header fields after other object-group edits, validates the reparse before atomic replacement, and refuses a style/type mismatch. Display provides Point Style, Line Width, Line Pattern, and Color controls. WGSL geometry rendering and SVG export use those same styles. The generated graph origin has subtype `41` rather than the free-point subtype `4`; it is now recognized as a styled point, which keeps graph save/reopen intact.
+
+`tests/replay_styles.txt` builds a six-object sketch: thick blue point, thick green dashed segment, thin blue dotted circle, and purple polygon interior. `tests/fixtures/style_integrated_port.gsp` is the port output. The supplied Sketchpad 5 opened it in Wine, displayed all four styles, and saved it. The saved file is `style_integrated_saved_by_wine.gsp`; `cmp` confirmed that it is byte-identical to the port output. The port reopened it with six supported objects and `partial=false`. `/tmp/sketchpad_style_integrated_before_save.png` records the original UI, and `/tmp/sketchpad_native_style.png` records the native KDE window. SVG output contains the expected RGB, width, dash, and point-radius attributes.
+
+Remaining Display parity includes defaults for future objects, text style, tracing, animation, and exact polygon frame behavior. The native drawing uses an approximate pixel size for the four point and line widths; the record values and save format are verified against the original.

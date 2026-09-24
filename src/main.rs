@@ -1,4 +1,5 @@
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
+use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
@@ -671,6 +672,35 @@ impl Editor {
         let id = self.doc.add(Kind::PointDistance(a, b));
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
+    }
+    fn measure_coordinate(&mut self, kind: CoordinateMeasureKind) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let selected = self.selection_order.as_slice();
+        let (first, second) = match (kind, selected) {
+            (CoordinateMeasureKind::CoordinateDistance, [a, b]) => (*a, Some(*b)),
+            (CoordinateMeasureKind::Coordinates | CoordinateMeasureKind::Abscissa | CoordinateMeasureKind::Ordinate, [a]) => (*a, None),
+            _ => {
+                self.status = if kind == CoordinateMeasureKind::CoordinateDistance { "Select two points to measure" } else { "Select one point to measure" }.into();
+                return;
+            }
+        };
+        if self.doc.position(first).is_none() || second.is_some_and(|id| self.doc.position(id).is_none()) {
+            self.status = "Select point objects to measure".into();
+            return;
+        }
+        let frame = match self.doc.active_coordinate_system() {
+            Some(frame) => frame,
+            None => match self.doc.add_default_coordinate_system(self.center) {
+                Ok(frame) => frame,
+                Err(error) => { self.status = error; return; }
+            },
+        };
+        let id = self.doc.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+        self.select_only(id);
+        self.status = format!("Measured {kind:?} for point {first}");
     }
     fn measure_ratio(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
@@ -1489,6 +1519,17 @@ impl Editor {
                         self.measure_distance();
                         ui.close();
                     }
+                    for (label, kind) in [
+                        ("Coordinates", CoordinateMeasureKind::Coordinates),
+                        ("Abscissa (x)", CoordinateMeasureKind::Abscissa),
+                        ("Ordinate (y)", CoordinateMeasureKind::Ordinate),
+                        ("Coordinate Distance", CoordinateMeasureKind::CoordinateDistance),
+                    ] {
+                        if ui.button(label).clicked() {
+                            self.measure_coordinate(kind);
+                            ui.close();
+                        }
+                    }
                     if ui.button("Ratio").clicked() {
                         self.measure_ratio();
                         ui.close();
@@ -1614,11 +1655,18 @@ impl Editor {
                 });
                 ui.menu_button("Display", |ui| {
                     ui.menu_button("Point Style", |ui| {
-                        for (label, style) in [("Dot", PointStyle::Dot), ("Small", PointStyle::Small), ("Medium", PointStyle::Medium), ("Thick", PointStyle::Large)] {
+                        for (label, style) in [
+                            ("Dot", PointStyle::Dot),
+                            ("Small", PointStyle::Small),
+                            ("Medium", PointStyle::Medium),
+                            ("Thick", PointStyle::Large),
+                        ] {
                             if ui.button(label).clicked() {
                                 self.status = match self.doc.set_selected_point_style(style) {
                                     Ok(0) => "Select at least one point".into(),
-                                    Ok(count) => format!("Changed point style on {count} object(s)"),
+                                    Ok(count) => {
+                                        format!("Changed point style on {count} object(s)")
+                                    }
                                     Err(error) => error,
                                 };
                                 ui.close();
@@ -1626,7 +1674,12 @@ impl Editor {
                         }
                     });
                     ui.menu_button("Line Width", |ui| {
-                        for (label, width) in [("Hairline", LineWidth::Hairline), ("Thin", LineWidth::Thin), ("Medium", LineWidth::Medium), ("Thick", LineWidth::Thick)] {
+                        for (label, width) in [
+                            ("Hairline", LineWidth::Hairline),
+                            ("Thin", LineWidth::Thin),
+                            ("Medium", LineWidth::Medium),
+                            ("Thick", LineWidth::Thick),
+                        ] {
                             if ui.button(label).clicked() {
                                 self.status = match self.doc.set_selected_line_width(width) {
                                     Ok(0) => "Select at least one line or circle".into(),
@@ -1638,11 +1691,17 @@ impl Editor {
                         }
                     });
                     ui.menu_button("Line Pattern", |ui| {
-                        for (label, pattern) in [("Solid", LinePattern::Solid), ("Dashed", LinePattern::Dashed), ("Dotted", LinePattern::Dotted)] {
+                        for (label, pattern) in [
+                            ("Solid", LinePattern::Solid),
+                            ("Dashed", LinePattern::Dashed),
+                            ("Dotted", LinePattern::Dotted),
+                        ] {
                             if ui.button(label).clicked() {
                                 self.status = match self.doc.set_selected_line_pattern(pattern) {
                                     Ok(0) => "Select at least one line or circle".into(),
-                                    Ok(count) => format!("Changed line pattern on {count} object(s)"),
+                                    Ok(count) => {
+                                        format!("Changed line pattern on {count} object(s)")
+                                    }
                                     Err(error) => error,
                                 };
                                 ui.close();
@@ -1651,13 +1710,62 @@ impl Editor {
                     });
                     ui.menu_button("Color", |ui| {
                         for (label, color) in [
-                            ("Red", RgbColor { red: 255, green: 0, blue: 0 }),
-                            ("Orange", RgbColor { red: 255, green: 128, blue: 0 }),
-                            ("Green", RgbColor { red: 0, green: 128, blue: 0 }),
-                            ("Blue", RgbColor { red: 0, green: 0, blue: 255 }),
-                            ("Navy", RgbColor { red: 0, green: 0, blue: 128 }),
-                            ("Purple", RgbColor { red: 128, green: 0, blue: 128 }),
-                            ("Black", RgbColor { red: 0, green: 0, blue: 0 }),
+                            (
+                                "Red",
+                                RgbColor {
+                                    red: 255,
+                                    green: 0,
+                                    blue: 0,
+                                },
+                            ),
+                            (
+                                "Orange",
+                                RgbColor {
+                                    red: 255,
+                                    green: 128,
+                                    blue: 0,
+                                },
+                            ),
+                            (
+                                "Green",
+                                RgbColor {
+                                    red: 0,
+                                    green: 128,
+                                    blue: 0,
+                                },
+                            ),
+                            (
+                                "Blue",
+                                RgbColor {
+                                    red: 0,
+                                    green: 0,
+                                    blue: 255,
+                                },
+                            ),
+                            (
+                                "Navy",
+                                RgbColor {
+                                    red: 0,
+                                    green: 0,
+                                    blue: 128,
+                                },
+                            ),
+                            (
+                                "Purple",
+                                RgbColor {
+                                    red: 128,
+                                    green: 0,
+                                    blue: 128,
+                                },
+                            ),
+                            (
+                                "Black",
+                                RgbColor {
+                                    red: 0,
+                                    green: 0,
+                                    blue: 0,
+                                },
+                            ),
                         ] {
                             if ui.button(label).clicked() {
                                 self.status = match self.doc.set_selected_color(color) {
@@ -2157,6 +2265,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Slope = {value}"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(value) = self.doc.coordinate_measure_text(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            value,
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );
