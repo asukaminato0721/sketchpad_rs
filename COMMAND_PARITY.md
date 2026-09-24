@@ -113,7 +113,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Area | Pending |
 | Arc Angle | Pending |
 | Arc Length | Pending |
-| Radius | Pending |
+| Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Ratio | Pending |
 | Value of Point | Pending |
 | Coordinates | Pending |

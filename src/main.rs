@@ -447,7 +447,7 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
     }
-    fn measure_circumference(&mut self) {
+    fn measure_circle(&mut self, radius: bool) {
         if self.doc.partial_view || self.doc.page_count != 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
@@ -467,9 +467,16 @@ impl Editor {
             self.status = "Select one circle to measure".into();
             return;
         }
-        let id = self.doc.add(Kind::CircleCircumference(circle));
+        let id = self.doc.add(if radius {
+            Kind::CircleRadius(circle)
+        } else {
+            Kind::CircleCircumference(circle)
+        });
         self.select_only(id);
-        self.status = format!("Measured circumference of circle {circle}");
+        self.status = format!(
+            "Measured {} of circle {circle}",
+            if radius { "radius" } else { "circumference" }
+        );
     }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
@@ -1084,7 +1091,11 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Circumference").clicked() {
-                        self.measure_circumference();
+                        self.measure_circle(false);
+                        ui.close();
+                    }
+                    if ui.button("Radius").clicked() {
+                        self.measure_circle(true);
                         ui.close();
                     }
                 });
@@ -1280,6 +1291,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Circumference = {circumference:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(radius) = self.doc.circle_radius_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Radius = {radius:.2} cm"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

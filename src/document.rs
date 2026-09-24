@@ -25,7 +25,8 @@ impl Kind {
             | Kind::PointOnArc(host, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
             | Kind::SegmentLength(host)
-            | Kind::CircleCircumference(host) => vec![host],
+            | Kind::CircleCircumference(host)
+            | Kind::CircleRadius(host) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -59,6 +60,7 @@ impl Kind {
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
+            Kind::CircleRadius(a) => Kind::CircleRadius(m(a)),
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
@@ -99,6 +101,7 @@ pub enum Kind {
     PointOnArc(usize, f64),
     SegmentLength(usize),
     CircleCircumference(usize),
+    CircleRadius(usize),
     PointDistance(usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
@@ -587,14 +590,15 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 40) => {
+                    0x0903 if matches!(code, 36 | 37 | 40 | 46) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
                                 &include_bytes!("../assets/distance_measurement_group.bin")[64..96]
                             }
-                            _ => &include_bytes!("../assets/circumference_measurement_group.bin")
+                            40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [60..92],
+                            _ => &include_bytes!("../assets/radius_measurement_group.bin")[60..92],
                         };
                         measurement_format = d.len() == sample.len()
                             && d.iter()
@@ -611,20 +615,25 @@ impl Document {
                                         *actual == 0x41 || *actual == 0
                                     } else if code == 40 && i == 31 {
                                         *actual == 0x4e || *actual == 0
+                                    } else if code == 46 && i == 22 {
+                                        *actual == 0 || *actual == 0x61
                                     } else {
                                         actual == expected
                                     }
                                 });
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 40) => {
+                    0x07d8 if matches!(code, 36 | 37 | 40 | 46) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
                             }
                             37 => &include_bytes!("../assets/distance_measurement_group.bin")
                                 [104..106],
-                            _ => &include_bytes!("../assets/circumference_measurement_group.bin")
+                            40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [100..102],
+                            _ => {
+                                &include_bytes!("../assets/radius_measurement_group.bin")[100..102]
+                            }
                         };
                         measurement_style = d == sample;
                     }
@@ -645,7 +654,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(matches!(code, 36 | 37 | 40) && matches!(r.kind, 0x0903 | 0x07d8))
+                    && !(matches!(code, 36 | 37 | 40 | 46) && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
                 }
@@ -680,6 +689,12 @@ impl Document {
                             && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
                     {
                         Kind::CircleCircumference(*host)
+                    }
+                    (46, _, [host])
+                        if measurement_format && measurement_style
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                    {
+                        Kind::CircleRadius(*host)
                     }
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
@@ -1187,6 +1202,17 @@ impl Document {
         let (_, radius) = self.circle_points(circle)?;
         Some(std::f64::consts::TAU * radius / 37.79527559055118)
     }
+    pub fn circle_radius_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::CircleRadius(circle) = object.kind else {
+            return None;
+        };
+        let (_, radius) = self.circle_points(circle)?;
+        Some(radius / 37.79527559055118)
+    }
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
             d: &Document,
@@ -1601,6 +1627,13 @@ impl Document {
                     o.id
                 ));
             }
+            if matches!(o.kind, Kind::CircleRadius(_))
+                && self
+                    .circle_radius_cm(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid circle in radius measurement {}", o.id));
+            }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
             {
@@ -1832,6 +1865,15 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::CircleRadius(circle) = o.kind {
+                let mut group = *include_bytes!("../assets/radius_measurement_group.bin");
+                group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
@@ -2048,6 +2090,8 @@ mod tests {
             "wine_moved_distance",
             "wine_circle_circumference",
             "wine_moved_circumference",
+            "wine_circle_radius",
+            "wine_moved_radius",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2181,6 +2225,34 @@ mod tests {
             reopened.clear_selected().unwrap(),
             vec![circle, circumference]
         );
+    }
+    #[test]
+    fn radius_matches_original_and_updates_after_resize() {
+        let original = Document::open(Path::new("tests/fixtures/wine_circle_radius.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::CircleRadius(3));
+        assert!((original.circle_radius_cm(4).unwrap() - 2.6458333333333335).abs() < 1e-10);
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_radius.gsp")).unwrap();
+        assert_eq!(moved.objects[3].kind, Kind::CircleRadius(3));
+        assert!((moved.circle_radius_cm(4).unwrap() - 3.96875).abs() < 1e-10);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let circle = doc.add(Kind::Circle(a, b));
+        let radius = doc.add(Kind::CircleRadius(circle));
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::CircleRadius(circle));
+        reopened.checkpoint();
+        assert!(reopened.move_point(b, Point { x: 350., y: 120. }));
+        assert!((reopened.circle_radius_cm(radius).unwrap() - 5.291666666666667).abs() < 1e-10);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .circle_radius_cm(radius),
+            reopened.circle_radius_cm(radius)
+        );
+        reopened.selected.insert(circle);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![circle, radius]);
     }
     #[test]
     fn copy_segment_includes_parents_but_not_children_like_original() {
