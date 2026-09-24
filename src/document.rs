@@ -379,44 +379,51 @@ impl Document {
             if i == rs.len() {
                 return Err("Unterminated object group".into());
             }
-            let kind = match (code, point, refs.as_slice()) {
-                (0, Some(p), _) => Kind::Free(p),
-                (1, _, [segment]) => {
-                    match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
-                        Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
-                        _ => Kind::Unsupported(code),
+            let kind = if refs
+                .iter()
+                .any(|&reference| reference == 0 || reference > objects.len())
+            {
+                Kind::Unsupported(code)
+            } else {
+                match (code, point, refs.as_slice()) {
+                    (0, Some(p), _) => Kind::Free(p),
+                    (1, _, [segment]) => {
+                        match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
+                            Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
+                            _ => Kind::Unsupported(code),
+                        }
                     }
+                    (2, _, [a, b]) => Kind::Segment(*a, *b),
+                    (3, _, [a, b]) => Kind::Circle(*a, *b),
+                    (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
+                    (6, _, [a, b]) => Kind::Parallel(*a, *b),
+                    (9, _, [a, b]) => Kind::Intersection(*a, *b),
+                    (11, _, [a, b])
+                        if objects
+                            .get(a.saturating_sub(1))
+                            .is_some_and(|object| is_straight_kind(&object.kind))
+                            && objects.get(b.saturating_sub(1)).is_some_and(|object| {
+                                matches!(object.kind, Kind::Circle(_, _))
+                            }) =>
+                    {
+                        Kind::LineCircleIntersection(*a, *b, 1)
+                    }
+                    (12, _, [a, b])
+                        if objects
+                            .get(a.saturating_sub(1))
+                            .is_some_and(|object| is_straight_kind(&object.kind))
+                            && objects.get(b.saturating_sub(1)).is_some_and(|object| {
+                                matches!(object.kind, Kind::Circle(_, _))
+                            }) =>
+                    {
+                        Kind::LineCircleIntersection(*a, *b, 0)
+                    }
+                    (13, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 1),
+                    (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
+                    (63, _, [a, b]) => Kind::Line(*a, *b),
+                    (64, _, [a, b]) => Kind::Ray(*a, *b),
+                    _ => Kind::Unsupported(code),
                 }
-                (2, _, [a, b]) => Kind::Segment(*a, *b),
-                (3, _, [a, b]) => Kind::Circle(*a, *b),
-                (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
-                (6, _, [a, b]) => Kind::Parallel(*a, *b),
-                (9, _, [a, b]) => Kind::Intersection(*a, *b),
-                (11, _, [a, b])
-                    if objects
-                        .get(a.saturating_sub(1))
-                        .is_some_and(|object| is_straight_kind(&object.kind))
-                        && objects
-                            .get(b.saturating_sub(1))
-                            .is_some_and(|object| matches!(object.kind, Kind::Circle(_, _))) =>
-                {
-                    Kind::LineCircleIntersection(*a, *b, 1)
-                }
-                (12, _, [a, b])
-                    if objects
-                        .get(a.saturating_sub(1))
-                        .is_some_and(|object| is_straight_kind(&object.kind))
-                        && objects
-                            .get(b.saturating_sub(1))
-                            .is_some_and(|object| matches!(object.kind, Kind::Circle(_, _))) =>
-                {
-                    Kind::LineCircleIntersection(*a, *b, 0)
-                }
-                (13, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 1),
-                (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
-                (63, _, [a, b]) => Kind::Line(*a, *b),
-                (64, _, [a, b]) => Kind::Ray(*a, *b),
-                _ => Kind::Unsupported(code),
             };
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
@@ -1005,6 +1012,26 @@ mod tests {
         assert_eq!(document.encode().unwrap(), bytes);
         document.add(Kind::Free(Point { x: 4., y: 5. }));
         assert!(document.encode().is_err());
+    }
+    #[test]
+    fn forward_reference_is_preserved_without_evaluation() {
+        let mut source = Document::new();
+        let a = source.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = source.add(Kind::Free(Point { x: 10., y: 0. }));
+        source.add(Kind::Segment(a, b));
+        let mut bytes = source.encode().unwrap();
+        let references = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x7d2)
+            .unwrap();
+        bytes[references.data.start + 8..references.data.start + 12]
+            .copy_from_slice(&3_u32.to_le_bytes());
+        let document = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(document.objects[2].kind, Kind::Unsupported(2));
+        assert!(document.partial_view);
+        assert!(document.line_points(3).is_none());
+        assert_eq!(document.encode().unwrap(), bytes);
     }
     #[test]
     fn straight_intersections_update_and_reopen() {
