@@ -26,7 +26,8 @@ impl Kind {
             | Kind::PolarTranslatedPoint(host, _, _, _)
             | Kind::SegmentLength(host)
             | Kind::CircleCircumference(host)
-            | Kind::CircleRadius(host) => vec![host],
+            | Kind::CircleRadius(host)
+            | Kind::CircleArea(host) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -46,7 +47,10 @@ impl Kind {
             | Kind::RotatedPoint(source, center, _) => {
                 vec![source, center]
             }
-            Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
+            Kind::Bisector(a, b, c)
+            | Kind::ThreePointArc(a, b, c)
+            | Kind::ArcOnCircle(a, b, c)
+            | Kind::AngleMeasurement(a, b, c) => {
                 vec![a, b, c]
             }
         }
@@ -61,6 +65,8 @@ impl Kind {
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
             Kind::CircleRadius(a) => Kind::CircleRadius(m(a)),
+            Kind::CircleArea(a) => Kind::CircleArea(m(a)),
+            Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
@@ -102,6 +108,8 @@ pub enum Kind {
     SegmentLength(usize),
     CircleCircumference(usize),
     CircleRadius(usize),
+    CircleArea(usize),
+    AngleMeasurement(usize, usize, usize),
     PointDistance(usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
@@ -590,7 +598,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 40 | 46) => {
+                    0x0903 if matches!(code, 36 | 37 | 40 | 41 | 42 | 46) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
@@ -598,6 +606,8 @@ impl Document {
                             }
                             40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [60..92],
+                            41 => &include_bytes!("../assets/angle_measurement_group.bin")[68..100],
+                            42 => &include_bytes!("../assets/area_measurement_group.bin")[60..92],
                             _ => &include_bytes!("../assets/radius_measurement_group.bin")[60..92],
                         };
                         measurement_format = d.len() == sample.len()
@@ -605,24 +615,11 @@ impl Document {
                                 .zip(sample)
                                 .enumerate()
                                 .all(|(i, (actual, expected))| {
-                                    if code == 36 && i == 22 {
-                                        *actual == 0 || *actual == 0x20
-                                    } else if code == 36 && i == 30 {
-                                        *actual == 0 || *actual == 0x53
-                                    } else if code == 37 && i == 22 {
-                                        *actual == 0x72 || *actual == 0x61
-                                    } else if code == 40 && i == 30 {
-                                        *actual == 0x41 || *actual == 0
-                                    } else if code == 40 && i == 31 {
-                                        *actual == 0x4e || *actual == 0
-                                    } else if code == 46 && i == 22 {
-                                        *actual == 0 || *actual == 0x61
-                                    } else {
-                                        actual == expected
-                                    }
+                                    // Sketchpad rewrites these presentation bytes after edits.
+                                    matches!(i, 22 | 30 | 31) || actual == expected
                                 });
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 40 | 46) => {
+                    0x07d8 if matches!(code, 36 | 37 | 40 | 41 | 42 | 46) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
@@ -631,6 +628,10 @@ impl Document {
                                 [104..106],
                             40 => &include_bytes!("../assets/circumference_measurement_group.bin")
                                 [100..102],
+                            41 => {
+                                &include_bytes!("../assets/angle_measurement_group.bin")[108..110]
+                            }
+                            42 => &include_bytes!("../assets/area_measurement_group.bin")[100..102],
                             _ => {
                                 &include_bytes!("../assets/radius_measurement_group.bin")[100..102]
                             }
@@ -654,7 +655,8 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(matches!(code, 36 | 37 | 40 | 46) && matches!(r.kind, 0x0903 | 0x07d8))
+                    && !(matches!(code, 36 | 37 | 40 | 41 | 42 | 46)
+                        && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
                 }
@@ -689,6 +691,18 @@ impl Document {
                             && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
                     {
                         Kind::CircleCircumference(*host)
+                    }
+                    (41, _, [a, b, c])
+                        if measurement_format && measurement_style
+                            && [a, b, c].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| is_point_kind(&o.kind))) =>
+                    {
+                        Kind::AngleMeasurement(*a, *b, *c)
+                    }
+                    (42, _, [host])
+                        if measurement_format && measurement_style
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                    {
+                        Kind::CircleArea(*host)
                     }
                     (46, _, [host])
                         if measurement_format && measurement_style
@@ -1213,6 +1227,46 @@ impl Document {
         let (_, radius) = self.circle_points(circle)?;
         Some(radius / 37.79527559055118)
     }
+    pub fn circle_area_cm2(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::CircleArea(circle) = object.kind else {
+            return None;
+        };
+        let (_, radius) = self.circle_points(circle)?;
+        let cm = radius / 37.79527559055118;
+        Some(std::f64::consts::PI * cm * cm)
+    }
+    pub fn angle_degrees(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::AngleMeasurement(a, vertex, c) = object.kind else {
+            return None;
+        };
+        self.angle_for_points(a, vertex, c)
+    }
+    pub fn angle_for_points(&self, a: usize, vertex: usize, c: usize) -> Option<f64> {
+        let a = self.position(a)?;
+        let vertex = self.position(vertex)?;
+        let c = self.position(c)?;
+        let (ax, ay) = (a.x - vertex.x, a.y - vertex.y);
+        let (cx, cy) = (c.x - vertex.x, c.y - vertex.y);
+        let (al, cl) = (ax.hypot(ay), cx.hypot(cy));
+        if !al.is_finite() || !cl.is_finite() || al == 0. || cl == 0. {
+            return None;
+        }
+        let (ax, ay, cx, cy) = (ax / al, ay / al, cx / cl, cy / cl);
+        Some(
+            (ax * cy - ay * cx)
+                .abs()
+                .atan2(ax * cx + ay * cy)
+                .to_degrees(),
+        )
+    }
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
             d: &Document,
@@ -1634,6 +1688,20 @@ impl Document {
             {
                 return Err(format!("Invalid circle in radius measurement {}", o.id));
             }
+            if matches!(o.kind, Kind::CircleArea(_))
+                && self
+                    .circle_area_cm2(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid circle in area measurement {}", o.id));
+            }
+            if matches!(o.kind, Kind::AngleMeasurement(_, _, _))
+                && self
+                    .angle_degrees(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid points in angle measurement {}", o.id));
+            }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
             {
@@ -1874,6 +1942,26 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::CircleArea(circle) = o.kind {
+                let mut group = *include_bytes!("../assets/area_measurement_group.bin");
+                group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::AngleMeasurement(a, b, c) = o.kind {
+                let mut group = *include_bytes!("../assets/angle_measurement_group.bin");
+                group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
+                group[56..60].copy_from_slice(&(c as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
@@ -2092,6 +2180,11 @@ mod tests {
             "wine_moved_circumference",
             "wine_circle_radius",
             "wine_moved_radius",
+            "wine_point_angle",
+            "wine_moved_angle",
+            "wine_moved_generated_angle",
+            "wine_circle_area",
+            "wine_moved_area",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2253,6 +2346,82 @@ mod tests {
         );
         reopened.selected.insert(circle);
         assert_eq!(reopened.clear_selected().unwrap(), vec![circle, radius]);
+    }
+    #[test]
+    fn angle_matches_original_and_updates_after_drag() {
+        let original = Document::open(Path::new("tests/fixtures/wine_point_angle.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::AngleMeasurement(1, 2, 3));
+        assert!((original.angle_degrees(4).unwrap() - 90.).abs() < 1e-10);
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_angle.gsp")).unwrap();
+        assert_eq!(moved.objects[3].kind, Kind::AngleMeasurement(1, 2, 3));
+        assert!((moved.angle_degrees(4).unwrap() - 135.).abs() < 1e-10);
+        let edited_generated =
+            Document::open(Path::new("tests/fixtures/wine_moved_generated_angle.gsp")).unwrap();
+        assert_eq!(
+            edited_generated.objects[3].kind,
+            Kind::AngleMeasurement(1, 2, 3)
+        );
+        assert!((edited_generated.angle_degrees(4).unwrap() - 135.).abs() < 1e-10);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let c = doc.add(Kind::Free(Point { x: 250., y: 220. }));
+        let angle = doc.add(Kind::AngleMeasurement(a, b, c));
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::AngleMeasurement(a, b, c));
+        reopened.checkpoint();
+        assert!(reopened.move_point(c, Point { x: 350., y: 220. }));
+        assert!((reopened.angle_degrees(angle).unwrap() - 135.).abs() < 1e-10);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .angle_degrees(angle),
+            reopened.angle_degrees(angle)
+        );
+        reopened.undo();
+        assert!((reopened.angle_degrees(angle).unwrap() - 90.).abs() < 1e-10);
+        reopened.selected.insert(b);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![b, angle]);
+    }
+    #[test]
+    fn angle_rejects_zero_rays_and_evaluates_large_coordinates() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let c = doc.add(Kind::Free(Point { x: 1., y: 0. }));
+        assert_eq!(doc.angle_for_points(a, b, c), None);
+        assert!(doc.move_point(a, Point { x: -1e150, y: 0. }));
+        assert!(doc.move_point(c, Point { x: 0., y: 1e150 }));
+        assert!((doc.angle_for_points(a, b, c).unwrap() - 90.).abs() < 1e-10);
+    }
+    #[test]
+    fn circle_area_matches_original_and_updates_after_resize() {
+        let original = Document::open(Path::new("tests/fixtures/wine_circle_area.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::CircleArea(3));
+        assert!((original.circle_area_cm2(4).unwrap() - 21.992512113606676).abs() < 1e-10);
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_area.gsp")).unwrap();
+        assert_eq!(moved.objects[3].kind, Kind::CircleArea(3));
+        assert!((moved.circle_area_cm2(4).unwrap() - 49.483152255615025).abs() < 1e-10);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let circle = doc.add(Kind::Circle(a, b));
+        let area = doc.add(Kind::CircleArea(circle));
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::CircleArea(circle));
+        reopened.checkpoint();
+        assert!(reopened.move_point(b, Point { x: 300., y: 120. }));
+        assert!((reopened.circle_area_cm2(area).unwrap() - 49.483152255615025).abs() < 1e-10);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .circle_area_cm2(area),
+            reopened.circle_area_cm2(area)
+        );
+        reopened.selected.insert(circle);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![circle, area]);
     }
     #[test]
     fn copy_segment_includes_parents_but_not_children_like_original() {

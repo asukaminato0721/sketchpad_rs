@@ -90,6 +90,12 @@ mod pdf_tests {
         assert!(pdf.len() > 100);
     }
 }
+#[derive(Clone, Copy)]
+enum CircleMeasure {
+    Circumference,
+    Radius,
+    Area,
+}
 struct Editor {
     doc: Document,
     clipboard: Option<Clipboard>,
@@ -447,7 +453,25 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
     }
-    fn measure_circle(&mut self, radius: bool) {
+    fn measure_angle(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [a, b, c] = self.selection_order.as_slice() else {
+            self.status = "Select three points in angle order".into();
+            return;
+        };
+        let (a, b, c) = (*a, *b, *c);
+        if self.doc.angle_for_points(a, b, c).is_none() {
+            self.status = "The angle needs two nonzero rays".into();
+            return;
+        }
+        let id = self.doc.add(Kind::AngleMeasurement(a, b, c));
+        self.select_only(id);
+        self.status = format!("Measured angle {a}-{b}-{c}");
+    }
+    fn measure_circle(&mut self, measurement: CircleMeasure) {
         if self.doc.partial_view || self.doc.page_count != 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
@@ -467,16 +491,14 @@ impl Editor {
             self.status = "Select one circle to measure".into();
             return;
         }
-        let id = self.doc.add(if radius {
-            Kind::CircleRadius(circle)
-        } else {
-            Kind::CircleCircumference(circle)
-        });
+        let (kind, name) = match measurement {
+            CircleMeasure::Circumference => (Kind::CircleCircumference(circle), "circumference"),
+            CircleMeasure::Radius => (Kind::CircleRadius(circle), "radius"),
+            CircleMeasure::Area => (Kind::CircleArea(circle), "area"),
+        };
+        let id = self.doc.add(kind);
         self.select_only(id);
-        self.status = format!(
-            "Measured {} of circle {circle}",
-            if radius { "radius" } else { "circumference" }
-        );
+        self.status = format!("Measured {name} of circle {circle}");
     }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
@@ -1091,11 +1113,19 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Circumference").clicked() {
-                        self.measure_circle(false);
+                        self.measure_circle(CircleMeasure::Circumference);
+                        ui.close();
+                    }
+                    if ui.button("Angle").clicked() {
+                        self.measure_angle();
                         ui.close();
                     }
                     if ui.button("Radius").clicked() {
-                        self.measure_circle(true);
+                        self.measure_circle(CircleMeasure::Radius);
+                        ui.close();
+                    }
+                    if ui.button("Area").clicked() {
+                        self.measure_circle(CircleMeasure::Area);
                         ui.close();
                     }
                 });
@@ -1301,6 +1331,26 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Radius = {radius:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(area) = self.doc.circle_area_cm2(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Area = {area:.2} cm²"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(angle) = self.doc.angle_degrees(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Angle = {angle:.2}°"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

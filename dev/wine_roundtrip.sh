@@ -70,6 +70,12 @@ xvfb-run -a bash -c '
       xdotool keyup Shift
       sleep 0.3
     fi
+    if [[ -n "${SKETCHPAD_WINE_ACTION_SHIFT_CLICK_2_X:-}" ]]; then
+      xdotool keydown Shift
+      xdotool mousemove "$SKETCHPAD_WINE_ACTION_SHIFT_CLICK_2_X" "${SKETCHPAD_WINE_ACTION_SHIFT_CLICK_2_Y:-249}" click 1
+      xdotool keyup Shift
+      sleep 0.3
+    fi
     xdotool mousemove "$SKETCHPAD_WINE_MENU_X" "${SKETCHPAD_WINE_MENU_Y:-40}" click 1
     sleep 0.5
     import -window root /tmp/sketchpad_wine_menu.png

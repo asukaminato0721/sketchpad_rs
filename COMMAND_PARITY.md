@@ -109,7 +109,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Distance | Partial: two-point distance, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Perimeter | Pending |
 | Circumference | Partial: circle circumference, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Angle | Pending |
+| Angle | Partial: three-point angle, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Area | Pending |
 | Arc Angle | Pending |
 | Arc Length | Pending |
