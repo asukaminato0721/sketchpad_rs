@@ -1,0 +1,10 @@
+new
+point 200 180
+point 260 130
+point 320 180
+arc3 1 2 3
+arc_angle 4
+check
+save /tmp/sketchpad_arc_angle.gsp
+open /tmp/sketchpad_arc_angle.gsp
+check

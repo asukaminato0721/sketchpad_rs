@@ -521,6 +521,27 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured angle of arc {arc}");
     }
+    fn measure_arc_length(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [arc] = self.selection_order.as_slice() else {
+            self.status = "Select one arc to measure".into();
+            return;
+        };
+        let arc = *arc;
+        if !matches!(
+            self.doc.objects.get(arc.saturating_sub(1)).map(|o| &o.kind),
+            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
+        ) {
+            self.status = "Select one arc to measure".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ArcLength(arc));
+        self.select_only(id);
+        self.status = format!("Measured length of arc {arc}");
+    }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
             Ok(clipboard) => {
@@ -1153,6 +1174,10 @@ impl Editor {
                         self.measure_arc_angle();
                         ui.close();
                     }
+                    if ui.button("Arc Length").clicked() {
+                        self.measure_arc_length();
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Transform", |ui| {
                     if ui.button("Translate by Angle and Distance…").clicked() {
@@ -1376,6 +1401,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Arc Angle = {angle:.2}°"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(length) = self.doc.arc_length_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Arc Length = {length:.2} cm"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

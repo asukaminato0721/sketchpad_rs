@@ -266,6 +266,11 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::ArcAngle(arc));
                     println!("line {}: arc_angle -> object {id}", index + 1);
                 }
+                "arc_length" => {
+                    let arc: usize = rest.parse().map_err(|_| "invalid arc ID")?;
+                    let id = document.add(Kind::ArcLength(arc));
+                    println!("line {}: arc_length -> object {id}", index + 1);
+                }
                 "angle" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 3 {

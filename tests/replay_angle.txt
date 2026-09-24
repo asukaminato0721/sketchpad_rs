@@ -1,0 +1,7 @@
+new
+point 150 120
+point 250 120
+point 250 220
+angle 1 2 3
+check
+save /tmp/sketchpad_angle.gsp

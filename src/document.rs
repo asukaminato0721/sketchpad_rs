@@ -28,7 +28,8 @@ impl Kind {
             | Kind::CircleCircumference(host)
             | Kind::CircleRadius(host)
             | Kind::CircleArea(host)
-            | Kind::ArcAngle(host) => vec![host],
+            | Kind::ArcAngle(host)
+            | Kind::ArcLength(host) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -68,6 +69,7 @@ impl Kind {
             Kind::CircleRadius(a) => Kind::CircleRadius(m(a)),
             Kind::CircleArea(a) => Kind::CircleArea(m(a)),
             Kind::ArcAngle(a) => Kind::ArcAngle(m(a)),
+            Kind::ArcLength(a) => Kind::ArcLength(m(a)),
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
@@ -112,6 +114,7 @@ pub enum Kind {
     CircleRadius(usize),
     CircleArea(usize),
     ArcAngle(usize),
+    ArcLength(usize),
     AngleMeasurement(usize, usize, usize),
     PointDistance(usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
@@ -601,7 +604,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 46) => {
+                    0x0903 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
@@ -614,6 +617,8 @@ impl Document {
                             43 => {
                                 &include_bytes!("../assets/arc_angle_measurement_group.bin")[60..92]
                             }
+                            44 => &include_bytes!("../assets/arc_length_measurement_group.bin")
+                                [60..92],
                             _ => &include_bytes!("../assets/radius_measurement_group.bin")[60..92],
                         };
                         measurement_format = d.len() == sample.len()
@@ -625,7 +630,7 @@ impl Document {
                                     matches!(i, 22 | 30 | 31) || actual == expected
                                 });
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 46) => {
+                    0x07d8 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
@@ -639,6 +644,8 @@ impl Document {
                             }
                             42 => &include_bytes!("../assets/area_measurement_group.bin")[100..102],
                             43 => &include_bytes!("../assets/arc_angle_measurement_group.bin")
+                                [100..102],
+                            44 => &include_bytes!("../assets/arc_length_measurement_group.bin")
                                 [100..102],
                             _ => {
                                 &include_bytes!("../assets/radius_measurement_group.bin")[100..102]
@@ -663,7 +670,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 46)
+                    && !(matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
@@ -717,6 +724,12 @@ impl Document {
                             && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))) =>
                     {
                         Kind::ArcAngle(*host)
+                    }
+                    (44, _, [host])
+                        if measurement_format && measurement_style
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))) =>
+                    {
+                        Kind::ArcLength(*host)
                     }
                     (46, _, [host])
                         if measurement_format && measurement_style
@@ -1263,6 +1276,17 @@ impl Document {
         };
         Some(self.arc_geometry(arc)?.3.abs().to_degrees())
     }
+    pub fn arc_length_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::ArcLength(arc) = object.kind else {
+            return None;
+        };
+        let (_, radius, _, sweep, _) = self.arc_geometry(arc)?;
+        Some(radius * sweep.abs() / 37.79527559055118)
+    }
     pub fn angle_degrees(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
@@ -1726,6 +1750,13 @@ impl Document {
             {
                 return Err(format!("Invalid arc in angle measurement {}", o.id));
             }
+            if matches!(o.kind, Kind::ArcLength(_))
+                && self
+                    .arc_length_cm(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid arc in length measurement {}", o.id));
+            }
             if matches!(o.kind, Kind::AngleMeasurement(_, _, _))
                 && self
                     .angle_degrees(o.id)
@@ -1991,6 +2022,15 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::ArcLength(arc) = o.kind {
+                let mut group = *include_bytes!("../assets/arc_length_measurement_group.bin");
+                group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::AngleMeasurement(a, b, c) = o.kind {
                 let mut group = *include_bytes!("../assets/angle_measurement_group.bin");
                 group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
@@ -2228,6 +2268,8 @@ mod tests {
             "wine_moved_generated_area",
             "wine_arc_angle",
             "wine_moved_arc_angle",
+            "wine_arc_length",
+            "wine_moved_arc_length",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2495,6 +2537,35 @@ mod tests {
                 .unwrap()
                 .arc_angle_degrees(measurement),
             reopened.arc_angle_degrees(measurement)
+        );
+        reopened.selected.insert(arc);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![arc, measurement]);
+    }
+    #[test]
+    fn arc_length_matches_original_and_updates_after_drag() {
+        let original = Document::open(Path::new("tests/fixtures/wine_arc_length.gsp")).unwrap();
+        assert_eq!(original.objects[4].kind, Kind::ArcLength(4));
+        assert!((original.arc_length_cm(5).unwrap() - 4.49).abs() < 0.01);
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_arc_length.gsp")).unwrap();
+        assert_eq!(moved.objects[4].kind, Kind::ArcLength(4));
+        assert!((moved.arc_length_cm(5).unwrap() - 6.76).abs() < 0.01);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 200., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 260., y: 130. }));
+        let c = doc.add(Kind::Free(Point { x: 320., y: 180. }));
+        let arc = doc.add(Kind::ThreePointArc(a, b, c));
+        let measurement = doc.add(Kind::ArcLength(arc));
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[4].kind, Kind::ArcLength(arc));
+        reopened.checkpoint();
+        assert!(reopened.move_point(b, Point { x: 260., y: 90. }));
+        assert!((reopened.arc_length_cm(measurement).unwrap() - 6.76).abs() < 0.01);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .arc_length_cm(measurement),
+            reopened.arc_length_cm(measurement)
         );
         reopened.selected.insert(arc);
         assert_eq!(reopened.clear_selected().unwrap(), vec![arc, measurement]);
