@@ -80,7 +80,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Circle by Center+Radius | Partial: segment radius variant cross-opened |
 | Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
-| Interior | Pending |
+| Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, SVG, generated file opened in Sketchpad 5 |
 | Locus | Pending |
 
 ## Transform

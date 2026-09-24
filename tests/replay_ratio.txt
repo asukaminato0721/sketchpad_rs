@@ -1,0 +1,10 @@
+new
+point 150 100
+point 250 100
+point 270 100
+ratio 1 2 3
+check
+save /tmp/sketchpad_ratio_generated.gsp
+move 3 50 100
+check
+save /tmp/sketchpad_ratio_opposite_generated.gsp

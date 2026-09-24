@@ -148,7 +148,7 @@ impl Editor {
             .doc
             .objects
             .iter()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
             .filter_map(|o| self.doc.position(o.id))
             .collect();
         if pts.is_empty() {
@@ -283,7 +283,7 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
             .filter_map(|o| {
                 self.doc
                     .position(o.id)
@@ -466,6 +466,40 @@ impl Editor {
         let id = self.doc.add(Kind::SegmentLength(segment));
         self.select_only(id);
         self.status = format!("Measured segment {segment}");
+    }
+    fn define_coordinate_system(&mut self) {
+        match self.doc.add_default_coordinate_system(self.center) {
+            Ok(frame) => {
+                self.select_only(frame);
+                self.status = format!("Defined Cartesian coordinate system {frame}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    fn measure_slope(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [line] = self.selection_order.as_slice() else {
+            self.status = "Select one segment, line, or ray to measure".into();
+            return;
+        };
+        let line = *line;
+        if !matches!(self.doc.objects.get(line.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))) {
+            self.status = "Select one segment, line, or ray to measure".into();
+            return;
+        }
+        let frame = match self.doc.active_coordinate_system() {
+            Some(frame) => frame,
+            None => match self.doc.add_default_coordinate_system(self.center) {
+                Ok(frame) => frame,
+                Err(error) => { self.status = error; return; }
+            },
+        };
+        let id = self.doc.add(Kind::SlopeMeasurement(line, frame));
+        self.select_only(id);
+        self.status = format!("Measured slope of object {line}");
     }
     fn measure_distance(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
@@ -1258,6 +1292,10 @@ impl Editor {
                         self.measure_perimeter();
                         ui.close();
                     }
+                    if ui.button("Slope").clicked() {
+                        self.measure_slope();
+                        ui.close();
+                    }
                     if ui.button("Circumference").clicked() {
                         self.measure_circle(CircleMeasure::Circumference);
                         ui.close();
@@ -1280,6 +1318,17 @@ impl Editor {
                     }
                     if ui.button("Arc Length").clicked() {
                         self.measure_arc_length();
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Graph", |ui| {
+                    if ui.button("Define Coordinate System").clicked() {
+                        self.define_coordinate_system();
+                        ui.close();
+                    }
+                    let mut visible = self.doc.grid_visible.get(self.doc.active_page).copied().unwrap_or(false);
+                    if ui.add_enabled(self.doc.active_coordinate_system().is_some(), egui::Checkbox::new(&mut visible, "Show Grid")).changed() {
+                        self.doc.set_grid_visible(visible);
                         ui.close();
                     }
                 });
@@ -1431,7 +1480,7 @@ impl Editor {
                     .doc
                     .objects
                     .iter()
-                    .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+                    .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
                 {
                     if let Some(p) = self.doc.position(o.id) {
                         let at = vp.screen(p);
@@ -1545,6 +1594,17 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Angle = {angle:.2}°"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
+                        let value = self.doc.slope_value(object.id).map(|value| format!("{value:.2}")).unwrap_or_else(|| "undefined".into());
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Slope = {value}"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

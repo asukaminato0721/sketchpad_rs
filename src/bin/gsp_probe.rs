@@ -246,6 +246,29 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::PointDistance(a, b));
                     println!("line {}: distance -> object {id}", index + 1);
                 }
+                "coordinate_system" => {
+                    let values = rest.split_whitespace().collect::<Vec<_>>();
+                    let origin = match values.as_slice() {
+                        [] => Point { x: 199., y: 125. },
+                        [x,y] => Point { x: x.parse().map_err(|_| "invalid origin x")?, y: y.parse().map_err(|_| "invalid origin y")? },
+                        _ => return Err("expected optional origin x y".into()),
+                    };
+                    let id = document.add_default_coordinate_system(origin)?;
+                    println!("line {}: coordinate_system -> object {id}", index + 1);
+                }
+                "show_grid" => {
+                    let visible = match rest { "on" => true, "off" => false, _ => return Err("expected show_grid on or off".into()) };
+                    document.set_grid_visible(visible);
+                }
+                "slope" => {
+                    let line: usize = rest.parse().map_err(|_| "invalid line ID")?;
+                    let frame = match document.active_coordinate_system() {
+                        Some(frame) => frame,
+                        None => document.add_default_coordinate_system(Point { x: 199., y: 125. })?,
+                    };
+                    let id = document.add(Kind::SlopeMeasurement(line, frame));
+                    println!("line {}: slope -> object {id}", index + 1);
+                }
                 "ratio" => {
                     let ids = rest
                         .split_whitespace()

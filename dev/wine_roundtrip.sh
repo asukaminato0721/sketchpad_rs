@@ -90,7 +90,16 @@ xvfb-run -a bash -c '
     xdotool mousemove "$SKETCHPAD_WINE_MENU_X" "${SKETCHPAD_WINE_MENU_Y:-40}" click 1
     sleep 0.5
     import -window root "${capture_prefix}_menu.png"
-    if [[ -n "${SKETCHPAD_WINE_MENU_ITEM_Y:-}" ]]; then
+    if [[ -n "${SKETCHPAD_WINE_SUBMENU_X:-}" ]]; then
+      test -n "${SKETCHPAD_WINE_MENU_ITEM_Y:-}"
+      test -n "${SKETCHPAD_WINE_SUBMENU_Y:-}"
+      xdotool mousemove "${SKETCHPAD_WINE_MENU_ITEM_X:-305}" "$SKETCHPAD_WINE_MENU_ITEM_Y"
+      sleep 0.5
+      import -window root "${capture_prefix}_submenu.png"
+      xdotool mousemove "$SKETCHPAD_WINE_SUBMENU_X" "$SKETCHPAD_WINE_SUBMENU_Y" click 1
+      sleep 0.7
+      import -window root "${capture_prefix}_after_menu.png"
+    elif [[ -n "${SKETCHPAD_WINE_MENU_ITEM_Y:-}" ]]; then
       xdotool mousemove "${SKETCHPAD_WINE_MENU_ITEM_X:-305}" "$SKETCHPAD_WINE_MENU_ITEM_Y" click 1
       sleep 0.7
       import -window root "${capture_prefix}_after_menu.png"

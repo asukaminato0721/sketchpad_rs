@@ -18,6 +18,13 @@ pub struct CoordinateFrame {
 }
 
 impl CoordinateFrame {
+    pub fn world(self, x: f64, y: f64) -> Option<GraphPoint> {
+        let point = GraphPoint {
+            x: self.origin.x + x * (self.x_unit.x - self.origin.x) + y * (self.y_unit.x - self.origin.x),
+            y: self.origin.y + x * (self.x_unit.y - self.origin.y) + y * (self.y_unit.y - self.origin.y),
+        };
+        (point.x.is_finite() && point.y.is_finite()).then_some(point)
+    }
     /// Convert a screen-coordinate point to axis coordinates. The Y direction
     /// comes from the frame rather than from a hard-coded screen convention.
     pub fn coordinates(self, point: GraphPoint) -> Option<GraphPoint> {

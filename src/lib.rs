@@ -1,3 +1,5 @@
 pub mod document;
+pub mod graph;
 pub mod render;
+pub mod style_records;
 pub mod text_records;

@@ -4,6 +4,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -28,6 +29,7 @@ impl Kind {
                 | Kind::CircleRadius(_)
                 | Kind::CircleArea(_)
                 | Kind::AngleMeasurement(_, _, _)
+                | Kind::SlopeMeasurement(_, _)
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
         )
@@ -49,6 +51,7 @@ impl Kind {
             | Kind::CircleArea(host)
             | Kind::ArcAngle(host)
             | Kind::ArcLength(host) => vec![host],
+            Kind::GraphHorizontalUnit(origin, _) | Kind::GraphVerticalUnit(origin, _) => vec![origin],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -63,6 +66,7 @@ impl Kind {
             | Kind::ReflectedPoint(a, b)
             | Kind::ReflectedCircle(a, b)
             | Kind::PointDistance(a, b) => vec![a, b],
+            Kind::GraphAxis(a, b, _) | Kind::CoordinateSystem(a, b) | Kind::SlopeMeasurement(a, b) => vec![a, b],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
             | Kind::RotatedPoint(source, center, _) => {
@@ -88,6 +92,11 @@ impl Kind {
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::GraphHorizontalUnit(a, step) => Kind::GraphHorizontalUnit(m(a), step),
+            Kind::GraphVerticalUnit(a, step) => Kind::GraphVerticalUnit(m(a), step),
+            Kind::GraphAxis(a, b, axis) => Kind::GraphAxis(m(a), m(b), axis),
+            Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
+            Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -136,6 +145,11 @@ pub enum Kind {
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    GraphHorizontalUnit(usize, f64),
+    GraphVerticalUnit(usize, f64),
+    GraphAxis(usize, usize, u32),
+    CoordinateSystem(usize, usize),
+    SlopeMeasurement(usize, usize),
     SegmentLength(usize),
     PolygonPerimeter(usize),
     CircleCircumference(usize),
@@ -337,6 +351,7 @@ fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::Bisector(_, _, _)
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
+            | Kind::GraphAxis(_, _, _)
     )
 }
 
@@ -347,6 +362,8 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PointOnSegment(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
+            | Kind::GraphHorizontalUnit(_, _)
+            | Kind::GraphVerticalUnit(_, _)
             | Kind::PolarTranslatedPoint(_, _, _, _)
             | Kind::ReflectedPoint(_, _)
             | Kind::ScaledPoint(_, _, _)
@@ -559,11 +576,12 @@ pub struct Document {
     pub partial_view: bool,
     pub active_page: usize,
     pub page_count: usize,
+    pub grid_visible: Vec<bool>,
     original: Vec<u8>,
     source_count: usize,
     safe_structure: bool,
-    pub undo: Vec<Vec<Object>>,
-    pub redo: Vec<Vec<Object>>,
+    pub undo: Vec<(Vec<Object>, Vec<bool>)>,
+    pub redo: Vec<(Vec<Object>, Vec<bool>)>,
 }
 impl Document {
     pub fn new() -> Self {
@@ -595,6 +613,7 @@ impl Document {
         let mut objects: Vec<Object> = Vec::new();
         let mut i = 0;
         let mut safe = true;
+        let mut grid_visible = Vec::new();
         let (mut page, mut page_base, mut page_count) = (0, 0, 0);
         while i < rs.len() {
             if rs[i].kind == 0x3e8 {
@@ -603,6 +622,7 @@ impl Document {
                     page_base = objects.len();
                 }
                 page_count += 1;
+                grid_visible.push(graph::grid_visible(&b[rs[i].data.clone()]).unwrap_or(true));
                 i += 1;
                 continue;
             }
@@ -626,10 +646,14 @@ impl Document {
             let mut refs = Vec::new();
             let mut measurement_format = false;
             let mut measurement_style = false;
+            let mut graph_records: Vec<(u32, Vec<u8>)> = Vec::new();
             i += 1;
             while i < rs.len() && rs[i].kind != 0x7d7 {
                 let r = &rs[i];
                 let d = &b[r.data.clone()];
+                if matches!(code, 52 | 54 | 58 | 61 | 87) {
+                    graph_records.push((r.kind, d.to_vec()));
+                }
                 match r.kind {
                     0x899 if d.len() == 16 => {
                         point = Some(Point {
@@ -714,6 +738,8 @@ impl Document {
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
                     && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
+                    && !(matches!(code, 52 | 54 | 58 | 61 | 87)
+                        && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                 {
                     safe = false;
                 }
@@ -722,11 +748,25 @@ impl Document {
             if i == rs.len() {
                 return Err("Unterminated object group".into());
             }
+            let graph_borrowed = graph_records
+                .iter()
+                .map(|(kind, payload)| (*kind, payload.as_slice()))
+                .collect::<Vec<_>>();
+            let graph_kind = graph::decode_graph_object(code, &refs, &graph_borrowed);
             let kind = if refs
                 .iter()
                 .any(|&reference| reference == 0 || reference > objects.len())
             {
                 Kind::Unsupported(code)
+            } else if let Some(graph_kind) = graph_kind {
+                match graph_kind {
+                    GraphObject::HorizontalUnit { origin, step } if objects.get(origin-1).is_some_and(|o| is_point_kind(&o.kind)) => Kind::GraphHorizontalUnit(origin, step),
+                    GraphObject::VerticalUnit { horizontal_unit, step } if objects.get(horizontal_unit-1).is_some_and(|o| matches!(o.kind, Kind::GraphHorizontalUnit(_, _))) => Kind::GraphVerticalUnit(horizontal_unit, step),
+                    GraphObject::Axis { start, end, axis } if objects.get(start-1).is_some_and(|o| is_point_kind(&o.kind)) && objects.get(end-1).is_some_and(|o| is_point_kind(&o.kind)) => Kind::GraphAxis(start, end, axis),
+                    GraphObject::CoordinateSystem { x_axis, y_axis } if objects.get(x_axis-1).is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 1))) && objects.get(y_axis-1).is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 0))) => Kind::CoordinateSystem(x_axis, y_axis),
+                    GraphObject::Slope { line, coordinates } if objects.get(line-1).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))) && objects.get(coordinates-1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => Kind::SlopeMeasurement(line, coordinates),
+                    _ => Kind::Unsupported(code),
+                }
             } else {
                 match (code, point, refs.as_slice()) {
                     (0, Some(p), _) => Kind::Free(p),
@@ -949,6 +989,9 @@ impl Document {
                 constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
             });
+            if matches!(objects.last().map(|o| &o.kind), Some(Kind::Unsupported(_))) {
+                safe = false;
+            }
             i += 1;
         }
         let source_count = objects.len();
@@ -968,6 +1011,7 @@ impl Document {
             partial_view: !safe,
             active_page: 0,
             page_count: page_count.max(1),
+            grid_visible: if grid_visible.is_empty() { vec![true] } else { grid_visible },
             original: b.to_vec(),
             source_count,
             safe_structure: safe,
@@ -976,24 +1020,27 @@ impl Document {
         })
     }
     pub fn checkpoint(&mut self) {
-        self.undo.push(self.objects.clone());
+        self.undo.push((self.objects.clone(), self.grid_visible.clone()));
         self.redo.clear();
         self.dirty = true;
     }
     pub fn undo(&mut self) {
-        if let Some(p) = self.undo.pop() {
-            self.redo.push(std::mem::replace(&mut self.objects, p));
+        if let Some((objects, grid_visible)) = self.undo.pop() {
+            self.redo.push((std::mem::replace(&mut self.objects, objects), std::mem::replace(&mut self.grid_visible, grid_visible)));
             self.dirty = true;
         }
     }
     pub fn redo(&mut self) {
-        if let Some(p) = self.redo.pop() {
-            self.undo.push(std::mem::replace(&mut self.objects, p));
+        if let Some((objects, grid_visible)) = self.redo.pop() {
+            self.undo.push((std::mem::replace(&mut self.objects, objects), std::mem::replace(&mut self.grid_visible, grid_visible)));
             self.dirty = true;
         }
     }
     pub fn add(&mut self, kind: Kind) -> usize {
         self.checkpoint();
+        self.append_object(kind)
+    }
+    fn append_object(&mut self, kind: Kind) -> usize {
         let id = self.objects.len() + 1;
         let midpoint_host = if let Kind::Midpoint(a, b) = kind {
             self.objects
@@ -1018,6 +1065,46 @@ impl Document {
             header_offset: None,
         });
         id
+    }
+    pub fn active_coordinate_system(&self) -> Option<usize> {
+        self.objects.iter().rev().find(|o| o.page == self.active_page && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))).map(|o| o.id)
+    }
+    pub fn add_default_coordinate_system(&mut self, origin: Point) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || self.active_coordinate_system().is_some() {
+            return Err("Cannot define another coordinate system in this sketch".into());
+        }
+        if !origin.x.is_finite() || !origin.y.is_finite() {
+            return Err("Coordinate-system origin must be finite".into());
+        }
+        let step = 37.79527559055118;
+        self.checkpoint();
+        let center = self.append_object(Kind::Free(origin));
+        let x_unit = self.append_object(Kind::GraphHorizontalUnit(center, step));
+        let x_axis = self.append_object(Kind::GraphAxis(center, x_unit, 1));
+        let y_unit = self.append_object(Kind::GraphVerticalUnit(x_unit, step));
+        let y_axis = self.append_object(Kind::GraphAxis(center, y_unit, 0));
+        let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
+        self.grid_visible[self.active_page] = true;
+        Ok(frame)
+    }
+    pub fn set_grid_visible(&mut self, visible: bool) {
+        if self.active_coordinate_system().is_some() && self.grid_visible[self.active_page] != visible {
+            self.checkpoint();
+            self.grid_visible[self.active_page] = visible;
+        }
+    }
+    pub fn graph_frame(&self, id: usize) -> Option<CoordinateFrame> {
+        let Kind::CoordinateSystem(x_axis, y_axis) = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let Kind::GraphAxis(origin, x_unit, 1) = self.objects.get(x_axis.checked_sub(1)?)?.kind else { return None; };
+        let Kind::GraphAxis(y_origin, y_unit, 0) = self.objects.get(y_axis.checked_sub(1)?)?.kind else { return None; };
+        if origin != y_origin { return None; }
+        let map = |p: Point| GraphPoint { x: p.x, y: p.y };
+        Some(CoordinateFrame { origin: map(self.position(origin)?), x_unit: map(self.position(x_unit)?), y_unit: map(self.position(y_unit)?) })
+    }
+    pub fn slope_value(&self, id: usize) -> Option<f64> {
+        let Kind::SlopeMeasurement(line, frame) = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let (a, b, _) = self.line_points(line)?;
+        self.graph_frame(frame)?.slope(GraphPoint { x: a.x, y: a.y }, GraphPoint { x: b.x, y: b.y })
     }
     pub fn dependencies_of(&self, id: usize) -> Option<Vec<usize>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
@@ -1193,6 +1280,15 @@ impl Document {
             }
             let p = match &object.kind {
                 Kind::Free(p) => Some(*p),
+                Kind::GraphHorizontalUnit(origin, step) => {
+                    let origin = go(d, *origin, seen)?;
+                    Some(Point { x: origin.x + step, y: origin.y })
+                }
+                Kind::GraphVerticalUnit(horizontal_unit, step) => {
+                    let Kind::GraphHorizontalUnit(origin, _) = d.objects.get(horizontal_unit.checked_sub(1)?)?.kind else { return None; };
+                    let origin = go(d, origin, seen)?;
+                    Some(Point { x: origin.x, y: origin.y - step })
+                }
                 Kind::PointOnSegment(host, t) => {
                     let (a, b, LineMode::Segment) = d.line_points(*host)? else {
                         return None;
@@ -1448,6 +1544,7 @@ impl Document {
             }
             let result = match object.kind {
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
+                Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::Line(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::Ray(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Ray)),
                 Kind::Parallel(p, line) | Kind::Perpendicular(p, line) => {
@@ -1777,6 +1874,9 @@ impl Document {
         Ok(out)
     }
     pub fn can_save(&self) -> Result<(), String> {
+        if self.grid_visible.len() != self.page_count {
+            return Err("Invalid page grid state".into());
+        }
         if self.objects.len() < self.source_count {
             return Err("Removing saved objects is not yet supported by the GSP writer".into());
         }
@@ -1851,6 +1951,30 @@ impl Document {
                 && self.ratio_value(o.id).is_none()
             {
                 return Err(format!("Invalid points in ratio measurement {}", o.id));
+            }
+            if matches!(o.kind, Kind::GraphHorizontalUnit(_, step) | Kind::GraphVerticalUnit(_, step) if !step.is_finite() || step <= 0.0)
+                || matches!(o.kind, Kind::GraphAxis(_, _, axis) if axis > 1)
+            {
+                return Err(format!("Invalid graph object {}", o.id));
+            }
+            if matches!(o.kind, Kind::GraphHorizontalUnit(_, _) | Kind::GraphVerticalUnit(_, _))
+                && self.position(o.id).is_none_or(|p| !p.x.is_finite() || !p.y.is_finite())
+            {
+                return Err(format!("Undefined graph point {}", o.id));
+            }
+            if matches!(o.kind, Kind::GraphAxis(_, _, _)) && self.line_points(o.id).is_none() {
+                return Err(format!("Undefined graph axis {}", o.id));
+            }
+            if matches!(o.kind, Kind::CoordinateSystem(_, _)) && self.graph_frame(o.id).is_none() {
+                return Err(format!("Invalid coordinate system {}", o.id));
+            }
+            if let Kind::SlopeMeasurement(line, frame) = o.kind {
+                if !matches!(self.objects.get(line.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)))
+                    || self.line_points(line).is_none()
+                    || self.graph_frame(frame).is_none()
+                {
+                    return Err(format!("Invalid slope measurement {}", o.id));
+                }
             }
             if matches!(o.kind, Kind::PolygonPerimeter(_))
                 && self
@@ -2060,6 +2184,37 @@ impl Document {
         *row += 1;
         Ok(())
     }
+    fn graph_template_group(&self, object: &Object) -> Result<Option<Vec<u8>>, String> {
+        let first = match object.kind {
+            Kind::Free(_) if self.objects.get(object.id).is_some_and(|next| matches!(next.kind, Kind::GraphHorizontalUnit(host, _) if host == object.id)) => Some(object.id),
+            Kind::GraphHorizontalUnit(_, _) => object.id.checked_sub(1),
+            Kind::GraphAxis(_, _, 1) => object.id.checked_sub(2),
+            Kind::GraphVerticalUnit(_, _) => object.id.checked_sub(3),
+            Kind::GraphAxis(_, _, 0) => object.id.checked_sub(4),
+            Kind::CoordinateSystem(_, _) => object.id.checked_sub(5),
+            _ => None,
+        };
+        let Some(first) = first else { return Ok(None); };
+        if first == 0 { return Err("Invalid coordinate-system object ID".into()); }
+        let [Some(origin), Some(x_unit), Some(x_axis), Some(y_unit), Some(y_axis), Some(frame)] = self.objects.get(first-1..first+5).map(|slice| [slice.get(0),slice.get(1),slice.get(2),slice.get(3),slice.get(4),slice.get(5)]).unwrap_or([None;6]) else { return Err("Incomplete coordinate-system group".into()); };
+        let step = 37.79527559055118;
+        if !matches!(origin.kind, Kind::Free(_))
+            || !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == first && value == step)
+            || !matches!(x_axis.kind, Kind::GraphAxis(a,b,1) if a == first && b == first+1)
+            || !matches!(y_unit.kind, Kind::GraphVerticalUnit(host, value) if host == first+1 && value == step)
+            || !matches!(y_axis.kind, Kind::GraphAxis(a,b,0) if a == first && b == first+3)
+            || !matches!(frame.kind, Kind::CoordinateSystem(a,b) if a == first+2 && b == first+4)
+        {
+            return Err("Unsupported coordinate-system construction".into());
+        }
+        let point = self.position(first).ok_or("Undefined coordinate-system origin")?;
+        let bytes = graph::coordinate_system_groups(first, GraphPoint { x: point.x, y: point.y })?;
+        let offsets = [0, 68, 148, 268, 348, 468, 548];
+        let index = object.id - first;
+        let mut group = bytes[offsets[index]..offsets[index+1]].to_vec();
+        if object.visible { group[10] &= !1; } else { group[10] |= 1; }
+        Ok(Some(group))
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         self.can_save()?;
         let rs = records(&self.original)?;
@@ -2094,6 +2249,13 @@ impl Document {
                 }
             }
         }
+        let mut page_index = 0;
+        for record in rs.iter().filter(|r| r.kind == 0x3e8) {
+            if self.objects.iter().any(|o| o.page == page_index && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))) {
+                out[record.data.start + 10] = u8::from(!self.grid_visible[page_index]);
+            }
+            page_index += 1;
+        }
         if self.objects.len() == self.source_count {
             return self.compact_deleted(out);
         }
@@ -2127,6 +2289,17 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Some(group) = self.graph_template_group(o)? {
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::SlopeMeasurement(line, frame) = o.kind {
+                let mut group = graph::slope_measurement_group(line, frame)?;
+                Self::place_measurement(&mut group, 64, &mut measurement_row)?;
+                if !o.visible { group[10] |= 1; }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::SegmentLength(segment) = o.kind {
                 let mut group = *include_bytes!("../assets/length_measurement_group.bin");
                 group[48..52].copy_from_slice(&(segment as u32).to_le_bytes());
@@ -2353,7 +2526,8 @@ impl Document {
             ids[object.id] = survivors.len() + 1;
             survivors.push(object);
         }
-        if reparsed.objects.len() != survivors.len()
+        if reparsed.grid_visible != self.grid_visible
+            || reparsed.objects.len() != survivors.len()
             || reparsed
                 .objects
                 .iter()
@@ -3783,5 +3957,39 @@ mod tests {
         let rotated = wine.position(3).unwrap();
         assert!((rotated.x - 180.).abs() < 1e-6);
         assert!((rotated.y - 109.).abs() < 1e-6);
+    }
+    #[test]
+    fn graph_frame_and_slope_reopen_after_edit() {
+        let original = Document::open(Path::new("tests/fixtures/wine_segment_slope.gsp")).unwrap();
+        assert_eq!(original.objects[4].kind, Kind::GraphHorizontalUnit(4, 37.79527559055118));
+        assert_eq!(original.objects[8].kind, Kind::CoordinateSystem(6, 8));
+        assert_eq!(original.objects[9].kind, Kind::SlopeMeasurement(3, 9));
+        assert_eq!(original.slope_value(10), Some(0.0));
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let line = doc.add(Kind::Segment(a, b));
+        let frame = doc.add_default_coordinate_system(Point { x: 199., y: 125. }).unwrap();
+        assert_eq!(frame, 9);
+        let slope = doc.add(Kind::SlopeMeasurement(line, frame));
+        assert_eq!(doc.slope_value(slope), Some(0.0));
+        doc.set_grid_visible(false);
+        assert!(!doc.grid_visible[0]);
+        doc.undo();
+        assert!(doc.grid_visible[0]);
+        doc.redo();
+        assert!(!doc.grid_visible[0]);
+        let bytes = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(reopened.objects.len(), 10);
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.grid_visible, vec![false]);
+        assert_eq!(reopened.slope_value(slope), Some(0.0));
+        let mut reopened = reopened;
+        assert!(reopened.move_point(b, Point { x: 300., y: 170. }));
+        assert!((reopened.slope_value(slope).unwrap() + 1. / 3.).abs() < 1e-12);
+        let edited = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+        assert!((edited.slope_value(slope).unwrap() + 1. / 3.).abs() < 1e-12);
     }
 }
