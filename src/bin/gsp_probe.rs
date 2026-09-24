@@ -246,6 +246,11 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::PointDistance(a, b));
                     println!("line {}: distance -> object {id}", index + 1);
                 }
+                "circumference" => {
+                    let circle: usize = rest.parse().map_err(|_| "invalid circle ID")?;
+                    let id = document.add(Kind::CircleCircumference(circle));
+                    println!("line {}: circumference -> object {id}", index + 1);
+                }
                 "point" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 2 {

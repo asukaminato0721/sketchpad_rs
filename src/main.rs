@@ -447,6 +447,30 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
     }
+    fn measure_circumference(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [circle] = self.selection_order.as_slice() else {
+            self.status = "Select one circle to measure".into();
+            return;
+        };
+        let circle = *circle;
+        if !matches!(
+            self.doc
+                .objects
+                .get(circle.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+        ) {
+            self.status = "Select one circle to measure".into();
+            return;
+        }
+        let id = self.doc.add(Kind::CircleCircumference(circle));
+        self.select_only(id);
+        self.status = format!("Measured circumference of circle {circle}");
+    }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
             Ok(clipboard) => {
@@ -1059,6 +1083,10 @@ impl Editor {
                         self.measure_distance();
                         ui.close();
                     }
+                    if ui.button("Circumference").clicked() {
+                        self.measure_circumference();
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Transform", |ui| {
                     if ui.button("Translate by Angle and Distance…").clicked() {
@@ -1242,6 +1270,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Distance = {distance:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(circumference) = self.doc.circle_circumference_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Circumference = {circumference:.2} cm"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

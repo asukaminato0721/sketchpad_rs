@@ -159,6 +159,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             .unwrap();
             row += 1;
         }
+        if let Some(circumference) = doc.circle_circumference_cm(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Circumference = {:.2} cm</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                circumference
+            )
+            .unwrap();
+            row += 1;
+        }
     }
     svg.push_str("</g>\n</svg>\n");
     Ok(svg)
@@ -435,6 +446,8 @@ mod tests {
         let segment = doc.add(Kind::Segment(a, b));
         let measurement = doc.add(Kind::SegmentLength(segment));
         let distance = doc.add(Kind::PointDistance(a, b));
+        let circle = doc.add(Kind::Circle(a, b));
+        let circumference = doc.add(Kind::CircleCircumference(circle));
         let viewport = Viewport {
             rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(200., 100.)),
             scale: 1.,
@@ -450,6 +463,11 @@ mod tests {
                 .unwrap()
                 .contains("Distance = 2.65 cm")
         );
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Circumference = 16.62 cm")
+        );
         doc.checkpoint();
         doc.move_point(b, Point { x: 200., y: 0. });
         assert!(
@@ -462,10 +480,21 @@ mod tests {
                 .unwrap()
                 .contains("Distance = 5.29 cm")
         );
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Circumference = 33.25 cm")
+        );
         doc.selected.insert(measurement);
         doc.selected.insert(distance);
+        doc.selected.insert(circumference);
         doc.set_selected_visibility(false);
         assert!(!svg_page(&doc, &viewport).unwrap().contains("Length ="));
         assert!(!svg_page(&doc, &viewport).unwrap().contains("Distance ="));
+        assert!(
+            !svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Circumference =")
+        );
     }
 }
