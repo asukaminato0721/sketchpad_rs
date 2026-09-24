@@ -514,4 +514,40 @@ mod tests {
         group[rs[2].payload.start + 2] = 0xff;
         assert!(decode_group(&group).is_err());
     }
+
+    #[test]
+    fn remapped_wine_files_and_vertical_variant_reparse() {
+        for (source, kind, refs) in [
+            (
+                include_bytes!("../tests/fixtures/value_equation_generated_point.gsp").as_slice(),
+                ValueEquationKind::PointValue,
+                [5, 4],
+            ),
+            (
+                include_bytes!("../tests/fixtures/value_equation_generated_line.gsp").as_slice(),
+                ValueEquationKind::LineEquation,
+                [4, 10],
+            ),
+            (
+                include_bytes!("../tests/fixtures/value_equation_generated_circle.gsp").as_slice(),
+                ValueEquationKind::CircleEquation,
+                [4, 10],
+            ),
+            (
+                include_bytes!("../tests/fixtures/value_equation_vertical_original.gsp").as_slice(),
+                ValueEquationKind::LineEquation,
+                [3, 9],
+            ),
+            (
+                include_bytes!("../tests/fixtures/value_equation_circle_point_value_original.gsp")
+                    .as_slice(),
+                ValueEquationKind::PointValue,
+                [4, 3],
+            ),
+        ] {
+            let group = last_group(source).unwrap();
+            let decoded = decode_group(&source[group]).unwrap();
+            assert_eq!((decoded.kind, decoded.references), (kind, refs));
+        }
+    }
 }

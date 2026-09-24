@@ -2,6 +2,7 @@
 
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
 use sketchpad_rs::render::{Viewport, svg_page};
+use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use std::{env, fs, path::Path};
 
 fn usage() -> String {
@@ -655,6 +656,56 @@ fn replay(path: &str) -> Result<(), String> {
                     document.selected.insert(id);
                     document.set_selected_visibility(false);
                 }
+                "point_style" | "line_width" | "line_pattern" | "color" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, value] = parts.as_slice() else {
+                        return Err("expected object ID and style value".into());
+                    };
+                    let id: usize = id.parse().map_err(|_| "invalid object ID")?;
+                    if document.objects.get(id.saturating_sub(1)).is_none() {
+                        return Err("unknown object ID".into());
+                    }
+                    document.selected.clear();
+                    document.selected.insert(id);
+                    let changed = match command {
+                        "point_style" => document.set_selected_point_style(match *value {
+                            "dot" => PointStyle::Dot,
+                            "small" => PointStyle::Small,
+                            "medium" => PointStyle::Medium,
+                            "thick" => PointStyle::Large,
+                            _ => return Err("point_style expects dot, small, medium, or thick".into()),
+                        })?,
+                        "line_width" => document.set_selected_line_width(match *value {
+                            "hairline" => LineWidth::Hairline,
+                            "thin" => LineWidth::Thin,
+                            "medium" => LineWidth::Medium,
+                            "thick" => LineWidth::Thick,
+                            _ => return Err("line_width expects hairline, thin, medium, or thick".into()),
+                        })?,
+                        "line_pattern" => document.set_selected_line_pattern(match *value {
+                            "solid" => LinePattern::Solid,
+                            "dashed" => LinePattern::Dashed,
+                            "dotted" => LinePattern::Dotted,
+                            _ => return Err("line_pattern expects solid, dashed, or dotted".into()),
+                        })?,
+                        "color" => {
+                            let hex = value.strip_prefix('#').unwrap_or(value);
+                            if hex.len() != 6 {
+                                return Err("color expects six hexadecimal RGB digits".into());
+                            }
+                            let rgb = u32::from_str_radix(hex, 16).map_err(|_| "invalid RGB color")?;
+                            document.set_selected_color(RgbColor {
+                                red: (rgb >> 16) as u8,
+                                green: (rgb >> 8) as u8,
+                                blue: rgb as u8,
+                            })?
+                        }
+                        _ => unreachable!(),
+                    };
+                    if changed == 0 {
+                        return Err("selected object does not support this style".into());
+                    }
+                }
                 "clear" => {
                     let ids: Result<Vec<usize>, _> = rest
                         .split_whitespace()
@@ -702,6 +753,7 @@ fn replay(path: &str) -> Result<(), String> {
                                 saved.kind != current.kind
                                     || saved.page != current.page
                                     || saved.visible != current.visible
+                                    || saved.visual_style != current.visual_style
                             })
                     {
                         return Err("reopened objects differ".into());

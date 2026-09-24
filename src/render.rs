@@ -1,7 +1,43 @@
 use crate::document::{Document, Kind, LineMode, Point};
+use crate::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle};
 use egui::{Pos2, Rect};
 use std::fmt::Write as _;
 use wgpu::util::DeviceExt;
+
+fn rgba(color: RgbColor, alpha: f32) -> [f32; 4] {
+    [color.red as f32 / 255., color.green as f32 / 255., color.blue as f32 / 255., alpha]
+}
+fn css_color(color: RgbColor) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.red, color.green, color.blue)
+}
+fn point_radius(style: PointStyle) -> f32 {
+    match style {
+        PointStyle::Dot => 1.4,
+        PointStyle::Small => 2.7,
+        PointStyle::Medium => 4.,
+        PointStyle::Large => 6.,
+    }
+}
+fn line_width(style: LineWidth) -> f32 {
+    match style {
+        LineWidth::Hairline => 1.,
+        LineWidth::Thin => 1.5,
+        LineWidth::Medium => 2.,
+        LineWidth::Thick => 4.,
+    }
+}
+fn svg_stroke(style: Option<VisualStyle>) -> String {
+    if let Some(VisualStyle::Stroke { line, color }) = style {
+        let dash = match line.pattern {
+            LinePattern::Solid => String::new(),
+            LinePattern::Dashed => " stroke-dasharray=\"9 6\"".into(),
+            LinePattern::Dotted => " stroke-dasharray=\"2 5\"".into(),
+        };
+        format!(" stroke=\"{}\" stroke-width=\"{}\"{}", css_color(color), line_width(line.width), dash)
+    } else {
+        String::new()
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -304,8 +340,8 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         {
             writeln!(
                 svg,
-                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                a.x, a.y, b.x, b.y
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{}/>",
+                a.x, a.y, b.x, b.y, svg_stroke(o.visual_style)
             )
             .unwrap();
         }
@@ -327,10 +363,11 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             let at = vp.screen(center);
             writeln!(
                 svg,
-                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\"{}/>",
                 at.x,
                 at.y,
-                radius as f32 * vp.scale
+                radius as f32 * vp.scale,
+                svg_stroke(o.visual_style)
             )
             .unwrap();
         }
@@ -338,7 +375,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             let mut points = points.into_iter();
             if let Some(first) = points.next() {
                 let at = vp.screen(first);
-                write!(svg, "<path d=\"M {} {}", at.x, at.y).unwrap();
+                write!(svg, "<path{} d=\"M {} {}", svg_stroke(o.visual_style), at.x, at.y).unwrap();
                 for p in points {
                     let at = vp.screen(p);
                     write!(svg, " L {} {}", at.x, at.y).unwrap();
@@ -357,8 +394,9 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 .join(" ");
             writeln!(
                 svg,
-                "<polygon points=\"{}\" fill=\"#f6ad60\" fill-opacity=\"0.35\"/>",
-                vertices
+                "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"0.35\" stroke=\"none\"/>",
+                vertices,
+                match o.visual_style { Some(VisualStyle::Polygon { color }) => css_color(color), _ => "#f6ad60".into() }
             )
             .unwrap();
         }
@@ -374,7 +412,11 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
-            writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"4\"/>", at.x, at.y).unwrap();
+            let (radius, color) = match o.visual_style {
+                Some(VisualStyle::Point { shape, color }) => (point_radius(shape), css_color(color)),
+                _ => (4., "#176bd6".into()),
+            };
+            writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\"/>", at.x, at.y, radius, color).unwrap();
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
@@ -617,6 +659,50 @@ impl Mesh {
         self.tri(a + off, b + off, b - off, col);
         self.tri(a + off, b - off, a - off, col);
     }
+    fn styled_path(&mut self, points: &[Pos2], closed: bool, style: SegmentLineStyle, color: [f32; 4]) {
+        if points.len() < 2 {
+            return;
+        }
+        let width = line_width(style.width);
+        let mut edges = points.windows(2).map(|pair| (pair[0], pair[1])).collect::<Vec<_>>();
+        if closed {
+            edges.push((points[points.len() - 1], points[0]));
+        }
+        if style.pattern == LinePattern::Solid {
+            for (a, b) in edges {
+                self.line(a, b, width, color);
+            }
+            return;
+        }
+        let total: f32 = edges.iter().map(|(a, b)| a.distance(*b)).sum();
+        let scale = (total / 20_000.).max(1.);
+        let (on, off) = match style.pattern {
+            LinePattern::Dashed => (9. * scale, 6. * scale),
+            LinePattern::Dotted => (2. * scale, 5. * scale),
+            LinePattern::Solid => unreachable!(),
+        };
+        let cycle = on + off;
+        let mut traveled = 0.;
+        for (a, b) in edges {
+            let delta = b - a;
+            let length = delta.length();
+            if length < 0.01 {
+                continue;
+            }
+            let mut along = 0.;
+            while along < length - 0.001 {
+                let phase = (traveled + along) % cycle;
+                let step = (if phase < on { on - phase } else { cycle - phase })
+                    .min(length - along)
+                    .max(0.001);
+                if phase < on {
+                    self.line(a + delta * (along / length), a + delta * ((along + step) / length), width, color);
+                }
+                along += step;
+            }
+            traveled += length;
+        }
+    }
     fn disk(&mut self, p: Pos2, r: f32, col: [f32; 4]) {
         for i in 0..20 {
             let a = i as f32 * std::f32::consts::TAU / 20.;
@@ -629,7 +715,7 @@ impl Mesh {
             );
         }
     }
-    fn polygon(&mut self, points: &[Pos2], outline: [f32; 4]) {
+    fn polygon(&mut self, points: &[Pos2], fill: [f32; 4]) {
         if points.len() < 3 {
             return;
         }
@@ -666,7 +752,7 @@ impl Mesh {
                 });
                 if !has_inner {
                     ear = Some(i);
-                    self.tri(a, b, c, [0.96, 0.58, 0.22, 0.35]);
+                    self.tri(a, b, c, fill);
                     break;
                 }
             }
@@ -674,13 +760,6 @@ impl Mesh {
                 break;
             };
             remaining.remove(index);
-        }
-        for (a, b) in points
-            .iter()
-            .zip(points.iter().cycle().skip(1))
-            .take(points.len())
-        {
-            self.line(*a, *b, 2., outline);
         }
     }
 }
@@ -765,11 +844,18 @@ impl GeometryRenderer {
             let col = if doc.selected.contains(&o.id) {
                 selected
             } else {
-                dark
+                match o.visual_style {
+                    Some(VisualStyle::Stroke { color, .. }) => rgba(color, 1.),
+                    _ => dark,
+                }
+            };
+            let stroke = match o.visual_style {
+                Some(VisualStyle::Stroke { line, .. }) => line,
+                _ => SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid },
             };
             if let Some((a, b, mode)) = doc.line_points(o.id) {
                 if let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect) {
-                    mesh.line(a, b, 2., col);
+                    mesh.styled_path(&[a, b], false, stroke, col);
                 }
             }
             if let Some(points) = doc.function_plot_points(o.id, 384) {
@@ -803,24 +889,18 @@ impl GeometryRenderer {
                         let r = (radius as f32 * vp.scale).abs();
                         if r > 0.5 && r < 100000. {
                             let n = ((r * 0.45) as usize).clamp(32, 256);
-                            for i in 0..n {
+                            let points = (0..n).map(|i| {
                                 let t = i as f32 * std::f32::consts::TAU / n as f32;
-                                let u = (i + 1) as f32 * std::f32::consts::TAU / n as f32;
-                                mesh.line(
-                                    c + egui::vec2(t.cos(), t.sin()) * r,
-                                    c + egui::vec2(u.cos(), u.sin()) * r,
-                                    2.,
-                                    col,
-                                );
-                            }
+                                c + egui::vec2(t.cos(), t.sin()) * r
+                            }).collect::<Vec<_>>();
+                            mesh.styled_path(&points, true, stroke, col);
                         }
                     }
                 }
                 Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
                     if let Some(points) = doc.arc_points(o.id, 128) {
-                        for pair in points.windows(2) {
-                            mesh.line(vp.screen(pair[0]), vp.screen(pair[1]), 2., col);
-                        }
+                        let screen = points.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
+                        mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
                 Kind::Polygon(_) => {
@@ -829,7 +909,11 @@ impl GeometryRenderer {
                             .into_iter()
                             .map(|point| vp.screen(point))
                             .collect::<Vec<_>>();
-                        mesh.polygon(&screen, col);
+                        let fill = match o.visual_style {
+                            Some(VisualStyle::Polygon { color }) => rgba(color, 0.35),
+                            _ => [0.96, 0.58, 0.22, 0.35],
+                        };
+                        mesh.polygon(&screen, fill);
                     }
                 }
                 _ => {}
@@ -843,17 +927,21 @@ impl GeometryRenderer {
                 continue;
             }
             if let Some(p) = doc.position(o.id) {
+                let (radius, color) = match o.visual_style {
+                    Some(VisualStyle::Point { shape, color }) => (point_radius(shape), rgba(color, 1.)),
+                    _ => (4., blue),
+                };
                 mesh.disk(
                     vp.screen(p),
                     if doc.selected.contains(&o.id) {
-                        5.5
+                        radius + 1.5
                     } else {
-                        4.
+                        radius
                     },
                     if doc.selected.contains(&o.id) {
                         selected
                     } else {
-                        blue
+                        color
                     },
                 );
             }

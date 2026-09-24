@@ -1,6 +1,7 @@
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
+use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use std::{
     collections::HashMap,
     io::Write,
@@ -1612,6 +1613,63 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Display", |ui| {
+                    ui.menu_button("Point Style", |ui| {
+                        for (label, style) in [("Dot", PointStyle::Dot), ("Small", PointStyle::Small), ("Medium", PointStyle::Medium), ("Thick", PointStyle::Large)] {
+                            if ui.button(label).clicked() {
+                                self.status = match self.doc.set_selected_point_style(style) {
+                                    Ok(0) => "Select at least one point".into(),
+                                    Ok(count) => format!("Changed point style on {count} object(s)"),
+                                    Err(error) => error,
+                                };
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Line Width", |ui| {
+                        for (label, width) in [("Hairline", LineWidth::Hairline), ("Thin", LineWidth::Thin), ("Medium", LineWidth::Medium), ("Thick", LineWidth::Thick)] {
+                            if ui.button(label).clicked() {
+                                self.status = match self.doc.set_selected_line_width(width) {
+                                    Ok(0) => "Select at least one line or circle".into(),
+                                    Ok(count) => format!("Changed line width on {count} object(s)"),
+                                    Err(error) => error,
+                                };
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Line Pattern", |ui| {
+                        for (label, pattern) in [("Solid", LinePattern::Solid), ("Dashed", LinePattern::Dashed), ("Dotted", LinePattern::Dotted)] {
+                            if ui.button(label).clicked() {
+                                self.status = match self.doc.set_selected_line_pattern(pattern) {
+                                    Ok(0) => "Select at least one line or circle".into(),
+                                    Ok(count) => format!("Changed line pattern on {count} object(s)"),
+                                    Err(error) => error,
+                                };
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Color", |ui| {
+                        for (label, color) in [
+                            ("Red", RgbColor { red: 255, green: 0, blue: 0 }),
+                            ("Orange", RgbColor { red: 255, green: 128, blue: 0 }),
+                            ("Green", RgbColor { red: 0, green: 128, blue: 0 }),
+                            ("Blue", RgbColor { red: 0, green: 0, blue: 255 }),
+                            ("Navy", RgbColor { red: 0, green: 0, blue: 128 }),
+                            ("Purple", RgbColor { red: 128, green: 0, blue: 128 }),
+                            ("Black", RgbColor { red: 0, green: 0, blue: 0 }),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.status = match self.doc.set_selected_color(color) {
+                                    Ok(0) => "Select a styled geometry object".into(),
+                                    Ok(count) => format!("Changed color on {count} object(s)"),
+                                    Err(error) => error,
+                                };
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.separator();
                     if ui.button("Hide Objects").clicked() {
                         self.doc.set_selected_visibility(false);
                         self.selection_order

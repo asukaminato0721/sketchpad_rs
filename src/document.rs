@@ -3172,7 +3172,7 @@ impl Document {
             page_index += 1;
         }
         if self.objects.len() == self.source_count {
-            return self.patch_text_and_labels(self.compact_deleted(out)?);
+            return self.patch_visual_styles(self.patch_text_and_labels(self.compact_deleted(out)?)?);
         }
         let preamble = rs
             .iter()

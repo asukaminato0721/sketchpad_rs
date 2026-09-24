@@ -45,9 +45,9 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Point Style | Pending |
-| Line Style | Pending |
-| Color | Pending |
+| Point Style | Partial: selected points, undo/redo, SVG/native rendering, save/reopen and generated file cross-open; future-object default pending |
+| Line Style | Partial: width and solid/dashed/dotted patterns for supported strokes; generated segment/circle cross-opened; future-object default pending |
+| Color | Partial: RGB for supported points, strokes, and polygon interiors; generated mixed-style file cross-opened; future-object default pending |
 | Text | Pending |
 | Hide Objects | Partial |
 | Show All Hidden | Partial |
