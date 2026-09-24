@@ -20,7 +20,9 @@ impl Kind {
     pub fn dependencies(&self) -> Vec<usize> {
         match *self {
             Kind::Free(_) | Kind::Unsupported(_) => vec![],
-            Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => vec![host],
+            Kind::PointOnSegment(host, _)
+            | Kind::PointOnCircle(host, _, _)
+            | Kind::PointOnArc(host, _) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -44,6 +46,7 @@ pub enum Kind {
     Free(Point),
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
+    PointOnArc(usize, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -497,6 +500,15 @@ impl Document {
                             {
                                 Kind::PointOnCircle(*host, f64_at(payload, 4), f64_at(payload, 12))
                             }
+                            (
+                                Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _)),
+                                Some((payload, _)),
+                            ) if payload.len() == 12
+                                && payload[..4] == [15, 0, 67, 0]
+                                && f64_at(payload, 4).is_finite() =>
+                            {
+                                Kind::PointOnArc(*host, f64_at(payload, 4))
+                            }
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -679,6 +691,7 @@ impl Document {
                         y: center.y - radius * unit_y,
                     })
                 }
+                Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
                     let b = go(d, *b, seen)?;
@@ -801,44 +814,80 @@ impl Document {
         let center = self.position(center_id)?;
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
+    fn arc_geometry(&self, id: usize) -> Option<(Point, f64, f64, f64, bool)> {
+        let geometry = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::ThreePointArc(a, b, c) => {
+                let (center, radius, start, sweep) = three_point_arc_geometry(
+                    self.position(a)?,
+                    self.position(b)?,
+                    self.position(c)?,
+                )?;
+                (center, radius, start, sweep, false)
+            }
+            Kind::ArcOnCircle(circle, start, end) => {
+                let (center, radius) = self.circle_points(circle)?;
+                let start_point = self.position(start)?;
+                let end_point = self.position(end)?;
+                let a = (center.y - start_point.y).atan2(start_point.x - center.x);
+                let b = (center.y - end_point.y).atan2(end_point.x - center.x);
+                let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
+                (center, radius, a, sweep, true)
+            }
+            _ => return None,
+        };
+        Some(geometry)
+    }
+    pub fn point_on_arc(&self, id: usize, t: f64) -> Option<Point> {
+        if !t.is_finite() {
+            return None;
+        }
+        let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(id)?;
+        let angle = start + sweep * t.clamp(0., 1.);
+        Some(Point {
+            x: center.x + radius * angle.cos(),
+            y: center.y
+                + if clockwise_y {
+                    -radius * angle.sin()
+                } else {
+                    radius * angle.sin()
+                },
+        })
+    }
+    fn arc_parameter(&self, id: usize, p: Point) -> Option<f64> {
+        let (center, _, start, sweep, clockwise_y) = self.arc_geometry(id)?;
+        if sweep.abs() < 1e-9 {
+            return None;
+        }
+        let angle = (if clockwise_y {
+            center.y - p.y
+        } else {
+            p.y - center.y
+        })
+        .atan2(p.x - center.x);
+        let progress = if sweep >= 0. {
+            (angle - start).rem_euclid(std::f64::consts::TAU)
+        } else {
+            (start - angle).rem_euclid(std::f64::consts::TAU)
+        };
+        if progress <= sweep.abs() {
+            Some(progress / sweep.abs())
+        } else {
+            let first = self.point_on_arc(id, 0.)?;
+            let last = self.point_on_arc(id, 1.)?;
+            Some(if p.distance(first) <= p.distance(last) {
+                0.
+            } else {
+                1.
+            })
+        }
+    }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
-        let (center, radius, start, sweep, clockwise_y) =
-            match self.objects.get(id.checked_sub(1)?)?.kind {
-                Kind::ThreePointArc(a, b, c) => {
-                    let (center, radius, start, sweep) = three_point_arc_geometry(
-                        self.position(a)?,
-                        self.position(b)?,
-                        self.position(c)?,
-                    )?;
-                    (center, radius, start, sweep, false)
-                }
-                Kind::ArcOnCircle(circle, start, end) => {
-                    let (center, radius) = self.circle_points(circle)?;
-                    let start_point = self.position(start)?;
-                    let end_point = self.position(end)?;
-                    let a = (center.y - start_point.y).atan2(start_point.x - center.x);
-                    let b = (center.y - end_point.y).atan2(end_point.x - center.x);
-                    let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
-                    (center, radius, a, sweep, true)
-                }
-                _ => return None,
-            };
+        self.arc_geometry(id)?;
         let count = subdivisions.max(2);
         Some(
             (0..=count)
-                .map(|step| {
-                    let angle = start + sweep * step as f64 / count as f64;
-                    Point {
-                        x: center.x + radius * angle.cos(),
-                        y: center.y
-                            + if clockwise_y {
-                                -radius * angle.sin()
-                            } else {
-                                radius * angle.sin()
-                            },
-                    }
-                })
-                .collect(),
+                .map(|step| self.point_on_arc(id, step as f64 / count as f64))
+                .collect::<Option<Vec<_>>>()?,
         )
     }
     pub fn move_point(&mut self, id: usize, p: Point) -> bool {
@@ -874,6 +923,13 @@ impl Document {
                 }
                 Kind::PointOnCircle(host, dx / length, -dy / length)
             }
+            Some(Kind::PointOnArc(host, _)) => {
+                let host = *host;
+                let Some(t) = self.arc_parameter(host, p) else {
+                    return false;
+                };
+                Kind::PointOnArc(host, t)
+            }
             _ => return false,
         };
         self.objects[id - 1].kind = kind;
@@ -900,6 +956,9 @@ impl Document {
                 let length = dx.hypot(dy);
                 (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
+            Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => self
+                .arc_parameter(host, p)
+                .map(|t| Kind::PointOnArc(host, t)),
             _ => None,
         }
     }
@@ -916,13 +975,15 @@ impl Document {
             {
                 return Err(format!("Non-finite coordinates in object {}", o.id));
             }
-            if matches!(o.kind, Kind::PointOnSegment(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
+            if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
             let refs = match o.kind {
-                Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => vec![host],
+                Kind::PointOnSegment(host, _)
+                | Kind::PointOnCircle(host, _, _)
+                | Kind::PointOnArc(host, _) => vec![host],
                 Kind::Midpoint(a, b)
                 | Kind::Segment(a, b)
                 | Kind::Line(a, b)
@@ -951,6 +1012,11 @@ impl Document {
                 && matches!(o.kind, Kind::PointOnCircle(host, _, _) if self.circle_points(host).is_none())
             {
                 return Err(format!("Invalid circle host in point {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none())
+            {
+                return Err(format!("Invalid arc host in point {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
@@ -1047,6 +1113,9 @@ impl Document {
                     Kind::PointOnSegment(_, t) if out.get(i..i + 4) == Some(&[15, 0, 14, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
+                    Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
                     Kind::PointOnCircle(_, x, y) if out.get(i..i + 4) == Some(&[15, 0, 28, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&x.to_le_bytes());
                         out[i + 12..i + 20].copy_from_slice(&y.to_le_bytes());
@@ -1084,7 +1153,9 @@ impl Document {
         for o in self.objects.iter().skip(self.source_count) {
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
-                Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => (15, vec![host]),
+                Kind::PointOnSegment(host, _)
+                | Kind::PointOnCircle(host, _, _)
+                | Kind::PointOnArc(host, _) => (15, vec![host]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1132,6 +1203,11 @@ impl Document {
                 match o.kind {
                     Kind::PointOnSegment(_, t) => {
                         let mut payload = vec![15, 0, 14, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PointOnArc(_, t) => {
+                        let mut payload = vec![15, 0, 67, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
@@ -1720,5 +1796,29 @@ mod tests {
         );
         assert_eq!(reopened.arc_points(arc, 48), created.arc_points(arc, 48));
         assert!(!reopened.partial_view);
+    }
+    #[test]
+    fn point_on_arc_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/point_on_arc.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert!(matches!(original.objects[4].kind, Kind::PointOnArc(4, _)));
+        assert_eq!(original.encode().unwrap(), bytes);
+        assert!(original.position(5).is_some());
+        original.move_point(1, Point { x: 330., y: 220. });
+        let before_drag = original.position(5).unwrap();
+        assert!(original.move_point(5, Point { x: 300., y: 160. }));
+        assert_ne!(original.position(5), Some(before_drag));
+        let reopened = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(5), original.position(5));
+
+        let mut created = Document::new();
+        let a = created.add(Kind::Free(Point { x: 100., y: 200. }));
+        let b = created.add(Kind::Free(Point { x: 150., y: 150. }));
+        let c = created.add(Kind::Free(Point { x: 200., y: 200. }));
+        let arc = created.add(Kind::ThreePointArc(a, b, c));
+        let p = created.add(Kind::PointOnArc(arc, 0.5));
+        let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(p), created.position(p));
+        assert_eq!(reopened.objects[p - 1].kind, Kind::PointOnArc(arc, 0.5));
     }
 }

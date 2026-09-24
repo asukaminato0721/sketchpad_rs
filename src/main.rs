@@ -380,11 +380,17 @@ impl Editor {
         let host = self.selection_order.iter().copied().find(|id| {
             matches!(
                 self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                Some(Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+                Some(
+                    Kind::Segment(_, _)
+                        | Kind::Circle(_, _)
+                        | Kind::CircleBySegment(_, _)
+                        | Kind::ThreePointArc(_, _, _)
+                        | Kind::ArcOnCircle(_, _, _)
+                )
             )
         });
         let Some(host) = host else {
-            self.status = "Select a segment or circle".into();
+            self.status = "Select a segment, circle, or arc".into();
             return;
         };
         if self.selection_order.len() > 2 {
@@ -403,11 +409,13 @@ impl Editor {
                         x: (a.x + b.x) / 2.,
                         y: (a.y + b.y) / 2.,
                     })
-                } else {
-                    self.doc.circle_points(host).map(|(center, radius)| Point {
+                } else if let Some((center, radius)) = self.doc.circle_points(host) {
+                    Some(Point {
                         x: center.x + radius,
                         y: center.y,
                     })
+                } else {
+                    self.doc.point_on_arc(host, 0.5)
                 }
             });
         let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {
@@ -747,6 +755,7 @@ impl Editor {
                                 Kind::Free(_)
                                     | Kind::PointOnSegment(_, _)
                                     | Kind::PointOnCircle(_, _, _)
+                                    | Kind::PointOnArc(_, _)
                             ) {
                                 self.doc.checkpoint();
                                 self.dragging = Some(id);
