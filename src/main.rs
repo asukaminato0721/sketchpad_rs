@@ -673,6 +673,23 @@ impl Editor {
         ));
         self.select_only(id);
     }
+    fn reflect_selected(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Reflection on this document cannot be saved safely".into();
+            return;
+        }
+        if self.selection_order.len() != 2 {
+            self.status = "Select a point, then a mirror line".into();
+            return;
+        }
+        let (source, mirror) = (self.selection_order[0], self.selection_order[1]);
+        if self.doc.position(source).is_none() || self.doc.line_points(mirror).is_none() {
+            self.status = "Select a point, then a mirror line".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ReflectedPoint(source, mirror));
+        self.select_only(id);
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -827,6 +844,10 @@ impl Editor {
                 ui.menu_button("Transform", |ui| {
                     if ui.button("Translate by Angle and Distance…").clicked() {
                         self.translate_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Reflect Point across Line").clicked() {
+                        self.reflect_selected();
                         ui.close();
                     }
                 });

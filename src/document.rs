@@ -34,7 +34,8 @@ impl Kind {
             | Kind::CircleBySegment(a, b)
             | Kind::Intersection(a, b)
             | Kind::LineCircleIntersection(a, b, _)
-            | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
+            | Kind::CircleCircleIntersection(a, b, _)
+            | Kind::ReflectedPoint(a, b) => vec![a, b],
             Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
                 vec![a, b, c]
             }
@@ -49,6 +50,7 @@ pub enum Kind {
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
     PolarTranslatedPoint(usize, f64, f64, f64),
+    ReflectedPoint(usize, usize),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -171,6 +173,10 @@ fn header(kind: u16) -> [u8; 28] {
             21, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        34 => [
+            34, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0, 0,
+            0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         9 | 11..=14 => [
             kind as u8, 0, 0, 0, 0, 0, 1, 0, 0x2d, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39,
             0x20, 0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
@@ -204,6 +210,26 @@ fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
     )
+}
+
+fn is_point_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _)
+        | Kind::PointOnArc(_, _) | Kind::PolarTranslatedPoint(_, _, _, _)
+        | Kind::ReflectedPoint(_, _) | Kind::Midpoint(_, _) | Kind::Intersection(_, _)
+        | Kind::LineCircleIntersection(_, _, _) | Kind::CircleCircleIntersection(_, _, _))
+}
+
+fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let length_sq = dx * dx + dy * dy;
+    if !length_sq.is_finite() || length_sq <= 1e-18 {
+        return None;
+    }
+    let t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / length_sq;
+    let projected = Point { x: a.x + t * dx, y: a.y + t * dy };
+    let reflected = Point { x: 2. * projected.x - point.x, y: 2. * projected.y - point.y };
+    (reflected.x.is_finite() && reflected.y.is_finite()).then_some(reflected)
 }
 
 fn intersect_straight(
@@ -543,6 +569,12 @@ impl Document {
                         }
                         _ => Kind::Unsupported(code),
                     },
+                    (34, _, [source, mirror])
+                        if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
+                    {
+                        Kind::ReflectedPoint(*source, *mirror)
+                    }
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
                             Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
@@ -731,6 +763,11 @@ impl Document {
                         x: source.x + step * radians.cos(),
                         y: source.y - step * radians.sin(),
                     })
+                }
+                Kind::ReflectedPoint(source, mirror) => {
+                    let source = go(d, *source, seen)?;
+                    let (a, b, _) = d.line_points(*mirror)?;
+                    reflect_point(source, a, b)
                 }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
@@ -1051,6 +1088,13 @@ impl Document {
                 return Err(format!("Invalid source point in translation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::ReflectedPoint(source, mirror)
+                    if self.position(source).is_none() || self.line_points(mirror).is_none()
+                    || !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind)))
+            {
+                return Err(format!("Invalid point or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
                 if self.position(a).is_none()||self.position(b).is_none())
             {
@@ -1189,6 +1233,7 @@ impl Document {
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _) => (15, vec![host]),
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
+                Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1349,6 +1394,7 @@ mod tests {
             "perp",
             "example_tools",
             "wine_moved_demo",
+            "reflection",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -1889,5 +1935,39 @@ mod tests {
         );
         assert_eq!(reopened.position(translated), created.position(translated));
         assert!(!reopened.partial_view);
+
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_translation.gsp")).unwrap();
+        assert_eq!(moved.position(1), Some(Point { x: 241., y: 221. }));
+        assert!(matches!(moved.objects[1].kind, Kind::PolarTranslatedPoint(1, 90., _, 1.)));
+        assert!((moved.position(2).unwrap().y - 183.20472440944883).abs() < 1e-6);
+    }
+    #[test]
+    fn reflected_point_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/reflection.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(original.objects[13].kind, Kind::ReflectedPoint(1, 4));
+        assert_eq!(original.encode().unwrap(), bytes);
+        let (a, b, _) = original.line_points(4).unwrap();
+        assert_eq!(original.position(14), reflect_point(original.position(1).unwrap(), a, b));
+        let prior = original.position(14);
+        original.move_point(1, Point { x: 300., y: 150. });
+        assert_ne!(original.position(14), prior);
+        let reopened = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(14), original.position(14));
+
+        let mut created = Document::new();
+        let source = created.add(Kind::Free(Point { x: 50., y: 50. }));
+        let a = created.add(Kind::Free(Point { x: 0., y: 100. }));
+        let b = created.add(Kind::Free(Point { x: 200., y: 100. }));
+        let mirror = created.add(Kind::Segment(a, b));
+        let result = created.add(Kind::ReflectedPoint(source, mirror));
+        assert_eq!(created.position(result), Some(Point { x: 50., y: 150. }));
+        let encoded = created.encode().unwrap();
+        let headers: Vec<_> = records(&encoded).unwrap().into_iter().filter(|r| r.kind == 0x7d0).collect();
+        assert_eq!(&encoded[headers[4].data.clone()], &header(34));
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[4].kind, Kind::ReflectedPoint(source, mirror));
+        assert_eq!(reopened.position(result), created.position(result));
     }
 }
