@@ -1,0 +1,6 @@
+new
+point 140 140
+point 300 140
+segment 1 2
+midpoint 1 2
+save /tmp/sketchpad_visible_midpoint.gsp

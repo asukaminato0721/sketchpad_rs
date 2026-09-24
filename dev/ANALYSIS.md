@@ -2,6 +2,8 @@
 
 The development tools follow the same pattern as the headless probes in `../siglus_rs`: a deterministic Rust probe for file and model behavior, plus targeted analysis of the original executable. Keep conclusions tied to a fixture, a runtime observation, or a specific instruction in the original binary.
 
+The current `gsp_probe verify` pass covers all 105 `.gsp` files in `../gsp-rs/tests/fixtures` without parse or byte-preservation failures; 68 have `partial_view=true` because their sketch objects are not yet supported. The bundled `GSP5/GSP5.app/Contents/Resources/Example Tools.gsp` also verifies byte-exactly (523 objects, partial view). These checks establish safe retention, not command parity for unsupported objects.
+
 ## Headless probe
 
 ```sh

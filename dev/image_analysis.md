@@ -72,13 +72,14 @@ source picture's hidden bit changed from clear to set.
 CRCs, checks dimensions across PNG/resource/object records, and requires
 finite affine coefficients. It preserves all unrecognized bytes on exact
 reencode. For a document containing exactly one independent affine picture,
-it can update visibility and transform or replace the PNG transactionally.
+including one with unrelated geometry, it can update visibility and transform
+or replace the PNG transactionally.
 The generated PNG replacement reopened and saved in Sketchpad 5.
 
 The helper decodes the observed crop group for inspection but refuses edits
-in a document with additional objects, because the derived image's rewrite
-rules are not established. It refuses the multi-resource Paste Picture file
-entirely. Point-attached images, more than one picture, opacity, pixel
+in a document with a crop, because the derived image's rewrite rules are not
+established. It refuses the multi-resource Paste Picture file entirely.
+Point-attached images, more than one picture, opacity, pixel
 replacement inside a cropped construction, and external clipboard import
 remain unimplemented. `src/image_records.rs` is standalone for now; the
 shared document/UI modules were owned by another agent during this probe.

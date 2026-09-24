@@ -2,6 +2,7 @@ pub mod action_records;
 pub mod document;
 pub mod function_records;
 pub mod graph;
+pub mod image_records;
 pub mod render;
 pub mod style_records;
 pub mod text_object;

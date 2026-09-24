@@ -2186,6 +2186,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "image",
  "pollster",
  "rfd",
  "wgpu",

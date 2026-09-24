@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if (( $# != 2 )); then
-  echo "Usage: dev/table_wine_probe.sh parameter|calculate|tabulate COPY_OF_SKETCH.gsp" >&2
+  echo "Usage: dev/table_wine_probe.sh parameter|calculate|tabulate|add_data|remove_data COPY_OF_SKETCH.gsp" >&2
   exit 2
 fi
 mode="$1"
@@ -36,17 +36,21 @@ xvfb-run -a bash -c '
     sleep 0.3
     xdotool mousemove 355 61 click 1
   elif [[ "$3" == calculate ]]; then
-    xdotool mousemove 90 90 click 1
-    sleep 0.3
     xdotool mousemove 346 40 click 1
     sleep 0.3
     xdotool mousemove 355 87 click 1
   elif [[ "$3" == tabulate ]]; then
-    xdotool mousemove 90 90 click 1
-    sleep 0.3
     xdotool mousemove 346 40 click 1
     sleep 0.3
     xdotool mousemove 355 113 click 1
+  elif [[ "$3" == add_data ]]; then
+    xdotool mousemove 346 40 click 1
+    sleep 0.3
+    xdotool mousemove 355 130 click 1
+  elif [[ "$3" == remove_data ]]; then
+    xdotool mousemove 346 40 click 1
+    sleep 0.3
+    xdotool mousemove 355 147 click 1
   else
     exit 2
   fi
@@ -70,6 +74,15 @@ xvfb-run -a bash -c '
   xdotool key Return
   sleep 1
   import -window root "${4}_result.png"
+  if [[ "${SKETCHPAD_TABLE_POST_DRAG:-}" == "1" ]]; then
+    xdotool mousemove 90 122 mousedown 1
+    sleep 0.3
+    xdotool mousemove 180 200
+    sleep 0.3
+    xdotool mouseup 1
+    sleep 0.5
+    import -window root "${4}_after_drag.png"
+  fi
   xdotool key --clearmodifiers ctrl+s
   sleep 2
   echo "Saved copy: $2 ($(stat -c %s "$2") bytes)"

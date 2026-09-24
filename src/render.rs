@@ -36,6 +36,47 @@ pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rec
     let width = (label.chars().count() as f32 * 8. + 20.).max(88.);
     Rect::from_min_size(min, egui::vec2(width, 24.))
 }
+pub fn picture_screen_quad(vp: &Viewport, png: &[u8], transform: [f64; 6]) -> Option<[Pos2; 4]> {
+    if png.len() < 24 { return None; }
+    let width = u32::from_be_bytes(png[16..20].try_into().ok()?) as f64;
+    let height = u32::from_be_bytes(png[20..24].try_into().ok()?) as f64;
+    let world = |u: f64, v: f64| Point {
+        x: transform[0] * u + transform[1] * v + transform[2],
+        y: transform[3] * u + transform[4] * v + transform[5],
+    };
+    Some([
+        vp.screen(world(0., 0.)), vp.screen(world(width, 0.)),
+        vp.screen(world(width, height)), vp.screen(world(0., height)),
+    ])
+}
+pub fn picture_hit(vp: &Viewport, png: &[u8], transform: [f64; 6], at: Pos2) -> bool {
+    if png.len() < 24 { return false; }
+    let world = vp.world(at);
+    let x = world.x - transform[2];
+    let y = world.y - transform[5];
+    let det = transform[0] * transform[4] - transform[1] * transform[3];
+    if det.abs() < 1e-12 { return false; }
+    let u = (transform[4] * x - transform[1] * y) / det;
+    let v = (-transform[3] * x + transform[0] * y) / det;
+    let width = u32::from_be_bytes(png[16..20].try_into().unwrap()) as f64;
+    let height = u32::from_be_bytes(png[20..24].try_into().unwrap()) as f64;
+    u >= 0. && u <= width && v >= 0. && v <= height
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = ((chunk[0] as u32) << 16)
+            | ((chunk.get(1).copied().unwrap_or(0) as u32) << 8)
+            | chunk.get(2).copied().unwrap_or(0) as u32;
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { ALPHABET[((n >> 6) & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { ALPHABET[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
 
 fn xml_text(value: &str) -> String {
     value
@@ -183,6 +224,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         r.width(),
         r.height()
     );
+    for object in doc.objects.iter().filter(|object| object.page == doc.active_page && object.visible && !object.deleted) {
+        if let Kind::Image { png, transform } = &object.kind {
+            let (width, height) = crate::image_records::ImageFile::png_size(png)?;
+            let origin = vp.screen(Point { x: transform[2], y: transform[5] });
+            writeln!(svg,
+                "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/>",
+                transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
+                transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
+                origin.x, origin.y, base64(png)).unwrap();
+        }
+    }
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
     for (a, b) in grid_lines(doc, vp) {
         writeln!(

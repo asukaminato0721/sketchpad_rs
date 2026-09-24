@@ -1,6 +1,7 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
+use crate::image_records::ImageFile;
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
 use std::{
@@ -47,6 +48,7 @@ impl Kind {
         }
         match *self {
             Kind::Free(_)
+            | Kind::Image { .. }
             | Kind::PlainText { .. }
             | Kind::FunctionDefinition(_)
             | Kind::Unsupported(_) => vec![],
@@ -119,6 +121,7 @@ impl Kind {
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
+            Kind::Image { ref png, transform } => Kind::Image { png: png.clone(), transform },
             Kind::PlainText { ref text, rect } => Kind::PlainText {
                 text: text.clone(),
                 rect,
@@ -187,6 +190,7 @@ pub enum Kind {
         anchor: (i16, i16),
     },
     Free(Point),
+    Image { png: Vec<u8>, transform: [f64; 6] },
     PlainText {
         text: String,
         rect: TextRect,
@@ -632,6 +636,7 @@ pub struct Document {
     original: Vec<u8>,
     source_count: usize,
     safe_structure: bool,
+    image_read_only: bool,
     pub undo: Vec<(Vec<Object>, Vec<bool>)>,
     pub redo: Vec<(Vec<Object>, Vec<bool>)>,
 }
@@ -656,6 +661,9 @@ impl Document {
     }
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
         let rs = records(b)?;
+        let has_picture_resource = rs.iter().any(|record| record.kind == 0x0514);
+        let image_file = has_picture_resource.then(|| ImageFile::parse(b)).transpose().ok().flatten();
+        let image_read_only = has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../assets/point_template.gsp"))?;
         let safe_outside: BTreeSet<u32> = baseline_records
             .iter()
@@ -679,7 +687,9 @@ impl Document {
                 continue;
             }
             if rs[i].kind != 0x7d0 {
-                if !safe_outside.contains(&rs[i].kind) {
+                if !safe_outside.contains(&rs[i].kind)
+                    && !(rs[i].kind == 0x0514 && !image_read_only)
+                {
                     safe = false;
                 }
                 i += 1;
@@ -691,6 +701,7 @@ impl Document {
             }
             let header_offset = rs[i].data.start;
             let group_start = rs[i].start;
+            let is_image = image_file.as_ref().is_some_and(|picture| picture.picture_group_offset() == group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let mut point = None;
@@ -816,6 +827,7 @@ impl Document {
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(code == 72 && r.kind == 0x0902)
                 {
                     safe = false;
@@ -894,6 +906,10 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (0, None, []) if is_image => {
+                        let picture = image_file.as_ref().unwrap();
+                        Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
+                    }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
                         match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
                             Ok(expr) => Kind::FunctionDefinition(expr),
@@ -1199,6 +1215,7 @@ impl Document {
             original: b.to_vec(),
             source_count,
             safe_structure: safe,
+            image_read_only,
             undo: Vec::new(),
             redo: Vec::new(),
         })
@@ -1243,6 +1260,43 @@ impl Document {
             text: text.to_owned(),
             rect,
         }))
+    }
+    pub fn import_png(&mut self, png: &[u8], at: Point) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || self.image_read_only
+            || self.objects.iter().any(|object| matches!(object.kind, Kind::Image { .. }))
+        {
+            return Err("Only one independent picture can be edited in a single-page sketch".into());
+        }
+        if !at.x.is_finite() || !at.y.is_finite() {
+            return Err("Picture position must be finite".into());
+        }
+        ImageFile::independent_from_png(png, [1., 0., at.x, 0., 1., at.y])?;
+        Ok(self.add(Kind::Image {
+            png: png.to_vec(),
+            transform: [1., 0., at.x, 0., 1., at.y],
+        }))
+    }
+    pub fn move_image(&mut self, id: usize, at: Point) -> Result<(), String> {
+        self.move_image_inner(id, at, true)
+    }
+    pub fn drag_image(&mut self, id: usize, at: Point) -> Result<(), String> {
+        self.move_image_inner(id, at, false)
+    }
+    fn move_image_inner(&mut self, id: usize, at: Point, checkpoint: bool) -> Result<(), String> {
+        if self.image_read_only || !at.x.is_finite() || !at.y.is_finite() {
+            return Err("Picture cannot be moved safely".into());
+        }
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid picture ID")?)
+            .ok_or("Invalid picture ID")?;
+        let Kind::Image { png, mut transform } = object.kind.clone() else {
+            return Err("Object is not a picture".into());
+        };
+        if checkpoint { self.checkpoint(); }
+        transform[2] = at.x;
+        transform[5] = at.y;
+        self.objects[id - 1].kind = Kind::Image { png, transform };
+        self.dirty = true;
+        Ok(())
     }
     pub fn edit_text(&mut self, id: usize, text: &str) -> Result<(), String> {
         if self.partial_view {
@@ -2341,6 +2395,9 @@ impl Document {
         Ok(out)
     }
     pub fn can_save(&self) -> Result<(), String> {
+        if self.image_read_only && self.dirty {
+            return Err("Cropped or multi-resource picture content is read-only".into());
+        }
         if self.grid_visible.len() != self.page_count {
             return Err("Invalid page grid state".into());
         }
@@ -2361,6 +2418,12 @@ impl Document {
         {
             return Err("Deleting objects in a function document cannot be saved safely".into());
         }
+        if self.objects.iter().any(|o| o.deleted && matches!(o.kind, Kind::Image { .. })) {
+            return Err("Removing a picture resource is not yet supported".into());
+        }
+        if self.objects.iter().filter(|o| matches!(o.kind, Kind::Image { .. })).count() > 1 {
+            return Err("Only one independent picture can be written".into());
+        }
         for (i, o) in self.objects.iter().enumerate() {
             if o.id != i + 1 {
                 return Err("Invalid object ID".into());
@@ -2375,6 +2438,18 @@ impl Document {
             }
             if let Kind::PlainText { text, rect } = &o.kind {
                 text_object::encode_plain_text_group(text, *rect)?;
+            }
+            if let Kind::Image { png, transform } = &o.kind {
+                ImageFile::png_size(png)?;
+                if transform.iter().any(|value| !value.is_finite()) {
+                    return Err(format!("Non-finite picture transform in object {}", o.id));
+                }
+                if o.id <= self.source_count {
+                    let source = ImageFile::parse(&self.original)?;
+                    if source.png() != png {
+                        return Err("Replacing a saved picture's PNG is not supported".into());
+                    }
+                }
             }
             if o.label.is_some() && !is_point_kind(&o.kind) {
                 return Err(format!("Invalid point label in object {}", o.id));
@@ -2838,6 +2913,13 @@ impl Document {
                 out[start..end].copy_from_slice(&encoded);
             }
         }
+        if let Some(Kind::Image { transform, .. }) = self.objects.iter().take(self.source_count)
+            .find_map(|object| matches!(object.kind, Kind::Image { .. }).then_some(&object.kind))
+        {
+            let mut picture = ImageFile::parse(&out)?;
+            picture.set_transform(*transform)?;
+            out = picture.encode().to_vec();
+        }
         let mut page_index = 0;
         for record in rs.iter().filter(|r| r.kind == 0x3e8) {
             if self.objects.iter().any(|o| {
@@ -2875,6 +2957,7 @@ impl Document {
             .map(|r| r.start)
             .unwrap_or(trailer);
         let mut added = Vec::new();
+        let mut picture_resource: Option<Vec<u8>> = None;
         let mut measurement_row = self
             .objects
             .iter()
@@ -2882,6 +2965,14 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::Image { png, transform } = &o.kind {
+                let picture = ImageFile::independent_from_png(png, *transform)?;
+                let mut group = picture.picture_group().to_vec();
+                if !o.visible { group[10] |= 1; }
+                added.extend_from_slice(&group);
+                picture_resource = Some(picture.resource_record().to_vec());
+                continue;
+            }
             if let Kind::PlainText { text, rect } = &o.kind {
                 let mut group = text_object::encode_plain_text_group(text, *rect)?;
                 if !o.visible {
@@ -3199,6 +3290,11 @@ impl Document {
             );
         }
         records(&out)?;
+        if let Some(resource) = picture_resource {
+            let resource_at = records(&out)?.iter().find(|record| record.kind == 0x03ef)
+                .ok_or("Missing picture resource section")?.start;
+            out.splice(resource_at..resource_at, resource);
+        }
         self.patch_text_and_labels(self.compact_deleted(out)?)
     }
     fn patch_text_and_labels(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -3333,6 +3429,7 @@ impl Document {
         self.source_count = self.objects.len();
         self.path = Some(path.to_path_buf());
         self.safe_structure = reparsed.safe_structure;
+        self.image_read_only = reparsed.image_read_only;
         self.partial_view = reparsed.partial_view;
         self.undo.clear();
         self.redo.clear();

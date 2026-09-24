@@ -8,14 +8,15 @@
 //!   style_record_probe straight-or-arc-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
 //!   style_record_probe straight-or-arc-rgb INPUT.gsp OUTPUT.gsp R G B
 //!   style_record_probe polygon-rgb INPUT.gsp OUTPUT.gsp R G B
+//!   style_record_probe point-code-style INPUT.gsp OUTPUT.gsp CODE SHAPE R G B
 
 #[path = "../src/style_records.rs"]
 mod style_records;
 
 use style_records::{
-    LinePattern, LineWidth, RgbColor, SegmentLineStyle, circle_color, circle_line_style,
+    LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, circle_color, circle_line_style,
     point_color, polygon_color, segment_line_style, set_circle_color, set_circle_line_style,
-    set_point_color, set_polygon_color, set_segment_line_style, set_straight_or_arc_color,
+    set_point_color, set_point_style, set_polygon_color, set_segment_line_style, set_straight_or_arc_color,
     set_straight_or_arc_line_style, straight_or_arc_color, straight_or_arc_line_style,
 };
 
@@ -41,6 +42,27 @@ fn main() -> Result<(), String> {
         if kind == 0x07d0 && !changed {
             let payload = &mut bytes[start..end];
             match args[1].as_str() {
+                "point-code-style" if args.len() == 9 && payload.len() >= 16 => {
+                    let code = args[4].parse::<u16>().map_err(|e| e.to_string())?;
+                    if u16::from_le_bytes([payload[0], payload[1]]) == code
+                        && style_records::point_style(payload).is_some() {
+                        let shape = match args[5].as_str() {
+                            "dot" => PointStyle::Dot,
+                            "small" => PointStyle::Small,
+                            "medium" => PointStyle::Medium,
+                            "large" => PointStyle::Large,
+                            _ => return Err("Unknown point shape".into()),
+                        };
+                        let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
+                        set_point_style(payload, shape)?;
+                        set_point_color(payload, RgbColor {
+                            red: channel(6)?,
+                            green: channel(7)?,
+                            blue: channel(8)?,
+                        })?;
+                        changed = true;
+                    }
+                }
                 "point-rgb" if point_color(payload).is_some() && args.len() == 7 => {
                     let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
                     set_point_color(payload, RgbColor {

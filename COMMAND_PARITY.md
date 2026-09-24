@@ -132,7 +132,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Number Menu &gt; Tabulate | Pending |
 | Number Menu &gt; Add Table Data | Pending |
 | Number Menu &gt; Remove Table Data | Pending |
-| Number Menu &gt; New Function | Pending |
+| Number Menu &gt; New Function | Partial: Cartesian `x` and `x²` definitions save and cross-open; other expressions pending |
 | Number Menu &gt; Define Derivative Function | Pending |
 | Number Menu &gt; Define Function from Drawing or Picture | Pending |
 
@@ -149,7 +149,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Graph Menu &gt; Plot Value on Axis | Pending |
 | Graph Menu &gt; Plot Points/Plot as (x, y)/Plot as (r, θ) | Pending |
 | Graph Menu &gt; Plot Table Data | Pending |
-| Graph Menu &gt; Plot Function/Plot New Function | Pending |
+| Graph Menu &gt; Plot Function/Plot New Function | Partial: Cartesian `x` and `x²` plots update after origin drag and cross-open; other expressions and ranges pending |
 | Graph Menu &gt; Plot Parametric Curve | Pending |
 
 ## Action Buttons
@@ -182,7 +182,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Point tool | Partial |
 | Segment tool | Partial |
 | Circle tool | Partial |
-| Text, image, table, iteration, plotting | Partial: literal free text and point labels can be created, edited, dragged, saved, and cross-opened; image, table, iteration, and plotting pending |
+| Text, image, table, iteration, plotting | Partial: literal text, point labels, and Cartesian `x`/`x²` plots cross-open; image, table, and iteration pending |
 | Import, export, print | Partial: SVG/PDF export and Linux printing for supported visible geometry; import pending |
 | Multi-page documents | Partial: page navigation and read-only complex objects |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

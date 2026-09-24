@@ -43,13 +43,21 @@ Its nested and parameterized expression format is outside this subset.
 or `x²`, remaps the code-72 dependencies, and preserves all other bytes.
 `encode_minimal_plot_document` appends them to the port's six-object frame,
 updates the page count, and writes `0x2328`. `dev/function_generate.rs` is a
-small standalone driver for this proof; the shared editor model does not yet
-expose function objects.
+small standalone driver for this proof. The shared document model now parses,
+evaluates, and writes these two function forms. Number > New Function adds a
+definition; Graph > Plot New Function adds a definition and a Cartesian plot.
+The native renderer and SVG export sample the same evaluated curve, and the
+curve can be selected by hit testing.
 
 Both generated files opened in Sketchpad 5, showed the expected formula and
-curve, and saved with **zero changed record slots**. Five standalone tests
-cover expression rejection, original and Number-command decoding, generated
-document reparse, and the edited original file. Run them with:
+curve, and saved with **zero changed record slots**. The shared writer's
+`x²` plot and definition-only `x` files also opened and saved in the original.
+Dragging the shared writer's plot origin in the original changed `(199,125)`
+to `(228,140)`; the edited file reopened in the port with eight supported
+objects. The full Rust suite includes tests for original import, save/reopen,
+dependency update, and undo/redo. Run it with `cargo test --all-targets`.
+
+The independent record tests can also be run with:
 
 ```sh
 rustc --edition 2024 --test src/function_records.rs -o /tmp/function_records_tests
@@ -58,5 +66,6 @@ rustc --edition 2024 --test src/function_records.rs -o /tmp/function_records_tes
 
 Only `x` and `x²` in a Cartesian coordinate system are safe to encode here.
 General arithmetic, parameters, nested definitions, trigonometric functions,
-polar/parametric plots, and function editing still need original-file probes
-and a wider expression parser before integration.
+polar/parametric plots, editing formula text, and custom plot ranges still
+need original-file probes and a wider expression parser. Unsupported variants
+remain read-only through the conservative document safety check.

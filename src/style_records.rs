@@ -25,9 +25,18 @@ impl PointStyle {
 }
 
 fn is_point_header(payload: &[u8]) -> bool {
-    (payload.len() == 16 || payload.len() == 28)
-        && u16::from_le_bytes([payload[0], payload[1]]) == 0
-        && u16::from_le_bytes([payload[8], payload[9]]) == 4
+    if payload.len() != 16 && payload.len() != 28 {
+        return false;
+    }
+    let code = u16::from_le_bytes([payload[0], payload[1]]);
+    let subtype = u16::from_le_bytes([payload[8], payload[9]]);
+    matches!(
+        (code, subtype),
+        (0 | 21 | 27 | 30 | 34, 4)
+            | (1, 11)
+            | (15, 10)
+            | (9 | 11 | 12 | 13 | 14, 45)
+    )
 }
 
 pub fn point_style(payload: &[u8]) -> Option<PointStyle> {
@@ -382,6 +391,29 @@ mod tests {
         assert_eq!(point_color(&edited), point_color(blue));
         edited[12..15].copy_from_slice(&red[12..15]);
         assert_eq!(edited, red);
+    }
+
+    #[test]
+    fn supported_derived_point_headers_share_style_bytes() {
+        let cases: &[(&[u8], u16)] = &[
+            (include_bytes!("../tests/fixtures/middle_point.gsp"), 1),
+            (include_bytes!("../tests/fixtures/point_on_segment.gsp"), 15),
+            (include_bytes!("../tests/fixtures/point_translation.gsp"), 21),
+            (include_bytes!("../tests/fixtures/rotation.gsp"), 27),
+            (include_bytes!("../tests/fixtures/wine_moved_dilation.gsp"), 30),
+            (include_bytes!("../tests/fixtures/reflection.gsp"), 34),
+            (include_bytes!("../tests/fixtures/line_intersection.gsp"), 9),
+            (include_bytes!("../tests/fixtures/line_circle_intersection.gsp"), 12),
+            (include_bytes!("../tests/fixtures/circle_circle_intersection.gsp"), 14),
+        ];
+        for (bytes, code) in cases {
+            let header = records_headers(bytes)
+                .into_iter()
+                .find(|header| u16::from_le_bytes([header[0], header[1]]) == *code && is_point_header(header))
+                .unwrap();
+            assert_eq!(point_style(&header), Some(PointStyle::Medium));
+            assert_eq!(point_color(&header), Some(RgbColor { red: 255, green: 0, blue: 0 }));
+        }
     }
 
     #[test]
