@@ -2,6 +2,7 @@ use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::image_records::ImageFile;
+use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
 use std::{
@@ -50,9 +51,12 @@ impl Kind {
             Kind::Free(_)
             | Kind::Image { .. }
             | Kind::PlainText { .. }
+            | Kind::Parameter(_)
+            | Kind::Calculation(_)
             | Kind::FunctionDefinition(_)
             | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
+            | Kind::ValueTable(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
@@ -129,6 +133,9 @@ impl Kind {
                 text: text.clone(),
                 rect,
             },
+            Kind::Parameter(ref group) => Kind::Parameter(group.clone()),
+            Kind::Calculation(ref group) => Kind::Calculation(group.clone()),
+            Kind::ValueTable(source, ref group) => Kind::ValueTable(m(source), group.clone()),
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
@@ -201,6 +208,9 @@ pub enum Kind {
         text: String,
         rect: TextRect,
     },
+    Parameter(ParameterGroup),
+    Calculation(CalculationGroup),
+    ValueTable(usize, TableGroup),
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
@@ -840,6 +850,7 @@ impl Document {
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(code == 72 && r.kind == 0x0902)
                 {
@@ -924,9 +935,23 @@ impl Document {
                         Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
                     }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
-                        match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
-                            Ok(expr) => Kind::FunctionDefinition(expr),
-                            Err(_) => Kind::Unsupported(code),
+                        let group = &b[group_start..rs[i].data.end];
+                        if let Ok(parameter) = ParameterGroup::parse(group) {
+                            Kind::Parameter(parameter)
+                        } else if let Ok(calculation) = CalculationGroup::parse(group) {
+                            Kind::Calculation(calculation)
+                        } else {
+                            match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
+                                Ok(expr) => Kind::FunctionDefinition(expr),
+                                Err(_) => Kind::Unsupported(code),
+                            }
+                        }
+                    }
+                    (91, None, [source]) if *source == page_base + 1
+                        && objects.get(*source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
+                        match TableGroup::parse(&b[group_start..rs[i].data.end]) {
+                            Ok(table) if table.source_id() as usize == *source - page_base => Kind::ValueTable(*source, table),
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (72, None, [definition, frame]) if function_range.is_some()
@@ -1167,7 +1192,7 @@ impl Document {
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
             }
-            if matches!(kind, Kind::FunctionDefinition(_)) {
+            if matches!(kind, Kind::FunctionDefinition(_) | Kind::Parameter(_)) {
                 label = None;
             }
             if label.is_some() && !is_point_kind(&kind) {
@@ -1430,6 +1455,54 @@ impl Document {
             label: None,
         });
         id
+    }
+    pub fn add_default_parameter(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.objects.is_empty() {
+            return Err("The verified parameter can only be added to a blank sketch".into());
+        }
+        let mut group = ParameterGroup::default_value();
+        group.set_anchor(anchor)?;
+        self.checkpoint();
+        Ok(self.append_object(Kind::Parameter(group)))
+    }
+    pub fn add_literal_calculation(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.objects.is_empty() {
+            return Err("The verified calculation can only be added to a blank sketch".into());
+        }
+        let mut group = CalculationGroup::literal_two_plus_three();
+        group.set_anchor(anchor)?;
+        self.checkpoint();
+        Ok(self.append_object(Kind::Calculation(group)))
+    }
+    pub fn tabulate_default_parameter(&mut self, source: usize, anchor: (i16, i16)) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || source != 1 || self.objects.len() != 1
+            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(_))) {
+            return Err("Only the verified t[1] parameter can be tabulated".into());
+        }
+        let group = TableGroup::for_source(1, anchor)?;
+        self.checkpoint();
+        Ok(self.append_object(Kind::ValueTable(source, group)))
+    }
+    pub fn move_number(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid object ID")?).ok_or("Invalid object ID")?;
+        let mut kind = object.kind.clone();
+        match &mut kind {
+            Kind::Parameter(group) => group.set_anchor(anchor)?,
+            Kind::Calculation(group) => group.set_anchor(anchor)?,
+            Kind::ValueTable(_, group) => group.set_anchor(anchor),
+            _ => return Err("Object is not a number or table".into()),
+        }
+        self.checkpoint();
+        self.objects[id - 1].kind = kind;
+        Ok(())
+    }
+    pub fn change_table_rows(&mut self, id: usize, add: bool) -> Result<(), String> {
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid table ID")?).ok_or("Invalid table ID")?;
+        let Kind::ValueTable(_, mut group) = object.kind.clone() else { return Err("Object is not a table".into()); };
+        if add { group.add_default_snapshot()?; } else { group.remove_last_snapshot()?; }
+        self.checkpoint();
+        self.objects[id - 1].kind = Kind::ValueTable(1, group);
+        Ok(())
     }
     pub fn active_coordinate_system(&self) -> Option<usize> {
         self.objects
@@ -2481,6 +2554,18 @@ impl Document {
             if let Kind::PlainText { text, rect } = &o.kind {
                 text_object::encode_plain_text_group(text, *rect)?;
             }
+            match &o.kind {
+                Kind::Parameter(group) => { ParameterGroup::parse(group.as_bytes())?; }
+                Kind::Calculation(group) => { CalculationGroup::parse(group.as_bytes())?; }
+                Kind::ValueTable(source, group) => {
+                    TableGroup::parse(group.as_bytes())?;
+                    if *source != 1 || group.source_id() != 1
+                        || !matches!(self.objects.get(source - 1).map(|o| &o.kind), Some(Kind::Parameter(_))) {
+                        return Err("Unsupported table source".into());
+                    }
+                }
+                _ => {}
+            }
             if let Kind::Image { png, transform } = &o.kind {
                 ImageFile::png_size(png)?;
                 if transform.iter().any(|value| !value.is_finite()) {
@@ -3031,6 +3116,24 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::Parameter(group) = &o.kind {
+                let mut bytes = group.as_bytes().to_vec();
+                if !o.visible { bytes[10] |= 1; }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
+            if let Kind::Calculation(group) = &o.kind {
+                let mut bytes = group.as_bytes().to_vec();
+                if !o.visible { bytes[10] |= 1; }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
+            if let Kind::ValueTable(_, group) = &o.kind {
+                let mut bytes = group.as_bytes().to_vec();
+                if !o.visible { bytes[10] |= 1; }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
             if let Kind::HideShowButton {
                 target,
                 action,
@@ -3374,6 +3477,19 @@ impl Document {
                 continue;
             }
             let group = &rs[start_index..=index];
+            if let Some(replacement) = match &object.kind {
+                Kind::Parameter(value) => Some(value.as_bytes()),
+                Kind::Calculation(value) => Some(value.as_bytes()),
+                Kind::ValueTable(_, value) => Some(value.as_bytes()),
+                _ => None,
+            } {
+                if bytes[group[0].start..record.data.end] != *replacement {
+                    let mut replacement = replacement.to_vec();
+                    if !object.visible { replacement[10] |= 1; }
+                    edits.push((group[0].start, record.data.end, replacement));
+                }
+                continue;
+            }
             if let Kind::PlainText { text, rect } = &object.kind {
                 let rich = group
                     .iter()

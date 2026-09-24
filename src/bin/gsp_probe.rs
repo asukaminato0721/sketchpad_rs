@@ -217,6 +217,12 @@ fn two_ids(rest: &str) -> Result<(usize, usize), String> {
     ))
 }
 
+fn number_anchor(rest: &str) -> Result<(i16, i16), String> {
+    let parts = rest.split_whitespace().collect::<Vec<_>>();
+    let [x, y] = parts.as_slice() else { return Err("expected x y".into()); };
+    Ok((x.parse().map_err(|_| "invalid x")?, y.parse().map_err(|_| "invalid y")?))
+}
+
 fn replay(path: &str) -> Result<(), String> {
     let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
     let mut document = Document::new();
@@ -234,6 +240,29 @@ fn replay(path: &str) -> Result<(), String> {
         let result = (|| -> Result<(), String> {
             match command {
                 "new" if rest.is_empty() => document = Document::new(),
+                "parameter" => {
+                    let id = document.add_default_parameter(number_anchor(rest)?)?;
+                    println!("line {}: parameter -> object {id}", index + 1);
+                }
+                "calculate_2_plus_3" => {
+                    let id = document.add_literal_calculation(number_anchor(rest)?)?;
+                    println!("line {}: calculate_2_plus_3 -> object {id}", index + 1);
+                }
+                "tabulate" => {
+                    let source: usize = rest.parse().map_err(|_| "invalid parameter ID")?;
+                    let id = document.tabulate_default_parameter(source, (10, 38))?;
+                    println!("line {}: tabulate -> object {id}", index + 1);
+                }
+                "table_add" | "table_remove" => {
+                    let id: usize = rest.parse().map_err(|_| "invalid table ID")?;
+                    document.change_table_rows(id, command == "table_add")?;
+                }
+                "number_move" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, x, y] = parts.as_slice() else { return Err("expected ID x y".into()); };
+                    document.move_number(id.parse().map_err(|_| "invalid number ID")?,
+                        (x.parse().map_err(|_| "invalid x")?, y.parse().map_err(|_| "invalid y")?))?;
+                }
                 "open" if !rest.is_empty() => document = Document::open(Path::new(rest))?,
                 "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,
                 "import_png" => {

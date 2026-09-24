@@ -5,5 +5,6 @@ pub mod graph;
 pub mod image_records;
 pub mod render;
 pub mod style_records;
+pub mod table_records;
 pub mod text_object;
 pub mod text_records;

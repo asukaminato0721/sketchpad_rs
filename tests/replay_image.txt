@@ -1,0 +1,9 @@
+# Import a single independent PNG, move it, then save and reopen.
+new
+point 80 90
+import_png tests/fixtures/image_tiny.png 120 130
+save tests/fixtures/image_port_imported.gsp
+move_image 2 160 155
+save tests/fixtures/image_port_imported_moved.gsp
+open tests/fixtures/image_port_imported_moved.gsp
+check

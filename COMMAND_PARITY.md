@@ -182,7 +182,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Point tool | Partial |
 | Segment tool | Partial |
 | Circle tool | Partial |
-| Text, image, table, iteration, plotting | Partial: literal text, point labels, and Cartesian `x`/`x²` plots cross-open; image, table, and iteration pending |
-| Import, export, print | Partial: SVG/PDF export and Linux printing for supported visible geometry; import pending |
+| Text, image, table, iteration, plotting | Partial: literal text, point labels, a single PNG picture, and Cartesian `x`/`x²` plots cross-open; table and iteration pending |
+| Import, export, print | Partial: single PNG import, SVG/PDF export, and Linux printing for supported visible geometry; other image formats and physical print verification pending |
 | Multi-page documents | Partial: page navigation and read-only complex objects |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

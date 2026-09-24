@@ -74,7 +74,7 @@ impl ParameterGroup {
         let group = Self { bytes: bytes.to_vec() };
         let at = group.anchor();
         let bbox = group.bbox();
-        if bbox.0 != at || bbox.1.0 - bbox.0.0 != 94 || bbox.1.1 - bbox.0.1 != 32 {
+        if bbox.0 != at || i32::from(bbox.1.0) - i32::from(bbox.0.0) != 94 || i32::from(bbox.1.1) - i32::from(bbox.0.1) != 32 {
             return Err("Parameter anchor and box disagree".into());
         }
         Ok(group)
@@ -101,13 +101,17 @@ impl ParameterGroup {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
         let delta = (i32::from(anchor.0) - i32::from(before.0), i32::from(anchor.1) - i32::from(before.1));
-        let at = rs[1].payload + 12;
-        self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
-        self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
         let bbox = rs[4].payload;
+        let mut updates = Vec::new();
         for (index, difference) in [(0, delta.0), (2, delta.1), (4, delta.0), (6, delta.1)] {
             let old = i16::from_le_bytes(self.bytes[bbox + index..bbox + index + 2].try_into().unwrap());
             let new = i16::try_from(i32::from(old) + difference).map_err(|_| "Parameter box coordinate overflow")?;
+            updates.push((index, new));
+        }
+        let at = rs[1].payload + 12;
+        self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
+        for (index, new) in updates {
             self.bytes[bbox + index..bbox + index + 2].copy_from_slice(&new.to_le_bytes());
         }
         Ok(())
@@ -148,6 +152,28 @@ impl CalculationGroup {
     }
     pub fn expression(&self) -> &str { "2 + 3" }
     pub fn value(&self) -> f64 { 5.0 }
+    pub fn anchor(&self) -> (i16, i16) {
+        let rs = records(&self.bytes, 0).unwrap();
+        let at = rs[1].payload + 12;
+        (i16::from_le_bytes(self.bytes[at..at+2].try_into().unwrap()),
+         i16::from_le_bytes(self.bytes[at+2..at+4].try_into().unwrap()))
+    }
+    pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        let rs = records(&self.bytes, 0)?;
+        let before = self.anchor();
+        let bbox = rs[3].payload;
+        let delta = (i32::from(anchor.0)-i32::from(before.0), i32::from(anchor.1)-i32::from(before.1));
+        let mut updates = Vec::new();
+        for (index, difference) in [(0, delta.0), (2, delta.1), (4, delta.0), (6, delta.1)] {
+            let old = i16::from_le_bytes(self.bytes[bbox+index..bbox+index+2].try_into().unwrap());
+            updates.push((index, i16::try_from(i32::from(old)+difference).map_err(|_| "Calculation box coordinate overflow")?));
+        }
+        let at = rs[1].payload + 12;
+        self.bytes[at..at+2].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[at+2..at+4].copy_from_slice(&anchor.1.to_le_bytes());
+        for (index, value) in updates { self.bytes[bbox+index..bbox+index+2].copy_from_slice(&value.to_le_bytes()); }
+        Ok(())
+    }
     pub fn as_bytes(&self) -> &[u8] { &self.bytes }
 }
 
@@ -207,6 +233,10 @@ fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u
 
 impl TableGroup {
     pub fn default_snapshot() -> Self { Self { bytes: table_template() } }
+
+    pub fn for_source(source: u32, anchor: (i16, i16)) -> Result<Self, String> {
+        Ok(Self { bytes: canonical_table(source, anchor, 1)? })
+    }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
@@ -291,7 +321,7 @@ pub fn append_default_parameter_table(document: &[u8], anchor: (i16, i16)) -> Re
     let expected = &DEFAULT_PARAMETER[baseline[1].payload..baseline[1].end];
     if actual.len() != expected.len()
         || actual.iter().zip(expected).enumerate().any(|(i, (a,b))| !matches!(i, 22 | 23) && a != b)
-        || document[param[2].payload + 22..param[2].payload + 28] != *b"\x04\0t[1]"
+        || document.get(param[2].payload + 22..param[2].payload + 28) != Some(&b"\x04\0t[1]"[..])
     { return Err("Only the original t[1] = 1.00 parameter is supported".into()); }
     let selection = rs.iter().find(|r| r.kind == 0x2328 && r.start > param[5].start)
         .ok_or("Missing parameter selection record")?;
