@@ -16,6 +16,29 @@ impl Point {
     }
 }
 
+impl Kind {
+    pub fn dependencies(&self) -> Vec<usize> {
+        match *self {
+            Kind::Free(_) | Kind::Unsupported(_) => vec![],
+            Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => vec![host],
+            Kind::Midpoint(a, b)
+            | Kind::Segment(a, b)
+            | Kind::Line(a, b)
+            | Kind::Ray(a, b)
+            | Kind::Parallel(a, b)
+            | Kind::Perpendicular(a, b)
+            | Kind::Circle(a, b)
+            | Kind::CircleBySegment(a, b)
+            | Kind::Intersection(a, b)
+            | Kind::LineCircleIntersection(a, b, _)
+            | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
+            Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
+                vec![a, b, c]
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
     Free(Point),

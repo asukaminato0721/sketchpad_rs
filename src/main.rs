@@ -200,6 +200,39 @@ impl Editor {
         self.selection_order.clear();
         self.selection_order.push(id);
     }
+    fn select_related(&mut self, children: bool) {
+        let current = self.doc.selected.clone();
+        let related: Vec<_> = if children {
+            self.doc
+                .objects
+                .iter()
+                .filter(|object| object.page == self.doc.active_page && object.visible)
+                .filter(|object| {
+                    object
+                        .kind
+                        .dependencies()
+                        .iter()
+                        .any(|id| current.contains(id))
+                })
+                .map(|object| object.id)
+                .collect()
+        } else {
+            self.doc
+                .objects
+                .iter()
+                .filter(|object| current.contains(&object.id))
+                .flat_map(|object| object.kind.dependencies())
+                .filter(|id| {
+                    self.doc
+                        .objects
+                        .get(id.saturating_sub(1))
+                        .is_some_and(|object| object.page == self.doc.active_page && object.visible)
+                })
+                .collect()
+        };
+        self.doc.selected = related.iter().copied().collect();
+        self.selection_order = related;
+    }
     fn click(&mut self, v: &Viewport, p: egui::Pos2, multi: bool) {
         if self.doc.partial_view && self.tool != Tool::Select {
             self.status =
@@ -545,6 +578,14 @@ impl Editor {
                             .map(|o| o.id)
                             .collect();
                         self.selection_order = self.doc.selected.iter().copied().collect();
+                        ui.close();
+                    }
+                    if ui.button("Select Parents").clicked() {
+                        self.select_related(false);
+                        ui.close();
+                    }
+                    if ui.button("Select Children").clicked() {
+                        self.select_related(true);
                         ui.close();
                     }
                 });

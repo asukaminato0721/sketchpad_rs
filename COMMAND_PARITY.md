@@ -33,8 +33,8 @@ The release gate is every sketch and document command verified after editing, sa
 | Clear | Pending |
 | Action Buttons | Pending |
 | Select All | Partial |
-| Select Parents | Pending |
-| Select Children | Pending |
+| Select Parents | Partial: direct dependencies of supported objects |
+| Select Children | Partial: direct dependents of supported objects |
 | Crop Picture to Polygon | Pending |
 | Split/Merge | Pending |
 | Edit Definition | Pending |
@@ -78,7 +78,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Circle by Center+Point | Partial |
 | Angle Bisector | Partial: original fixture and generated ray cross-opened |
 | Circle by Center+Radius | Partial: segment radius variant cross-opened |
-| Arc on Circle | Pending |
+| Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Pending |
 | Locus | Pending |
