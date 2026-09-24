@@ -30,3 +30,9 @@ Changing the same original-app point from red to orange and blue changed only it
 The same RGB field occurs in a code-2 segment header: the port's default segment was navy `(0, 0, 128)`, and Display > Color > Blue changed its object-header bytes 12–14 to `(0, 0, 255)`. `tests/fixtures/style_blue_line.gsp` is the original-app save. The `segment_color` helpers are restricted to code-2 headers; other object codes need their own verification.
 
 A code-3 circle also uses payload bytes 12–14: the generated default circle was green `(0, 128, 0)`, and the original Display > Color > Blue saved `(0, 0, 255)` in `tests/fixtures/style_blue_circle.gsp`. The Rust `circle_color` helper then produced a blue-circle file that opened, displayed blue, and saved in Sketchpad 5. The helper rejects other object codes.
+
+## Circle line style
+
+I selected a circle boundary in the original application and used Display > Line Style. Choosing Thick changed its code-3 `0x07d0` payload byte 10 from `0x22` to `0x23`; choosing Dashed changed it from `0x22` to `0x12`. Original saves are `tests/fixtures/style_thick_circle.gsp` and `style_dashed_circle.gsp`. This agrees with the segment width and pattern nibbles. `circle_line_style` and `set_circle_line_style` decode and edit this field only for code-3 headers. Native editing and rendering remain to be integrated.
+
+`dev/style_record_probe.rs circle-line` generated a Thick, Solid circle from the green-circle fixture. Sketchpad 5 opened it, displayed a thick green circle, saved it, and `gsp_probe verify` reopened the save with three supported objects and `partial=false`.

@@ -263,6 +263,21 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
+    for object in doc.objects.iter().filter(|o| o.page == doc.active_page && o.visible && !o.deleted) {
+        if let Kind::PlainText { text, rect } = &object.kind {
+            let at = vp.screen(Point { x: rect.left.into(), y: rect.top.into() });
+            for (line, content) in text.split('\n').enumerate() {
+                writeln!(svg, "<text x=\"{}\" y=\"{}\">{}</text>", at.x, at.y + 16. + line as f32 * 19., xml_text(content)).unwrap();
+            }
+        }
+        if let Some(label) = &object.label && label.visible()
+            && let Ok(name) = label.name_utf8()
+            && let Some(point) = doc.position(object.id) {
+            let at = vp.screen(point);
+            let offset = label.offset();
+            writeln!(svg, "<text x=\"{}\" y=\"{}\">{}</text>", at.x + offset.0 as f32, at.y + offset.1 as f32 + 13., xml_text(name)).unwrap();
+        }
+    }
     let mut row = 0;
     for object in doc
         .objects

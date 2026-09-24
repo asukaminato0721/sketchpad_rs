@@ -1097,7 +1097,10 @@ impl Document {
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
             }
-            if label.is_some() && !is_point_kind(&kind) { safe = false; }
+            if label.is_some() && !is_point_kind(&kind) {
+                safe = false;
+                label = None;
+            }
             objects.push(Object {
                 id: objects.len() + 1,
                 page,
@@ -1183,6 +1186,57 @@ impl Document {
     pub fn add(&mut self, kind: Kind) -> usize {
         self.checkpoint();
         self.append_object(kind)
+    }
+    pub fn add_text(&mut self, text: &str, at: Point) -> Result<usize, String> {
+        let x = i16::try_from(at.x.round() as i64).map_err(|_| "Text x is out of range")?;
+        let y = i16::try_from(at.y.round() as i64).map_err(|_| "Text y is out of range")?;
+        let rect = TextRect::roomy_at(x, y, text)?;
+        text_object::encode_plain_text_group(text, rect)?;
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot add text to this sketch safely".into());
+        }
+        Ok(self.add(Kind::PlainText { text: text.to_owned(), rect }))
+    }
+    pub fn edit_text(&mut self, id: usize, text: &str) -> Result<(), String> {
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid text ID")?).ok_or("Invalid text ID")?;
+        let Kind::PlainText { rect, .. } = object.kind else { return Err("Object is not free text".into()); };
+        let rect = TextRect::roomy_at(rect.left, rect.top, text)?;
+        text_object::encode_plain_text_group(text, rect)?;
+        self.checkpoint();
+        self.objects[id - 1].kind = Kind::PlainText { text: text.to_owned(), rect };
+        Ok(())
+    }
+    pub fn move_text(&mut self, id: usize, at: Point) -> Result<(), String> {
+        self.move_text_inner(id, at, true)
+    }
+    pub fn drag_text(&mut self, id: usize, at: Point) -> Result<(), String> {
+        self.move_text_inner(id, at, false)
+    }
+    fn move_text_inner(&mut self, id: usize, at: Point, checkpoint: bool) -> Result<(), String> {
+        let x = i16::try_from(at.x.round() as i64).map_err(|_| "Text x is out of range")?;
+        let y = i16::try_from(at.y.round() as i64).map_err(|_| "Text y is out of range")?;
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid text ID")?).ok_or("Invalid text ID")?;
+        let Kind::PlainText { ref text, rect } = object.kind else { return Err("Object is not free text".into()); };
+        let dx = i32::from(x) - i32::from(rect.left);
+        let dy = i32::from(y) - i32::from(rect.top);
+        let right = i16::try_from(i32::from(rect.right) + dx).map_err(|_| "Text x is out of range")?;
+        let bottom = i16::try_from(i32::from(rect.bottom) + dy).map_err(|_| "Text y is out of range")?;
+        let text = text.clone();
+        if checkpoint { self.checkpoint(); }
+        self.objects[id - 1].kind = Kind::PlainText { text, rect: TextRect { left: x, top: y, right, bottom } };
+        self.dirty = true;
+        Ok(())
+    }
+    pub fn set_point_label(&mut self, id: usize, name: &str, visible: bool) -> Result<(), String> {
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid point ID")?).ok_or("Invalid point ID")?;
+        if !is_point_kind(&object.kind) || object.deleted { return Err("Object is not a point".into()); }
+        let mut label = if let Some(existing) = &object.label { existing.clone() }
+            else { LabelAux::new_point(name, visible, (8, 5))? };
+        label.set_name(name)?;
+        label.set_visible(visible);
+        self.checkpoint();
+        self.objects[id - 1].label = Some(label);
+        Ok(())
     }
     fn append_object(&mut self, kind: Kind) -> usize {
         let id = self.objects.len() + 1;
@@ -2173,6 +2227,12 @@ impl Document {
             {
                 return Err(format!("Non-finite coordinates in object {}", o.id));
             }
+            if let Kind::PlainText { text, rect } = &o.kind {
+                text_object::encode_plain_text_group(text, *rect)?;
+            }
+            if o.label.is_some() && !is_point_kind(&o.kind) {
+                return Err(format!("Invalid point label in object {}", o.id));
+            }
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
                 || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
@@ -2619,7 +2679,7 @@ impl Document {
             page_index += 1;
         }
         if self.objects.len() == self.source_count {
-            return self.compact_deleted(out);
+            return self.patch_text_and_labels(self.compact_deleted(out)?);
         }
         let preamble = rs
             .iter()
@@ -2651,6 +2711,12 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::PlainText { text, rect } = &o.kind {
+                let mut group = text_object::encode_plain_text_group(text, *rect)?;
+                if !o.visible { group[10] |= 1; }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::HideShowButton {
                 target,
                 action,
@@ -2836,6 +2902,9 @@ impl Document {
                 h[2] = 1;
             }
             put_record(&mut added, 0x7d0, &h);
+            if let Some(label) = &o.label {
+                added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+            }
             if let Kind::Free(p) = o.kind {
                 let mut pair = Vec::new();
                 pair.extend_from_slice(&p.x.to_le_bytes());
@@ -2905,7 +2974,55 @@ impl Document {
             out.splice(trailer + added_len..trailer + added_len, page_link);
         }
         records(&out)?;
-        self.compact_deleted(out)
+        self.patch_text_and_labels(self.compact_deleted(out)?)
+    }
+    fn patch_text_and_labels(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+        let mut ordinal = 0usize;
+        let mut current_group: Option<usize> = None;
+        let survivors: Vec<&Object> = self.objects.iter().filter(|o| !o.deleted).collect();
+        for (index, record) in rs.iter().enumerate() {
+            if record.kind == 0x07d0 {
+                ordinal += 1;
+                current_group = Some(index);
+            }
+            if record.kind != 0x07d7 { continue; }
+            let start_index = current_group.take().ok_or("Object terminator without header")?;
+            let object = survivors.get(ordinal - 1).ok_or("Object group count mismatch")?;
+            if object.id > self.source_count { continue; }
+            let group = &rs[start_index..=index];
+            if let Kind::PlainText { text, rect } = &object.kind {
+                let rich = group.iter().find(|r| r.kind == 0x08fc).ok_or("Missing free-text payload")?;
+                let bbox = group.iter().find(|r| r.kind == 0x0898).ok_or("Missing free-text box")?;
+                let (old_text, old_rect) = text_object::decode_plain_text(
+                    &bytes[rich.data.clone()], &bytes[bbox.data.clone()])?;
+                if old_text != *text || old_rect != *rect {
+                    let mut replacement = text_object::encode_plain_text_group(text, *rect)?;
+                    if !object.visible { replacement[10] |= 1; }
+                    edits.push((group[0].start, record.data.end, replacement));
+                }
+            }
+            if let Some(label) = &object.label {
+                if let Some(old) = group.iter().find(|r| r.kind == 0x07d5) {
+                    if bytes[old.data.clone()] != *label.payload() {
+                        let mut replacement = Vec::new();
+                        put_record(&mut replacement, 0x07d5, label.payload());
+                        edits.push((old.start, old.data.end + old.data.len() % 2, replacement));
+                    }
+                } else {
+                    let insertion = group[0].data.end + group[0].data.len() % 2;
+                    edits.push((insertion, insertion, crate::text_records::encode_point_label_records(label)));
+                }
+            }
+        }
+        if ordinal != survivors.len() { return Err("Object group count mismatch".into()); }
+        edits.sort_by(|a, b| b.0.cmp(&a.0));
+        for (start, end, replacement) in edits {
+            bytes.splice(start..end, replacement);
+        }
+        records(&bytes)?;
+        Ok(bytes)
     }
     pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
         let data = self.encode()?;
@@ -2928,6 +3045,7 @@ impl Document {
                         || saved.page != current.page
                         || saved.kind != current.kind.remap(&ids)
                         || saved.visible != current.visible
+                        || saved.label != current.label
                         || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
                 })
         {
@@ -2977,6 +3095,39 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn plain_text_edit_move_and_label_survive_save() {
+        let mut doc = Document::from_bytes(include_bytes!("../tests/fixtures/text_object_original_Hello.gsp"), None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), include_bytes!("../tests/fixtures/text_object_original_Hello.gsp"));
+        doc.edit_text(1, "猫\nA<B>").unwrap();
+        doc.move_text(1, Point { x: 180., y: 130. }).unwrap();
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert_eq!(reopened.objects[0].kind, doc.objects[0].kind);
+        assert!(!reopened.partial_view);
+
+        let mut label_doc = Document::new();
+        let point = label_doc.add(Kind::Free(Point { x: 100., y: 120. }));
+        label_doc.set_point_label(point, "P", true).unwrap();
+        let bytes = label_doc.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(reopened.objects[0].label.as_ref().unwrap().name_utf8().unwrap(), "P");
+        assert!(!reopened.partial_view);
+    }
+    #[test]
+    fn source_point_label_rename_and_hide_survive_save() {
+        let original = include_bytes!("../tests/fixtures/text_point_label.gsp");
+        let mut doc = Document::from_bytes(original, None).unwrap();
+        assert_eq!(doc.encode().unwrap(), original);
+        doc.set_point_label(1, "Cat", false).unwrap();
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        let label = reopened.objects[0].label.as_ref().unwrap();
+        assert_eq!(label.name_utf8().unwrap(), "Cat");
+        assert!(!label.visible());
+        assert!(!reopened.partial_view);
+    }
     #[test]
     fn fixtures_preserve_bytes() {
         for name in [

@@ -4,13 +4,15 @@
 //!   style_record_probe point-rgb INPUT.gsp OUTPUT.gsp R G B
 //!   style_record_probe circle-rgb INPUT.gsp OUTPUT.gsp R G B
 //!   style_record_probe segment-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
+//!   style_record_probe circle-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
 
 #[path = "../src/style_records.rs"]
 mod style_records;
 
 use style_records::{
-    LinePattern, LineWidth, RgbColor, SegmentLineStyle, circle_color, point_color,
-    segment_line_style, set_circle_color, set_point_color, set_segment_line_style,
+    LinePattern, LineWidth, RgbColor, SegmentLineStyle, circle_color, circle_line_style,
+    point_color, segment_line_style, set_circle_color, set_circle_line_style,
+    set_point_color, set_segment_line_style,
 };
 
 fn main() -> Result<(), String> {
@@ -53,7 +55,10 @@ fn main() -> Result<(), String> {
                     })?;
                     changed = true;
                 }
-                "segment-line" if segment_line_style(payload).is_some() && args.len() == 6 => {
+                "segment-line" | "circle-line"
+                    if args.len() == 6
+                        && ((args[1] == "segment-line" && segment_line_style(payload).is_some())
+                            || (args[1] == "circle-line" && circle_line_style(payload).is_some())) => {
                     let width = match args[4].as_str() {
                         "hairline" => LineWidth::Hairline,
                         "thin" => LineWidth::Thin,
@@ -67,7 +72,11 @@ fn main() -> Result<(), String> {
                         "dotted" => LinePattern::Dotted,
                         _ => return Err("Unknown line pattern".into()),
                     };
-                    set_segment_line_style(payload, SegmentLineStyle { width, pattern })?;
+                    if args[1] == "segment-line" && segment_line_style(payload).is_some() {
+                        set_segment_line_style(payload, SegmentLineStyle { width, pattern })?;
+                    } else if args[1] == "circle-line" && circle_line_style(payload).is_some() {
+                        set_circle_line_style(payload, SegmentLineStyle { width, pattern })?;
+                    }
                     changed = true;
                 }
                 _ => {}

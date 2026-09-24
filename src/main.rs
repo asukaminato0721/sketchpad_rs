@@ -18,6 +18,7 @@ enum Tool {
     Point,
     Segment,
     Circle,
+    Text,
 }
 enum PendingAction {
     New,
@@ -103,6 +104,10 @@ struct Editor {
     pending: Option<usize>,
     selection_order: Vec<usize>,
     dragging: Option<usize>,
+    drag_offset: egui::Vec2,
+    text_draft: String,
+    inspected: Option<usize>,
+    edit_buffer: String,
     scale: f32,
     center: Point,
     status: String,
@@ -126,6 +131,10 @@ impl Editor {
             pending: None,
             selection_order: Vec::new(),
             dragging: None,
+            drag_offset: egui::Vec2::ZERO,
+            text_draft: "Text".into(),
+            inspected: None,
+            edit_buffer: String::new(),
             scale: 1.,
             center: Point { x: 400., y: 300. },
             status: String::new(),
@@ -144,7 +153,7 @@ impl Editor {
         e
     }
     fn fit(&mut self) {
-        let pts: Vec<_> = self
+        let mut pts: Vec<_> = self
             .doc
             .objects
             .iter()
@@ -156,6 +165,12 @@ impl Editor {
             })
             .filter_map(|o| self.doc.position(o.id))
             .collect();
+        for object in self.doc.objects.iter().filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted) {
+            if let Kind::PlainText { rect, .. } = &object.kind {
+                pts.push(Point { x: rect.left.into(), y: rect.top.into() });
+                pts.push(Point { x: rect.right.into(), y: rect.bottom.into() });
+            }
+        }
         if pts.is_empty() {
             return;
         }
@@ -304,6 +319,14 @@ impl Editor {
             .map(|x| x.0)
     }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
+        if let Some(object) = self.doc.objects.iter().rev().find(|object| {
+            object.page == self.doc.active_page && object.visible && !object.deleted
+                && matches!(&object.kind, Kind::PlainText { rect, .. }
+                    if egui::Rect::from_two_pos(
+                        v.screen(Point { x: rect.left.into(), y: rect.top.into() }),
+                        v.screen(Point { x: rect.right.into(), y: rect.bottom.into() })
+                    ).contains(p))
+        }) { return Some(object.id); }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             object.page == self.doc.active_page
                 && object.visible
@@ -766,6 +789,12 @@ impl Editor {
             Tool::Point => {
                 let id = self.point_at(v, p);
                 self.select_only(id);
+            }
+            Tool::Text => {
+                match self.doc.add_text(&self.text_draft, v.world(p)) {
+                    Ok(id) => self.select_only(id),
+                    Err(error) => self.status = error,
+                }
             }
             Tool::Segment | Tool::Circle => {
                 let id = self.point_at(v, p);
@@ -1487,12 +1516,48 @@ impl Editor {
                 (Tool::Point, "Point"),
                 (Tool::Segment, "Segment"),
                 (Tool::Circle, "Circle"),
+                (Tool::Text, "Text"),
             ] {
                 if ui.selectable_label(self.tool == tool, name).clicked() {
                     self.tool = tool;
                     self.pending = None;
                 }
             }
+            if self.tool == Tool::Text {
+                ui.label("New text");
+                ui.text_edit_multiline(&mut self.text_draft);
+                ui.label("Click the sketch to place it.");
+            }
+            if let Some(id) = self.doc.selected.iter().next().copied() {
+                if self.inspected != Some(id) {
+                    self.inspected = Some(id);
+                    self.edit_buffer = match &self.doc.objects[id - 1].kind {
+                        Kind::PlainText { text, .. } => text.clone(),
+                        _ => self.doc.objects[id - 1].label.as_ref()
+                            .and_then(|label| label.name_utf8().ok())
+                            .map(str::to_owned).unwrap_or_else(|| format!("P{id}")),
+                    };
+                }
+                if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
+                    ui.separator();
+                    ui.label("Edit selected text");
+                    ui.text_edit_multiline(&mut self.edit_buffer);
+                    if ui.button("Apply text").clicked() {
+                        if let Err(error) = self.doc.edit_text(id, &self.edit_buffer) { self.status = error; }
+                    }
+                } else if self.doc.position(id).is_some() {
+                    ui.separator();
+                    ui.label("Point label");
+                    ui.text_edit_singleline(&mut self.edit_buffer);
+                    let visible = self.doc.objects[id - 1].label.as_ref().is_some_and(|label| label.visible());
+                    if ui.button(if visible { "Hide label" } else { "Show label" }).clicked() {
+                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, !visible) { self.status = error; }
+                    }
+                    if ui.button("Rename label").clicked() {
+                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, visible) { self.status = error; }
+                    }
+                }
+            } else { self.inspected = None; }
             ui.separator();
             ui.label(format!("{} objects", self.doc.objects.len()));
             if self.doc.partial_view {
@@ -1533,10 +1598,14 @@ impl Editor {
                             if matches!(
                                 self.doc.objects[id - 1].kind,
                                 Kind::Free(_)
+                                    | Kind::PlainText { .. }
                                     | Kind::PointOnSegment(_, _)
                                     | Kind::PointOnCircle(_, _, _)
                                     | Kind::PointOnArc(_, _)
                             ) {
+                                self.drag_offset = if let Kind::PlainText { rect, .. } = &self.doc.objects[id - 1].kind {
+                                    p - vp.screen(Point { x: rect.left.into(), y: rect.top.into() })
+                                } else { egui::Vec2::ZERO };
                                 self.doc.checkpoint();
                                 self.dragging = Some(id);
                             }
@@ -1545,7 +1614,9 @@ impl Editor {
                 }
                 if response.dragged() {
                     if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
-                        self.doc.move_point(id, vp.world(p));
+                        if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
+                            if let Err(error) = self.doc.drag_text(id, vp.world(p - self.drag_offset)) { self.status = error; }
+                        } else { self.doc.move_point(id, vp.world(p)); }
                     }
                 }
                 if response.drag_stopped() {
@@ -1560,6 +1631,31 @@ impl Editor {
                 for object in self.doc.objects.iter().filter(|object| {
                     object.page == self.doc.active_page && object.visible && !object.deleted
                 }) {
+                    if let Kind::PlainText { text, rect } = &object.kind {
+                        let at = vp.screen(Point { x: rect.left.into(), y: rect.top.into() });
+                        for (line, content) in text.split('\n').enumerate() {
+                            ui.painter().text(
+                                at + egui::vec2(0., line as f32 * 19.),
+                                egui::Align2::LEFT_TOP,
+                                content,
+                                egui::FontId::proportional(16.),
+                                egui::Color32::from_gray(35),
+                            );
+                        }
+                    }
+                    if let Some(label) = &object.label && label.visible()
+                        && let Ok(name) = label.name_utf8()
+                        && let Some(point) = self.doc.position(object.id) {
+                        let at = vp.screen(point);
+                        let offset = label.offset();
+                        ui.painter().text(
+                            at + egui::vec2(offset.0 as f32, offset.1 as f32),
+                            egui::Align2::LEFT_TOP,
+                            name,
+                            egui::FontId::proportional(13.),
+                            egui::Color32::from_gray(35),
+                        );
+                    }
                     if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
                         let box_rect =
                             sketchpad_rs::render::action_button_rect(&vp, *anchor, label);
@@ -1589,7 +1685,7 @@ impl Editor {
                         && !o.deleted
                         && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
                 }) {
-                    if let Some(p) = self.doc.position(o.id) {
+                    if o.label.is_none() && let Some(p) = self.doc.position(o.id) {
                         let at = vp.screen(p);
                         if r.contains(at) {
                             ui.painter().text(

@@ -125,6 +125,8 @@ pub struct SegmentLineStyle {
     pub pattern: LinePattern,
 }
 
+pub type CircleLineStyle = SegmentLineStyle;
+
 fn is_segment_header(payload: &[u8]) -> bool {
     (payload.len() == 16 || payload.len() == 28)
         && u16::from_le_bytes([payload[0], payload[1]]) == 2
@@ -134,14 +136,25 @@ pub fn segment_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {
     if !is_segment_header(payload) {
         return None;
     }
-    let width = match payload[10] & 0x0f {
+    decode_line_style(payload[10])
+}
+
+pub fn circle_line_style(payload: &[u8]) -> Option<CircleLineStyle> {
+    if !is_circle_header(payload) {
+        return None;
+    }
+    decode_line_style(payload[10])
+}
+
+fn decode_line_style(value: u8) -> Option<SegmentLineStyle> {
+    let width = match value & 0x0f {
         0 => LineWidth::Hairline,
         1 => LineWidth::Thin,
         2 => LineWidth::Medium,
         3 => LineWidth::Thick,
         _ => return None,
     };
-    let pattern = match payload[10] >> 4 {
+    let pattern = match value >> 4 {
         0 => LinePattern::Dotted,
         1 => LinePattern::Dashed,
         2 => LinePattern::Solid,
@@ -156,6 +169,17 @@ pub fn set_segment_line_style(
 ) -> Result<(), String> {
     if !is_segment_header(payload) {
         return Err("Expected a segment object header".into());
+    }
+    payload[10] = (style.pattern as u8) << 4 | style.width as u8;
+    Ok(())
+}
+
+pub fn set_circle_line_style(
+    payload: &mut [u8],
+    style: CircleLineStyle,
+) -> Result<(), String> {
+    if !is_circle_header(payload) {
+        return Err("Expected a circle object header".into());
     }
     payload[10] = (style.pattern as u8) << 4 | style.width as u8;
     Ok(())
@@ -286,6 +310,23 @@ mod tests {
         assert_eq!(circle_color(&edited), circle_color(blue));
         edited[12..15].copy_from_slice(&green[12..15]);
         assert_eq!(edited, green);
+    }
+
+    #[test]
+    fn original_circle_line_menu_writes_the_same_nibbles_as_segments() {
+        let medium = first_circle_header(include_bytes!("../tests/fixtures/style_green_circle.gsp"));
+        let thick = first_circle_header(include_bytes!("../tests/fixtures/style_thick_circle.gsp"));
+        let dashed = first_circle_header(include_bytes!("../tests/fixtures/style_dashed_circle.gsp"));
+        assert_eq!(circle_line_style(medium), Some(CircleLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid }));
+        assert_eq!(circle_line_style(thick), Some(CircleLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid }));
+        assert_eq!(circle_line_style(dashed), Some(CircleLineStyle { width: LineWidth::Medium, pattern: LinePattern::Dashed }));
+        let mut edited = medium.to_vec();
+        set_circle_line_style(&mut edited, CircleLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid }).unwrap();
+        assert_eq!(edited[10], thick[10]);
+        edited[10] = medium[10];
+        assert_eq!(edited, medium);
+        assert_eq!(segment_line_style(medium), None);
+        assert_eq!(circle_line_style(first_segment_header(include_bytes!("../tests/fixtures/style_medium_solid_line.gsp"))), None);
     }
 
     fn first_circle_header(bytes: &[u8]) -> &[u8] {
