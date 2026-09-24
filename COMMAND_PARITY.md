@@ -12,12 +12,12 @@ The release gate is every sketch and document command verified after editing, sa
 | Open | Partial |
 | Save | Partial |
 | Save As | Partial |
-| Close | Pending |
+| Close | Partial: unsaved-change dialog |
 | Document Options | Pending |
 | Page Setup | Pending |
 | Print Preview | Pending |
 | Print | Pending |
-| Quit | Pending |
+| Quit | Partial: unsaved-change dialog |
 | Sketchpad LessonLink... | Outside release target (legacy service) |
 | Sketchpad Sketch Exchange | Outside release target (legacy service) |
 
@@ -69,7 +69,7 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Point on Object | Pending |
 | Midpoint | Partial |
-| Intersection | Pending |
+| Intersection | Partial: straight, line-circle, and circle-circle constructions; generated examples opened in Sketchpad 5 |
 | Segment | Partial |
 | Ray | Partial |
 | Line | Partial |
@@ -185,4 +185,4 @@ The release gate is every sketch and document command verified after editing, sa
 | Text, image, table, iteration, plotting | Pending |
 | Import, export, print | Pending |
 | Multi-page documents | Partial: page navigation and read-only complex objects |
-| Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object demo opened under Wine |
+| Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

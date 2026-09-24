@@ -14,6 +14,11 @@ enum Tool {
     Segment,
     Circle,
 }
+enum PendingAction {
+    New,
+    Open(PathBuf),
+    Quit,
+}
 struct Editor {
     doc: Document,
     tool: Tool,
@@ -22,6 +27,8 @@ struct Editor {
     scale: f32,
     center: Point,
     status: String,
+    pending_action: Option<PendingAction>,
+    exit_requested: bool,
 }
 impl Editor {
     fn new(doc: Document) -> Self {
@@ -33,6 +40,8 @@ impl Editor {
             scale: 1.,
             center: Point { x: 400., y: 300. },
             status: String::new(),
+            pending_action: None,
+            exit_requested: false,
         };
         e.fit();
         e
@@ -77,7 +86,7 @@ impl Editor {
             Err(e) => self.status = format!("Open failed: {e}"),
         }
     }
-    fn save(&mut self, as_new: bool) {
+    fn save(&mut self, as_new: bool) -> bool {
         let path = if as_new || self.doc.path.is_none() {
             rfd::FileDialog::new()
                 .add_filter("Sketchpad document", &["gsp"])
@@ -86,11 +95,24 @@ impl Editor {
         } else {
             self.doc.path.clone()
         };
-        if let Some(path) = path {
-            self.status = match self.doc.save_to(&path) {
-                Ok(()) => format!("Saved {}", path.display()),
-                Err(e) => format!("Save refused: {e}"),
-            };
+        let Some(path) = path else { return false };
+        match self.doc.save_to(&path) {
+            Ok(()) => {
+                self.status = format!("Saved {}", path.display());
+                true
+            }
+            Err(e) => {
+                self.status = format!("Save refused: {e}");
+                false
+            }
+        }
+    }
+    fn finish_pending_action(&mut self) {
+        match self.pending_action.take() {
+            Some(PendingAction::New) => *self = Self::new(Document::new()),
+            Some(PendingAction::Open(path)) => self.open(path),
+            Some(PendingAction::Quit) => self.exit_requested = true,
+            None => {}
         }
     }
     fn hit_point(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
@@ -313,7 +335,19 @@ impl Editor {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
-                        *self = Self::new(Document::new());
+                        if self.doc.dirty {
+                            self.pending_action = Some(PendingAction::New);
+                        } else {
+                            *self = Self::new(Document::new());
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Close").clicked() {
+                        if self.doc.dirty {
+                            self.pending_action = Some(PendingAction::New);
+                        } else {
+                            *self = Self::new(Document::new());
+                        }
                         ui.close();
                     }
                     if ui.button("Open…").clicked() {
@@ -321,7 +355,11 @@ impl Editor {
                             .add_filter("Sketchpad document", &["gsp"])
                             .pick_file()
                         {
-                            self.open(p);
+                            if self.doc.dirty {
+                                self.pending_action = Some(PendingAction::Open(p));
+                            } else {
+                                self.open(p);
+                            }
                         }
                         ui.close();
                     }
@@ -331,6 +369,14 @@ impl Editor {
                     }
                     if ui.button("Save As…").clicked() {
                         self.save(true);
+                        ui.close();
+                    }
+                    if ui.button("Quit").clicked() {
+                        if self.doc.dirty {
+                            self.pending_action = Some(PendingAction::Quit);
+                        } else {
+                            self.exit_requested = true;
+                        }
                         ui.close();
                     }
                 });
@@ -530,6 +576,35 @@ impl Editor {
                     }
                 }
             });
+        if self.pending_action.is_some() {
+            enum Decision {
+                Save,
+                Discard,
+                Cancel,
+            }
+            let mut decision = None;
+            egui::Modal::new(egui::Id::new("unsaved_changes")).show(root.ctx(), |ui| {
+                ui.heading("Unsaved changes");
+                ui.label("Save this sketch before continuing?");
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        decision = Some(Decision::Save);
+                    }
+                    if ui.button("Discard").clicked() {
+                        decision = Some(Decision::Discard);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        decision = Some(Decision::Cancel);
+                    }
+                });
+            });
+            match decision {
+                Some(Decision::Save) if self.save(false) => self.finish_pending_action(),
+                Some(Decision::Discard) => self.finish_pending_action(),
+                Some(Decision::Cancel) => self.pending_action = None,
+                _ => {}
+            }
+        }
         Viewport {
             rect,
             scale: self.scale,
@@ -606,7 +681,14 @@ fn main() {
             Event::WindowEvent { window_id, event } if window_id == window.id() => {
                 let response = egui_state.on_window_event(&window, &event);
                 match event {
-                    WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::CloseRequested => {
+                        if editor.doc.dirty {
+                            editor.pending_action = Some(PendingAction::Quit);
+                            window.request_redraw();
+                        } else {
+                            elwt.exit();
+                        }
+                    }
                     WindowEvent::Resized(s) => {
                         size = s;
                         if s.width > 0 && s.height > 0 {
@@ -623,6 +705,10 @@ fn main() {
                         let input = egui_state.take_egui_input(&window);
                         let mut viewport = None;
                         let mut output = ctx.run_ui(input, |ui| viewport = Some(editor.ui(ui)));
+                        if editor.exit_requested {
+                            elwt.exit();
+                            return;
+                        }
                         egui_state.handle_platform_output(&window, output.platform_output);
                         let jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
                         let free_textures = output.textures_delta.free.clone();
