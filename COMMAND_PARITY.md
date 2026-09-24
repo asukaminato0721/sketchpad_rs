@@ -93,7 +93,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Mark Ratio | Pending |
 | Mark Vector | Pending |
 | Mark Distance | Pending |
-| Translate | Pending |
+| Translate | Partial: point translation by fixed polar angle and distance cross-opened |
 | Rotate | Pending |
 | Dilate | Pending |
 | Reflect | Pending |

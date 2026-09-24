@@ -101,6 +101,9 @@ struct Editor {
     status: String,
     pending_action: Option<PendingAction>,
     pending_output: Option<OutputAction>,
+    translate_dialog: bool,
+    translation_angle: f64,
+    translation_distance: f64,
     exit_requested: bool,
 }
 impl Editor {
@@ -116,6 +119,9 @@ impl Editor {
             status: String::new(),
             pending_action: None,
             pending_output: None,
+            translate_dialog: false,
+            translation_angle: 90.,
+            translation_distance: 1.,
             exit_requested: false,
         };
         e.fit();
@@ -646,6 +652,27 @@ impl Editor {
         let id = self.doc.add(Kind::ArcOnCircle(circle, start, end));
         self.select_only(id);
     }
+    fn translate_selected(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Translation on this document cannot be saved safely".into();
+            return;
+        }
+        if self.selection_order.len() != 1 || self.doc.position(self.selection_order[0]).is_none() {
+            self.status = "Select one point to translate".into();
+            return;
+        }
+        if !self.translation_angle.is_finite() || !self.translation_distance.is_finite() {
+            self.status = "Translation values must be finite".into();
+            return;
+        }
+        let id = self.doc.add(Kind::PolarTranslatedPoint(
+            self.selection_order[0],
+            self.translation_angle,
+            37.79527559055118,
+            self.translation_distance,
+        ));
+        self.select_only(id);
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -794,6 +821,12 @@ impl Editor {
                     }
                     if ui.button("Perpendicular Line").clicked() {
                         self.derived_line(true);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Transform", |ui| {
+                    if ui.button("Translate by Angle and Distance…").clicked() {
+                        self.translate_dialog = true;
                         ui.close();
                     }
                 });
@@ -970,6 +1003,35 @@ impl Editor {
                 Some(Decision::Discard) => self.finish_pending_action(),
                 Some(Decision::Cancel) => self.pending_action = None,
                 _ => {}
+            }
+        }
+        if self.translate_dialog {
+            let mut angle = self.translation_angle;
+            let mut distance = self.translation_distance;
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("polar_translation")).show(root.ctx(), |ui| {
+                ui.heading("Translate point");
+                ui.horizontal(|ui| {
+                    ui.label("Angle (degrees)");
+                    ui.add(egui::DragValue::new(&mut angle).speed(1.));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Distance (cm)");
+                    ui.add(egui::DragValue::new(&mut distance).speed(0.1));
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Translate").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            self.translation_angle = angle;
+            self.translation_distance = distance;
+            if apply {
+                self.translate_dialog = false;
+                self.translate_selected();
+            } else if cancel {
+                self.translate_dialog = false;
             }
         }
         let viewport = Viewport {

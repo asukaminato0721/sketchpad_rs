@@ -22,7 +22,8 @@ impl Kind {
             Kind::Free(_) | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
             | Kind::PointOnCircle(host, _, _)
-            | Kind::PointOnArc(host, _) => vec![host],
+            | Kind::PointOnArc(host, _)
+            | Kind::PolarTranslatedPoint(host, _, _, _) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -47,6 +48,7 @@ pub enum Kind {
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    PolarTranslatedPoint(usize, f64, f64, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -163,6 +165,10 @@ fn header(kind: u16) -> [u8; 28] {
         ],
         15 => [
             15, 0, 0, 0, 0, 0, 1, 0, 10, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
+        21 => [
+            21, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         9 | 11..=14 => [
@@ -449,7 +455,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x7d3 if code == 15 => {
+                    0x7d3 if code == 15 || code == 21 => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
@@ -512,6 +518,31 @@ impl Document {
                             _ => Kind::Unsupported(code),
                         }
                     }
+                    (21, _, [origin]) => match &constraint_payload {
+                        Some((payload, _))
+                            if payload.len() == 60
+                                && payload[..4] == [21, 0, 0, 0]
+                                && f64_at(payload, 20).is_finite()
+                                && f64_at(payload, 32).is_finite()
+                                && f64_at(payload, 40).is_finite()
+                                && objects.get(origin - 1).is_some_and(|o| {
+                                    matches!(o.kind, Kind::Free(_) | Kind::PointOnSegment(_, _)
+                                        | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _)
+                                        | Kind::Midpoint(_, _) | Kind::Intersection(_, _)
+                                        | Kind::LineCircleIntersection(_, _, _)
+                                        | Kind::CircleCircleIntersection(_, _, _)
+                                        | Kind::PolarTranslatedPoint(_, _, _, _))
+                                }) =>
+                        {
+                            Kind::PolarTranslatedPoint(
+                                *origin,
+                                f64_at(payload, 20),
+                                f64_at(payload, 32),
+                                f64_at(payload, 40),
+                            )
+                        }
+                        _ => Kind::Unsupported(code),
+                    },
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
                             Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
@@ -692,6 +723,15 @@ impl Document {
                     })
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
+                Kind::PolarTranslatedPoint(origin, angle, units_to_raw, distance) => {
+                    let source = go(d, *origin, seen)?;
+                    let radians = angle.to_radians();
+                    let step = units_to_raw * distance;
+                    Some(Point {
+                        x: source.x + step * radians.cos(),
+                        y: source.y - step * radians.sin(),
+                    })
+                }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
                     let b = go(d, *b, seen)?;
@@ -982,29 +1022,11 @@ impl Document {
             }
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
+                || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
-            let refs = match o.kind {
-                Kind::PointOnSegment(host, _)
-                | Kind::PointOnCircle(host, _, _)
-                | Kind::PointOnArc(host, _) => vec![host],
-                Kind::Midpoint(a, b)
-                | Kind::Segment(a, b)
-                | Kind::Line(a, b)
-                | Kind::Ray(a, b)
-                | Kind::Parallel(a, b)
-                | Kind::Perpendicular(a, b)
-                | Kind::Circle(a, b)
-                | Kind::CircleBySegment(a, b)
-                | Kind::Intersection(a, b)
-                | Kind::LineCircleIntersection(a, b, _)
-                | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
-                Kind::Bisector(a, b, c)
-                | Kind::ThreePointArc(a, b, c)
-                | Kind::ArcOnCircle(a, b, c) => vec![a, b, c],
-                _ => vec![],
-            };
+            let refs = o.kind.dependencies();
             if refs.iter().any(|&r| r == 0 || r >= o.id) {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
@@ -1022,6 +1044,11 @@ impl Document {
                 && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none())
             {
                 return Err(format!("Invalid arc host in point {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PolarTranslatedPoint(origin, _, _, _) if self.position(origin).is_none())
+            {
+                return Err(format!("Invalid source point in translation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
@@ -1161,6 +1188,7 @@ impl Document {
                 Kind::PointOnSegment(host, _)
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _) => (15, vec![host]),
+                Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1220,6 +1248,14 @@ impl Document {
                         let mut payload = vec![15, 0, 28, 0];
                         payload.extend_from_slice(&x.to_le_bytes());
                         payload.extend_from_slice(&y.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PolarTranslatedPoint(_, angle, units, distance) => {
+                        let mut payload =
+                            *include_bytes!("../assets/polar_translation_payload.bin");
+                        payload[20..28].copy_from_slice(&angle.to_le_bytes());
+                        payload[32..40].copy_from_slice(&units.to_le_bytes());
+                        payload[40..48].copy_from_slice(&distance.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     _ => {}
@@ -1825,5 +1861,33 @@ mod tests {
         let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(p), created.position(p));
         assert_eq!(reopened.objects[p - 1].kind, Kind::PointOnArc(arc, 0.5));
+    }
+    #[test]
+    fn polar_translation_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/point_translation.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert!(matches!(
+            original.objects[1].kind,
+            Kind::PolarTranslatedPoint(1, 90., _, 1.)
+        ));
+        assert!(!original.partial_view);
+        assert_eq!(original.encode().unwrap(), bytes);
+        let source = original.position(1).unwrap();
+        let translated = original.position(2).unwrap();
+        assert!((translated.x - source.x).abs() < 1e-6);
+        assert!((translated.y - source.y + 37.79527559055118).abs() < 1e-6);
+        original.move_point(1, Point { x: 100., y: 200. });
+        assert!((original.position(2).unwrap().y - 162.20472440944883).abs() < 1e-6);
+
+        let mut created = Document::new();
+        let a = created.add(Kind::Free(Point { x: 200., y: 200. }));
+        let translated = created.add(Kind::PolarTranslatedPoint(a, 90., 37.79527559055118, 2.));
+        let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert_eq!(
+            reopened.objects[translated - 1].kind,
+            created.objects[translated - 1].kind
+        );
+        assert_eq!(reopened.position(translated), created.position(translated));
+        assert!(!reopened.partial_view);
     }
 }
