@@ -17,6 +17,19 @@ impl Point {
 }
 
 impl Kind {
+    fn is_measurement(&self) -> bool {
+        matches!(
+            self,
+            Kind::SegmentLength(_)
+                | Kind::PointDistance(_, _)
+                | Kind::CircleCircumference(_)
+                | Kind::CircleRadius(_)
+                | Kind::CircleArea(_)
+                | Kind::AngleMeasurement(_, _, _)
+                | Kind::ArcAngle(_)
+                | Kind::ArcLength(_)
+        )
+    }
     pub fn dependencies(&self) -> Vec<usize> {
         match *self {
             Kind::Free(_) | Kind::Unsupported(_) => vec![],
@@ -626,8 +639,8 @@ impl Document {
                                 .zip(sample)
                                 .enumerate()
                                 .all(|(i, (actual, expected))| {
-                                    // Sketchpad rewrites these presentation bytes after edits.
-                                    matches!(i, 22 | 30 | 31) || actual == expected
+                                    // Label x/y and presentation bytes vary after edits.
+                                    matches!(i, 12..=15 | 22 | 30 | 31) || actual == expected
                                 });
                     }
                     0x07d8 if matches!(code, 36 | 37 | 40 | 41 | 42 | 43 | 44 | 46) => {
@@ -1906,6 +1919,20 @@ impl Document {
         }
         Ok(())
     }
+    fn place_measurement(
+        group: &mut [u8],
+        format_offset: usize,
+        row: &mut usize,
+    ) -> Result<(), String> {
+        let y = row
+            .checked_mul(28)
+            .and_then(|v| v.checked_add(5))
+            .ok_or("Too many measurement labels")?;
+        let y = u16::try_from(y).map_err(|_| "Too many measurement labels")?;
+        group[format_offset + 14..format_offset + 16].copy_from_slice(&y.to_le_bytes());
+        *row += 1;
+        Ok(())
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         self.can_save()?;
         let rs = records(&self.original)?;
@@ -1966,10 +1993,17 @@ impl Document {
             .map(|r| r.start)
             .unwrap_or(trailer);
         let mut added = Vec::new();
+        let mut measurement_row = self
+            .objects
+            .iter()
+            .take(self.source_count)
+            .filter(|o| !o.deleted && o.kind.is_measurement())
+            .count();
         for o in self.objects.iter().skip(self.source_count) {
             if let Kind::SegmentLength(segment) = o.kind {
                 let mut group = *include_bytes!("../assets/length_measurement_group.bin");
                 group[48..52].copy_from_slice(&(segment as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -1980,6 +2014,7 @@ impl Document {
                 let mut group = *include_bytes!("../assets/distance_measurement_group.bin");
                 group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 64, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -1989,6 +2024,7 @@ impl Document {
             if let Kind::CircleCircumference(circle) = o.kind {
                 let mut group = *include_bytes!("../assets/circumference_measurement_group.bin");
                 group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -1998,6 +2034,7 @@ impl Document {
             if let Kind::CircleRadius(circle) = o.kind {
                 let mut group = *include_bytes!("../assets/radius_measurement_group.bin");
                 group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2007,6 +2044,7 @@ impl Document {
             if let Kind::CircleArea(circle) = o.kind {
                 let mut group = *include_bytes!("../assets/area_measurement_group.bin");
                 group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2016,6 +2054,7 @@ impl Document {
             if let Kind::ArcAngle(arc) = o.kind {
                 let mut group = *include_bytes!("../assets/arc_angle_measurement_group.bin");
                 group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2025,6 +2064,7 @@ impl Document {
             if let Kind::ArcLength(arc) = o.kind {
                 let mut group = *include_bytes!("../assets/arc_length_measurement_group.bin");
                 group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2036,6 +2076,7 @@ impl Document {
                 group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
                 group[56..60].copy_from_slice(&(c as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 68, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2264,12 +2305,14 @@ mod tests {
             "wine_moved_angle",
             "wine_moved_generated_angle",
             "wine_circle_area",
+            "wine_circle_area_radius",
             "wine_moved_area",
             "wine_moved_generated_area",
             "wine_arc_angle",
             "wine_moved_arc_angle",
             "wine_arc_length",
             "wine_moved_arc_length",
+            "wine_arc_measurements_on_circle",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2513,6 +2556,33 @@ mod tests {
         assert_eq!(reopened.clear_selected().unwrap(), vec![circle, area]);
     }
     #[test]
+    fn multiple_measurements_use_original_label_spacing() {
+        let original =
+            Document::open(Path::new("tests/fixtures/wine_circle_area_radius.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::CircleArea(3));
+        assert_eq!(original.objects[4].kind, Kind::CircleRadius(3));
+
+        let mut doc = Document::new();
+        let center = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let edge = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let circle = doc.add(Kind::Circle(center, edge));
+        doc.add(Kind::CircleArea(circle));
+        doc.add(Kind::CircleRadius(circle));
+        let bytes = doc.encode().unwrap();
+        let ys: Vec<u16> = records(&bytes)
+            .unwrap()
+            .iter()
+            .filter(|record| record.kind == 0x0903)
+            .map(|record| {
+                u16::from_le_bytes([bytes[record.data.start + 14], bytes[record.data.start + 15]])
+            })
+            .collect();
+        assert_eq!(ys, [5, 33]);
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::CircleArea(circle));
+        assert_eq!(reopened.objects[4].kind, Kind::CircleRadius(circle));
+    }
+    #[test]
     fn arc_angle_matches_original_and_updates_after_drag() {
         let original = Document::open(Path::new("tests/fixtures/wine_arc_angle.gsp")).unwrap();
         assert_eq!(original.objects[4].kind, Kind::ArcAngle(4));
@@ -2569,6 +2639,18 @@ mod tests {
         );
         reopened.selected.insert(arc);
         assert_eq!(reopened.clear_selected().unwrap(), vec![arc, measurement]);
+    }
+    #[test]
+    fn arc_on_circle_measurements_reopen_with_separate_labels() {
+        let doc = Document::open(Path::new(
+            "tests/fixtures/wine_arc_measurements_on_circle.gsp",
+        ))
+        .unwrap();
+        assert_eq!(doc.objects[5].kind, Kind::ArcOnCircle(3, 4, 5));
+        assert_eq!(doc.objects[6].kind, Kind::ArcAngle(6));
+        assert_eq!(doc.objects[7].kind, Kind::ArcLength(6));
+        assert!((doc.arc_angle_degrees(7).unwrap() - 90.).abs() < 1e-10);
+        assert!((doc.arc_length_cm(8).unwrap() - 2.91).abs() < 0.01);
     }
     #[test]
     fn copy_segment_includes_parents_but_not_children_like_original() {

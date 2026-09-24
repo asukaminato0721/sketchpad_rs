@@ -62,8 +62,13 @@ xvfb-run -a bash -c '
     import -window root /tmp/sketchpad_wine_after_action.png
   fi
   if [[ -n "${SKETCHPAD_WINE_MENU_X:-}" ]]; then
+    if [[ "${SKETCHPAD_WINE_CLEAR_SELECTION:-}" == "1" ]]; then
+      xdotool mousemove "${SKETCHPAD_WINE_CLEAR_X:-450}" "${SKETCHPAD_WINE_CLEAR_Y:-280}" click 1
+      sleep 0.2
+    fi
     xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-259}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-249}" click 1
     sleep 0.3
+    import -window root /tmp/sketchpad_wine_after_select.png
     if [[ -n "${SKETCHPAD_WINE_ACTION_SHIFT_CLICK_X:-}" ]]; then
       xdotool keydown Shift
       xdotool mousemove "$SKETCHPAD_WINE_ACTION_SHIFT_CLICK_X" "${SKETCHPAD_WINE_ACTION_SHIFT_CLICK_Y:-249}" click 1
