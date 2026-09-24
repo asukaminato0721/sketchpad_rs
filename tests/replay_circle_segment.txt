@@ -1,0 +1,10 @@
+new
+point 130 120
+point 190 120
+segment 1 2
+point 300 170
+circle_segment 4 3
+check
+save /tmp/sketchpad_circle_segment.gsp
+open /tmp/sketchpad_circle_segment.gsp
+check

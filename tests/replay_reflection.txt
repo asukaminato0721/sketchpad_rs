@@ -1,0 +1,14 @@
+new
+point 200 110
+point 120 170
+point 320 170
+segment 2 3
+reflect 1 4
+point 300 220
+point 320 220
+circle 6 7
+reflect 8 4
+check
+save /tmp/sketchpad_reflection.gsp
+open /tmp/sketchpad_reflection.gsp
+check

@@ -429,6 +429,24 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured segment {segment}");
     }
+    fn measure_distance(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [a, b] = self.selection_order.as_slice() else {
+            self.status = "Select two points to measure".into();
+            return;
+        };
+        let (a, b) = (*a, *b);
+        if self.doc.position(a).is_none() || self.doc.position(b).is_none() {
+            self.status = "Select two points to measure".into();
+            return;
+        }
+        let id = self.doc.add(Kind::PointDistance(a, b));
+        self.select_only(id);
+        self.status = format!("Measured distance between {a} and {b}");
+    }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
             Ok(clipboard) => {
@@ -1037,6 +1055,10 @@ impl Editor {
                         self.measure_length();
                         ui.close();
                     }
+                    if ui.button("Distance").clicked() {
+                        self.measure_distance();
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Transform", |ui| {
                     if ui.button("Translate by Angle and Distance…").clicked() {
@@ -1210,6 +1232,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Length = {length:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(distance) = self.doc.point_distance_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Distance = {distance:.2} cm"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );

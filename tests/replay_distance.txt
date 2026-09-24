@@ -1,0 +1,6 @@
+new
+point 150 120
+point 250 120
+distance 1 2
+check
+save /tmp/sketchpad_distance.gsp

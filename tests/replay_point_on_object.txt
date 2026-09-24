@@ -1,0 +1,11 @@
+new
+point 200 185
+point 270 185
+segment 1 2
+point_on 3 240 190
+circle 1 2
+point_on 5 200 115
+check
+save /tmp/sketchpad_point_on_object.gsp
+open /tmp/sketchpad_point_on_object.gsp
+check

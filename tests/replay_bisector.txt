@@ -1,0 +1,9 @@
+new
+point 180 105
+point 260 145
+point 340 105
+bisector 1 2 3
+check
+save /tmp/sketchpad_bisector.gsp
+open /tmp/sketchpad_bisector.gsp
+check

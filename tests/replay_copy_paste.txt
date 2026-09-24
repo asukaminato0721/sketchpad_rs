@@ -1,0 +1,10 @@
+new
+point 150 120
+point 250 120
+segment 1 2
+midpoint 1 2
+point 330 200
+copy 3
+paste
+check
+save /tmp/sketchpad_copy_paste.gsp

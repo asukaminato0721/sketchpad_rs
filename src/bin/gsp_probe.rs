@@ -1,10 +1,11 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
-use sketchpad_rs::document::{Document, Kind, Point, Record, records};
+use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
+use sketchpad_rs::render::{Viewport, svg_page};
 use std::{env, fs, path::Path};
 
 fn usage() -> String {
-    "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | demo OUTPUT.gsp [1..9]"
+    "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | demo OUTPUT.gsp [1..9] | replay SCRIPT | svg INPUT.gsp OUTPUT.svg"
         .into()
 }
 
@@ -205,6 +206,326 @@ fn demo(path: &str, steps: usize) -> Result<(), String> {
     Ok(())
 }
 
+fn two_ids(rest: &str) -> Result<(usize, usize), String> {
+    let parts: Vec<_> = rest.split_whitespace().collect();
+    if parts.len() != 2 {
+        return Err("expected two object IDs".into());
+    }
+    Ok((
+        parts[0].parse().map_err(|_| "invalid first object ID")?,
+        parts[1].parse().map_err(|_| "invalid second object ID")?,
+    ))
+}
+
+fn replay(path: &str) -> Result<(), String> {
+    let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
+    let mut document = Document::new();
+    let mut clipboard: Option<Clipboard> = None;
+    for (index, raw) in source.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if index >= 10_000 {
+            return Err("replay is limited to 10,000 lines".into());
+        }
+        let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let rest = rest.trim();
+        let result = (|| -> Result<(), String> {
+            match command {
+                "new" if rest.is_empty() => document = Document::new(),
+                "open" if !rest.is_empty() => document = Document::open(Path::new(rest))?,
+                "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,
+                "length" => {
+                    let segment: usize = rest.parse().map_err(|_| "invalid segment ID")?;
+                    let id = document.add(Kind::SegmentLength(segment));
+                    println!("line {}: length -> object {id}", index + 1);
+                }
+                "distance" => {
+                    let (a, b) = two_ids(rest)?;
+                    let id = document.add(Kind::PointDistance(a, b));
+                    println!("line {}: distance -> object {id}", index + 1);
+                }
+                "point" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 2 {
+                        return Err("expected x y".into());
+                    }
+                    let x = parts[0].parse().map_err(|_| "invalid x coordinate")?;
+                    let y = parts[1].parse().map_err(|_| "invalid y coordinate")?;
+                    let id = document.add(Kind::Free(Point { x, y }));
+                    println!("line {}: point -> object {id}", index + 1);
+                }
+                "point_on" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected host ID and x y coordinates".into());
+                    }
+                    let host = parts[0].parse().map_err(|_| "invalid host ID")?;
+                    let x = parts[1].parse().map_err(|_| "invalid x coordinate")?;
+                    let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
+                    let kind = document
+                        .constrained_point(host, Point { x, y })
+                        .ok_or("host must be a nondegenerate segment or circle")?;
+                    let id = document.add(kind);
+                    println!("line {}: point_on -> object {id}", index + 1);
+                }
+                "translate" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected source point ID, angle in degrees, distance in centimeters"
+                                .into(),
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid source point ID")?;
+                    let angle = parts[1].parse().map_err(|_| "invalid angle")?;
+                    let distance = parts[2].parse().map_err(|_| "invalid distance")?;
+                    let id = document.add(Kind::PolarTranslatedPoint(
+                        source,
+                        angle,
+                        37.79527559055118,
+                        distance,
+                    ));
+                    println!("line {}: translate -> object {id}", index + 1);
+                }
+                "dilate" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected source ID, center point ID, and ratio".into());
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let center = parts[1].parse().map_err(|_| "invalid center ID")?;
+                    let factor = parts[2].parse().map_err(|_| "invalid ratio")?;
+                    let kind = if document.circle_points(source).is_some() {
+                        Kind::ScaledCircle(source, center, factor)
+                    } else {
+                        Kind::ScaledPoint(source, center, factor)
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: dilate -> object {id}", index + 1);
+                }
+                "rotate" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected source point ID, center point ID, and angle".into());
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let center = parts[1].parse().map_err(|_| "invalid center ID")?;
+                    let angle = parts[2].parse().map_err(|_| "invalid angle")?;
+                    let id = document.add(Kind::RotatedPoint(source, center, angle));
+                    println!("line {}: rotate -> object {id}", index + 1);
+                }
+                "segment" | "circle" | "circle_segment" | "midpoint" | "line" | "ray"
+                | "reflect" | "parallel" | "intersection" | "perpendicular" => {
+                    let (a, b) = two_ids(rest)?;
+                    let kind = match command {
+                        "segment" => Kind::Segment(a, b),
+                        "circle" => Kind::Circle(a, b),
+                        "circle_segment" => Kind::CircleBySegment(a, b),
+                        "midpoint" => Kind::Midpoint(a, b),
+                        "line" => Kind::Line(a, b),
+                        "ray" => Kind::Ray(a, b),
+                        "parallel" => Kind::Parallel(a, b),
+                        "intersection" => Kind::Intersection(a, b),
+                        "perpendicular" => Kind::Perpendicular(a, b),
+                        "reflect" => {
+                            if document.circle_points(a).is_some() {
+                                Kind::ReflectedCircle(a, b)
+                            } else {
+                                Kind::ReflectedPoint(a, b)
+                            }
+                        }
+                        _ => unreachable!(),
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "bisector" | "arc3" | "arc_on_circle" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected start, vertex, and end point IDs".into());
+                    }
+                    let start = parts[0].parse().map_err(|_| "invalid start point ID")?;
+                    let vertex = parts[1].parse().map_err(|_| "invalid vertex point ID")?;
+                    let end = parts[2].parse().map_err(|_| "invalid end point ID")?;
+                    let kind = match command {
+                        "bisector" => Kind::Bisector(start, vertex, end),
+                        "arc3" => Kind::ThreePointArc(start, vertex, end),
+                        _ => Kind::ArcOnCircle(start, vertex, end),
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "line_circle_intersection" | "circle_circle_intersection" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected two object IDs and root 0 or 1".into());
+                    }
+                    let a = parts[0].parse().map_err(|_| "invalid first object ID")?;
+                    let b = parts[1].parse().map_err(|_| "invalid second object ID")?;
+                    let variant: usize =
+                        parts[2].parse().map_err(|_| "invalid intersection root")?;
+                    if variant > 1 {
+                        return Err("intersection root must be 0 or 1".into());
+                    }
+                    let kind = if command == "line_circle_intersection" {
+                        Kind::LineCircleIntersection(a, b, variant)
+                    } else {
+                        Kind::CircleCircleIntersection(a, b, variant)
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "move" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected object ID, x, y".into());
+                    }
+                    let id: usize = parts[0].parse().map_err(|_| "invalid object ID")?;
+                    let x = parts[1].parse().map_err(|_| "invalid x coordinate")?;
+                    let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
+                    if !matches!(
+                        document.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                        Some(Kind::Free(_))
+                    ) {
+                        return Err("move requires a free point".into());
+                    }
+                    document.checkpoint();
+                    if !document.move_point(id, Point { x, y }) {
+                        return Err("invalid point coordinates".into());
+                    }
+                }
+                "hide" => {
+                    let id: usize = rest.parse().map_err(|_| "invalid object ID")?;
+                    if document.objects.get(id.saturating_sub(1)).is_none() {
+                        return Err("unknown object ID".into());
+                    }
+                    document.selected.clear();
+                    document.selected.insert(id);
+                    document.set_selected_visibility(false);
+                }
+                "clear" => {
+                    let ids: Result<Vec<usize>, _> = rest
+                        .split_whitespace()
+                        .map(|part| part.parse().map_err(|_| "invalid object ID"))
+                        .collect();
+                    let ids = ids?;
+                    document.selected = ids.into_iter().collect();
+                    let removed = document.clear_selected()?;
+                    println!("line {}: clear -> {} object(s)", index + 1, removed.len());
+                }
+                "copy" | "cut" => {
+                    let ids: Result<Vec<usize>, _> = rest
+                        .split_whitespace()
+                        .map(|part| part.parse().map_err(|_| "invalid object ID"))
+                        .collect();
+                    document.selected = ids?.into_iter().collect();
+                    let copied = document.copy_selected()?;
+                    println!(
+                        "line {}: {command} -> {} object(s)",
+                        index + 1,
+                        copied.len()
+                    );
+                    if command == "cut" {
+                        document.clear_selected()?;
+                    }
+                    clipboard = Some(copied);
+                }
+                "paste" if rest.is_empty() => {
+                    let copied = clipboard.as_ref().ok_or("Clipboard is empty")?;
+                    let ids = document.paste(copied)?;
+                    println!("line {}: paste -> objects {ids:?}", index + 1);
+                }
+                "show_all" if rest.is_empty() => document.show_all_hidden(),
+                "undo" if rest.is_empty() => document.undo(),
+                "redo" if rest.is_empty() => document.redo(),
+                "check" if rest.is_empty() => {
+                    let bytes = document.encode()?;
+                    let reopened = Document::from_bytes(&bytes, None)?;
+                    if reopened.objects.len() != document.objects.len()
+                        || reopened
+                            .objects
+                            .iter()
+                            .zip(&document.objects)
+                            .any(|(saved, current)| {
+                                saved.kind != current.kind
+                                    || saved.page != current.page
+                                    || saved.visible != current.visible
+                            })
+                    {
+                        return Err("reopened objects differ".into());
+                    }
+                }
+                _ => return Err(format!("unknown or malformed command: {command}")),
+            }
+            Ok(())
+        })();
+        result.map_err(|error| format!("{path}:{}: {error}", index + 1))?;
+        if env::var_os("SKETCHPAD_TRACE").is_some() {
+            println!("line {}: {command}: {:?}", index + 1, document.objects);
+        }
+    }
+    document.can_save()?;
+    println!("replay complete: {} objects", document.objects.len());
+    Ok(())
+}
+
+fn svg(input: &str, output: &str) -> Result<(), String> {
+    let document = Document::open(Path::new(input))?;
+    let mut bounds = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for object in document
+        .objects
+        .iter()
+        .filter(|object| object.visible && object.page == document.active_page)
+    {
+        if let Some(point) = document.position(object.id) {
+            bounds.0 = bounds.0.min(point.x);
+            bounds.1 = bounds.1.min(point.y);
+            bounds.2 = bounds.2.max(point.x);
+            bounds.3 = bounds.3.max(point.y);
+        }
+        if let Some((center, radius)) = document.circle_points(object.id) {
+            bounds.0 = bounds.0.min(center.x - radius);
+            bounds.1 = bounds.1.min(center.y - radius);
+            bounds.2 = bounds.2.max(center.x + radius);
+            bounds.3 = bounds.3.max(center.y + radius);
+        }
+        if let Some(points) = document.arc_points(object.id, 128) {
+            for point in points {
+                bounds.0 = bounds.0.min(point.x);
+                bounds.1 = bounds.1.min(point.y);
+                bounds.2 = bounds.2.max(point.x);
+                bounds.3 = bounds.3.max(point.y);
+            }
+        }
+    }
+    if !bounds.0.is_finite() {
+        bounds = (0., 0., 800., 600.);
+    }
+    let center = Point {
+        x: (bounds.0 + bounds.2) / 2.,
+        y: (bounds.1 + bounds.3) / 2.,
+    };
+    let scale = (900. / (bounds.2 - bounds.0).max(1.))
+        .min(660. / (bounds.3 - bounds.1).max(1.))
+        .min(8.) as f32;
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024., 768.)),
+        scale,
+        center,
+    };
+    let content = svg_page(&document, &viewport)?;
+    fs::write(output, content).map_err(|error| error.to_string())?;
+    println!("exported {output}");
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
@@ -216,6 +537,8 @@ fn run() -> Result<(), String> {
             path,
             steps.parse().map_err(|_| "demo steps must be an integer")?,
         ),
+        [command, path] if command == "replay" => replay(path),
+        [command, input, output] if command == "svg" => svg(input, output),
         _ => Err(usage()),
     }
 }

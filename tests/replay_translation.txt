@@ -1,0 +1,7 @@
+new
+point 200 220
+translate 1 90 1
+check
+save /tmp/sketchpad_translation.gsp
+open /tmp/sketchpad_translation.gsp
+check

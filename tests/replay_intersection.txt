@@ -1,0 +1,9 @@
+point 100 130
+point 350 130
+point 220 50
+point 220 280
+segment 1 2
+segment 3 4
+intersection 5 6
+check
+save /tmp/sketchpad_intersection.gsp

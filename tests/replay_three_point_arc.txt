@@ -1,0 +1,9 @@
+new
+point 200 180
+point 260 130
+point 320 180
+arc3 1 2 3
+check
+save /tmp/sketchpad_three_point_arc.gsp
+open /tmp/sketchpad_three_point_arc.gsp
+check

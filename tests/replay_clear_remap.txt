@@ -1,0 +1,10 @@
+new
+point 100 100
+point 170 170
+point 290 170
+segment 2 3
+midpoint 2 3
+clear 1
+save /tmp/sketchpad_clear_remap.gsp
+open /tmp/sketchpad_clear_remap.gsp
+check

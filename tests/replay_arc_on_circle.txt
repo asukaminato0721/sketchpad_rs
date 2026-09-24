@@ -1,0 +1,13 @@
+new
+point 260 180
+point 330 180
+circle 1 2
+point_on 3 330 180
+point_on 3 260 110
+arc_on_circle 3 4 5
+point_on 6 310 130
+hide 3
+check
+save /tmp/sketchpad_arc_on_circle.gsp
+open /tmp/sketchpad_arc_on_circle.gsp
+check

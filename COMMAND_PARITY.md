@@ -106,7 +106,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Command | Status |
 | --- | --- |
 | Length | Partial: segment length, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Distance | Pending |
+| Distance | Partial: two-point distance, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Perimeter | Pending |
 | Circumference | Pending |
 | Angle | Pending |

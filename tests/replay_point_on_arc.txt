@@ -1,0 +1,10 @@
+new
+point 100 200
+point 150 150
+point 200 200
+arc3 1 2 3
+point_on 4 130 160
+check
+save /tmp/sketchpad_point_on_arc.gsp
+open /tmp/sketchpad_point_on_arc.gsp
+check

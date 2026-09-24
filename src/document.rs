@@ -37,7 +37,8 @@ impl Kind {
             | Kind::LineCircleIntersection(a, b, _)
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::ReflectedPoint(a, b)
-            | Kind::ReflectedCircle(a, b) => vec![a, b],
+            | Kind::ReflectedCircle(a, b)
+            | Kind::PointDistance(a, b) => vec![a, b],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
             | Kind::RotatedPoint(source, center, _) => {
@@ -56,6 +57,7 @@ impl Kind {
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
+            Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
             }
@@ -94,6 +96,7 @@ pub enum Kind {
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
     SegmentLength(usize),
+    PointDistance(usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
     ReflectedCircle(usize, usize),
@@ -567,8 +570,8 @@ impl Document {
             let mut point_offset = None;
             let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
             let mut refs = Vec::new();
-            let mut length_format = false;
-            let mut length_style = false;
+            let mut measurement_format = false;
+            let mut measurement_style = false;
             i += 1;
             while i < rs.len() && rs[i].kind != 0x7d7 {
                 let r = &rs[i];
@@ -581,26 +584,35 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if code == 36 => {
-                        let sample =
-                            &include_bytes!("../assets/length_measurement_group.bin")[60..92];
-                        length_format = d.len() == sample.len()
+                    0x0903 if code == 36 || code == 37 => {
+                        let sample: &[u8] = if code == 36 {
+                            &include_bytes!("../assets/length_measurement_group.bin")[60..92]
+                        } else {
+                            &include_bytes!("../assets/distance_measurement_group.bin")[64..96]
+                        };
+                        measurement_format = d.len() == sample.len()
                             && d.iter()
                                 .zip(sample)
                                 .enumerate()
                                 .all(|(i, (actual, expected))| {
-                                    if i == 22 {
+                                    if code == 36 && i == 22 {
                                         *actual == 0 || *actual == 0x20
-                                    } else if i == 30 {
+                                    } else if code == 36 && i == 30 {
                                         *actual == 0 || *actual == 0x53
+                                    } else if code == 37 && i == 22 {
+                                        *actual == 0x72 || *actual == 0x61
                                     } else {
                                         actual == expected
                                     }
                                 });
                     }
-                    0x07d8 if code == 36 => {
-                        length_style =
-                            d == &include_bytes!("../assets/length_measurement_group.bin")[100..102]
+                    0x07d8 if code == 36 || code == 37 => {
+                        let sample: &[u8] = if code == 36 {
+                            &include_bytes!("../assets/length_measurement_group.bin")[100..102]
+                        } else {
+                            &include_bytes!("../assets/distance_measurement_group.bin")[104..106]
+                        };
+                        measurement_style = d == sample;
                     }
                     0x7d3 if code == 15 || code == 21 || code == 27 || code == 30 => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -619,7 +631,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(code == 36 && matches!(r.kind, 0x0903 | 0x07d8))
+                    && !((code == 36 || code == 37) && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
                 }
@@ -637,10 +649,17 @@ impl Document {
                 match (code, point, refs.as_slice()) {
                     (0, Some(p), _) => Kind::Free(p),
                     (36, _, [host])
-                        if length_format && length_style
+                        if measurement_format && measurement_style
                             && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _))) =>
                     {
                         Kind::SegmentLength(*host)
+                    }
+                    (37, _, [a, b])
+                        if measurement_format && measurement_style
+                            && objects.get(a - 1).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(b - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
+                    {
+                        Kind::PointDistance(*a, *b)
                     }
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
@@ -1127,6 +1146,16 @@ impl Document {
         };
         Some(a.distance(b) / 37.79527559055118)
     }
+    pub fn point_distance_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::PointDistance(a, b) = object.kind else {
+            return None;
+        };
+        Some(self.position(a)?.distance(self.position(b)?) / 37.79527559055118)
+    }
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
             d: &Document,
@@ -1524,6 +1553,13 @@ impl Document {
             {
                 return Err(format!("Invalid segment in length measurement {}", o.id));
             }
+            if matches!(o.kind, Kind::PointDistance(_, _))
+                && self
+                    .point_distance_cm(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid points in distance measurement {}", o.id));
+            }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
             {
@@ -1730,6 +1766,16 @@ impl Document {
             if let Kind::SegmentLength(segment) = o.kind {
                 let mut group = *include_bytes!("../assets/length_measurement_group.bin");
                 group[48..52].copy_from_slice(&(segment as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::PointDistance(a, b) = o.kind {
+                let mut group = *include_bytes!("../assets/distance_measurement_group.bin");
+                group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -1948,6 +1994,8 @@ mod tests {
             "wine_cut_segment",
             "wine_pasted_segment",
             "wine_segment_length",
+            "wine_point_distance",
+            "wine_moved_distance",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2014,6 +2062,36 @@ mod tests {
                 .len(),
             2
         );
+    }
+    #[test]
+    fn point_distance_matches_original_and_updates_after_edit() {
+        let original = Document::open(Path::new("tests/fixtures/wine_point_distance.gsp")).unwrap();
+        assert_eq!(original.objects[5].kind, Kind::PointDistance(1, 2));
+        assert!((original.point_distance_cm(6).unwrap() - 2.6458333333333335).abs() < 1e-10);
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_distance.gsp")).unwrap();
+        assert_eq!(moved.objects[2].kind, Kind::PointDistance(1, 2));
+        assert!((moved.point_distance_cm(3).unwrap() - 5.291666666666667).abs() < 1e-10);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let distance = doc.add(Kind::PointDistance(a, b));
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[2].kind, Kind::PointDistance(a, b));
+        reopened.checkpoint();
+        assert!(reopened.move_point(b, Point { x: 350., y: 120. }));
+        assert!((reopened.point_distance_cm(distance).unwrap() - 5.291666666666667).abs() < 1e-10);
+        let bytes = reopened.encode().unwrap();
+        assert_eq!(
+            Document::from_bytes(&bytes, None)
+                .unwrap()
+                .point_distance_cm(distance),
+            reopened.point_distance_cm(distance)
+        );
+        reopened.undo();
+        assert!((reopened.point_distance_cm(distance).unwrap() - 2.6458333333333335).abs() < 1e-10);
+        reopened.selected.insert(a);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![a, distance]);
     }
     #[test]
     fn copy_segment_includes_parents_but_not_children_like_original() {

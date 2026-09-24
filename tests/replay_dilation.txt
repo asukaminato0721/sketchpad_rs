@@ -1,0 +1,12 @@
+new
+point 200 160
+point 320 100
+dilate 2 1 0.5
+point 300 240
+point 330 240
+circle 4 5
+dilate 6 1 0.5
+check
+save /tmp/sketchpad_dilation.gsp
+open /tmp/sketchpad_dilation.gsp
+check

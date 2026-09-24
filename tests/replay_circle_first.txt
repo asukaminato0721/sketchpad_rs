@@ -1,0 +1,12 @@
+new
+point 200 160
+point 200 110
+circle 1 2
+point 350 160
+segment 1 4
+line_circle_intersection 5 3 0
+line_circle_intersection 5 3 1
+check
+save /tmp/sketchpad_circle_first.gsp
+open /tmp/sketchpad_circle_first.gsp
+check

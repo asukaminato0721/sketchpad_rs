@@ -1,0 +1,20 @@
+# IDs are assigned in construction order.
+point 220 230
+point 480 360
+segment 1 2
+circle 1 2
+midpoint 1 2
+line 1 2
+ray 1 2
+parallel 1 3
+perpendicular 2 3
+check
+move 1 244 246.4
+check
+undo
+check
+redo
+hide 4
+check
+show_all
+check

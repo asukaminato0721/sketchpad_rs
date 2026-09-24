@@ -1,0 +1,8 @@
+new
+point 200 180
+point 300 180
+rotate 2 1 90
+check
+save /tmp/sketchpad_rotation.gsp
+open /tmp/sketchpad_rotation.gsp
+check
