@@ -1,5 +1,6 @@
 use crate::document::{Document, Kind, LineMode, Point};
 use egui::{Pos2, Rect};
+use std::fmt::Write as _;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -56,6 +57,81 @@ fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, P
         hi = hi.min(t0.max(t1));
     }
     (lo <= hi && lo.is_finite() && hi.is_finite()).then_some((a + d * lo, a + d * hi))
+}
+
+pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
+    if doc.partial_view {
+        return Err("This document contains objects that cannot be exported yet".into());
+    }
+    let r = vp.rect;
+    if !r.is_finite() || r.width() <= 0. || r.height() <= 0. {
+        return Err("No visible sketch viewport".into());
+    }
+    let mut svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\">\n<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"white\"/>\n<g fill=\"none\" stroke=\"#24303d\" stroke-width=\"2\">\n",
+        r.width(),
+        r.height(),
+        r.min.x,
+        r.min.y,
+        r.width(),
+        r.height(),
+        r.min.x,
+        r.min.y,
+        r.width(),
+        r.height()
+    );
+    for o in doc
+        .objects
+        .iter()
+        .filter(|o| o.visible && o.page == doc.active_page)
+    {
+        if let Some((a, b, mode)) = doc.line_points(o.id)
+            && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
+        {
+            writeln!(
+                svg,
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+                a.x, a.y, b.x, b.y
+            )
+            .unwrap();
+        }
+        if let Some((center, radius)) = doc.circle_points(o.id) {
+            let at = vp.screen(center);
+            writeln!(
+                svg,
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                at.x,
+                at.y,
+                radius as f32 * vp.scale
+            )
+            .unwrap();
+        }
+        if let Some(points) = doc.arc_points(o.id, 128) {
+            let mut points = points.into_iter();
+            if let Some(first) = points.next() {
+                let at = vp.screen(first);
+                write!(svg, "<path d=\"M {} {}", at.x, at.y).unwrap();
+                for p in points {
+                    let at = vp.screen(p);
+                    write!(svg, " L {} {}", at.x, at.y).unwrap();
+                }
+                svg.push_str("\"/>\n");
+            }
+        }
+    }
+    svg.push_str("</g>\n<g fill=\"#176bd6\">\n");
+    for o in doc
+        .objects
+        .iter()
+        .filter(|o| o.visible && o.page == doc.active_page)
+    {
+        if let Some(p) = doc.position(o.id) {
+            let at = vp.screen(p);
+            writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"4\"/>", at.x, at.y).unwrap();
+        }
+    }
+    svg.push_str("</g>\n</svg>\n");
+    Ok(svg)
 }
 struct Mesh {
     vertices: Vec<Vertex>,
@@ -281,6 +357,27 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn svg_export_uses_visible_geometry_and_refuses_partial_documents() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let b = doc.add(Kind::Free(Point { x: 80., y: 20. }));
+        doc.add(Kind::Segment(a, b));
+        let circle = doc.add(Kind::Circle(a, b));
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(100., 100.)),
+            scale: 1.,
+            center: Point { x: 50., y: 50. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(svg.contains("<line"));
+        assert!(svg.contains("<circle"));
+        doc.selected.insert(circle);
+        doc.set_selected_visibility(false);
+        assert!(!svg_page(&doc, &vp).unwrap().contains("r=\"70\""));
+        doc.partial_view = true;
+        assert!(svg_page(&doc, &vp).is_err());
+    }
     #[test]
     fn clips_line_ray_and_segment() {
         let r = Rect::from_min_max(Pos2::new(0., 0.), Pos2::new(100., 100.));

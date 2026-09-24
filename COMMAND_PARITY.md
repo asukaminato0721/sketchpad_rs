@@ -16,7 +16,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Document Options | Pending |
 | Page Setup | Pending |
 | Print Preview | Pending |
-| Print | Pending |
+| Print | Partial: visible page sent as PDF to the Linux default printer |
 | Quit | Partial: unsaved-change dialog |
 | Sketchpad LessonLink... | Outside release target (legacy service) |
 | Sketchpad Sketch Exchange | Outside release target (legacy service) |
@@ -67,7 +67,7 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Point on Object | Partial: segment and circle hosts, including drag and generated-file cross-open |
+| Point on Object | Partial: segment, circle, and arc hosts, including drag and generated-file cross-open |
 | Midpoint | Partial |
 | Intersection | Partial: straight, line-circle, and circle-circle constructions; generated examples opened in Sketchpad 5 |
 | Segment | Partial |
@@ -183,6 +183,6 @@ The release gate is every sketch and document command verified after editing, sa
 | Segment tool | Partial |
 | Circle tool | Partial |
 | Text, image, table, iteration, plotting | Pending |
-| Import, export, print | Pending |
+| Import, export, print | Partial: SVG/PDF export and Linux printing for supported visible geometry; import pending |
 | Multi-page documents | Partial: page navigation and read-only complex objects |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

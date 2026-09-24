@@ -1,6 +1,11 @@
 use sketchpad_rs::document::{Document, Kind, LineMode, Point};
-use sketchpad_rs::render::{GeometryRenderer, Viewport};
-use std::{path::PathBuf, sync::Arc};
+use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
+use std::{
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::Arc,
+};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -19,6 +24,38 @@ enum PendingAction {
     Open(PathBuf),
     Quit,
 }
+#[derive(Clone, Copy)]
+enum OutputAction {
+    Svg,
+    Pdf,
+    Print,
+}
+
+fn pdf_from_svg(svg: &str) -> Result<Vec<u8>, String> {
+    let mut process = Command::new("rsvg-convert")
+        .arg("--format=pdf")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    process
+        .stdin
+        .take()
+        .ok_or("Missing PDF converter stdin")?
+        .write_all(svg.as_bytes())
+        .map_err(|error| error.to_string())?;
+    let output = process
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    if !output.stdout.starts_with(b"%PDF-") {
+        return Err("PDF converter returned invalid output".into());
+    }
+    Ok(output.stdout)
+}
 struct Editor {
     doc: Document,
     tool: Tool,
@@ -29,6 +66,7 @@ struct Editor {
     center: Point,
     status: String,
     pending_action: Option<PendingAction>,
+    pending_output: Option<OutputAction>,
     exit_requested: bool,
 }
 impl Editor {
@@ -43,6 +81,7 @@ impl Editor {
             center: Point { x: 400., y: 300. },
             status: String::new(),
             pending_action: None,
+            pending_output: None,
             exit_requested: false,
         };
         e.fit();
@@ -108,6 +147,74 @@ impl Editor {
                 false
             }
         }
+    }
+    fn output_page(&mut self, viewport: &Viewport, action: OutputAction) {
+        let svg = match svg_page(&self.doc, viewport) {
+            Ok(svg) => svg,
+            Err(error) => {
+                self.status = format!("Output refused: {error}");
+                return;
+            }
+        };
+        if matches!(action, OutputAction::Svg) {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("SVG image", &["svg"])
+                .set_file_name("Sketch.svg")
+                .save_file()
+            else {
+                return;
+            };
+            match std::fs::write(&path, svg) {
+                Ok(()) => self.status = format!("Exported {}", path.display()),
+                Err(error) => self.status = format!("Export failed: {error}"),
+            }
+            return;
+        }
+        let pdf = match pdf_from_svg(&svg) {
+            Ok(pdf) => pdf,
+            Err(error) => {
+                self.status = format!("PDF conversion failed: {error}");
+                return;
+            }
+        };
+        if matches!(action, OutputAction::Pdf) {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("PDF document", &["pdf"])
+                .set_file_name("Sketch.pdf")
+                .save_file()
+            else {
+                return;
+            };
+            match std::fs::write(&path, pdf) {
+                Ok(()) => self.status = format!("Exported {}", path.display()),
+                Err(error) => self.status = format!("Export failed: {error}"),
+            }
+            return;
+        }
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad-print-{}-{unique}.pdf",
+            std::process::id()
+        ));
+        if let Err(error) = std::fs::write(&path, pdf) {
+            self.status = format!("Print failed: {error}");
+            return;
+        }
+        let result = Command::new("lp").arg(&path).output();
+        let _ = std::fs::remove_file(&path);
+        self.status = match result {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_owned()
+            }
+            Ok(output) => format!(
+                "Print failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            Err(error) => format!("Print failed: {error}"),
+        };
     }
     fn finish_pending_action(&mut self) {
         match self.pending_action.take() {
@@ -553,6 +660,18 @@ impl Editor {
                         self.save(true);
                         ui.close();
                     }
+                    if ui.button("Export SVG…").clicked() {
+                        self.pending_output = Some(OutputAction::Svg);
+                        ui.close();
+                    }
+                    if ui.button("Export PDF…").clicked() {
+                        self.pending_output = Some(OutputAction::Pdf);
+                        ui.close();
+                    }
+                    if ui.button("Print…").clicked() {
+                        self.pending_output = Some(OutputAction::Print);
+                        ui.close();
+                    }
                     if ui.button("Quit").clicked() {
                         if self.doc.dirty {
                             self.pending_action = Some(PendingAction::Quit);
@@ -826,11 +945,15 @@ impl Editor {
                 _ => {}
             }
         }
-        Viewport {
+        let viewport = Viewport {
             rect,
             scale: self.scale,
             center: self.center,
+        };
+        if let Some(action) = self.pending_output.take() {
+            self.output_page(&viewport, action);
         }
+        viewport
     }
 }
 fn main() {

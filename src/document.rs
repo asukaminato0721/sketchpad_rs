@@ -841,9 +841,14 @@ impl Document {
         if !t.is_finite() {
             return None;
         }
-        let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(id)?;
+        Some(Self::sample_arc(self.arc_geometry(id)?, t))
+    }
+    fn sample_arc(
+        (center, radius, start, sweep, clockwise_y): (Point, f64, f64, f64, bool),
+        t: f64,
+    ) -> Point {
         let angle = start + sweep * t.clamp(0., 1.);
-        Some(Point {
+        Point {
             x: center.x + radius * angle.cos(),
             y: center.y
                 + if clockwise_y {
@@ -851,7 +856,7 @@ impl Document {
                 } else {
                     radius * angle.sin()
                 },
-        })
+        }
     }
     fn arc_parameter(&self, id: usize, p: Point) -> Option<f64> {
         let (center, _, start, sweep, clockwise_y) = self.arc_geometry(id)?;
@@ -882,12 +887,12 @@ impl Document {
         }
     }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
-        self.arc_geometry(id)?;
+        let geometry = self.arc_geometry(id)?;
         let count = subdivisions.max(2);
         Some(
             (0..=count)
-                .map(|step| self.point_on_arc(id, step as f64 / count as f64))
-                .collect::<Option<Vec<_>>>()?,
+                .map(|step| Self::sample_arc(geometry, step as f64 / count as f64))
+                .collect(),
         )
     }
     pub fn move_point(&mut self, id: usize, p: Point) -> bool {
