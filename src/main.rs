@@ -140,8 +140,15 @@ struct Editor {
     function_draft: String,
     parameter_value_dialog: Option<usize>,
     parameter_value_draft: String,
+    named_parameter_dialog: bool,
+    parameter_name_draft: String,
     plot_axis_dialog: Option<Option<usize>>,
     plot_axis_draft: String,
+    plot_points_dialog: Option<PlotPointsMode>,
+    plot_points_first_draft: String,
+    plot_points_second_draft: String,
+    plot_table_dialog: Option<usize>,
+    plot_table_mode: PlotPointsMode,
     exit_requested: bool,
 }
 impl Editor {
@@ -177,8 +184,15 @@ impl Editor {
             function_draft: "x".into(),
             parameter_value_dialog: None,
             parameter_value_draft: "1".into(),
+            named_parameter_dialog: false,
+            parameter_name_draft: "a".into(),
             plot_axis_dialog: None,
             plot_axis_draft: "1".into(),
+            plot_points_dialog: None,
+            plot_points_first_draft: "1".into(),
+            plot_points_second_draft: "1".into(),
+            plot_table_dialog: None,
+            plot_table_mode: PlotPointsMode::Cartesian,
             exit_requested: false,
         };
         e.fit();
@@ -208,7 +222,9 @@ impl Editor {
                     y: rect.bottom.into(),
                 });
             }
-            if let Some((anchor, _)) = sketchpad_rs::render::number_lines(&object.kind) {
+            if let Some((anchor, _)) =
+                sketchpad_rs::render::number_lines_for_object(&self.doc, object.id)
+            {
                 pts.push(Point {
                     x: anchor.0 as f64,
                     y: anchor.1 as f64,
@@ -414,7 +430,7 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && sketchpad_rs::render::number_screen_rect(v, &object.kind)
+                && sketchpad_rs::render::number_screen_rect_for_object(v, &self.doc, object.id)
                     .is_some_and(|rect| rect.contains(p))
         }) {
             return Some(object.id);
@@ -1783,6 +1799,12 @@ impl Editor {
                         }
                         ui.close();
                     }
+                    if ui.button("New Named Parameter…").clicked() {
+                        self.parameter_name_draft = "a".into();
+                        self.parameter_value_draft = "1".into();
+                        self.named_parameter_dialog = true;
+                        ui.close();
+                    }
                     if ui.button("Edit Selected Parameter…").clicked() {
                         let selected = self.doc.selected.iter().copied().find(|&id| {
                             self.doc
@@ -1813,7 +1835,18 @@ impl Editor {
                                 self.doc.tabulate_default_pair((10, 71))
                             } else {
                                 let source = self.doc.selected.iter().next().copied().unwrap_or(0);
-                                self.doc.tabulate_default_parameter(source, (10, 38))
+                                let anchor = source
+                                    .checked_sub(1)
+                                    .and_then(|index| self.doc.objects.get(index))
+                                    .and_then(|object| match &object.kind {
+                                        Kind::Parameter(group) if group.name() != "t[1]" => {
+                                            let bottom = group.bbox().1.1;
+                                            bottom.checked_add(8).map(|y| (group.anchor().0, y))
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or((10, 38));
+                                self.doc.tabulate_default_parameter(source, anchor)
                             };
                         match result {
                             Ok(id) => self.status = format!("Created table {id}"),
@@ -1895,27 +1928,21 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Plot Points as (x, y)").clicked() {
-                        match self.doc.plot_default_parameter(PlotPointsMode::Cartesian) {
-                            Ok(id) => self.status = format!("Plotted point {id}"),
-                            Err(error) => self.status = error,
-                        }
+                        self.plot_points_dialog = Some(PlotPointsMode::Cartesian);
+                        self.plot_points_first_draft = "1".into();
+                        self.plot_points_second_draft = "1".into();
                         ui.close();
                     }
                     if ui.button("Plot Points as (r, θ)").clicked() {
-                        match self.doc.plot_default_parameter(PlotPointsMode::Polar) {
-                            Ok(id) => self.status = format!("Plotted point {id}"),
-                            Err(error) => self.status = error,
-                        }
+                        self.plot_points_dialog = Some(PlotPointsMode::Polar);
+                        self.plot_points_first_draft = "1".into();
+                        self.plot_points_second_draft = "1".into();
                         ui.close();
                     }
                     if ui.button("Plot Table Data").clicked() {
                         let table = self.doc.selected.iter().next().copied().unwrap_or(0);
-                        match self.doc.plot_default_pair_table(table) {
-                            Ok(ids) => {
-                                self.status = format!("Plotted {} table data point(s)", ids.len())
-                            }
-                            Err(error) => self.status = error,
-                        }
+                        self.plot_table_dialog = Some(table);
+                        self.plot_table_mode = PlotPointsMode::Cartesian;
                         ui.close();
                     }
                     if ui.button("Plot New Function…").clicked() {
@@ -2359,8 +2386,8 @@ impl Editor {
                                     | Kind::Calculation(_)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _) => {
-                                        let anchor = sketchpad_rs::render::number_lines(
-                                            &self.doc.objects[id - 1].kind,
+                                        let anchor = sketchpad_rs::render::number_lines_for_object(
+                                            &self.doc, id,
                                         )
                                         .unwrap()
                                         .0;
@@ -2503,9 +2530,12 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some((_, lines)) = sketchpad_rs::render::number_lines(&object.kind)
+                    if let Some((_, lines)) =
+                        sketchpad_rs::render::number_lines_for_object(&self.doc, object.id)
                         && let Some(number_rect) =
-                            sketchpad_rs::render::number_screen_rect(&vp, &object.kind)
+                            sketchpad_rs::render::number_screen_rect_for_object(
+                                &vp, &self.doc, object.id,
+                            )
                     {
                         ui.painter()
                             .rect_filled(number_rect, 0., egui::Color32::WHITE);
@@ -2773,6 +2803,61 @@ impl Editor {
                 _ => {}
             }
         }
+        if self.named_parameter_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("named_parameter")).show(root.ctx(), |ui| {
+                ui.heading("New named parameter");
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.parameter_name_draft);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Value");
+                    ui.text_edit_singleline(&mut self.parameter_value_draft);
+                });
+                ui.label("Value: -99.99 to 99.99, up to two decimal places");
+                ui.horizontal(|ui| {
+                    apply = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.named_parameter_dialog = false;
+            }
+            if apply {
+                let result = self
+                    .parameter_value_draft
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric value".to_string())
+                    .and_then(|value| {
+                        let parameter_count = self
+                            .doc
+                            .objects
+                            .iter()
+                            .filter(|object| matches!(object.kind, Kind::Parameter(_)))
+                            .count();
+                        let y = parameter_count
+                            .checked_mul(33)
+                            .and_then(|offset| offset.checked_add(5))
+                            .and_then(|y| i16::try_from(y).ok())
+                            .ok_or("Too many parameters")?;
+                        self.doc.add_named_parameter(
+                            self.parameter_name_draft.trim(),
+                            value,
+                            (10, y),
+                        )
+                    });
+                match result {
+                    Ok(id) => {
+                        self.named_parameter_dialog = false;
+                        self.status = format!("Created parameter {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
         if let Some(id) = self.parameter_value_dialog {
             let mut apply = false;
             let mut cancel = false;
@@ -2905,6 +2990,95 @@ impl Editor {
                         self.plot_axis_dialog = None;
                         self.select_only(id);
                         self.status = format!("Plotted path value {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some(mode) = self.plot_points_dialog {
+            let mut apply = false;
+            let mut done = false;
+            egui::Modal::new(egui::Id::new("plot_points")).show(root.ctx(), |ui| {
+                ui.heading("Plot Points");
+                ui.horizontal(|ui| {
+                    ui.label(if mode == PlotPointsMode::Cartesian {
+                        "X"
+                    } else {
+                        "Radius"
+                    });
+                    ui.text_edit_singleline(&mut self.plot_points_first_draft);
+                });
+                ui.horizontal(|ui| {
+                    ui.label(if mode == PlotPointsMode::Cartesian {
+                        "Y"
+                    } else {
+                        "Angle (degrees)"
+                    });
+                    ui.text_edit_singleline(&mut self.plot_points_second_draft);
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Plot").clicked();
+                    done = ui.button("Done").clicked();
+                });
+            });
+            if done {
+                self.plot_points_dialog = None;
+            }
+            if apply {
+                let coordinates = [
+                    self.plot_points_first_draft.trim().parse::<f64>(),
+                    self.plot_points_second_draft.trim().parse::<f64>(),
+                ];
+                let result = match coordinates {
+                    [Ok(first), Ok(second)] => self.doc.plot_points_at(mode, [first, second]),
+                    _ => Err("Enter two numeric coordinates".into()),
+                };
+                match result {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.status = format!("Plotted point {id}");
+                        self.plot_points_first_draft.clear();
+                        self.plot_points_second_draft.clear();
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some(table) = self.plot_table_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("plot_table_data")).show(root.ctx(), |ui| {
+                ui.heading("Plot Table Data");
+                ui.label("First coordinate: t₂");
+                ui.label("Second coordinate: t₁");
+                ui.horizontal(|ui| {
+                    ui.radio_value(
+                        &mut self.plot_table_mode,
+                        PlotPointsMode::Cartesian,
+                        "Cartesian (x, y)",
+                    );
+                    ui.radio_value(
+                        &mut self.plot_table_mode,
+                        PlotPointsMode::Polar,
+                        "Polar (r, θ in degrees)",
+                    );
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Plot").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.plot_table_dialog = None;
+            }
+            if apply {
+                match self.doc.plot_pair_table_data(table, self.plot_table_mode) {
+                    Ok(ids) => {
+                        self.plot_table_dialog = None;
+                        if let Some(id) = ids.last() {
+                            self.select_only(*id);
+                        }
+                        self.status = format!("Plotted {} table data point(s)", ids.len());
                     }
                     Err(error) => self.status = error,
                 }

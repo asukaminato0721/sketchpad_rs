@@ -1,5 +1,5 @@
-//! Bounded Graph plotting records observed with Plot Points and Plot Table Data.
-//! Cartesian (1,1) and (2,1), plus the original t[1] polar point, are cross-opened.
+//! Graph plotting records observed with Plot Points and Plot Table Data.
+//! Cartesian and polar points from frame-only and parameter sketches are cross-opened.
 
 use std::ops::Range;
 
@@ -9,6 +9,9 @@ mod table_records;
 
 const CARTESIAN: &[u8] = include_bytes!("../tests/fixtures/plot_points_table_single_original.gsp");
 const POLAR: &[u8] = include_bytes!("../tests/fixtures/plot_points_table_polar_original.gsp");
+
+/// One degree in radians as stored by Sketchpad 5's polar point dialog.
+pub const DEGREES_TO_RADIANS: f64 = 0.017453292519943334;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlotPointsMode {
@@ -34,7 +37,7 @@ impl PlotPointsMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotPoint {
     pub mode: PlotPointsMode,
-    /// Parameter first, active coordinate system second.
+    /// Source anchor first, active coordinate system second.
     pub references: [u32; 2],
     /// Cartesian x/y; polar radius/angle in radians as stored in GSP4.
     pub stored: [f64; 2],

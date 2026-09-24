@@ -1,9 +1,11 @@
-//! Bounded GSP4 support for a one-column snapshot table of the default t[1]
-//! parameter. Unknown table layouts and values are refused before writing.
+//! Bounded GSP4 support for numeric parameters and verified snapshot tables.
+//! Unknown layouts and values are refused before writing.
 
 const TEMPLATE_DOCUMENT: &[u8] = include_bytes!("../tests/fixtures/table_parameter_tabulated.gsp");
 const DEFAULT_PARAMETER: &[u8] = include_bytes!("../tests/fixtures/table_parameter_default.gsp");
 const TWO_PARAMETERS: &[u8] = include_bytes!("../tests/fixtures/table_two_parameters_original.gsp");
+const NAMED_PARAMETER: &[u8] =
+    include_bytes!("../tests/fixtures/table_parameter_speed_original.gsp");
 const TWO_COLUMN_TABLE: &[u8] = include_bytes!("../tests/fixtures/table_two_columns_original.gsp");
 const TWO_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../tests/fixtures/table_two_columns_two_rows_original.gsp");
@@ -157,6 +159,49 @@ impl ParameterGroup {
         }
     }
 
+    pub fn named(name: &str, value: f64) -> Result<Self, String> {
+        let valid = (1..=32).contains(&name.len())
+            && name.as_bytes()[0].is_ascii_alphabetic()
+            && name
+                .bytes()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_');
+        if !valid {
+            return Err("Name must contain 1–32 ASCII letters, digits, or underscores and begin with a letter".into());
+        }
+        let mut group = Self {
+            bytes: object_group(NAMED_PARAMETER, 1),
+        };
+        group.set_value(value)?;
+        let rs = records(&group.bytes, 0)?;
+        let named = object_group(NAMED_PARAMETER, 1);
+        let named_records = records(&named, 0)?;
+        let mut label = named[named_records[2].payload..named_records[2].payload + 22].to_vec();
+        label.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        label.extend_from_slice(name.as_bytes());
+        label.push(0);
+        if name.len() % 2 == 0 {
+            label.push(0);
+        }
+        let mut updated = group.bytes[..rs[2].start].to_vec();
+        put_record(&mut updated, 0x07d5, &label);
+        updated.extend_from_slice(&group.bytes[rs[2].end..]);
+        let changed = records(&updated, 0)?;
+        let bbox = changed[4].payload;
+        let left = i16::from_le_bytes(updated[bbox..bbox + 2].try_into().unwrap());
+        let letter_width = name
+            .bytes()
+            .map(|ch| match ch.to_ascii_lowercase() {
+                b't' | b'i' | b'l' => 4,
+                b's' => 7,
+                _ => 8,
+            })
+            .sum::<i16>();
+        let value_extra = 4 * (i16::from(value.abs() >= 10.) + i16::from(value < 0.));
+        let width = 80 + letter_width + if group.precision() == 2 { 10 } else { 0 } + value_extra;
+        updated[bbox + 4..bbox + 6].copy_from_slice(&(left + width).to_le_bytes());
+        Self::parse(&updated)
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
         if rs.iter().map(|r| r.kind).collect::<Vec<_>>()
@@ -179,9 +224,15 @@ impl ParameterGroup {
             .map(|i| u16::from_le_bytes(payload[92 + i * 2..94 + i * 2].try_into().unwrap()))
             .collect::<Vec<_>>();
         value_from_words(&words)?;
+        let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
+        let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
+        if !(precision == 1 && step == 0.1 || precision == 2 && step == 0.01) {
+            return Err("Unsupported parameter precision".into());
+        }
         let templates = [
             object_group(DEFAULT_PARAMETER, 1),
             object_group(TWO_PARAMETERS, 2),
+            object_group(NAMED_PARAMETER, 1),
         ];
         let supported = templates.iter().any(|template| {
             let base = records(template, 0).unwrap();
@@ -193,11 +244,41 @@ impl ParameterGroup {
                     (0..92).all(|i| {
                         let mutable = (12..16).contains(&i)
                             || (22..24).contains(&i)
-                            || (30..32).contains(&i)
+                            || (28..32).contains(&i)
                             || (36..40).contains(&i)
-                            || (44..46).contains(&i);
+                            || (44..46).contains(&i)
+                            || (52..60).contains(&i);
                         mutable || actual_payload[i] == expected_payload[i]
                     })
+                } else if record_index == 2 {
+                    let actual_payload = &bytes[actual.payload..actual.end];
+                    if actual_payload.len() < 26 {
+                        false
+                    } else if u32::from_le_bytes(actual_payload[..4].try_into().unwrap()) == 6 {
+                        let expected_record = &template[expected.start..expected.end];
+                        &bytes[actual.start..actual.end] == expected_record
+                    } else {
+                        let named = object_group(NAMED_PARAMETER, 1);
+                        let label_records = records(&named, 0).unwrap();
+                        let expected_payload =
+                            &named[label_records[2].payload..label_records[2].end];
+                        actual_payload[..22] == expected_payload[..22] && {
+                            let name_len =
+                                u16::from_le_bytes(actual_payload[22..24].try_into().unwrap())
+                                    as usize;
+                            let name = actual_payload.get(24..24 + name_len);
+                            name_len > 0
+                                && name_len <= 32
+                                && actual_payload.len() == 24 + name_len + 1 + ((name_len + 1) % 2)
+                                && actual_payload[24 + name_len..].iter().all(|ch| *ch == 0)
+                                && name.is_some_and(|name| {
+                                    name[0].is_ascii_alphabetic()
+                                        && name
+                                            .iter()
+                                            .all(|ch| ch.is_ascii_alphanumeric() || *ch == b'_')
+                                })
+                        }
+                    }
                 } else {
                     let actual_record = &bytes[actual.start..actual.end];
                     let expected_record = &template[expected.start..expected.end];
@@ -230,11 +311,19 @@ impl ParameterGroup {
 
     pub fn name(&self) -> &str {
         let rs = records(&self.bytes, 0).unwrap();
-        if self.bytes[rs[2].payload + 26] == b'2' {
-            "t[2]"
-        } else {
-            "t[1]"
-        }
+        let payload = rs[2].payload;
+        let len =
+            u16::from_le_bytes(self.bytes[payload + 22..payload + 24].try_into().unwrap()) as usize;
+        std::str::from_utf8(&self.bytes[payload + 24..payload + 24 + len]).unwrap()
+    }
+
+    pub fn precision(&self) -> usize {
+        let rs = records(&self.bytes, 0).unwrap();
+        u16::from_le_bytes(
+            self.bytes[rs[1].payload + 28..rs[1].payload + 30]
+                .try_into()
+                .unwrap(),
+        ) as usize
     }
     pub fn value(&self) -> f64 {
         let rs = records(&self.bytes, 0).unwrap();
@@ -248,12 +337,19 @@ impl ParameterGroup {
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
         let words = decimal_words(value)?;
+        let promote_precision =
+            self.precision() == 1 && (value * 10. - (value * 10.).round()).abs() > 1e-7;
         let old_value = self.value();
         let extra = |value: f64| i32::from(value.abs() >= 10.) + i32::from(value < 0.);
-        let width_delta = 4 * (extra(value) - extra(old_value));
+        let width_delta =
+            4 * (extra(value) - extra(old_value)) + if promote_precision { 10 } else { 0 };
         let rs = records(&self.bytes, 0)?;
         let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
+        if promote_precision {
+            payload[28..30].copy_from_slice(&2_u16.to_le_bytes());
+            payload[52..60].copy_from_slice(&0.01_f64.to_le_bytes());
+        }
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
         }
@@ -510,11 +606,117 @@ fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u
     Ok(group)
 }
 
+fn named_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
+    if layout.len() < 28 || layout.len() % 4 != 0 {
+        return None;
+    }
+    let text = &layout[28..];
+    let used = text
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(text.len());
+    if text.len() - used > 3 || text[used..].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let text = std::str::from_utf8(&text[..used]).ok()?;
+    if !text.is_ascii() {
+        return None;
+    }
+    let rest = text.strip_prefix("000<SS2<T")?;
+    let (name_len, rest) = rest.split_once('x')?;
+    let name_len = name_len.parse::<usize>().ok()?;
+    if !(1..=32).contains(&name_len) || rest.len() < name_len {
+        return None;
+    }
+    let (name, rest) = rest.split_at(name_len);
+    if !name.as_bytes()[0].is_ascii_alphabetic()
+        || !name
+            .bytes()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_')
+    {
+        return None;
+    }
+    let mut rest = rest.strip_prefix(">>")?;
+    let mut values = Vec::new();
+    while !rest.is_empty() {
+        if values.len() >= 256 {
+            return None;
+        }
+        rest = rest.strip_prefix("0<H<T")?;
+        let (value_len, after_len) = rest.split_once('x')?;
+        let value_len = value_len.parse::<usize>().ok()?;
+        if !(3..=6).contains(&value_len) || after_len.len() < value_len {
+            return None;
+        }
+        let (value, after_value) = after_len.split_at(value_len);
+        rest = after_value.strip_prefix(">>")?;
+        let decimals = value.split_once('.')?.1.len();
+        if !(1..=2).contains(&decimals) {
+            return None;
+        }
+        let numeric = value.parse::<f64>().ok()?;
+        decimal_words(numeric).ok()?;
+        if format!("{numeric:.decimals$}") != value {
+            return None;
+        }
+        values.push(value.to_owned());
+    }
+    (!values.is_empty()).then_some((name.to_owned(), values))
+}
+
+fn canonical_named_table(
+    source: u32,
+    name: &str,
+    values: &[String],
+    anchor: (i16, i16),
+) -> Result<Vec<u8>, String> {
+    if source == 0 || name.len() > 32 || !(1..=256).contains(&values.len()) {
+        return Err("Invalid named table source or value".into());
+    }
+    let base = table_template();
+    let rs = records(&base, 0)?;
+    let mut layout = base[rs[2].payload..rs[2].payload + 28].to_vec();
+    layout[12..14].copy_from_slice(&anchor.0.to_le_bytes());
+    layout[14..16].copy_from_slice(&anchor.1.to_le_bytes());
+    layout[16..18].copy_from_slice(&((values.len() + 2) as u16).to_le_bytes());
+    layout.extend_from_slice(format!("000<SS2<T{}x{name}>>", name.len()).as_bytes());
+    for value in values {
+        layout.extend_from_slice(format!("0<H<T{}x{value}>>", value.len()).as_bytes());
+    }
+    while layout.len() % 4 != 0 {
+        layout.push(0);
+    }
+    if named_table_parts(&layout) != Some((name.to_owned(), values.to_vec())) {
+        return Err("Invalid named table text".into());
+    }
+    let layout_len = layout.len() as u32;
+    layout[4..8].copy_from_slice(&layout_len.to_le_bytes());
+    let mut refs = base[rs[1].payload..rs[1].end].to_vec();
+    refs[4..8].copy_from_slice(&source.to_le_bytes());
+    let mut group = Vec::new();
+    put_record(&mut group, 0x07d0, &base[rs[0].payload..rs[0].end]);
+    put_record(&mut group, 0x07d2, &refs);
+    put_record(&mut group, 0x090d, &layout);
+    put_record(&mut group, 0x07d8, &base[rs[3].payload..rs[3].end]);
+    put_record(&mut group, 0x07d7, &[]);
+    Ok(group)
+}
+
 impl TableGroup {
     pub fn default_snapshot() -> Self {
         Self {
             bytes: table_template(),
         }
+    }
+
+    pub fn named_snapshot(
+        source: u32,
+        parameter: &ParameterGroup,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let value = format!("{:.*}", parameter.precision(), parameter.value());
+        let bytes = canonical_named_table(source, parameter.name(), &[value], anchor)?;
+        Self::parse(&bytes)
     }
 
     pub fn pair_snapshot() -> Self {
@@ -651,7 +853,7 @@ impl TableGroup {
         {
             return Err("Unsupported table record sequence".into());
         }
-        if rs[1].end - rs[1].payload != 8 || rs[2].end - rs[2].payload < 64 {
+        if rs[1].end - rs[1].payload != 8 || rs[2].end - rs[2].payload < 28 {
             return Err("Unsupported table payload length".into());
         }
         let source = u32::from_le_bytes(
@@ -668,6 +870,16 @@ impl TableGroup {
         let rows = row_count.checked_sub(2).ok_or("Invalid table row count")?;
         let mut normalized = bytes.to_vec();
         normalized[10] &= !1;
+        let layout = &bytes[rs[2].payload..rs[2].end];
+        if u32::from_le_bytes(layout[4..8].try_into().unwrap()) as usize == layout.len()
+            && let Some((name, values)) = named_table_parts(layout)
+            && rows == values.len()
+            && normalized == canonical_named_table(source, &name, &values, anchor)?
+        {
+            return Ok(Self {
+                bytes: bytes.to_vec(),
+            });
+        }
         // A two-row table saved after Plot Points has an observed `t` in
         // the penultimate padding byte of 0x090d. It is outside the row text.
         if rows == 2 && normalized[rs[2].end - 2] == b't' && normalized[rs[2].end - 1] == 0 {
@@ -681,6 +893,24 @@ impl TableGroup {
         })
     }
 
+    pub fn named_label_values(&self) -> Option<(String, Vec<String>)> {
+        let rs = records(&self.bytes, 0).ok()?;
+        named_table_parts(&self.bytes[rs[2].payload..rs[2].end])
+    }
+
+    pub fn named_label_value(&self) -> Option<(String, String)> {
+        let (name, values) = self.named_label_values()?;
+        Some((name, values.into_iter().next()?))
+    }
+
+    pub fn add_named_snapshot(&mut self, value: &str) -> Result<(), String> {
+        let (name, mut values) = self.named_label_values().ok_or("Not a named table")?;
+        *values.last_mut().ok_or("Table has no rows")? = value.to_owned();
+        values.push(value.to_owned());
+        self.bytes = canonical_named_table(self.source_id(), &name, &values, self.anchor())?;
+        Ok(())
+    }
+
     pub fn rows(&self) -> usize {
         let rs = records(&self.bytes, 0).unwrap();
         u16::from_le_bytes(
@@ -692,11 +922,22 @@ impl TableGroup {
     }
 
     pub fn add_default_snapshot(&mut self) -> Result<(), String> {
+        if self.named_label_values().is_some() {
+            return Err("Use the named parameter value for this table row".into());
+        }
         self.bytes = canonical_table(self.source_id(), self.anchor(), self.rows() + 1)?;
         Ok(())
     }
 
     pub fn remove_last_snapshot(&mut self) -> Result<(), String> {
+        if let Some((name, mut values)) = self.named_label_values() {
+            if values.len() <= 1 {
+                return Err("Table has only one row".into());
+            }
+            values.pop();
+            self.bytes = canonical_named_table(self.source_id(), &name, &values, self.anchor())?;
+            return Ok(());
+        }
         let rows = self.rows().checked_sub(1).ok_or("Table has no rows")?;
         self.bytes = canonical_table(self.source_id(), self.anchor(), rows)?;
         Ok(())
@@ -869,6 +1110,109 @@ mod tests {
         let output = append_default_parameter(blank, (140, 95)).unwrap();
         assert_eq!(object_group(&output, 1), parameter.as_bytes());
         assert!(append_default_parameter(&output, (10, 5)).is_err());
+    }
+
+    #[test]
+    fn named_parameter_decodes_and_matches_original_groups() {
+        let custom = object_group(
+            include_bytes!("../tests/fixtures/table_parameter_custom.gsp"),
+            1,
+        );
+        let parsed = ParameterGroup::parse(&custom).unwrap();
+        assert_eq!(parsed.name(), "a");
+        assert_eq!(parsed.value(), 2.5);
+        assert_eq!(parsed.precision(), 2);
+        assert_eq!(ParameterGroup::parse(&custom).unwrap().as_bytes(), custom);
+
+        let speed = object_group(NAMED_PARAMETER, 1);
+        let parsed = ParameterGroup::parse(&speed).unwrap();
+        assert_eq!(parsed.name(), "speed");
+        assert_eq!(parsed.value(), 2.5);
+        assert_eq!(parsed.precision(), 1);
+        assert_eq!(
+            ParameterGroup::named("speed", 2.5).unwrap().as_bytes(),
+            speed
+        );
+        assert_eq!(
+            ParameterGroup::named("speed", 3.25).unwrap().as_bytes(),
+            object_group(
+                include_bytes!("../tests/fixtures/table_parameter_speed_precision2_original.gsp"),
+                1
+            )
+        );
+        let original_test = object_group(
+            include_bytes!("../tests/fixtures/table_parameter_test_original.gsp"),
+            1,
+        );
+        let original_test = ParameterGroup::parse(&original_test).unwrap();
+        let generated_test = ParameterGroup::named("test", 2.5).unwrap();
+        assert_eq!(generated_test.name(), "test");
+        assert_eq!(generated_test.bbox(), original_test.bbox());
+        assert_eq!(ParameterGroup::named("test", 3.25).unwrap().name(), "test");
+        assert!(ParameterGroup::named("3bad", 1.).is_err());
+    }
+
+    #[test]
+    fn named_parameter_tables_match_original_saved_groups() {
+        for (document, parameter_id, table_id) in [
+            (
+                include_bytes!("../tests/fixtures/table_named_speed_snapshot_original.gsp")
+                    .as_slice(),
+                1,
+                2,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/table_named_speed_precision2_snapshot_original.gsp"
+                )
+                .as_slice(),
+                1,
+                2,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_named_test_late_source_original.gsp")
+                    .as_slice(),
+                5,
+                7,
+            ),
+        ] {
+            let parameter = ParameterGroup::parse(&object_group(document, parameter_id)).unwrap();
+            let original = object_group(document, table_id);
+            let table = TableGroup::parse(&original).unwrap();
+            assert_eq!(table.source_id(), parameter_id as u32);
+            assert_eq!(table.named_label_value().unwrap().0, parameter.name());
+            assert_eq!(
+                TableGroup::named_snapshot(parameter_id as u32, &parameter, table.anchor())
+                    .unwrap()
+                    .as_bytes(),
+                original
+            );
+            assert!(table.clone().add_default_snapshot().is_err());
+        }
+        let original = include_bytes!("../tests/fixtures/table_named_speed_two_rows_original.gsp");
+        let parameter = ParameterGroup::parse(&object_group(original, 1)).unwrap();
+        let two_rows = object_group(original, 2);
+        let parsed = TableGroup::parse(&two_rows).unwrap();
+        assert_eq!(parsed.named_label_values().unwrap().1, ["2.5", "2.5"]);
+        let mut generated = TableGroup::named_snapshot(1, &parameter, parsed.anchor()).unwrap();
+        generated.add_named_snapshot("2.5").unwrap();
+        assert_eq!(generated.as_bytes(), two_rows);
+        generated.remove_last_snapshot().unwrap();
+        assert_eq!(generated.rows(), 1);
+        assert!(generated.remove_last_snapshot().is_err());
+
+        let live_add = include_bytes!("../tests/fixtures/table_named_speed_live_add_original.gsp");
+        let original_group = object_group(live_add, 2);
+        let original_table = TableGroup::parse(&original_group).unwrap();
+        assert_eq!(
+            original_table.named_label_values().unwrap().1,
+            ["3.25", "3.25"]
+        );
+        let old_parameter = ParameterGroup::named("speed", 2.5).unwrap();
+        let mut generated =
+            TableGroup::named_snapshot(1, &old_parameter, original_table.anchor()).unwrap();
+        generated.add_named_snapshot("3.25").unwrap();
+        assert_eq!(generated.as_bytes(), original_group);
     }
 
     #[test]

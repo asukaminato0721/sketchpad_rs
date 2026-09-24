@@ -89,17 +89,23 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
         Kind::Parameter(group) => Some((
             group.anchor(),
             vec![format!(
-                "{} = {:.2}",
-                if group.name() == "t[2]" {
-                    "t₂"
-                } else {
-                    "t₁"
+                "{} = {:.*}",
+                match group.name() {
+                    "t[1]" => "t₁",
+                    "t[2]" => "t₂",
+                    name => name,
                 },
+                group.precision(),
                 group.value()
             )],
         )),
         Kind::Calculation(group) => Some((group.anchor(), vec!["2 + 3 = 5.00".into()])),
         Kind::ValueTable(_, group) => {
+            if let Some((name, values)) = group.named_label_values() {
+                let mut lines = vec![name];
+                lines.extend(values);
+                return Some((group.anchor(), lines));
+            }
             let mut lines = vec!["t₁".into()];
             lines.extend((0..group.rows()).map(|_| "1.00".into()));
             Some((group.anchor(), lines))
@@ -117,8 +123,28 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
         _ => None,
     }
 }
-pub fn number_screen_rect(vp: &Viewport, kind: &Kind) -> Option<Rect> {
-    let (anchor, lines) = number_lines(kind)?;
+
+pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
+    let object = doc.objects.get(id.checked_sub(1)?)?;
+    if let Kind::ValueTable(source, group) = &object.kind
+        && let Some((name, mut values)) = group.named_label_values()
+    {
+        if let Some(Kind::Parameter(parameter)) = doc
+            .objects
+            .get(source.checked_sub(1)?)
+            .map(|object| &object.kind)
+            && let Some(last) = values.last_mut()
+        {
+            *last = format!("{:.*}", parameter.precision(), parameter.value());
+        }
+        let mut lines = vec![name];
+        lines.extend(values);
+        return Some((group.anchor(), lines));
+    }
+    number_lines(&object.kind)
+}
+
+fn number_rect(vp: &Viewport, anchor: (i16, i16), lines: &[String]) -> Rect {
     let width = lines
         .iter()
         .map(|line| line.chars().count())
@@ -126,10 +152,20 @@ pub fn number_screen_rect(vp: &Viewport, kind: &Kind) -> Option<Rect> {
         .unwrap_or(0) as f32
         * 10.
         + 16.;
-    Some(Rect::from_min_size(
+    Rect::from_min_size(
         vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32),
         egui::vec2(width.max(66.), lines.len() as f32 * 21. + 8.),
-    ))
+    )
+}
+
+pub fn number_screen_rect(vp: &Viewport, kind: &Kind) -> Option<Rect> {
+    let (anchor, lines) = number_lines(kind)?;
+    Some(number_rect(vp, anchor, &lines))
+}
+
+pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -> Option<Rect> {
+    let (anchor, lines) = number_lines_for_object(doc, id)?;
+    Some(number_rect(vp, anchor, &lines))
 }
 pub fn picture_screen_quad(vp: &Viewport, png: &[u8], transform: [f64; 6]) -> Option<[Pos2; 4]> {
     if png.len() < 24 {
@@ -647,7 +683,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 .unwrap();
             }
         }
-        if let Some((anchor, lines)) = number_lines(&object.kind) {
+        if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
             for (line, content) in lines.iter().enumerate() {
                 writeln!(

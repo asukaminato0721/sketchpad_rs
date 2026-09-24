@@ -254,6 +254,16 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_default_parameter(number_anchor(rest)?)?;
                     println!("line {}: parameter -> object {id}", index + 1);
                 }
+                "named_parameter" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [name, value, x, y] = parts.as_slice() else {
+                        return Err("expected named_parameter NAME VALUE X Y".into());
+                    };
+                    let value: f64 = value.parse().map_err(|_| "invalid parameter value")?;
+                    let anchor = number_anchor(&format!("{x} {y}"))?;
+                    let id = document.add_named_parameter(name, value, anchor)?;
+                    println!("line {}: named_parameter -> object {id}", index + 1);
+                }
                 "parameter2_value" => {
                     let value: u16 = rest.parse().map_err(|_| "invalid second parameter value")?;
                     document.set_second_parameter_value(2, value)?;
@@ -272,8 +282,18 @@ fn replay(path: &str) -> Result<(), String> {
                     println!("line {}: calculate_2_plus_3 -> object {id}", index + 1);
                 }
                 "tabulate" => {
-                    let source: usize = rest.parse().map_err(|_| "invalid parameter ID")?;
-                    let id = document.tabulate_default_parameter(source, (10, 38))?;
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let source: usize = parts
+                        .first()
+                        .ok_or("expected tabulate SOURCE [X Y]")?
+                        .parse()
+                        .map_err(|_| "invalid parameter ID")?;
+                    let anchor = match parts.as_slice() {
+                        [_] => (10, 38),
+                        [_, x, y] => number_anchor(&format!("{x} {y}"))?,
+                        _ => return Err("expected tabulate SOURCE [X Y]".into()),
+                    };
+                    let id = document.tabulate_default_parameter(source, anchor)?;
                     println!("line {}: tabulate -> object {id}", index + 1);
                 }
                 "tabulate_pair" if rest.is_empty() => {
@@ -407,17 +427,41 @@ fn replay(path: &str) -> Result<(), String> {
                     }
                 }
                 "plot_points" => {
-                    let mode = match rest {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let mode = match parts.first().copied().unwrap_or("") {
                         "cartesian" => PlotPointsMode::Cartesian,
                         "polar" => PlotPointsMode::Polar,
-                        _ => return Err("expected plot_points cartesian or polar".into()),
+                        _ => {
+                            return Err("expected plot_points cartesian|polar [X Y]".into());
+                        }
                     };
-                    let id = document.plot_default_parameter(mode)?;
+                    let coordinates = match parts.as_slice() {
+                        [_] => [1.0, 1.0],
+                        [_, first, second] => [
+                            first.parse().map_err(|_| "invalid first coordinate")?,
+                            second.parse().map_err(|_| "invalid second coordinate")?,
+                        ],
+                        _ => {
+                            return Err("expected plot_points cartesian|polar [X Y]".into());
+                        }
+                    };
+                    let id = document.plot_points_at(mode, coordinates)?;
                     println!("line {}: plot_points -> object {id}", index + 1);
                 }
                 "plot_table_data" => {
-                    let table: usize = rest.parse().map_err(|_| "invalid table ID")?;
-                    let ids = document.plot_default_pair_table(table)?;
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let (table, mode) = match parts.as_slice() {
+                        [table] => (
+                            table.parse().map_err(|_| "invalid table ID")?,
+                            PlotPointsMode::Cartesian,
+                        ),
+                        [table, "polar"] => (
+                            table.parse().map_err(|_| "invalid table ID")?,
+                            PlotPointsMode::Polar,
+                        ),
+                        _ => return Err("expected plot_table_data TABLE [polar]".into()),
+                    };
+                    let ids = document.plot_pair_table_data(table, mode)?;
                     println!("line {}: plot_table_data -> objects {ids:?}", index + 1);
                 }
                 "plot_axis" | "plot_path" => {

@@ -30,9 +30,62 @@ Selecting the segment's two endpoints before Graph > Define Coordinate
 System produced the same six graph groups as defining it with no selection.
 Only an unrelated `0x04b1` presentation record differed in that probe.
 
-Graph > Show Grid toggled page record `0x03e8` payload byte 10 from zero to
-one. Its saved file is `graph_hidden_grid.gsp`. A page without any coordinate
-system also stores zero there, so the flag only has meaning with a frame.
+Further menu and drag probes corrected the earlier identification of page
+record `0x03e8` payload byte 10. Graph > Show Grid changes the coordinate
+system object's visibility bit in its `0x07d0` header. It hides the frame,
+axes, origin, and unit points on reopen while leaving unrelated free points
+visible. The original example is `graph_hidden_by_menu_original.gsp`.
+The generated `tests/graph_hidden_replay.txt` frame opened with no graph
+components in Sketchpad 5 and saved byte-identically.
+
+Graph > Dotted Grid changes the coordinate-system object's `0x0904` payload
+from `01 00 00 00 00 00 00 00` to `01 00 01 00 00 00 00 00`. The original
+saved example is `graph_dotted_grid_original.gsp`. The port decodes that byte,
+renders grid intersections as dots, and writes it for both existing and new
+frames. A port-generated six-object dotted frame opened with the expected
+dots in Sketchpad 5 and saved byte-identically. The generated and original
+fixtures are in `tests/fixtures`, and `tests/graph_dotted_grid_replay.txt`
+reproduces the generated file.
+
+Grid Form's first three submenu entries are Polar, Square (the default),
+and Rectangular. The coordinate-system `0x0904` first byte is respectively
+`0`, `1`, or `2`. Polar retains the default unit objects and displays
+concentric unit circles and 24 radial lines. Rectangular changes the vertical
+unit object's code and `0x07d3` constraint code from decimal `54` to `55`;
+its initial step is one `f64` bit below the default `37.79527559055118`.
+Dragging that unit point upward by 18 screen units changed the step to
+`55.79527559055117` while leaving horizontal spacing unchanged. The fourth
+submenu entry opened a confirmation dialog. Accepting it labeled the
+horizontal axis at `−π` and `π`; its X-axis `0x0905` payload changed from
+`01 00 00 00` to `01 00 01 00`, while the coordinate-system form remained
+Square. The port stores that X-axis flag, exposes the fourth Grid Form
+command, and renders labels at multiples of π in the native canvas and SVG.
+Original Polar and Rectangular examples, plus the dragged Rectangular unit,
+are in `tests/fixtures`. Generated Polar, Rectangular, and dotted Polar files
+opened with the expected grids in Sketchpad 5 and saved byte-identically.
+An original Rectangular file edited by the port to use a 65-unit vertical
+step reopened in Sketchpad 5 with independent vertical spacing. The original
+trigonometric-axis file round-trips byte-identically. A generated file with
+the same flag opened with `−π` and `π` labels in Sketchpad 5 and saved
+byte-identically. Its fixture and replay script are
+`graph_trigonometric_axis_generated.gsp` and
+`graph_trigonometric_axis_replay.txt`.
+
+Graph > Snap Points changes page record `0x03e8` payload byte 10 from `0` to
+`1`. With the option on, dragging a free point toward `(250, 170)` in the
+default frame saved it at `(236.79527559055117, 162.79527559055117)`, the
+nearest grid intersection. With the option off, the same drag saved it at
+`(250, 170)`. Reopening and dragging again still snapped. The original
+example is `graph_snap_points_original.gsp`; a port-generated example from
+`tests/graph_snap_points_replay.txt` opened, snapped again, and saved in
+Sketchpad 5. The `0x2328` record seen after these probes is the selected
+object marker, not the snap flag: it held the free point's ID after dragging.
+Clicking Snap Points again restored byte 10 to `0`; the next drag moved the
+point by the pointer delta without rounding it to the grid.
+In a Polar frame, dragging a free point toward `(250, 170)` snapped it to
+`(252.45059133378615, 178.45059133378635)`, the radius-2 ring at −45°.
+The port's polar snap calculation matched within floating-point rounding;
+`graph_polar_snap_original.gsp` retains the original result.
 
 ## Writer proof
 
@@ -59,10 +112,12 @@ to retain those records when opening an existing original file.
 ## Integrated behavior and verification
 
 The document model decodes the six frame objects and slope, evaluates their
-dependencies, and writes the observed default frame template. The native UI
-has Define Coordinate System, Show Grid, and Slope commands. The renderer and
-SVG exporter draw the grid using the same viewport transform as the sketch.
-The replay harness has `coordinate_system`, `show_grid`, and `slope` commands.
+dependencies, and writes the observed frame templates. The native UI has
+Define Coordinate System, all four Grid Form choices, Show Grid, Dotted Grid,
+Snap Points, and Slope commands. The renderer and SVG exporter use the same viewport
+transform as the sketch. The replay harness includes `coordinate_system`,
+`grid_form`, `trigonometric_axis`, `show_grid`, `dotted_grid`, `snap_points`,
+and `slope` commands.
 
 Original files include a trailing `0x232d` page-link record whose four-byte
 payload is the coordinate-system object ID. The first writer omitted it; the
@@ -79,12 +134,15 @@ displayed `0.00`, and saved with zero changed record slots. Dragging an
 endpoint in Sketchpad 5 displayed `-0.33`; Rust reopened and verified all ten
 objects. A blank-document replay generated a six-object coordinate system
 with IDs 1–6; Sketchpad 5 opened and saved it with zero changed record slots.
-The hidden-grid replay generated the same page flag and `0x232d` page link as
-the corresponding original file, and Sketchpad 5 saved it byte-for-byte.
-However, Wine screenshots of the same hidden-grid bytes differed between
-runs: one showed the grid and one did not. The visual persistence of Show Grid
-therefore remains unverified in the original app despite the matching records.
+The earlier `graph_hidden_grid.gsp` fixture was misnamed: its page flag enables
+Snap Points. A later drag comparison established that distinction. The
+corrected Show Grid replay now changes the frame header visibility bit, and
+its file opened with no frame components in Sketchpad 5 and saved
+byte-identically. The Snap Points replay rounded a free point to the same
+intersection as the original app; Sketchpad 5 opened it and snapped a second
+drag to the next intersection.
 
-These probes cover the default Cartesian frame and segment slope. They do not
-establish selected-object frames, grid form, axis dragging, or the other Graph
-commands.
+These probes cover the default frame, free-point snapping, all four Grid Form
+choices, grid visibility and dotted form, and segment slope. They do not
+establish selected-object frames, horizontal unit dragging, or the remaining
+Graph commands.

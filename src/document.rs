@@ -1180,8 +1180,8 @@ impl Document {
                         if plotted_point.as_ref().is_some_and(|plot| {
                             plot.references == [(*source - page_base) as u32, (*frame - page_base) as u32]
                         })
-                        && objects.get(source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
-                        && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(source - 1).is_some_and(|o| o.page == page)
+                        && objects.get(frame - 1).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         let plot = plotted_point.unwrap();
                         Kind::PlottedPoint(*source, *frame, plot.mode, plot.stored)
                     }
@@ -1228,10 +1228,16 @@ impl Document {
                             }
                         }
                     }
-                    (91, None, [source]) if *source == page_base + 1
-                        && objects.get(*source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
+                    (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
                         match TableGroup::parse(&b[group_start..rs[i].data.end]) {
-                            Ok(table) if table.source_id() as usize == *source - page_base => Kind::ValueTable(*source, table),
+                            Ok(table) if source.checked_sub(page_base) == Some(table.source_id() as usize)
+                                && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| match &o.kind {
+                                    Kind::Parameter(parameter) => match table.named_label_value() {
+                                        Some((name, _)) => name == parameter.name(),
+                                        None => *source == page_base + 1 && parameter.name() == "t[1]",
+                                    },
+                                    _ => false,
+                                }) => Kind::ValueTable(*source, table),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1781,6 +1787,26 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::Parameter(group)))
     }
+    pub fn add_named_parameter(
+        &mut self,
+        name: &str,
+        value: f64,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot add a parameter in this sketch".into());
+        }
+        if self.objects.iter().any(|object| {
+            !object.deleted
+                && matches!(&object.kind, Kind::Parameter(group) if group.name() == name)
+        }) {
+            return Err("A parameter with this name already exists".into());
+        }
+        let mut group = ParameterGroup::named(name, value)?;
+        group.set_anchor(anchor)?;
+        self.checkpoint();
+        Ok(self.append_object(Kind::Parameter(group)))
+    }
     pub fn set_second_parameter_value(&mut self, id: usize, value: u16) -> Result<(), String> {
         if id != 2 {
             return Err("Select t[2]".into());
@@ -1788,13 +1814,13 @@ impl Document {
         self.set_parameter_value(id, value as f64)
     }
     pub fn set_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
-        if self.partial_view || self.page_count != 1 || !matches!(id, 1 | 2) {
-            return Err("Only verified parameters can be edited".into());
+        if self.partial_view || self.page_count != 1 || id == 0 {
+            return Err("Cannot edit a parameter in this sketch".into());
         }
         let Some(Kind::Parameter(group)) = self.objects.get(id - 1).map(|o| &o.kind) else {
             return Err("Select a parameter".into());
         };
-        if id == 1
+        if group.name() == "t[1]"
             && self.objects.iter().any(|object| {
                 matches!(
                     object.kind,
@@ -1806,7 +1832,7 @@ impl Document {
         }
         let mut group = group.clone();
         group.set_value(value)?;
-        let table = (id == 2)
+        let table = (id == 2 && group.name() == "t[2]")
             .then(|| self.objects.get(2))
             .flatten()
             .and_then(|object| {
@@ -1843,18 +1869,27 @@ impl Document {
         source: usize,
         anchor: (i16, i16),
     ) -> Result<usize, String> {
-        if self.partial_view
-            || self.page_count != 1
-            || source != 1
-            || self.objects.len() != 1
-            || !matches!(
-                self.objects.first().map(|o| &o.kind),
-                Some(Kind::Parameter(_))
-            )
-        {
-            return Err("Only the verified t[1] parameter can be tabulated".into());
+        if self.partial_view || self.page_count != 1 || source == 0 {
+            return Err("Cannot tabulate a parameter in this sketch".into());
         }
-        let group = TableGroup::for_source(1, anchor)?;
+        let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).map(|o| &o.kind) else {
+            return Err("Select a supported parameter".into());
+        };
+        let group = if source == 1
+            && self.objects.len() == 1
+            && parameter.name() == "t[1]"
+            && parameter.value() == 1.0
+        {
+            TableGroup::for_source(1, anchor)?
+        } else if !matches!(parameter.name(), "t[1]" | "t[2]") {
+            TableGroup::named_snapshot(
+                u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
+                parameter,
+                anchor,
+            )?
+        } else {
+            return Err("This default parameter table is not yet supported".into());
+        };
         self.checkpoint();
         Ok(self.append_object(Kind::ValueTable(source, group)))
     }
@@ -1896,14 +1931,26 @@ impl Document {
             .get(id.checked_sub(1).ok_or("Invalid table ID")?)
             .ok_or("Invalid table ID")?;
         let kind = match &object.kind {
-            Kind::ValueTable(_, group) => {
+            Kind::ValueTable(source, group) => {
                 let mut group = group.clone();
                 if add {
-                    group.add_default_snapshot()?;
+                    if group.named_label_values().is_some() {
+                        let Some(Kind::Parameter(parameter)) = self
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .map(|object| &object.kind)
+                        else {
+                            return Err("Invalid named table source".into());
+                        };
+                        let value = format!("{:.*}", parameter.precision(), parameter.value());
+                        group.add_named_snapshot(&value)?;
+                    } else {
+                        group.add_default_snapshot()?;
+                    }
                 } else {
                     group.remove_last_snapshot()?;
                 }
-                Kind::ValueTable(1, group)
+                Kind::ValueTable(*source, group)
             }
             Kind::ValueTablePair(_, _, group) => {
                 let values = group.pair_values().ok_or("Invalid pair table")?;
@@ -2032,27 +2079,60 @@ impl Document {
             .collect()
     }
     pub fn plot_default_parameter(&mut self, mode: PlotPointsMode) -> Result<usize, String> {
-        if self.partial_view
-            || self.page_count != 1
-            || self.objects.len() != 8
-            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]" && group.value() == 1.0)
-            || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::ValueTable(1, group)) if group.rows() > 0)
-            || self.active_coordinate_system() != Some(8)
-        {
-            return Err(
-                "Plot Points currently requires the t[1] table and its default Cartesian frame"
-                    .into(),
-            );
+        self.plot_points_at(mode, [1.0, 1.0])
+    }
+    pub fn plot_points_at(
+        &mut self,
+        mode: PlotPointsMode,
+        coordinates: [f64; 2],
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Plot Points requires a supported coordinate frame".into());
         }
-        let group = plot_points_records::encode_t1_group(mode, [1, 8])?;
+        let frame = self
+            .active_coordinate_system()
+            .ok_or("Define a coordinate system before plotting points")?;
+        let source = self
+            .objects
+            .first()
+            .filter(|object| {
+                object.page == self.active_page && !object.deleted && object.id != frame
+            })
+            .ok_or("Plot Points requires a source object on this page")?
+            .id;
+        if coordinates.iter().any(|value| !value.is_finite()) {
+            return Err("Plot coordinates must be finite".into());
+        }
+        let stored = match mode {
+            PlotPointsMode::Cartesian => coordinates,
+            PlotPointsMode::Polar => [
+                coordinates[0],
+                coordinates[1] * plot_points_records::DEGREES_TO_RADIANS,
+            ],
+        };
+        let [x, y] = match mode {
+            PlotPointsMode::Cartesian => stored,
+            PlotPointsMode::Polar => [stored[0] * stored[1].cos(), stored[0] * stored[1].sin()],
+        };
+        self.graph_frame(frame)
+            .and_then(|frame| frame.world(x, y))
+            .ok_or("Plot coordinates are outside the supported range")?;
+        let group = plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
         let plot = plot_points_records::decode_group(&group)?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
-        let id = self.append_object(Kind::PlottedPoint(1, 8, mode, plot.stored));
+        let id = self.append_object(Kind::PlottedPoint(source, frame, mode, plot.stored));
         self.objects[id - 1].visual_style = style;
         Ok(id)
     }
     pub fn plot_default_pair_table(&mut self, table: usize) -> Result<Vec<usize>, String> {
+        self.plot_pair_table_data(table, PlotPointsMode::Cartesian)
+    }
+    pub fn plot_pair_table_data(
+        &mut self,
+        table: usize,
+        mode: PlotPointsMode,
+    ) -> Result<Vec<usize>, String> {
         if self.partial_view
             || self.page_count != 1
             || table != 3
@@ -2083,11 +2163,16 @@ impl Document {
         self.checkpoint();
         let mut ids = Vec::new();
         for stored in unique {
-            let group =
-                plot_points_records::encode_group(PlotPointsMode::Cartesian, [1, 9], stored)?;
+            let stored = match mode {
+                PlotPointsMode::Cartesian => stored,
+                PlotPointsMode::Polar => [
+                    stored[0],
+                    stored[1] * plot_points_records::DEGREES_TO_RADIANS,
+                ],
+            };
+            let group = plot_points_records::encode_group(mode, [1, 9], stored)?;
             let style = style_records::visual_style(&group[8..36]);
-            let id =
-                self.append_object(Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, stored));
+            let id = self.append_object(Kind::PlottedPoint(1, 9, mode, stored));
             self.objects[id - 1].visual_style = style;
             ids.push(id);
         }
@@ -3717,12 +3802,16 @@ impl Document {
                 }
                 Kind::ValueTable(source, group) => {
                     TableGroup::parse(group.as_bytes())?;
-                    if *source != 1
-                        || group.source_id() != 1
-                        || !matches!(
-                            self.objects.get(source - 1).map(|o| &o.kind),
-                            Some(Kind::Parameter(_))
-                        )
+                    if group.source_id() as usize != *source
+                        || !self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
+                            match &o.kind {
+                                Kind::Parameter(parameter) => match group.named_label_value() {
+                                    Some((name, _)) => name == parameter.name(),
+                                    None => *source == 1 && parameter.name() == "t[1]",
+                                },
+                                _ => false,
+                            }
+                        })
                     {
                         return Err("Unsupported table source".into());
                     }
@@ -3860,7 +3949,10 @@ impl Document {
                 }
             }
             if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
-                if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]" && group.value() == 1.0)
+                if self
+                    .objects
+                    .get(source.saturating_sub(1))
+                    .is_none_or(|anchor| anchor.page != o.page)
                     || self.graph_frame(frame).is_none()
                     || stored.iter().any(|value| !value.is_finite())
                     || self.position(o.id).is_none()
@@ -3874,9 +3966,7 @@ impl Document {
                         stored,
                     )?;
                     if plot_points_records::decode_group(&group)?.stored != stored {
-                        return Err(
-                            "Only the observed t[1] Plot Points values can be written".into()
-                        );
+                        return Err("Cannot encode this Plot Points value".into());
                     }
                 }
             }
@@ -7275,6 +7365,211 @@ mod tests {
     }
 
     #[test]
+    fn named_parameter_table_plot_matches_original_point_group() {
+        let original = include_bytes!("../tests/fixtures/plot_points_named_speed_original.gsp");
+        let native = Document::from_bytes(original, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), original);
+        assert!(matches!(
+            native.objects[8].kind,
+            Kind::PlottedPoint(1, 8, PlotPointsMode::Cartesian, [1.0, 1.0])
+        ));
+        let mut doc = Document::new();
+        doc.add_named_parameter("speed", 2.5, (10, 5)).unwrap();
+        doc.tabulate_default_parameter(1, (10, 45)).unwrap();
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(doc.plot_default_parameter(PlotPointsMode::Cartesian), Ok(9));
+        let saved = doc.encode().unwrap();
+        let last = |bytes: &[u8]| {
+            let entries = records(bytes).unwrap();
+            let start = entries.iter().rfind(|r| r.kind == 0x07d0).unwrap().start;
+            let end = entries.iter().rfind(|r| r.kind == 0x07d7).unwrap().data.end;
+            bytes[start..end].to_vec()
+        };
+        assert_eq!(last(&saved), last(original));
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(9), native.position(9));
+    }
+
+    #[test]
+    fn custom_named_plot_coordinates_match_original_groups() {
+        let original_cases: [(PlotPointsMode, [f64; 2], &[u8]); 2] = [
+            (
+                PlotPointsMode::Cartesian,
+                [2.5, -1.25],
+                include_bytes!(
+                    "../tests/fixtures/plot_points_named_speed_custom_cartesian_original.gsp"
+                ),
+            ),
+            (
+                PlotPointsMode::Polar,
+                [2.5, 30.0],
+                include_bytes!(
+                    "../tests/fixtures/plot_points_named_speed_custom_polar_original.gsp"
+                ),
+            ),
+        ];
+        for (mode, coordinates, original) in original_cases {
+            let native = Document::from_bytes(original, None).unwrap();
+            assert!(!native.partial_view);
+            assert_eq!(native.encode().unwrap(), original);
+            let mut doc = Document::new();
+            doc.add_named_parameter("speed", 2.5, (10, 5)).unwrap();
+            doc.tabulate_default_parameter(1, (10, 45)).unwrap();
+            doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+                .unwrap();
+            assert_eq!(doc.plot_points_at(mode, coordinates), Ok(9));
+            let saved = doc.encode().unwrap();
+            let last = |bytes: &[u8]| {
+                let entries = records(bytes).unwrap();
+                let start = entries.iter().rfind(|r| r.kind == 0x07d0).unwrap().start;
+                let end = entries.iter().rfind(|r| r.kind == 0x07d7).unwrap().data.end;
+                bytes[start..end].to_vec()
+            };
+            assert_eq!(last(&saved), last(original));
+            let reopened = Document::from_bytes(&saved, None).unwrap();
+            assert_eq!(reopened.position(9), native.position(9));
+        }
+    }
+
+    #[test]
+    fn repeated_plot_points_round_trip_and_reject_invalid_coordinates() {
+        let mut doc = Document::new();
+        doc.add_named_parameter("speed", 2.5, (10, 5)).unwrap();
+        doc.tabulate_default_parameter(1, (10, 45)).unwrap();
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(
+            doc.plot_points_at(PlotPointsMode::Cartesian, [2.5, -1.25]),
+            Ok(9)
+        );
+        assert_eq!(
+            doc.plot_points_at(PlotPointsMode::Polar, [2.5, 30.0]),
+            Ok(10)
+        );
+        let before_invalid = doc.encode().unwrap();
+        assert!(
+            doc.plot_points_at(PlotPointsMode::Cartesian, [f64::NAN, 1.0])
+                .is_err()
+        );
+        assert_eq!(doc.encode().unwrap(), before_invalid);
+        doc.undo();
+        assert_eq!(doc.objects.len(), 9);
+        doc.redo();
+        assert_eq!(doc.objects.len(), 10);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(9), doc.position(9));
+        assert_eq!(reopened.position(10), doc.position(10));
+    }
+
+    #[test]
+    fn frame_only_plot_point_matches_original() {
+        let original = include_bytes!("../tests/fixtures/plot_points_frame_only_original.gsp");
+        let native = Document::from_bytes(original, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), original);
+        assert!(matches!(
+            native.objects[6].kind,
+            Kind::PlottedPoint(1, 6, PlotPointsMode::Cartesian, [1.0, 1.0])
+        ));
+        let mut doc = Document::new();
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(
+            doc.plot_points_at(PlotPointsMode::Cartesian, [1.0, 1.0]),
+            Ok(7)
+        );
+        let generated = doc.encode().unwrap();
+        let last = |bytes: &[u8]| {
+            let entries = records(bytes).unwrap();
+            let start = entries.iter().rfind(|r| r.kind == 0x07d0).unwrap().start;
+            let end = entries.iter().rfind(|r| r.kind == 0x07d7).unwrap().data.end;
+            bytes[start..end].to_vec()
+        };
+        assert_eq!(last(&generated), last(original));
+        let reopened = Document::from_bytes(&generated, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(7), native.position(7));
+    }
+
+    #[test]
+    fn plot_points_anchor_to_first_object_in_mixed_sketches() {
+        for (original, text_first) in [
+            (
+                include_bytes!("../tests/fixtures/plot_points_prepoint_original.gsp").as_slice(),
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/plot_points_pretext_original.gsp").as_slice(),
+                true,
+            ),
+        ] {
+            let native = Document::from_bytes(original, None).unwrap();
+            assert!(!native.partial_view);
+            assert_eq!(native.encode().unwrap(), original);
+            assert!(matches!(
+                native.objects[7].kind,
+                Kind::PlottedPoint(1, 7, PlotPointsMode::Cartesian, [1.0, 1.0])
+            ));
+            let mut doc = Document::new();
+            if text_first {
+                doc.add_text("hello", Point { x: 10., y: 5. }).unwrap();
+            } else {
+                doc.add(Kind::Free(Point { x: 100., y: 100. }));
+            }
+            doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+                .unwrap();
+            assert_eq!(
+                doc.plot_points_at(PlotPointsMode::Cartesian, [1., 1.]),
+                Ok(8)
+            );
+            let generated = doc.encode().unwrap();
+            let last = |bytes: &[u8]| {
+                let entries = records(bytes).unwrap();
+                let start = entries.iter().rfind(|r| r.kind == 0x07d0).unwrap().start;
+                let end = entries.iter().rfind(|r| r.kind == 0x07d7).unwrap().data.end;
+                bytes[start..end].to_vec()
+            };
+            assert_eq!(last(&generated), last(original));
+            let reopened = Document::from_bytes(&generated, None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.position(8), native.position(8));
+        }
+    }
+
+    #[test]
+    fn polar_table_data_matches_original_point_group() {
+        let original = include_bytes!("../tests/fixtures/plot_table_fraction_polar_original.gsp");
+        let native = Document::from_bytes(original, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), original);
+        assert!(matches!(
+            native.objects[9].kind,
+            Kind::PlottedPoint(1, 9, PlotPointsMode::Polar, [2.5, angle])
+                if angle == plot_points_records::DEGREES_TO_RADIANS
+        ));
+        let base = include_bytes!("../tests/fixtures/plot_table_fraction_base_original.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(
+            generated.plot_pair_table_data(3, PlotPointsMode::Polar),
+            Ok(vec![10])
+        );
+        let saved = generated.encode().unwrap();
+        let last = |bytes: &[u8]| {
+            let entries = records(bytes).unwrap();
+            let start = entries.iter().rfind(|r| r.kind == 0x07d0).unwrap().start;
+            let end = entries.iter().rfind(|r| r.kind == 0x07d7).unwrap().data.end;
+            bytes[start..end].to_vec()
+        };
+        assert_eq!(last(&saved), last(original));
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert_eq!(reopened.position(10), native.position(10));
+    }
+
+    #[test]
     fn original_two_row_plotted_point_is_editable() {
         let bytes = include_bytes!("../tests/fixtures/plot_points_table_two_rows_original.gsp");
         let mut doc = Document::from_bytes(bytes, None).unwrap();
@@ -7887,6 +8182,182 @@ mod tests {
         assert_eq!(original.position(10), plotted);
         assert!(
             matches!(&original.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[3.25, 1.]]))
+        );
+    }
+
+    #[test]
+    fn named_parameters_decode_create_and_edit() {
+        for (bytes, name, precision) in [
+            (
+                include_bytes!("../tests/fixtures/table_parameter_custom.gsp").as_slice(),
+                "a",
+                2,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_parameter_speed_original.gsp").as_slice(),
+                "speed",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_parameter_speed_precision2_original.gsp")
+                    .as_slice(),
+                "speed",
+                2,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_parameter_test_original.gsp").as_slice(),
+                "test",
+                1,
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::Parameter(group) = &document.objects[0].kind else {
+                panic!("expected parameter")
+            };
+            assert_eq!(group.name(), name);
+            assert_eq!(group.precision(), precision);
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut document = Document::new();
+        document.add_named_parameter("a", 2.5, (10, 5)).unwrap();
+        let generated = document.encode().unwrap();
+        let reopened = Document::from_bytes(&generated, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.encode().unwrap(), generated);
+        document.set_parameter_value(1, 3.25).unwrap();
+        assert_eq!(
+            Document::from_bytes(&document.encode().unwrap(), None)
+                .unwrap()
+                .objects[0]
+                .kind,
+            document.objects[0].kind
+        );
+    }
+
+    #[test]
+    fn multiple_named_parameters_can_follow_geometry_and_drive_a_plot() {
+        let mut document = Document::new();
+        assert_eq!(
+            document.add_named_parameter("speed", 2.5, (10, 5)).unwrap(),
+            1
+        );
+        document.add(Kind::Free(Point { x: 150., y: 120. }));
+        document.add(Kind::Free(Point { x: 180., y: 130. }));
+        document.add(Kind::Line(2, 3));
+        assert_eq!(
+            document
+                .add_named_parameter("test", 0.25, (10, 38))
+                .unwrap(),
+            5
+        );
+        let before_duplicate = document.encode().unwrap();
+        assert!(document.add_named_parameter("speed", 3., (10, 71)).is_err());
+        assert_eq!(document.encode().unwrap(), before_duplicate);
+        assert_eq!(document.plot_parameter_on_path(5, Some(4)).unwrap(), 6);
+        assert_eq!(document.position(6), Some(Point { x: 157.5, y: 122.5 }));
+        document.set_parameter_value(5, 0.5).unwrap();
+        assert_eq!(document.position(6), Some(Point { x: 165., y: 125. }));
+        let encoded = document.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(6), document.position(6));
+        assert_eq!(reopened.encode().unwrap(), encoded);
+    }
+
+    #[test]
+    fn named_parameter_tables_decode_and_save() {
+        for (bytes, source, table_id, name, value) in [
+            (
+                include_bytes!("../tests/fixtures/table_named_speed_snapshot_original.gsp")
+                    .as_slice(),
+                1,
+                2,
+                "speed",
+                "2.5",
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/table_named_speed_precision2_snapshot_original.gsp"
+                )
+                .as_slice(),
+                1,
+                2,
+                "speed",
+                "3.25",
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_named_test_late_source_original.gsp")
+                    .as_slice(),
+                5,
+                7,
+                "test",
+                "0.25",
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(
+                matches!(&document.objects[table_id - 1].kind, Kind::ValueTable(id, group)
+                if *id == source && group.named_label_value() == Some((name.into(), value.into())))
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut generated = Document::new();
+        generated
+            .add_named_parameter("speed", 2.5, (10, 5))
+            .unwrap();
+        let table_id = generated.tabulate_default_parameter(1, (10, 45)).unwrap();
+        assert_eq!(table_id, 2);
+        generated.change_table_rows(table_id, true).unwrap();
+        assert!(
+            matches!(&generated.objects[1].kind, Kind::ValueTable(1, table)
+            if table.named_label_values() == Some(("speed".into(), vec!["2.5".into(), "2.5".into()])))
+        );
+        let encoded = generated.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.encode().unwrap(), encoded);
+        generated.set_parameter_value(1, 3.25).unwrap();
+        assert_eq!(
+            crate::render::number_lines_for_object(&generated, table_id)
+                .unwrap()
+                .1,
+            vec!["speed", "2.5", "3.25"]
+        );
+        generated.change_table_rows(table_id, true).unwrap();
+        assert!(
+            matches!(&generated.objects[1].kind, Kind::ValueTable(1, table)
+            if table.named_label_values() == Some(("speed".into(), vec!["2.5".into(), "3.25".into(), "3.25".into()])))
+        );
+        generated.change_table_rows(table_id, false).unwrap();
+        assert_eq!(
+            crate::render::number_lines_for_object(&generated, table_id)
+                .unwrap()
+                .1,
+            vec!["speed", "2.5", "3.25"]
+        );
+        let changed = generated.encode().unwrap();
+        let reopened = Document::from_bytes(&changed, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.encode().unwrap(), changed);
+        let original_two_rows =
+            include_bytes!("../tests/fixtures/table_named_speed_two_rows_original.gsp");
+        let original = Document::from_bytes(original_two_rows, None).unwrap();
+        assert!(!original.partial_view);
+        assert_eq!(original.encode().unwrap(), original_two_rows);
+        assert!(
+            matches!(&original.objects[1].kind, Kind::ValueTable(1, table)
+            if table.named_label_values() == Some(("speed".into(), vec!["2.5".into(), "2.5".into()])))
+        );
+        let original_live_add =
+            include_bytes!("../tests/fixtures/table_named_speed_live_add_original.gsp");
+        let original = Document::from_bytes(original_live_add, None).unwrap();
+        assert!(!original.partial_view);
+        assert_eq!(original.encode().unwrap(), original_live_add);
+        assert!(
+            matches!(&original.objects[1].kind, Kind::ValueTable(1, table)
+            if table.named_label_values() == Some(("speed".into(), vec!["3.25".into(), "3.25".into()])))
         );
     }
 
