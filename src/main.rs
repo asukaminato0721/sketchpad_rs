@@ -148,7 +148,12 @@ impl Editor {
             .doc
             .objects
             .iter()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
+            .filter(|o| {
+                o.page == self.doc.active_page
+                    && o.visible
+                    && !o.deleted
+                    && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
+            })
             .filter_map(|o| self.doc.position(o.id))
             .collect();
         if pts.is_empty() {
@@ -283,7 +288,12 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
+            .filter(|o| {
+                o.page == self.doc.active_page
+                    && o.visible
+                    && !o.deleted
+                    && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
+            })
             .filter_map(|o| {
                 self.doc
                     .position(o.id)
@@ -486,7 +496,13 @@ impl Editor {
             return;
         };
         let line = *line;
-        if !matches!(self.doc.objects.get(line.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))) {
+        if !matches!(
+            self.doc
+                .objects
+                .get(line.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))
+        ) {
             self.status = "Select one segment, line, or ray to measure".into();
             return;
         }
@@ -494,7 +510,10 @@ impl Editor {
             Some(frame) => frame,
             None => match self.doc.add_default_coordinate_system(self.center) {
                 Ok(frame) => frame,
-                Err(error) => { self.status = error; return; }
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
             },
         };
         let id = self.doc.add(Kind::SlopeMeasurement(line, frame));
@@ -529,9 +548,11 @@ impl Editor {
             return;
         };
         let (a, b, c) = (*a, *b, *c);
-        let (Some(origin), Some(base), Some(target)) =
-            (self.doc.position(a), self.doc.position(b), self.doc.position(c))
-        else {
+        let (Some(origin), Some(base), Some(target)) = (
+            self.doc.position(a),
+            self.doc.position(b),
+            self.doc.position(c),
+        ) else {
             self.status = "Select three points to measure".into();
             return;
         };
@@ -540,7 +561,8 @@ impl Editor {
         let cross = bx * cy - by * cx;
         let tolerance = 1e-8 * bx.hypot(by) * cx.hypot(cy);
         if self.doc.ratio_for_points(a, b, c).is_none() || cross.abs() > tolerance {
-            self.status = "Ratio construction needs three collinear points and a nonzero base".into();
+            self.status =
+                "Ratio construction needs three collinear points and a nonzero base".into();
             return;
         }
         let id = self.doc.add(Kind::PointRatio(a, b, c));
@@ -1326,8 +1348,19 @@ impl Editor {
                         self.define_coordinate_system();
                         ui.close();
                     }
-                    let mut visible = self.doc.grid_visible.get(self.doc.active_page).copied().unwrap_or(false);
-                    if ui.add_enabled(self.doc.active_coordinate_system().is_some(), egui::Checkbox::new(&mut visible, "Show Grid")).changed() {
+                    let mut visible = self
+                        .doc
+                        .grid_visible
+                        .get(self.doc.active_page)
+                        .copied()
+                        .unwrap_or(false);
+                    if ui
+                        .add_enabled(
+                            self.doc.active_coordinate_system().is_some(),
+                            egui::Checkbox::new(&mut visible, "Show Grid"),
+                        )
+                        .changed()
+                    {
                         self.doc.set_grid_visible(visible);
                         ui.close();
                     }
@@ -1476,12 +1509,12 @@ impl Editor {
                         self.click(&vp, p, multi);
                     }
                 }
-                for o in self
-                    .doc
-                    .objects
-                    .iter()
-                    .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted && !matches!(o.kind, Kind::GraphVerticalUnit(_, _)))
-                {
+                for o in self.doc.objects.iter().filter(|o| {
+                    o.page == self.doc.active_page
+                        && o.visible
+                        && !o.deleted
+                        && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
+                }) {
                     if let Some(p) = self.doc.position(o.id) {
                         let at = vp.screen(p);
                         if r.contains(at) {
@@ -1600,7 +1633,11 @@ impl Editor {
                         row += 1;
                     }
                     if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
-                        let value = self.doc.slope_value(object.id).map(|value| format!("{value:.2}")).unwrap_or_else(|| "undefined".into());
+                        let value = self
+                            .doc
+                            .slope_value(object.id)
+                            .map(|value| format!("{value:.2}"))
+                            .unwrap_or_else(|| "undefined".into());
                         ui.painter().text(
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,

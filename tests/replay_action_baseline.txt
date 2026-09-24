@@ -1,0 +1,4 @@
+point 150 120
+point 270 120
+segment 1 2
+save /tmp/sketchpad_action_baseline.gsp

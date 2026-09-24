@@ -41,6 +41,65 @@ pub fn set_point_style(payload: &mut [u8], style: PointStyle) -> Result<(), Stri
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum LineWidth {
+    Hairline = 0,
+    Thin = 1,
+    Medium = 2,
+    Thick = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum LinePattern {
+    Dotted = 0,
+    Dashed = 1,
+    Solid = 2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SegmentLineStyle {
+    pub width: LineWidth,
+    pub pattern: LinePattern,
+}
+
+fn is_segment_header(payload: &[u8]) -> bool {
+    (payload.len() == 16 || payload.len() == 28)
+        && u16::from_le_bytes([payload[0], payload[1]]) == 2
+}
+
+pub fn segment_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {
+    if !is_segment_header(payload) {
+        return None;
+    }
+    let width = match payload[10] & 0x0f {
+        0 => LineWidth::Hairline,
+        1 => LineWidth::Thin,
+        2 => LineWidth::Medium,
+        3 => LineWidth::Thick,
+        _ => return None,
+    };
+    let pattern = match payload[10] >> 4 {
+        0 => LinePattern::Dotted,
+        1 => LinePattern::Dashed,
+        2 => LinePattern::Solid,
+        _ => return None,
+    };
+    Some(SegmentLineStyle { width, pattern })
+}
+
+pub fn set_segment_line_style(
+    payload: &mut [u8],
+    style: SegmentLineStyle,
+) -> Result<(), String> {
+    if !is_segment_header(payload) {
+        return Err("Expected a segment object header".into());
+    }
+    payload[10] = (style.pattern as u8) << 4 | style.width as u8;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,9 +122,18 @@ mod tests {
     #[test]
     fn original_menu_variants_match_header_byte() {
         let fixtures: &[(&[u8], PointStyle)] = &[
-            (include_bytes!("../tests/fixtures/style_dot_point.gsp"), PointStyle::Dot),
-            (include_bytes!("../tests/fixtures/style_small_point.gsp"), PointStyle::Small),
-            (include_bytes!("../tests/fixtures/style_large_point.gsp"), PointStyle::Large),
+            (
+                include_bytes!("../tests/fixtures/style_dot_point.gsp"),
+                PointStyle::Dot,
+            ),
+            (
+                include_bytes!("../tests/fixtures/style_small_point.gsp"),
+                PointStyle::Small,
+            ),
+            (
+                include_bytes!("../tests/fixtures/style_large_point.gsp"),
+                PointStyle::Large,
+            ),
         ];
         for (bytes, style) in fixtures {
             let payload = first_point_header(bytes);
@@ -93,5 +161,51 @@ mod tests {
         assert_eq!(point_style(&header), None);
         header[0] = 1;
         assert!(set_point_style(&mut header, PointStyle::Dot).is_err());
+    }
+
+    #[test]
+    fn original_segment_menu_variants_match_header_byte() {
+        use LinePattern::{Dashed, Dotted, Solid};
+        use LineWidth::{Hairline, Medium, Thick, Thin};
+        let fixtures: &[(&[u8], LineWidth, LinePattern)] = &[
+            (include_bytes!("../tests/fixtures/style_medium_solid_line.gsp"), Medium, Solid),
+            (include_bytes!("../tests/fixtures/style_hairline_line.gsp"), Hairline, Solid),
+            (include_bytes!("../tests/fixtures/style_thin_line.gsp"), Thin, Solid),
+            (include_bytes!("../tests/fixtures/style_thick_line.gsp"), Thick, Solid),
+            (include_bytes!("../tests/fixtures/style_dashed_line.gsp"), Medium, Dashed),
+            (include_bytes!("../tests/fixtures/style_dotted_line.gsp"), Medium, Dotted),
+        ];
+        for (bytes, width, pattern) in fixtures {
+            let payload = first_segment_header(bytes);
+            assert_eq!(segment_line_style(payload), Some(SegmentLineStyle { width: *width, pattern: *pattern }));
+        }
+    }
+
+    fn first_segment_header(bytes: &[u8]) -> &[u8] {
+        assert_eq!(&bytes[..4], b"GSP4");
+        let mut offset = 4;
+        while offset < bytes.len() {
+            let length = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let kind = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap());
+            let payload = &bytes[offset + 8..offset + 8 + length];
+            if kind == 0x07d0 && is_segment_header(payload) {
+                return payload;
+            }
+            offset += 8 + length + length % 2;
+        }
+        panic!("fixture has no segment header");
+    }
+
+    #[test]
+    fn editing_segment_style_preserves_other_header_bytes() {
+        let original = first_segment_header(include_bytes!("../tests/fixtures/style_medium_solid_line.gsp"));
+        let mut changed = original.to_vec();
+        set_segment_line_style(&mut changed, SegmentLineStyle {
+            width: LineWidth::Thick,
+            pattern: LinePattern::Dashed,
+        }).unwrap();
+        assert_eq!(changed[10], 0x13);
+        changed[10] = original[10];
+        assert_eq!(changed, original);
     }
 }

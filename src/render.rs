@@ -60,39 +60,90 @@ fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, P
 }
 
 fn grid_lines(doc: &Document, vp: &Viewport) -> Vec<(Pos2, Pos2)> {
-    if !doc.grid_visible.get(doc.active_page).copied().unwrap_or(false) {
+    if !doc
+        .grid_visible
+        .get(doc.active_page)
+        .copied()
+        .unwrap_or(false)
+    {
         return Vec::new();
     }
     let mut lines = Vec::new();
-    for object in doc.objects.iter().filter(|object| object.page == doc.active_page && object.visible && !object.deleted && matches!(object.kind, Kind::CoordinateSystem(_, _))) {
-        let Some(frame) = doc.graph_frame(object.id) else { continue; };
-        let corners = [vp.rect.left_top(), vp.rect.right_top(), vp.rect.left_bottom(), vp.rect.right_bottom()];
-        let coordinates = corners.into_iter().filter_map(|corner| {
-            let world = vp.world(corner);
-            frame.coordinates(crate::graph::GraphPoint { x: world.x, y: world.y })
-        }).collect::<Vec<_>>();
-        if coordinates.len() != 4 { continue; }
-        let (xmin,xmax) = coordinates.iter().fold((f64::INFINITY,f64::NEG_INFINITY), |(lo,hi),p| (lo.min(p.x),hi.max(p.x)));
-        let (ymin,ymax) = coordinates.iter().fold((f64::INFINITY,f64::NEG_INFINITY), |(lo,hi),p| (lo.min(p.y),hi.max(p.y)));
-        let bounds = [(xmin.floor()-1.,xmax.ceil()+1.),(ymin.floor()-1.,ymax.ceil()+1.)];
+    for object in doc.objects.iter().filter(|object| {
+        object.page == doc.active_page
+            && object.visible
+            && !object.deleted
+            && matches!(object.kind, Kind::CoordinateSystem(_, _))
+    }) {
+        let Some(frame) = doc.graph_frame(object.id) else {
+            continue;
+        };
+        let corners = [
+            vp.rect.left_top(),
+            vp.rect.right_top(),
+            vp.rect.left_bottom(),
+            vp.rect.right_bottom(),
+        ];
+        let coordinates = corners
+            .into_iter()
+            .filter_map(|corner| {
+                let world = vp.world(corner);
+                frame.coordinates(crate::graph::GraphPoint {
+                    x: world.x,
+                    y: world.y,
+                })
+            })
+            .collect::<Vec<_>>();
+        if coordinates.len() != 4 {
+            continue;
+        }
+        let (xmin, xmax) = coordinates
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.x), hi.max(p.x))
+            });
+        let (ymin, ymax) = coordinates
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.y), hi.max(p.y))
+            });
+        let bounds = [
+            (xmin.floor() - 1., xmax.ceil() + 1.),
+            (ymin.floor() - 1., ymax.ceil() + 1.),
+        ];
         for axis in 0..2 {
-            let (lo,hi) = bounds[axis];
-            if !lo.is_finite() || !hi.is_finite() { continue; }
-            let interval = ((hi-lo)/200.).ceil().max(1.) as i64;
+            let (lo, hi) = bounds[axis];
+            if !lo.is_finite() || !hi.is_finite() {
+                continue;
+            }
+            let interval = ((hi - lo) / 200.).ceil().max(1.) as i64;
             let mut value = lo as i64;
             while value <= hi as i64 {
                 let pair = if axis == 0 {
-                    (frame.world(value as f64, ymin-1.), frame.world(value as f64, ymax+1.))
+                    (
+                        frame.world(value as f64, ymin - 1.),
+                        frame.world(value as f64, ymax + 1.),
+                    )
                 } else {
-                    (frame.world(xmin-1., value as f64), frame.world(xmax+1., value as f64))
+                    (
+                        frame.world(xmin - 1., value as f64),
+                        frame.world(xmax + 1., value as f64),
+                    )
                 };
-                if let (Some(a),Some(b)) = pair {
-                    if let Some(line) = clipped_line(vp.screen(Point { x:a.x, y:a.y }), vp.screen(Point { x:b.x, y:b.y }), LineMode::Line, vp.rect) {
+                if let (Some(a), Some(b)) = pair {
+                    if let Some(line) = clipped_line(
+                        vp.screen(Point { x: a.x, y: a.y }),
+                        vp.screen(Point { x: b.x, y: b.y }),
+                        LineMode::Line,
+                        vp.rect,
+                    ) {
                         lines.push(line);
                     }
                 }
                 value = value.saturating_add(interval);
-                if value == i64::MAX { break; }
+                if value == i64::MAX {
+                    break;
+                }
             }
         }
     }
@@ -121,8 +172,13 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         r.height()
     );
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
-    for (a,b) in grid_lines(doc,vp) {
-        writeln!(svg,"<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",a.x,a.y,b.x,b.y).unwrap();
+    for (a, b) in grid_lines(doc, vp) {
+        writeln!(
+            svg,
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+            a.x, a.y, b.x, b.y
+        )
+        .unwrap();
     }
     svg.push_str("</g>\n<g fill=\"none\" stroke=\"#24303d\" stroke-width=\"2\">\n");
     for o in doc
@@ -186,7 +242,9 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         .iter()
         .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
     {
-        if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) { continue; }
+        if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) {
+            continue;
+        }
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
             writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"4\"/>", at.x, at.y).unwrap();
@@ -310,8 +368,18 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             row += 1;
         }
         if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
-            let value = doc.slope_value(object.id).map(|value| format!("{value:.2}")).unwrap_or_else(|| "undefined".into());
-            writeln!(svg,"<text x=\"{}\" y=\"{}\">Slope = {}</text>",r.min.x+12.,r.min.y+28.+row as f32*20.,value).unwrap();
+            let value = doc
+                .slope_value(object.id)
+                .map(|value| format!("{value:.2}"))
+                .unwrap_or_else(|| "undefined".into());
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Slope = {}</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                value
+            )
+            .unwrap();
             row += 1;
         }
     }
@@ -485,8 +553,8 @@ impl GeometryRenderer {
         let dark = [0.14, 0.18, 0.24, 1.];
         let blue = [0.09, 0.42, 0.84, 1.];
         let selected = [0.94, 0.32, 0.10, 1.];
-        for (a,b) in grid_lines(doc,vp) {
-            mesh.line(a,b,1.,[0.78,0.83,0.88,1.]);
+        for (a, b) in grid_lines(doc, vp) {
+            mesh.line(a, b, 1., [0.78, 0.83, 0.88, 1.]);
         }
         // Draw paths first and points last.
         for o in &doc.objects {
@@ -549,7 +617,9 @@ impl GeometryRenderer {
             if !o.visible || o.deleted || o.page != doc.active_page {
                 continue;
             }
-            if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) { continue; }
+            if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) {
+                continue;
+            }
             if let Some(p) = doc.position(o.id) {
                 mesh.disk(
                     vp.screen(p),
