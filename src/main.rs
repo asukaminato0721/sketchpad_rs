@@ -405,6 +405,30 @@ impl Editor {
             Err(error) => self.status = error,
         }
     }
+    fn measure_length(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [segment] = self.selection_order.as_slice() else {
+            self.status = "Select one segment to measure".into();
+            return;
+        };
+        let segment = *segment;
+        if !matches!(
+            self.doc
+                .objects
+                .get(segment.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Segment(_, _))
+        ) {
+            self.status = "Select one segment to measure".into();
+            return;
+        }
+        let id = self.doc.add(Kind::SegmentLength(segment));
+        self.select_only(id);
+        self.status = format!("Measured segment {segment}");
+    }
     fn copy_selected(&mut self) -> bool {
         match self.doc.copy_selected() {
             Ok(clipboard) => {
@@ -1008,6 +1032,12 @@ impl Editor {
                         ui.close();
                     }
                 });
+                ui.menu_button("Measure", |ui| {
+                    if ui.button("Length").clicked() {
+                        self.measure_length();
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Transform", |ui| {
                     if ui.button("Translate by Angle and Distance…").clicked() {
                         self.translate_dialog = true;
@@ -1169,6 +1199,21 @@ impl Editor {
                                 egui::Color32::from_gray(90),
                             );
                         }
+                    }
+                }
+                let mut row = 0;
+                for object in self.doc.objects.iter().filter(|object| {
+                    object.page == self.doc.active_page && object.visible && !object.deleted
+                }) {
+                    if let Some(length) = self.doc.segment_length_cm(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Length = {length:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
                     }
                 }
             });

@@ -23,7 +23,8 @@ impl Kind {
             Kind::PointOnSegment(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
-            | Kind::PolarTranslatedPoint(host, _, _, _) => vec![host],
+            | Kind::PolarTranslatedPoint(host, _, _, _)
+            | Kind::SegmentLength(host) => vec![host],
             Kind::Midpoint(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -54,6 +55,7 @@ impl Kind {
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
             }
@@ -91,6 +93,7 @@ pub enum Kind {
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    SegmentLength(usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
     ReflectedCircle(usize, usize),
@@ -126,13 +129,14 @@ pub struct Object {
     pub kind: Kind,
     pub visible: bool,
     pub deleted: bool,
+    pub midpoint_host: Option<usize>,
     pub point_offset: Option<usize>,
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
 }
 #[derive(Clone, Debug)]
 pub struct Clipboard {
-    objects: Vec<(usize, Kind, bool)>,
+    objects: Vec<(usize, Kind, bool, Option<usize>)>,
 }
 impl Clipboard {
     pub fn len(&self) -> usize {
@@ -563,6 +567,8 @@ impl Document {
             let mut point_offset = None;
             let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
             let mut refs = Vec::new();
+            let mut length_format = false;
+            let mut length_style = false;
             i += 1;
             while i < rs.len() && rs[i].kind != 0x7d7 {
                 let r = &rs[i];
@@ -574,6 +580,27 @@ impl Document {
                             y: f64_at(d, 8),
                         });
                         point_offset = Some(r.data.start);
+                    }
+                    0x0903 if code == 36 => {
+                        let sample =
+                            &include_bytes!("../assets/length_measurement_group.bin")[60..92];
+                        length_format = d.len() == sample.len()
+                            && d.iter()
+                                .zip(sample)
+                                .enumerate()
+                                .all(|(i, (actual, expected))| {
+                                    if i == 22 {
+                                        *actual == 0 || *actual == 0x20
+                                    } else if i == 30 {
+                                        *actual == 0 || *actual == 0x53
+                                    } else {
+                                        actual == expected
+                                    }
+                                });
+                    }
+                    0x07d8 if code == 36 => {
+                        length_style =
+                            d == &include_bytes!("../assets/length_measurement_group.bin")[100..102]
                     }
                     0x7d3 if code == 15 || code == 21 || code == 27 || code == 30 => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -591,7 +618,9 @@ impl Document {
                     }
                     _ => {}
                 }
-                if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3) {
+                if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
+                    && !(code == 36 && matches!(r.kind, 0x0903 | 0x07d8))
+                {
                     safe = false;
                 }
                 i += 1;
@@ -607,6 +636,12 @@ impl Document {
             } else {
                 match (code, point, refs.as_slice()) {
                     (0, Some(p), _) => Kind::Free(p),
+                    (36, _, [host])
+                        if length_format && length_style
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _))) =>
+                    {
+                        Kind::SegmentLength(*host)
+                    }
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
                             (Some(Kind::Segment(_, _)), Some((payload, _)))
@@ -751,6 +786,7 @@ impl Document {
             objects.push(Object {
                 id: objects.len() + 1,
                 page,
+                midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 kind,
                 visible: raw & 0x10000 == 0,
                 deleted: false,
@@ -804,12 +840,24 @@ impl Document {
     pub fn add(&mut self, kind: Kind) -> usize {
         self.checkpoint();
         let id = self.objects.len() + 1;
+        let midpoint_host = if let Kind::Midpoint(a, b) = kind {
+            self.objects
+                .iter()
+                .find(|object| {
+                    !object.deleted
+                        && matches!(object.kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
+                })
+                .map(|object| object.id)
+        } else {
+            None
+        };
         self.objects.push(Object {
             id,
             page: self.active_page,
             kind,
             visible: true,
             deleted: false,
+            midpoint_host,
             point_offset: None,
             constraint_offset: None,
             header_offset: None,
@@ -819,13 +867,8 @@ impl Document {
     pub fn dependencies_of(&self, id: usize) -> Option<Vec<usize>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let mut dependencies = object.kind.dependencies();
-        if let Kind::Midpoint(a, b) = object.kind {
-            if let Some(segment) = self.objects.iter().find(|candidate| {
-                !candidate.deleted && candidate.id < id
-                    && matches!(candidate.kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
-            }) {
-                dependencies.push(segment.id);
-            }
+        if let Some(host) = object.midpoint_host {
+            dependencies.push(host);
         }
         Some(dependencies)
     }
@@ -856,7 +899,12 @@ impl Document {
                 .into_iter()
                 .map(|id| {
                     let object = &self.objects[id - 1];
-                    (id, object.kind.clone(), object.visible)
+                    (
+                        id,
+                        object.kind.clone(),
+                        object.visible,
+                        object.midpoint_host,
+                    )
                 })
                 .collect(),
         })
@@ -874,11 +922,12 @@ impl Document {
         let max_source = clipboard.objects.last().ok_or("Clipboard is empty")?.0;
         let mut ids = vec![0; max_source + 1];
         let mut created = Vec::with_capacity(clipboard.len());
-        for (old_id, kind, visible) in &clipboard.objects {
+        for (old_id, kind, visible, midpoint_host) in &clipboard.objects {
             if kind
                 .dependencies()
-                .iter()
-                .any(|&id| id >= ids.len() || ids[id] == 0)
+                .into_iter()
+                .chain(*midpoint_host)
+                .any(|id| id >= ids.len() || ids[id] == 0)
             {
                 return Err("Clipboard has an unresolved dependency".into());
             }
@@ -894,6 +943,7 @@ impl Document {
                 kind: remapped,
                 visible: *visible,
                 deleted: false,
+                midpoint_host: midpoint_host.map(|host| ids[host]),
                 point_offset: None,
                 constraint_offset: None,
                 header_offset: None,
@@ -1063,6 +1113,19 @@ impl Document {
             p
         }
         go(self, id, &mut BTreeSet::new())
+    }
+    pub fn segment_length_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::SegmentLength(segment) = object.kind else {
+            return None;
+        };
+        let (a, b, LineMode::Segment) = self.line_points(segment)? else {
+            return None;
+        };
+        Some(a.distance(b) / 37.79527559055118)
     }
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
@@ -1442,6 +1505,25 @@ impl Document {
             {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
+            if let Kind::Midpoint(a, b) = o.kind {
+                let Some(host) = o.midpoint_host else {
+                    return Err(format!("Midpoint {} has no segment host", o.id));
+                };
+                if host == 0
+                    || host >= o.id
+                    || self.objects[host - 1].deleted
+                    || !matches!(self.objects[host - 1].kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
+                {
+                    return Err(format!("Invalid segment host in midpoint {}", o.id));
+                }
+            }
+            if matches!(o.kind, Kind::SegmentLength(_))
+                && self
+                    .segment_length_cm(o.id)
+                    .is_none_or(|value| !value.is_finite())
+            {
+                return Err(format!("Invalid segment in length measurement {}", o.id));
+            }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
             {
@@ -1645,6 +1727,15 @@ impl Document {
             .unwrap_or(trailer);
         let mut added = Vec::new();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::SegmentLength(segment) = o.kind {
+                let mut group = *include_bytes!("../assets/length_measurement_group.bin");
+                group[48..52].copy_from_slice(&(segment as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
@@ -1657,18 +1748,13 @@ impl Document {
                     (30, vec![source, center])
                 }
                 Kind::RotatedPoint(source, center, _) => (27, vec![source, center]),
-                Kind::Midpoint(a, b) => {
-                    let s = self
-                        .objects
-                        .iter()
-                        .find(|s| {
-                            (o.deleted || !s.deleted)
-                                && s.id < o.id
-                                && matches!(s.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a))
-                        })
-                        .ok_or("Midpoint requires an existing segment")?;
-                    (1, vec![s.id])
-                }
+                Kind::Midpoint(_, _) => (
+                    1,
+                    vec![
+                        o.midpoint_host
+                            .ok_or("Midpoint requires an existing segment")?,
+                    ],
+                ),
                 Kind::Segment(a, b) => (2, vec![a, b]),
                 Kind::Circle(a, b) => (3, vec![a, b]),
                 Kind::CircleBySegment(a, b) => (4, vec![a, b]),
@@ -1780,6 +1866,7 @@ impl Document {
                         || saved.page != current.page
                         || saved.kind != current.kind.remap(&ids)
                         || saved.visible != current.visible
+                        || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
                 })
         {
             return Err("Serialized sketch does not preserve the edited objects".into());
@@ -1849,6 +1936,7 @@ mod tests {
             "perp",
             "example_tools",
             "wine_moved_demo",
+            "wine_moved_length",
             "reflection",
             "wine_moved_reflection",
             "wine_moved_reflected_circle",
@@ -1857,7 +1945,9 @@ mod tests {
             "rotation",
             "wine_moved_rotation",
             "wine_deleted_source",
+            "wine_cut_segment",
             "wine_pasted_segment",
+            "wine_segment_length",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -1884,6 +1974,46 @@ mod tests {
         assert!(d.objects.is_empty());
         d.redo();
         assert_eq!(d.objects.len(), 1);
+    }
+    #[test]
+    fn segment_length_matches_original_and_updates_after_drag() {
+        let original = Document::open(Path::new("tests/fixtures/wine_segment_length.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::SegmentLength(3));
+        let (a, b, _) = original.line_points(3).unwrap();
+        assert!(
+            (original.segment_length_cm(4).unwrap() - a.distance(b) / 37.79527559055118).abs()
+                < 1e-10
+        );
+        let moved = Document::open(Path::new("tests/fixtures/wine_moved_length.gsp")).unwrap();
+        assert_eq!(moved.objects[3].kind, Kind::SegmentLength(3));
+        assert!((moved.segment_length_cm(4).unwrap() - 5.291666666666667).abs() < 1e-10);
+
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let length = doc.add(Kind::SegmentLength(segment));
+        assert!((doc.segment_length_cm(length).unwrap() - 2.6458333333333335).abs() < 1e-10);
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::SegmentLength(3));
+        reopened.checkpoint();
+        assert!(reopened.move_point(b, Point { x: 350., y: 120. }));
+        assert!((reopened.segment_length_cm(length).unwrap() - 5.291666666666667).abs() < 1e-10);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .segment_length_cm(length),
+            reopened.segment_length_cm(length)
+        );
+        reopened.selected.insert(segment);
+        assert_eq!(reopened.clear_selected().unwrap(), vec![segment, length]);
+        assert_eq!(
+            Document::from_bytes(&reopened.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            2
+        );
     }
     #[test]
     fn copy_segment_includes_parents_but_not_children_like_original() {
@@ -1947,6 +2077,50 @@ mod tests {
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.objects.len(), 2);
         assert_eq!(reopened.position(1), Some(Point { x: 10., y: 20. }));
+
+        let mut original_shape = Document::new();
+        let first = original_shape.add(Kind::Free(Point { x: 150., y: 120. }));
+        let second = original_shape.add(Kind::Free(Point { x: 250., y: 120. }));
+        let line = original_shape.add(Kind::Segment(first, second));
+        original_shape.add(Kind::Midpoint(first, second));
+        original_shape.add(Kind::Free(Point { x: 330., y: 200. }));
+        original_shape.selected.insert(line);
+        original_shape.clear_selected().unwrap();
+        let parsed = Document::from_bytes(&original_shape.encode().unwrap(), None).unwrap();
+        let wine = Document::open(Path::new("tests/fixtures/wine_cut_segment.gsp")).unwrap();
+        assert_eq!(
+            parsed.objects.iter().map(|o| &o.kind).collect::<Vec<_>>(),
+            wine.objects.iter().map(|o| &o.kind).collect::<Vec<_>>()
+        );
+    }
+    #[test]
+    fn midpoint_tracks_its_specific_segment_when_segments_share_endpoints() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let b = doc.add(Kind::Free(Point { x: 30., y: 20. }));
+        let first = doc.add(Kind::Segment(a, b));
+        let second = doc.add(Kind::Segment(a, b));
+        let midpoint = doc.add(Kind::Midpoint(a, b));
+        doc.objects[midpoint - 1].midpoint_host = Some(second);
+        let mut loaded = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(loaded.objects[midpoint - 1].midpoint_host, Some(second));
+        loaded.selected.insert(first);
+        assert_eq!(loaded.clear_selected().unwrap(), vec![first]);
+        let after = Document::from_bytes(&loaded.encode().unwrap(), None).unwrap();
+        assert_eq!(after.objects[3].midpoint_host, Some(3));
+        assert_eq!(after.position(4), Some(Point { x: 20., y: 20. }));
+    }
+    #[test]
+    fn paste_refusal_leaves_unsupported_document_unchanged() {
+        let mut source = Document::new();
+        let point = source.add(Kind::Free(Point { x: 10., y: 20. }));
+        source.selected.insert(point);
+        let clipboard = source.copy_selected().unwrap();
+        let mut dest = Document::open(Path::new("tests/fixtures/example_tools.gsp")).unwrap();
+        let before = dest.encode().unwrap();
+        assert!(dest.paste(&clipboard).is_err());
+        assert_eq!(dest.encode().unwrap(), before);
+        assert!(!dest.dirty);
     }
     #[test]
     fn clearing_source_removes_dependents_and_survives_save() {

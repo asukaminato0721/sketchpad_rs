@@ -130,6 +130,25 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"4\"/>", at.x, at.y).unwrap();
         }
     }
+    svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
+    let mut row = 0;
+    for object in doc
+        .objects
+        .iter()
+        .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
+    {
+        if let Some(length) = doc.segment_length_cm(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Length = {:.2} cm</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                length
+            )
+            .unwrap();
+            row += 1;
+        }
+    }
     svg.push_str("</g>\n</svg>\n");
     Ok(svg)
 }
@@ -396,5 +415,33 @@ mod tests {
         );
         assert_eq!(clipped_line(a, b, LineMode::Segment, r), Some((a, b)));
         assert_eq!(clipped_line(a, a, LineMode::Line, r), None);
+    }
+    #[test]
+    fn svg_length_tracks_geometry_and_visibility() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 100., y: 0. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let measurement = doc.add(Kind::SegmentLength(segment));
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(200., 100.)),
+            scale: 1.,
+            center: Point { x: 100., y: 50. },
+        };
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Length = 2.65 cm")
+        );
+        doc.checkpoint();
+        doc.move_point(b, Point { x: 200., y: 0. });
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Length = 5.29 cm")
+        );
+        doc.selected.insert(measurement);
+        doc.set_selected_visibility(false);
+        assert!(!svg_page(&doc, &viewport).unwrap().contains("Length ="));
     }
 }
