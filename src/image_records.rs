@@ -29,6 +29,7 @@ pub struct ImageFile {
     header: Record,
     size: Record,
     transform: Record,
+    group_end: usize,
     crops: Vec<CroppedPicture>,
     editable: bool,
 }
@@ -189,7 +190,7 @@ impl ImageFile {
         {
             return Err("Picture transform contains a non-finite value".into());
         }
-        let crops = records
+        let crops: Vec<CroppedPicture> = records
             .windows(4)
             .filter_map(|window| {
                 let [header, refs, size, end] = window else {
@@ -220,13 +221,14 @@ impl ImageFile {
         let editable = records.iter().filter(|r| r.kind == IMAGE_SIZE).count() == 1
             && records.iter().filter(|r| r.kind == IMAGE_TRANSFORM).count() == 1
             && records.iter().filter(|r| r.kind == IMAGE_RESOURCE).count() == 1
-            && records.iter().filter(|r| r.kind == OBJECT_HEADER).count() == 1;
+            && crops.is_empty();
         Ok(Self {
             bytes: bytes.to_vec(),
             resource: (*resource).clone(),
             header: header.clone(),
             size: size.clone(),
             transform: transform.clone(),
+            group_end: terminator.end,
             crops,
             editable,
         })
@@ -238,6 +240,29 @@ impl ImageFile {
 
     pub fn png(&self) -> &[u8] {
         &self.bytes[self.resource.payload.start + 8..self.resource.payload.end]
+    }
+
+    pub fn resource_record(&self) -> &[u8] {
+        &self.bytes[self.resource.start..self.resource.end]
+    }
+
+    pub fn picture_group(&self) -> &[u8] {
+        &self.bytes[self.header.start..self.group_end]
+    }
+
+    pub fn picture_group_offset(&self) -> usize {
+        self.header.start
+    }
+
+    pub fn png_size(png: &[u8]) -> Result<(u32, u32), String> {
+        png_dimensions(png)
+    }
+
+    pub fn independent_from_png(png: &[u8], transform: [f64; 6]) -> Result<Self, String> {
+        let mut picture = Self::parse(include_bytes!("../tests/fixtures/image_port_tiny.gsp"))?;
+        picture.replace_png(png)?;
+        picture.set_transform(transform)?;
+        Ok(picture)
     }
 
     pub fn crops(&self) -> &[CroppedPicture] {
@@ -420,5 +445,28 @@ mod tests {
     fn multi_resource_paste_is_outside_the_safe_writer() {
         let pasted = include_bytes!("../tests/fixtures/image_original_pasted.gsp");
         assert!(ImageFile::parse(pasted).is_err());
+    }
+
+    #[test]
+    fn one_picture_with_independent_geometry_remains_editable() {
+        let source = include_bytes!("../tests/fixtures/image_port_polygon.gsp");
+        let mut picture = ImageFile::parse(source).unwrap();
+        assert!(picture.can_edit());
+        assert_eq!(picture.picture_group()[..8], [28, 0, 0, 0, 0xd0, 7, 0, 0]);
+        assert_eq!(&picture.resource_record()[4..8], &RESOURCE.to_le_bytes());
+        picture.set_transform([4., 0., 140., 0., 4., 112.]).unwrap();
+        let reopened = ImageFile::parse(picture.encode()).unwrap();
+        assert_eq!(reopened.transform()[2], 140.);
+        assert_eq!(reopened.encode().len(), source.len());
+    }
+
+    #[test]
+    fn imported_png_builds_original_compatible_records() {
+        let png = include_bytes!("../tests/fixtures/image_tiny.png");
+        let picture = ImageFile::independent_from_png(png, [2., 0., 30., 0., 2., 40.]).unwrap();
+        assert_eq!(picture.png(), png);
+        assert_eq!(picture.transform(), [2., 0., 30., 0., 2., 40.]);
+        assert_eq!(ImageFile::png_size(png).unwrap(), (16, 16));
+        assert!(ImageFile::parse(picture.encode()).unwrap().can_edit());
     }
 }

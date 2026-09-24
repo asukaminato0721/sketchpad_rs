@@ -16,7 +16,10 @@ impl SimpleFunction {
         }
     }
     pub fn display(self) -> &'static str {
-        match self { Self::Identity => "f(x) = x", Self::Square => "f(x) = x²" }
+        match self {
+            Self::Identity => "f(x) = x",
+            Self::Square => "f(x) = x²",
+        }
     }
     pub fn evaluate(self, x: f64) -> f64 {
         match self {
@@ -210,7 +213,8 @@ pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32), String> {
     let x_min = f64::from_le_bytes(data[0..8].try_into().unwrap());
     let x_max = f64::from_le_bytes(data[8..16].try_into().unwrap());
     let samples = u32_at(data, 16);
-    if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max || !(2..=4096).contains(&samples) {
+    if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max || !(2..=4096).contains(&samples)
+    {
         return Err("Invalid function plot range".into());
     }
     Ok((x_min, x_max, samples))
@@ -221,11 +225,17 @@ pub fn encode_definition_group(expression: SimpleFunction) -> Result<Vec<u8>, St
     let rs = records(source)?;
     let groups = group_ranges(source, &rs)?;
     let (first, last, code) = groups[6];
-    if code != 0 { return Err("Invalid function definition template".into()); }
+    if code != 0 {
+        return Err("Invalid function definition template".into());
+    }
     Ok(source[rs[first].start..rs[last].end].to_vec())
 }
 
-pub fn encode_plot_group(expression: SimpleFunction, definition_id: usize, frame_id: usize) -> Result<Vec<u8>, String> {
+pub fn encode_plot_group(
+    expression: SimpleFunction,
+    definition_id: usize,
+    frame_id: usize,
+) -> Result<Vec<u8>, String> {
     let both = encode_plot_groups(expression, definition_id, frame_id)?;
     let definition_length = encode_definition_group(expression)?.len();
     Ok(both[definition_length..].to_vec())

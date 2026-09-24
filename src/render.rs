@@ -210,8 +210,15 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
         if let Some(points) = doc.function_plot_points(o.id, 384) {
             for pair in points.windows(2) {
-                if let Some((a,b)) = clipped_line(vp.screen(pair[0]), vp.screen(pair[1]), LineMode::Segment, r) {
-                    writeln!(svg,"<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",a.x,a.y,b.x,b.y).unwrap();
+                if let Some((a, b)) =
+                    clipped_line(vp.screen(pair[0]), vp.screen(pair[1]), LineMode::Segment, r)
+                {
+                    writeln!(
+                        svg,
+                        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",
+                        a.x, a.y, b.x, b.y
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -440,7 +447,14 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             row += 1;
         }
         if let Kind::FunctionDefinition(expression) = object.kind {
-            writeln!(svg,"<text x=\"{}\" y=\"{}\">{}</text>",r.min.x+12.,r.min.y+28.+row as f32*20.,expression.display()).unwrap();
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">{}</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                expression.display()
+            )
+            .unwrap();
             row += 1;
         }
     }
@@ -646,8 +660,22 @@ impl GeometryRenderer {
             }
             if let Some(points) = doc.function_plot_points(o.id, 384) {
                 for pair in points.windows(2) {
-                    if let Some((a,b)) = clipped_line(vp.screen(pair[0]),vp.screen(pair[1]),LineMode::Segment,vp.rect) {
-                        mesh.line(a,b,2.,if doc.selected.contains(&o.id) { selected } else { [0.70,0.23,0.60,1.] });
+                    if let Some((a, b)) = clipped_line(
+                        vp.screen(pair[0]),
+                        vp.screen(pair[1]),
+                        LineMode::Segment,
+                        vp.rect,
+                    ) {
+                        mesh.line(
+                            a,
+                            b,
+                            2.,
+                            if doc.selected.contains(&o.id) {
+                                selected
+                            } else {
+                                [0.70, 0.23, 0.60, 1.]
+                            },
+                        );
                     }
                 }
             }

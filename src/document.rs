@@ -1,6 +1,6 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
-use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::function_records::{self, SimpleFunction};
+use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
 use std::{
@@ -46,7 +46,10 @@ impl Kind {
             return vertices.clone();
         }
         match *self {
-            Kind::Free(_) | Kind::PlainText { .. } | Kind::FunctionDefinition(_) | Kind::Unsupported(_) => vec![],
+            Kind::Free(_)
+            | Kind::PlainText { .. }
+            | Kind::FunctionDefinition(_)
+            | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
@@ -129,7 +132,9 @@ impl Kind {
             Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
             Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
             Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
-            Kind::FunctionPlot(a,b,min,max,samples) => Kind::FunctionPlot(m(a),m(b),min,max,samples),
+            Kind::FunctionPlot(a, b, min, max, samples) => {
+                Kind::FunctionPlot(m(a), m(b), min, max, samples)
+            }
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -708,8 +713,12 @@ impl Document {
                 if matches!(code, 52 | 54 | 58 | 61 | 87) {
                     graph_records.push((r.kind, d.to_vec()));
                 }
-                if code == 0 && r.kind == 0x0907 { function_expression = Some(d.to_vec()); }
-                if code == 72 && r.kind == 0x0902 { function_range = Some(d.to_vec()); }
+                if code == 0 && r.kind == 0x0907 {
+                    function_expression = Some(d.to_vec());
+                }
+                if code == 72 && r.kind == 0x0902 {
+                    function_range = Some(d.to_vec());
+                }
                 match r.kind {
                     0x07d5 if code == 0 => match LabelAux::parse(d) {
                         Ok(value) => label = Some(value),
@@ -1129,7 +1138,9 @@ impl Document {
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
             }
-            if matches!(kind, Kind::FunctionDefinition(_)) { label = None; }
+            if matches!(kind, Kind::FunctionDefinition(_)) {
+                label = None;
+            }
             if label.is_some() && !is_point_kind(&kind) {
                 safe = false;
                 label = None;
@@ -1370,30 +1381,54 @@ impl Document {
         Ok(frame)
     }
     pub fn add_function_definition(&mut self, expression: SimpleFunction) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 { return Err("Cannot add a function to this sketch".into()); }
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot add a function to this sketch".into());
+        }
         self.checkpoint();
         Ok(self.append_object(Kind::FunctionDefinition(expression)))
     }
-    pub fn plot_new_function(&mut self, expression: SimpleFunction, origin: Point) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 { return Err("Cannot plot a function in this sketch".into()); }
+    pub fn plot_new_function(
+        &mut self,
+        expression: SimpleFunction,
+        origin: Point,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot plot a function in this sketch".into());
+        }
         let frame = match self.active_coordinate_system() {
             Some(id) => id,
             None => self.add_default_coordinate_system(origin)?,
         };
         self.checkpoint();
         let definition = self.append_object(Kind::FunctionDefinition(expression));
-        Ok(self.append_object(Kind::FunctionPlot(definition,frame,-5.265208333333335,5.265208333333335,750)))
+        Ok(self.append_object(Kind::FunctionPlot(
+            definition,
+            frame,
+            -5.265208333333335,
+            5.265208333333335,
+            750,
+        )))
     }
     pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
-        let Kind::FunctionPlot(definition,frame,min,max,_) = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
-        let Kind::FunctionDefinition(expression) = self.objects.get(definition.checked_sub(1)?)?.kind else { return None; };
+        let Kind::FunctionPlot(definition, frame, min, max, _) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let Kind::FunctionDefinition(expression) =
+            self.objects.get(definition.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
         let frame = self.graph_frame(frame)?;
-        let count = count.clamp(2,4096);
-        (0..count).map(|i| {
-            let x = min + (max-min) * (i as f64 / (count-1) as f64);
-            let p = frame.world(x, expression.evaluate(x))?;
-            Some(Point { x:p.x, y:p.y })
-        }).collect()
+        let count = count.clamp(2, 4096);
+        (0..count)
+            .map(|i| {
+                let x = min + (max - min) * (i as f64 / (count - 1) as f64);
+                let p = frame.world(x, expression.evaluate(x))?;
+                Some(Point { x: p.x, y: p.y })
+            })
+            .collect()
     }
     pub fn set_grid_visible(&mut self, visible: bool) {
         if self.active_coordinate_system().is_some()
@@ -2316,7 +2351,14 @@ impl Document {
         {
             return Err("Deleting objects in this document cannot be saved safely".into());
         }
-        if self.objects.iter().any(|o| o.deleted) && self.objects.iter().any(|o| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::FunctionPlot(_,_,_,_,_))) {
+        if self.objects.iter().any(|o| o.deleted)
+            && self.objects.iter().any(|o| {
+                matches!(
+                    o.kind,
+                    Kind::FunctionDefinition(_) | Kind::FunctionPlot(_, _, _, _, _)
+                )
+            })
+        {
             return Err("Deleting objects in a function document cannot be saved safely".into());
         }
         for (i, o) in self.objects.iter().enumerate() {
@@ -2419,14 +2461,27 @@ impl Document {
             if matches!(o.kind, Kind::CoordinateSystem(_, _)) && self.graph_frame(o.id).is_none() {
                 return Err(format!("Invalid coordinate system {}", o.id));
             }
-            if let Kind::FunctionPlot(definition,frame,min,max,samples) = o.kind {
-                if !matches!(self.objects.get(definition.saturating_sub(1)).map(|o| &o.kind), Some(Kind::FunctionDefinition(_)))
-                    || self.graph_frame(frame).is_none()
-                    || !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+            if let Kind::FunctionPlot(definition, frame, min, max, samples) = o.kind {
+                if !matches!(
+                    self.objects
+                        .get(definition.saturating_sub(1))
+                        .map(|o| &o.kind),
+                    Some(Kind::FunctionDefinition(_))
+                ) || self.graph_frame(frame).is_none()
+                    || !min.is_finite()
+                    || !max.is_finite()
+                    || min >= max
+                    || !(2..=4096).contains(&samples)
+                {
                     return Err(format!("Invalid function plot {}", o.id));
                 }
-                if o.id > self.source_count && (min != -5.265208333333335 || max != 5.265208333333335 || samples != 750) {
-                    return Err(format!("Cannot encode modified function range in object {}", o.id));
+                if o.id > self.source_count
+                    && (min != -5.265208333333335 || max != 5.265208333333335 || samples != 750)
+                {
+                    return Err(format!(
+                        "Cannot encode modified function range in object {}",
+                        o.id
+                    ));
                 }
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind {
@@ -2814,7 +2869,9 @@ impl Document {
             .unwrap_or(0);
         let insert_at = rs
             .iter()
-            .find(|r| matches!(r.kind, 0x2328 | 0x232d) && r.start >= last_group_end && r.start < trailer)
+            .find(|r| {
+                matches!(r.kind, 0x2328 | 0x232d) && r.start >= last_group_end && r.start < trailer
+            })
             .map(|r| r.start)
             .unwrap_or(trailer);
         let mut added = Vec::new();
@@ -2853,14 +2910,20 @@ impl Document {
             }
             if let Kind::FunctionDefinition(expression) = o.kind {
                 let mut group = function_records::encode_definition_group(expression)?;
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
             if let Kind::FunctionPlot(definition, frame, _, _, _) = o.kind {
-                let Kind::FunctionDefinition(expression) = self.objects[definition-1].kind else { return Err("Invalid function definition".into()); };
+                let Kind::FunctionDefinition(expression) = self.objects[definition - 1].kind else {
+                    return Err("Invalid function definition".into());
+                };
                 let mut group = function_records::encode_plot_group(expression, definition, frame)?;
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -3096,25 +3159,44 @@ impl Document {
             .map(|object| object.id);
         let added_len = added.len();
         out.splice(insert_at..insert_at, added);
-        let last_function = self.objects.iter().rev().skip_while(|o| o.deleted).find(|o| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::FunctionPlot(_,_,_,_,_))).map(|o| o.id);
+        let last_function = self
+            .objects
+            .iter()
+            .rev()
+            .skip_while(|o| o.deleted)
+            .find(|o| {
+                matches!(
+                    o.kind,
+                    Kind::FunctionDefinition(_) | Kind::FunctionPlot(_, _, _, _, _)
+                )
+            })
+            .map(|o| o.id);
         let mut footer_added = 0;
         if let Some(id) = last_function {
-            if let Some(marker) = rs.iter().find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer) {
-                if marker.data.len() != 4 { return Err("Invalid function marker".into()); }
+            if let Some(marker) = rs
+                .iter()
+                .find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer)
+            {
+                if marker.data.len() != 4 {
+                    return Err("Invalid function marker".into());
+                }
                 let offset = marker.data.start + added_len;
-                out[offset..offset+4].copy_from_slice(&(id as u32).to_le_bytes());
+                out[offset..offset + 4].copy_from_slice(&(id as u32).to_le_bytes());
             } else {
                 let mut marker = Vec::new();
                 put_record(&mut marker, 0x2328, &(id as u32).to_le_bytes());
                 footer_added = marker.len();
-                out.splice(insert_at+added_len..insert_at+added_len, marker);
+                out.splice(insert_at + added_len..insert_at + added_len, marker);
             }
         }
         if let Some(frame) = new_frame {
             let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
             let mut page_link = Vec::new();
             put_record(&mut page_link, 0x232d, &frame.to_le_bytes());
-            out.splice(trailer + added_len + footer_added..trailer + added_len + footer_added, page_link);
+            out.splice(
+                trailer + added_len + footer_added..trailer + added_len + footer_added,
+                page_link,
+            );
         }
         records(&out)?;
         self.patch_text_and_labels(self.compact_deleted(out)?)
@@ -4809,5 +4891,76 @@ mod tests {
         assert!(!reopened.partial_view);
         assert_eq!(reopened.active_coordinate_system(), Some(frame));
         assert_eq!(reopened.grid_visible, vec![false]);
+    }
+
+    #[test]
+    fn original_function_files_decode_as_editable_documents() {
+        for (source, expression) in [
+            (
+                include_bytes!("../tests/fixtures/function_plot_identity.gsp").as_slice(),
+                SimpleFunction::Identity,
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_square.gsp").as_slice(),
+                SimpleFunction::Square,
+            ),
+        ] {
+            let mut doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[6].kind, Kind::FunctionDefinition(expression));
+            assert!(matches!(
+                doc.objects[7].kind,
+                Kind::FunctionPlot(7, 6, _, _, 750)
+            ));
+            assert_eq!(doc.encode().unwrap(), source);
+            let before = doc.function_plot_points(8, 3).unwrap();
+            assert!(doc.move_point(1, Point { x: 228., y: 140. }));
+            let after = doc.function_plot_points(8, 3).unwrap();
+            assert!((after[1].x - before[1].x - 29.).abs() < 1e-9);
+            assert!((after[1].y - before[1].y - 15.).abs() < 1e-9);
+            let saved = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!saved.partial_view);
+            assert_eq!(saved.objects[7].kind, doc.objects[7].kind);
+        }
+    }
+
+    #[test]
+    fn new_function_plot_reopens_and_tracks_drag_with_undo() {
+        let mut doc = Document::new();
+        let plot = doc
+            .plot_new_function(SimpleFunction::Square, Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(plot, 8);
+        let frame = doc.graph_frame(6).unwrap();
+        let vertex = doc.function_plot_points(plot, 3).unwrap()[1];
+        assert_eq!(
+            vertex,
+            Point {
+                x: frame.origin.x,
+                y: frame.origin.y
+            }
+        );
+        let saved = doc.encode().unwrap();
+        let mut reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, doc.objects[7].kind);
+        reopened.checkpoint();
+        assert!(reopened.move_point(1, Point { x: 228., y: 140. }));
+        assert_eq!(
+            reopened.function_plot_points(plot, 3).unwrap()[1],
+            Point { x: 228., y: 140. }
+        );
+        reopened.undo();
+        assert_eq!(reopened.function_plot_points(plot, 3).unwrap()[1], vertex);
+        reopened.redo();
+        assert_eq!(
+            reopened.function_plot_points(plot, 3).unwrap()[1],
+            Point { x: 228., y: 140. }
+        );
+        let edited = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+        assert_eq!(
+            edited.function_plot_points(plot, 3).unwrap()[1],
+            Point { x: 228., y: 140. }
+        );
     }
 }

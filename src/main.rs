@@ -433,13 +433,22 @@ impl Editor {
                                     .min_by(f32::total_cmp)?
                             }
                         }
-                        Kind::FunctionPlot(_,_,_,_,_) => {
+                        Kind::FunctionPlot(_, _, _, _, _) => {
                             let points = self.doc.function_plot_points(o.id, 256)?;
-                            points.windows(2).map(|pair| {
-                                let a=v.screen(pair[0]); let b=v.screen(pair[1]); let ab=b-a;
-                                let t=if ab.length_sq()<1e-6 {0.} else {((p-a).dot(ab)/ab.length_sq()).clamp(0.,1.)};
-                                (p-(a+ab*t)).length()
-                            }).min_by(f32::total_cmp)?
+                            points
+                                .windows(2)
+                                .map(|pair| {
+                                    let a = v.screen(pair[0]);
+                                    let b = v.screen(pair[1]);
+                                    let ab = b - a;
+                                    let t = if ab.length_sq() < 1e-6 {
+                                        0.
+                                    } else {
+                                        ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.)
+                                    };
+                                    (p - (a + ab * t)).length()
+                                })
+                                .min_by(f32::total_cmp)?
                         }
                         _ => return None,
                     }
@@ -1938,7 +1947,11 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("new_function")).show(root.ctx(), |ui| {
-                ui.heading(if plot { "Plot new function" } else { "New function" });
+                ui.heading(if plot {
+                    "Plot new function"
+                } else {
+                    "New function"
+                });
                 ui.label("f(x) =");
                 ui.text_edit_singleline(&mut self.function_draft);
                 ui.label("Supported: x, x^2");
@@ -1947,13 +1960,22 @@ impl Editor {
                     cancel = ui.button("Cancel").clicked();
                 });
             });
-            if cancel { self.function_dialog = None; }
+            if cancel {
+                self.function_dialog = None;
+            }
             if apply {
                 match SimpleFunction::parse(&self.function_draft).and_then(|expr| {
-                    if plot { self.doc.plot_new_function(expr, self.center) }
-                    else { self.doc.add_function_definition(expr) }
+                    if plot {
+                        self.doc.plot_new_function(expr, self.center)
+                    } else {
+                        self.doc.add_function_definition(expr)
+                    }
                 }) {
-                    Ok(id) => { self.function_dialog = None; self.select_only(id); self.status = format!("Created function object {id}"); }
+                    Ok(id) => {
+                        self.function_dialog = None;
+                        self.select_only(id);
+                        self.status = format!("Created function object {id}");
+                    }
                     Err(error) => self.status = error,
                 }
             }
