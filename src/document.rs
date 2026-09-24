@@ -1474,9 +1474,20 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::Calculation(group)))
     }
-    pub fn tabulate_default_parameter(&mut self, source: usize, anchor: (i16, i16)) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || source != 1 || self.objects.len() != 1
-            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(_))) {
+    pub fn tabulate_default_parameter(
+        &mut self,
+        source: usize,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || self.page_count != 1
+            || source != 1
+            || self.objects.len() != 1
+            || !matches!(
+                self.objects.first().map(|o| &o.kind),
+                Some(Kind::Parameter(_))
+            )
+        {
             return Err("Only the verified t[1] parameter can be tabulated".into());
         }
         let group = TableGroup::for_source(1, anchor)?;
@@ -1484,7 +1495,10 @@ impl Document {
         Ok(self.append_object(Kind::ValueTable(source, group)))
     }
     pub fn move_number(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid object ID")?).ok_or("Invalid object ID")?;
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid object ID")?)
+            .ok_or("Invalid object ID")?;
         let mut kind = object.kind.clone();
         match &mut kind {
             Kind::Parameter(group) => group.set_anchor(anchor)?,
@@ -1497,9 +1511,18 @@ impl Document {
         Ok(())
     }
     pub fn change_table_rows(&mut self, id: usize, add: bool) -> Result<(), String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid table ID")?).ok_or("Invalid table ID")?;
-        let Kind::ValueTable(_, mut group) = object.kind.clone() else { return Err("Object is not a table".into()); };
-        if add { group.add_default_snapshot()?; } else { group.remove_last_snapshot()?; }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid table ID")?)
+            .ok_or("Invalid table ID")?;
+        let Kind::ValueTable(_, mut group) = object.kind.clone() else {
+            return Err("Object is not a table".into());
+        };
+        if add {
+            group.add_default_snapshot()?;
+        } else {
+            group.remove_last_snapshot()?;
+        }
         self.checkpoint();
         self.objects[id - 1].kind = Kind::ValueTable(1, group);
         Ok(())
@@ -2555,12 +2578,21 @@ impl Document {
                 text_object::encode_plain_text_group(text, *rect)?;
             }
             match &o.kind {
-                Kind::Parameter(group) => { ParameterGroup::parse(group.as_bytes())?; }
-                Kind::Calculation(group) => { CalculationGroup::parse(group.as_bytes())?; }
+                Kind::Parameter(group) => {
+                    ParameterGroup::parse(group.as_bytes())?;
+                }
+                Kind::Calculation(group) => {
+                    CalculationGroup::parse(group.as_bytes())?;
+                }
                 Kind::ValueTable(source, group) => {
                     TableGroup::parse(group.as_bytes())?;
-                    if *source != 1 || group.source_id() != 1
-                        || !matches!(self.objects.get(source - 1).map(|o| &o.kind), Some(Kind::Parameter(_))) {
+                    if *source != 1
+                        || group.source_id() != 1
+                        || !matches!(
+                            self.objects.get(source - 1).map(|o| &o.kind),
+                            Some(Kind::Parameter(_))
+                        )
+                    {
                         return Err("Unsupported table source".into());
                     }
                 }
@@ -3118,19 +3150,25 @@ impl Document {
             }
             if let Kind::Parameter(group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
-                if !o.visible { bytes[10] |= 1; }
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
                 added.extend_from_slice(&bytes);
                 continue;
             }
             if let Kind::Calculation(group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
-                if !o.visible { bytes[10] |= 1; }
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
                 added.extend_from_slice(&bytes);
                 continue;
             }
             if let Kind::ValueTable(_, group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
-                if !o.visible { bytes[10] |= 1; }
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
                 added.extend_from_slice(&bytes);
                 continue;
             }
@@ -3485,7 +3523,9 @@ impl Document {
             } {
                 if bytes[group[0].start..record.data.end] != *replacement {
                     let mut replacement = replacement.to_vec();
-                    if !object.visible { replacement[10] |= 1; }
+                    if !object.visible {
+                        replacement[10] |= 1;
+                    }
                     edits.push((group[0].start, record.data.end, replacement));
                 }
                 continue;

@@ -219,8 +219,13 @@ fn two_ids(rest: &str) -> Result<(usize, usize), String> {
 
 fn number_anchor(rest: &str) -> Result<(i16, i16), String> {
     let parts = rest.split_whitespace().collect::<Vec<_>>();
-    let [x, y] = parts.as_slice() else { return Err("expected x y".into()); };
-    Ok((x.parse().map_err(|_| "invalid x")?, y.parse().map_err(|_| "invalid y")?))
+    let [x, y] = parts.as_slice() else {
+        return Err("expected x y".into());
+    };
+    Ok((
+        x.parse().map_err(|_| "invalid x")?,
+        y.parse().map_err(|_| "invalid y")?,
+    ))
 }
 
 fn replay(path: &str) -> Result<(), String> {
@@ -259,9 +264,16 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "number_move" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
-                    let [id, x, y] = parts.as_slice() else { return Err("expected ID x y".into()); };
-                    document.move_number(id.parse().map_err(|_| "invalid number ID")?,
-                        (x.parse().map_err(|_| "invalid x")?, y.parse().map_err(|_| "invalid y")?))?;
+                    let [id, x, y] = parts.as_slice() else {
+                        return Err("expected ID x y".into());
+                    };
+                    document.move_number(
+                        id.parse().map_err(|_| "invalid number ID")?,
+                        (
+                            x.parse().map_err(|_| "invalid x")?,
+                            y.parse().map_err(|_| "invalid y")?,
+                        ),
+                    )?;
                 }
                 "open" if !rest.is_empty() => document = Document::open(Path::new(rest))?,
                 "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,

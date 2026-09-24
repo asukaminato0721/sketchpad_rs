@@ -50,9 +50,17 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
 }
 pub fn number_screen_rect(vp: &Viewport, kind: &Kind) -> Option<Rect> {
     let (anchor, lines) = number_lines(kind)?;
-    let width = lines.iter().map(|line| line.chars().count()).max().unwrap_or(0) as f32 * 10. + 16.;
-    Some(Rect::from_min_size(vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32),
-        egui::vec2(width.max(66.), lines.len() as f32 * 21. + 8.)))
+    let width = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as f32
+        * 10.
+        + 16.;
+    Some(Rect::from_min_size(
+        vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32),
+        egui::vec2(width.max(66.), lines.len() as f32 * 21. + 8.),
+    ))
 }
 pub fn picture_screen_quad(vp: &Viewport, png: &[u8], transform: [f64; 6]) -> Option<[Pos2; 4]> {
     if png.len() < 24 {
@@ -394,7 +402,14 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         if let Some((anchor, lines)) = number_lines(&object.kind) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
             for (line, content) in lines.iter().enumerate() {
-                writeln!(svg, "<text x=\"{}\" y=\"{}\">{}</text>", at.x + 4., at.y + 18. + line as f32 * 21., xml_text(content)).unwrap();
+                writeln!(
+                    svg,
+                    "<text x=\"{}\" y=\"{}\">{}</text>",
+                    at.x + 4.,
+                    at.y + 18. + line as f32 * 21.,
+                    xml_text(content)
+                )
+                .unwrap();
             }
         }
         if let Some(label) = &object.label

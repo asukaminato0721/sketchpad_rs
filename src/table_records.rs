@@ -22,14 +22,22 @@ fn records(bytes: &[u8], start: usize) -> Result<Vec<Record>, String> {
     let mut at = start;
     let mut result = Vec::new();
     while at < bytes.len() {
-        if at + 8 > bytes.len() { return Err("Truncated GSP record".into()); }
+        if at + 8 > bytes.len() {
+            return Err("Truncated GSP record".into());
+        }
         let len = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
         let payload = at + 8;
-        let end = payload.checked_add(len + len % 2).ok_or("GSP record length overflow")?;
-        if end > bytes.len() { return Err("Truncated GSP payload".into()); }
+        let end = payload
+            .checked_add(len + len % 2)
+            .ok_or("GSP record length overflow")?;
+        if end > bytes.len() {
+            return Err("Truncated GSP payload".into());
+        }
         result.push(Record {
             kind: u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()),
-            start: at, payload, end,
+            start: at,
+            payload,
+            end,
         });
         at = end;
     }
@@ -45,67 +53,114 @@ fn table_template() -> Vec<u8> {
 
 fn object_group(document: &[u8], ordinal: usize) -> Vec<u8> {
     let rs = records(document, 4).unwrap();
-    let start = rs.iter().filter(|r| r.kind == 0x07d0).nth(ordinal - 1).unwrap().start;
-    let end = rs.iter().filter(|r| r.kind == 0x07d7).nth(ordinal - 1).unwrap().end;
+    let start = rs
+        .iter()
+        .filter(|r| r.kind == 0x07d0)
+        .nth(ordinal - 1)
+        .unwrap()
+        .start;
+    let end = rs
+        .iter()
+        .filter(|r| r.kind == 0x07d7)
+        .nth(ordinal - 1)
+        .unwrap()
+        .end;
     document[start..end].to_vec()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParameterGroup { bytes: Vec<u8> }
+pub struct ParameterGroup {
+    bytes: Vec<u8>,
+}
 
 impl ParameterGroup {
-    pub fn default_value() -> Self { Self { bytes: object_group(DEFAULT_PARAMETER, 1) } }
+    pub fn default_value() -> Self {
+        Self {
+            bytes: object_group(DEFAULT_PARAMETER, 1),
+        }
+    }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
         if rs.iter().map(|r| r.kind).collect::<Vec<_>>()
             != [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
-        { return Err("Unsupported parameter record sequence".into()); }
+        {
+            return Err("Unsupported parameter record sequence".into());
+        }
         let template = object_group(DEFAULT_PARAMETER, 1);
         let base = records(&template, 0)?;
-        if bytes.len() != template.len() { return Err("Unsupported parameter byte length".into()); }
-        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
-            let mutable = (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
-                || (rs[1].payload + 22..rs[1].payload + 24).contains(&i)
-                || (rs[4].payload..rs[4].end).contains(&i);
-            if !mutable && actual != expected { return Err("Unsupported parameter variant".into()); }
+        if bytes.len() != template.len() {
+            return Err("Unsupported parameter byte length".into());
         }
-        if base.len() != rs.len() { return Err("Invalid parameter template".into()); }
-        let group = Self { bytes: bytes.to_vec() };
+        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
+            let mutable = i == 10
+                || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
+                || (rs[1].payload + 22..rs[1].payload + 24).contains(&i)
+                || (rs[1].payload + 30..rs[1].payload + 32).contains(&i)
+                || (rs[4].payload..rs[4].end).contains(&i);
+            if !mutable && actual != expected {
+                return Err("Unsupported parameter variant".into());
+            }
+        }
+        if base.len() != rs.len() {
+            return Err("Invalid parameter template".into());
+        }
+        let group = Self {
+            bytes: bytes.to_vec(),
+        };
         let at = group.anchor();
         let bbox = group.bbox();
-        if bbox.0 != at || i32::from(bbox.1.0) - i32::from(bbox.0.0) != 94 || i32::from(bbox.1.1) - i32::from(bbox.0.1) != 32 {
+        if bbox.0 != at
+            || i32::from(bbox.1.0) - i32::from(bbox.0.0) != 94
+            || i32::from(bbox.1.1) - i32::from(bbox.0.1) != 32
+        {
             return Err("Parameter anchor and box disagree".into());
         }
         Ok(group)
     }
 
-    pub fn name(&self) -> &str { "t[1]" }
-    pub fn value(&self) -> f64 { 1.0 }
+    pub fn name(&self) -> &str {
+        "t[1]"
+    }
+    pub fn value(&self) -> f64 {
+        1.0
+    }
 
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
         let at = rs[1].payload + 12;
-        (i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
-         i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()))
+        (
+            i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
+        )
     }
 
     pub fn bbox(&self) -> ((i16, i16), (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
         let at = rs[4].payload;
-        let word = |offset| i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap());
+        let word = |offset| {
+            i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap())
+        };
         ((word(0), word(2)), (word(4), word(6)))
     }
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
-        let delta = (i32::from(anchor.0) - i32::from(before.0), i32::from(anchor.1) - i32::from(before.1));
+        let delta = (
+            i32::from(anchor.0) - i32::from(before.0),
+            i32::from(anchor.1) - i32::from(before.1),
+        );
         let bbox = rs[4].payload;
         let mut updates = Vec::new();
         for (index, difference) in [(0, delta.0), (2, delta.1), (4, delta.0), (6, delta.1)] {
-            let old = i16::from_le_bytes(self.bytes[bbox + index..bbox + index + 2].try_into().unwrap());
-            let new = i16::try_from(i32::from(old) + difference).map_err(|_| "Parameter box coordinate overflow")?;
+            let old = i16::from_le_bytes(
+                self.bytes[bbox + index..bbox + index + 2]
+                    .try_into()
+                    .unwrap(),
+            );
+            let new = i16::try_from(i32::from(old) + difference)
+                .map_err(|_| "Parameter box coordinate overflow")?;
             updates.push((index, new));
         }
         let at = rs[1].payload + 12;
@@ -117,11 +172,18 @@ impl ParameterGroup {
         Ok(())
     }
 
-    pub fn as_bytes(&self) -> &[u8] { &self.bytes }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 pub fn append_default_parameter(blank: &[u8], anchor: (i16, i16)) -> Result<Vec<u8>, String> {
-    append_to_blank(blank, ParameterGroup::default_value().with_anchor(anchor)?.as_bytes())
+    append_to_blank(
+        blank,
+        ParameterGroup::default_value()
+            .with_anchor(anchor)?
+            .as_bytes(),
+    )
 }
 
 impl ParameterGroup {
@@ -132,49 +194,100 @@ impl ParameterGroup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CalculationGroup { bytes: Vec<u8> }
+pub struct CalculationGroup {
+    bytes: Vec<u8>,
+}
 
 impl CalculationGroup {
-    pub fn literal_two_plus_three() -> Self { Self { bytes: object_group(CALCULATION, 2) } }
+    pub fn literal_two_plus_three() -> Self {
+        Self {
+            bytes: object_group(CALCULATION, 2),
+        }
+    }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
-        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7] {
+        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
+        {
             return Err("Unsupported calculation record sequence".into());
         }
         let template = object_group(CALCULATION, 2);
-        if bytes.len() != template.len() { return Err("Unsupported calculation byte length".into()); }
-        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
-            let mutable = (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
-                || (rs[3].payload..rs[3].end).contains(&i);
-            if !mutable && actual != expected { return Err("Unsupported calculation variant".into()); }
+        if bytes.len() != template.len() {
+            return Err("Unsupported calculation byte length".into());
         }
-        Ok(Self { bytes: bytes.to_vec() })
+        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
+            let mutable = i == 10
+                || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
+                || (rs[3].payload..rs[3].end).contains(&i);
+            if !mutable && actual != expected {
+                return Err("Unsupported calculation variant".into());
+            }
+        }
+        let result = Self {
+            bytes: bytes.to_vec(),
+        };
+        let anchor = result.anchor();
+        let bbox = rs[3].payload;
+        let word = |offset| {
+            i16::from_le_bytes(
+                result.bytes[bbox + offset..bbox + offset + 2]
+                    .try_into()
+                    .unwrap(),
+            )
+        };
+        if (word(0), word(2)) != anchor
+            || i32::from(word(4)) - i32::from(word(0)) != 114
+            || i32::from(word(6)) - i32::from(word(2)) != 26
+        {
+            return Err("Calculation anchor and box disagree".into());
+        }
+        Ok(result)
     }
-    pub fn expression(&self) -> &str { "2 + 3" }
-    pub fn value(&self) -> f64 { 5.0 }
+    pub fn expression(&self) -> &str {
+        "2 + 3"
+    }
+    pub fn value(&self) -> f64 {
+        5.0
+    }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
         let at = rs[1].payload + 12;
-        (i16::from_le_bytes(self.bytes[at..at+2].try_into().unwrap()),
-         i16::from_le_bytes(self.bytes[at+2..at+4].try_into().unwrap()))
+        (
+            i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
+        )
     }
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
         let bbox = rs[3].payload;
-        let delta = (i32::from(anchor.0)-i32::from(before.0), i32::from(anchor.1)-i32::from(before.1));
+        let delta = (
+            i32::from(anchor.0) - i32::from(before.0),
+            i32::from(anchor.1) - i32::from(before.1),
+        );
         let mut updates = Vec::new();
         for (index, difference) in [(0, delta.0), (2, delta.1), (4, delta.0), (6, delta.1)] {
-            let old = i16::from_le_bytes(self.bytes[bbox+index..bbox+index+2].try_into().unwrap());
-            updates.push((index, i16::try_from(i32::from(old)+difference).map_err(|_| "Calculation box coordinate overflow")?));
+            let old = i16::from_le_bytes(
+                self.bytes[bbox + index..bbox + index + 2]
+                    .try_into()
+                    .unwrap(),
+            );
+            updates.push((
+                index,
+                i16::try_from(i32::from(old) + difference)
+                    .map_err(|_| "Calculation box coordinate overflow")?,
+            ));
         }
         let at = rs[1].payload + 12;
-        self.bytes[at..at+2].copy_from_slice(&anchor.0.to_le_bytes());
-        self.bytes[at+2..at+4].copy_from_slice(&anchor.1.to_le_bytes());
-        for (index, value) in updates { self.bytes[bbox+index..bbox+index+2].copy_from_slice(&value.to_le_bytes()); }
+        self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
+        for (index, value) in updates {
+            self.bytes[bbox + index..bbox + index + 2].copy_from_slice(&value.to_le_bytes());
+        }
         Ok(())
     }
-    pub fn as_bytes(&self) -> &[u8] { &self.bytes }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 pub fn append_literal_sum(blank: &[u8]) -> Result<Vec<u8>, String> {
@@ -182,14 +295,24 @@ pub fn append_literal_sum(blank: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn append_to_blank(blank: &[u8], group: &[u8]) -> Result<Vec<u8>, String> {
-    if blank.get(..4) != Some(b"GSP4") { return Err("Expected GSP4".into()); }
+    if blank.get(..4) != Some(b"GSP4") {
+        return Err("Expected GSP4".into());
+    }
     let rs = records(blank, 4)?;
-    let preamble = rs.iter().find(|r| r.kind == 0x03e8).ok_or("Missing page preamble")?;
+    let preamble = rs
+        .iter()
+        .find(|r| r.kind == 0x03e8)
+        .ok_or("Missing page preamble")?;
     if rs.iter().filter(|r| r.kind == 0x03e8).count() != 1
         || rs.iter().any(|r| r.kind == 0x07d0)
         || blank.get(preamble.payload + 24..preamble.payload + 28) != Some(&0_u32.to_le_bytes())
-    { return Err("Expected blank one-page document".into()); }
-    let trailer = rs.iter().find(|r| r.kind == 0x03e9).ok_or("Missing page trailer")?;
+    {
+        return Err("Expected blank one-page document".into());
+    }
+    let trailer = rs
+        .iter()
+        .find(|r| r.kind == 0x03e9)
+        .ok_or("Missing page trailer")?;
     let mut output = blank.to_vec();
     output[preamble.payload + 24..preamble.payload + 28].copy_from_slice(&1_u32.to_le_bytes());
     let mut insertion = group.to_vec();
@@ -205,19 +328,27 @@ fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(payload);
-    if payload.len() % 2 != 0 { out.push(0); }
+    if payload.len() % 2 != 0 {
+        out.push(0);
+    }
 }
 
 fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u8>, String> {
-    if source == 0 || !(1..=256).contains(&rows) { return Err("Invalid table source or row count".into()); }
+    if source == 0 || !(1..=256).contains(&rows) {
+        return Err("Invalid table source or row count".into());
+    }
     let base = table_template();
     let rs = records(&base, 0)?;
     let mut layout = base[rs[2].payload..rs[2].end].to_vec();
     layout[12..14].copy_from_slice(&anchor.0.to_le_bytes());
     layout[14..16].copy_from_slice(&anchor.1.to_le_bytes());
     layout[16..18].copy_from_slice(&((rows + 2) as u16).to_le_bytes());
-    for _ in 1..rows { layout.extend_from_slice(SNAPSHOT_ROW); }
-    while layout.len() % 4 != 0 { layout.push(0); }
+    for _ in 1..rows {
+        layout.extend_from_slice(SNAPSHOT_ROW);
+    }
+    while layout.len() % 4 != 0 {
+        layout.push(0);
+    }
     let layout_len = layout.len() as u32;
     layout[4..8].copy_from_slice(&layout_len.to_le_bytes());
     let mut refs = base[rs[1].payload..rs[1].end].to_vec();
@@ -232,21 +363,32 @@ fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u
 }
 
 impl TableGroup {
-    pub fn default_snapshot() -> Self { Self { bytes: table_template() } }
+    pub fn default_snapshot() -> Self {
+        Self {
+            bytes: table_template(),
+        }
+    }
 
     pub fn for_source(source: u32, anchor: (i16, i16)) -> Result<Self, String> {
-        Ok(Self { bytes: canonical_table(source, anchor, 1)? })
+        Ok(Self {
+            bytes: canonical_table(source, anchor, 1)?,
+        })
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
-        if rs.iter().map(|r| r.kind).collect::<Vec<_>>()
-            != [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
-        { return Err("Unsupported table record sequence".into()); }
+        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
+        {
+            return Err("Unsupported table record sequence".into());
+        }
         if rs[1].end - rs[1].payload != 8 || rs[2].end - rs[2].payload < 64 {
             return Err("Unsupported table payload length".into());
         }
-        let source = u32::from_le_bytes(bytes[rs[1].payload + 4..rs[1].payload + 8].try_into().unwrap());
+        let source = u32::from_le_bytes(
+            bytes[rs[1].payload + 4..rs[1].payload + 8]
+                .try_into()
+                .unwrap(),
+        );
         let at = rs[2].payload;
         let anchor = (
             i16::from_le_bytes(bytes[at + 12..at + 14].try_into().unwrap()),
@@ -254,15 +396,24 @@ impl TableGroup {
         );
         let row_count = u16::from_le_bytes(bytes[at + 16..at + 18].try_into().unwrap()) as usize;
         let rows = row_count.checked_sub(2).ok_or("Invalid table row count")?;
-        if bytes != canonical_table(source, anchor, rows)?.as_slice() {
+        let mut normalized = bytes.to_vec();
+        normalized[10] &= !1;
+        if normalized != canonical_table(source, anchor, rows)? {
             return Err("Unsupported one-column table variant".into());
         }
-        Ok(Self { bytes: bytes.to_vec() })
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
     }
 
     pub fn rows(&self) -> usize {
         let rs = records(&self.bytes, 0).unwrap();
-        u16::from_le_bytes(self.bytes[rs[2].payload + 16..rs[2].payload + 18].try_into().unwrap()) as usize - 2
+        u16::from_le_bytes(
+            self.bytes[rs[2].payload + 16..rs[2].payload + 18]
+                .try_into()
+                .unwrap(),
+        ) as usize
+            - 2
     }
 
     pub fn add_default_snapshot(&mut self) -> Result<(), String> {
@@ -278,14 +429,20 @@ impl TableGroup {
 
     pub fn source_id(&self) -> u32 {
         let rs = records(&self.bytes, 0).unwrap();
-        u32::from_le_bytes(self.bytes[rs[1].payload + 4..rs[1].payload + 8].try_into().unwrap())
+        u32::from_le_bytes(
+            self.bytes[rs[1].payload + 4..rs[1].payload + 8]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
         let at = rs[2].payload + 12;
-        (i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
-         i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()))
+        (
+            i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
+        )
     }
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) {
@@ -295,44 +452,76 @@ impl TableGroup {
         self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
     }
 
-    pub fn as_bytes(&self) -> &[u8] { &self.bytes }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 /// Append a one-row table to the original single default t[1]=1.00 parameter.
 /// The source value and name are verified so the table's cached row is accurate.
-pub fn append_default_parameter_table(document: &[u8], anchor: (i16, i16)) -> Result<Vec<u8>, String> {
-    if document.get(..4) != Some(b"GSP4") { return Err("Expected GSP4".into()); }
+pub fn append_default_parameter_table(
+    document: &[u8],
+    anchor: (i16, i16),
+) -> Result<Vec<u8>, String> {
+    if document.get(..4) != Some(b"GSP4") {
+        return Err("Expected GSP4".into());
+    }
     let rs = records(document, 4)?;
     let base = records(DEFAULT_PARAMETER, 4)?;
-    let preamble = rs.iter().find(|r| r.kind == 0x03e8).ok_or("Missing page preamble")?;
+    let preamble = rs
+        .iter()
+        .find(|r| r.kind == 0x03e8)
+        .ok_or("Missing page preamble")?;
     if rs.iter().filter(|r| r.kind == 0x03e8).count() != 1
         || rs.iter().filter(|r| r.kind == 0x07d0).count() != 1
         || document.get(preamble.payload + 24..preamble.payload + 28) != Some(&1_u32.to_le_bytes())
-    { return Err("Expected one-page one-parameter document".into()); }
+    {
+        return Err("Expected one-page one-parameter document".into());
+    }
     let start = rs.iter().position(|r| r.kind == 0x07d0).unwrap();
-    let end = rs[start..].iter().position(|r| r.kind == 0x07d7).map(|n| start+n).ok_or("Unterminated parameter")?;
+    let end = rs[start..]
+        .iter()
+        .position(|r| r.kind == 0x07d7)
+        .map(|n| start + n)
+        .ok_or("Unterminated parameter")?;
     let param = &rs[start..=end];
     if param.iter().map(|r| r.kind).collect::<Vec<_>>()
         != [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
-    { return Err("Unsupported parameter layout".into()); }
+    {
+        return Err("Unsupported parameter layout".into());
+    }
     let baseline_start = base.iter().position(|r| r.kind == 0x07d0).unwrap();
     let baseline = &base[baseline_start..baseline_start + param.len()];
     let actual = &document[param[1].payload..param[1].end];
     let expected = &DEFAULT_PARAMETER[baseline[1].payload..baseline[1].end];
     if actual.len() != expected.len()
-        || actual.iter().zip(expected).enumerate().any(|(i, (a,b))| !matches!(i, 22 | 23) && a != b)
+        || actual
+            .iter()
+            .zip(expected)
+            .enumerate()
+            .any(|(i, (a, b))| !matches!(i, 22 | 23 | 30 | 31) && a != b)
         || document.get(param[2].payload + 22..param[2].payload + 28) != Some(&b"\x04\0t[1]"[..])
-    { return Err("Only the original t[1] = 1.00 parameter is supported".into()); }
-    let selection = rs.iter().find(|r| r.kind == 0x2328 && r.start > param[5].start)
+    {
+        return Err("Only the original t[1] = 1.00 parameter is supported".into());
+    }
+    let selection = rs
+        .iter()
+        .find(|r| r.kind == 0x2328 && r.start > param[5].start)
         .ok_or("Missing parameter selection record")?;
-    if selection.end - selection.payload != 4 || document[selection.payload..selection.end] != 1_u32.to_le_bytes()
-    { return Err("Unsupported selection record".into()); }
+    if selection.end - selection.payload != 4
+        || document[selection.payload..selection.end] != 1_u32.to_le_bytes()
+    {
+        return Err("Unsupported selection record".into());
+    }
     let mut table = TableGroup::default_snapshot();
     table.set_anchor(anchor);
     let mut output = document.to_vec();
     output[preamble.payload + 24..preamble.payload + 28].copy_from_slice(&2_u32.to_le_bytes());
     output[selection.payload..selection.end].copy_from_slice(&2_u32.to_le_bytes());
-    output.splice(selection.start..selection.start, table.as_bytes().iter().copied());
+    output.splice(
+        selection.start..selection.start,
+        table.as_bytes().iter().copied(),
+    );
     records(&output, 4)?;
     Ok(output)
 }
@@ -363,9 +552,17 @@ mod tests {
         let rs = records(&output, 4).unwrap();
         let start = rs.iter().filter(|r| r.kind == 0x07d0).nth(1).unwrap().start;
         let end = rs.iter().filter(|r| r.kind == 0x07d7).nth(1).unwrap().end;
-        assert_eq!(TableGroup::parse(&output[start..end]).unwrap().anchor(), (100, 116));
-        assert!(append_default_parameter_table(
-            include_bytes!("../tests/fixtures/table_parameter_custom.gsp"), (10, 38)).is_err());
+        assert_eq!(
+            TableGroup::parse(&output[start..end]).unwrap().anchor(),
+            (100, 116)
+        );
+        assert!(
+            append_default_parameter_table(
+                include_bytes!("../tests/fixtures/table_parameter_custom.gsp"),
+                (10, 38)
+            )
+            .is_err()
+        );
     }
 
     #[test]

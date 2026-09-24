@@ -88,8 +88,12 @@ pub fn set_segment_color(payload: &mut [u8], color: RgbColor) -> Result<(), Stri
 }
 
 fn is_circle_header(payload: &[u8]) -> bool {
-    (payload.len() == 16 || payload.len() == 28)
-        && u16::from_le_bytes([payload[0], payload[1]]) == 3
+    if payload.len() != 16 && payload.len() != 28 {
+        return false;
+    }
+    let code = u16::from_le_bytes([payload[0], payload[1]]);
+    let subtype = u16::from_le_bytes([payload[8], payload[9]]);
+    matches!((code, subtype), (3 | 4 | 30 | 34, 28))
 }
 
 pub fn circle_color(payload: &[u8]) -> Option<RgbColor> {
@@ -177,7 +181,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
     (payload.len() == 16 || payload.len() == 28)
         && matches!(
             u16::from_le_bytes([payload[0], payload[1]]),
-            63 | 64 | 79 | 81
+            5 | 6 | 7 | 63 | 64 | 79 | 81
         )
 }
 
@@ -874,5 +878,105 @@ mod tests {
         assert_eq!(changed[10], 0x13);
         changed[10] = original[10];
         assert_eq!(changed, original);
+    }
+
+    #[test]
+    fn constructed_circle_and_line_headers_share_stroke_fields() {
+        let cases: &[(&[u8], u16, RgbColor)] = &[
+            (
+                include_bytes!("../tests/fixtures/circle_center_radius.gsp"),
+                4,
+                RgbColor {
+                    red: 0,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/wine_moved_dilation.gsp"),
+                30,
+                RgbColor {
+                    red: 0,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/wine_moved_reflected_circle.gsp"),
+                34,
+                RgbColor {
+                    red: 0,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/perpendicular.gsp"),
+                5,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/parallel.gsp"),
+                6,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/bisector.gsp"),
+                7,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+        ];
+        for (file, code, color) in cases {
+            let mut header = records_headers(file)
+                .into_iter()
+                .find(|payload| {
+                    u16::from_le_bytes(payload[..2].try_into().unwrap()) == *code
+                        && matches!(visual_style(payload), Some(VisualStyle::Stroke { .. }))
+                })
+                .unwrap();
+            assert_eq!(
+                visual_style(&header),
+                Some(VisualStyle::Stroke {
+                    line: SegmentLineStyle {
+                        width: LineWidth::Medium,
+                        pattern: LinePattern::Solid
+                    },
+                    color: *color,
+                })
+            );
+            let original = header.clone();
+            set_visual_style(
+                &mut header,
+                VisualStyle::Stroke {
+                    line: SegmentLineStyle {
+                        width: LineWidth::Thick,
+                        pattern: LinePattern::Dashed,
+                    },
+                    color: RgbColor {
+                        red: 0,
+                        green: 0,
+                        blue: 255,
+                    },
+                },
+            )
+            .unwrap();
+            assert_eq!(header[10], 0x13);
+            assert_eq!(&header[12..15], &[0, 0, 255]);
+            header[10] = original[10];
+            header[12..15].copy_from_slice(&original[12..15]);
+            assert_eq!(header, original);
+        }
     }
 }

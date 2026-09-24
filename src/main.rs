@@ -190,7 +190,10 @@ impl Editor {
                 });
             }
             if let Some((anchor, _)) = sketchpad_rs::render::number_lines(&object.kind) {
-                pts.push(Point { x: anchor.0 as f64, y: anchor.1 as f64 });
+                pts.push(Point {
+                    x: anchor.0 as f64,
+                    y: anchor.1 as f64,
+                });
             }
             if let Kind::Image { png, transform } = &object.kind
                 && let Some(corners) = sketchpad_rs::render::picture_screen_quad(
@@ -400,7 +403,9 @@ impl Editor {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page && object.visible && !object.deleted
+            object.page == self.doc.active_page
+                && object.visible
+                && !object.deleted
                 && sketchpad_rs::render::number_screen_rect(v, &object.kind)
                     .is_some_and(|rect| rect.contains(p))
         }) {
@@ -1545,12 +1550,16 @@ impl Editor {
                     }
                     if ui.button("Add Table Data").clicked() {
                         let id = self.doc.selected.iter().next().copied().unwrap_or(0);
-                        if let Err(error) = self.doc.change_table_rows(id, true) { self.status = error; }
+                        if let Err(error) = self.doc.change_table_rows(id, true) {
+                            self.status = error;
+                        }
                         ui.close();
                     }
                     if ui.button("Remove Table Data").clicked() {
                         let id = self.doc.selected.iter().next().copied().unwrap_or(0);
-                        if let Err(error) = self.doc.change_table_rows(id, false) { self.status = error; }
+                        if let Err(error) = self.doc.change_table_rows(id, false) {
+                            self.status = error;
+                        }
                         ui.close();
                     }
                     if ui.button("New Function…").clicked() {
@@ -1776,9 +1785,16 @@ impl Editor {
                                             y: rect.top.into(),
                                         })
                                     }
-                                    Kind::Parameter(_) | Kind::Calculation(_) | Kind::ValueTable(_, _) => {
-                                        let anchor = sketchpad_rs::render::number_lines(&self.doc.objects[id - 1].kind).unwrap().0;
-                                        p - (vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32))
+                                    Kind::Parameter(_)
+                                    | Kind::Calculation(_)
+                                    | Kind::ValueTable(_, _) => {
+                                        let anchor = sketchpad_rs::render::number_lines(
+                                            &self.doc.objects[id - 1].kind,
+                                        )
+                                        .unwrap()
+                                        .0;
+                                        p - (vp.rect.min
+                                            + egui::vec2(anchor.0 as f32, anchor.1 as f32))
                                     }
                                     Kind::Image { transform, .. } => {
                                         p - vp.screen(Point {
@@ -1808,10 +1824,15 @@ impl Editor {
                             {
                                 self.status = error;
                             }
-                        } else if matches!(self.doc.objects[id - 1].kind, Kind::Parameter(_) | Kind::Calculation(_) | Kind::ValueTable(_, _)) {
+                        } else if matches!(
+                            self.doc.objects[id - 1].kind,
+                            Kind::Parameter(_) | Kind::Calculation(_) | Kind::ValueTable(_, _)
+                        ) {
                             let at = p - self.drag_offset - vp.rect.min;
                             let anchor = (at.x.round() as i16, at.y.round() as i16);
-                            if let Err(error) = self.doc.move_number(id, anchor) { self.status = error; }
+                            if let Err(error) = self.doc.move_number(id, anchor) {
+                                self.status = error;
+                            }
                         } else {
                             self.doc.move_point(id, vp.world(p));
                         }
@@ -1884,12 +1905,25 @@ impl Editor {
                         }
                     }
                     if let Some((_, lines)) = sketchpad_rs::render::number_lines(&object.kind)
-                        && let Some(number_rect) = sketchpad_rs::render::number_screen_rect(&vp, &object.kind) {
-                        ui.painter().rect_filled(number_rect, 0., egui::Color32::WHITE);
-                        ui.painter().rect_stroke(number_rect, 0., egui::Stroke::new(1., egui::Color32::from_gray(70)), egui::StrokeKind::Inside);
+                        && let Some(number_rect) =
+                            sketchpad_rs::render::number_screen_rect(&vp, &object.kind)
+                    {
+                        ui.painter()
+                            .rect_filled(number_rect, 0., egui::Color32::WHITE);
+                        ui.painter().rect_stroke(
+                            number_rect,
+                            0.,
+                            egui::Stroke::new(1., egui::Color32::from_gray(70)),
+                            egui::StrokeKind::Inside,
+                        );
                         for (row, line) in lines.iter().enumerate() {
-                            ui.painter().text(number_rect.min + egui::vec2(5., 3. + row as f32 * 21.),
-                                egui::Align2::LEFT_TOP, line, egui::FontId::proportional(16.), egui::Color32::BLACK);
+                            ui.painter().text(
+                                number_rect.min + egui::vec2(5., 3. + row as f32 * 21.),
+                                egui::Align2::LEFT_TOP,
+                                line,
+                                egui::FontId::proportional(16.),
+                                egui::Color32::BLACK,
+                            );
                         }
                     }
                     if let Some(label) = &object.label

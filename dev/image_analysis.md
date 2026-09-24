@@ -102,6 +102,11 @@ that result as an editable picture and preserved the original PNG and affine
 translation on another save. Wine recompressed the PNG, reducing the saved
 file from 2,320 to 2,112 bytes.
 
+The Linux Wayland desktop smoke capture (`/tmp/sketchpad_native_image.png`)
+showed the imported raster and point in the native window. The generated SVG
+was converted to PDF with `rsvg-convert`; rasterizing the PDF showed the same
+picture, so the print pipeline includes it.
+
 Documents with a crop or multiple picture resources open for inspection and
 round-trip byte-identically if untouched. Any edited save is refused with a
 read-only picture error. PNG input is decoded before the native menu or CLI
