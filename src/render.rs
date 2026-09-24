@@ -83,7 +83,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     for o in doc
         .objects
         .iter()
-        .filter(|o| o.visible && o.page == doc.active_page)
+        .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
     {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
@@ -123,7 +123,7 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     for o in doc
         .objects
         .iter()
-        .filter(|o| o.visible && o.page == doc.active_page)
+        .filter(|o| o.visible && !o.deleted && o.page == doc.active_page)
     {
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
@@ -248,7 +248,7 @@ impl GeometryRenderer {
         let selected = [0.94, 0.32, 0.10, 1.];
         // Draw paths first and points last.
         for o in &doc.objects {
-            if !o.visible || o.page != doc.active_page {
+            if !o.visible || o.deleted || o.page != doc.active_page {
                 continue;
             }
             let col = if doc.selected.contains(&o.id) {
@@ -295,7 +295,7 @@ impl GeometryRenderer {
             }
         }
         for o in &doc.objects {
-            if !o.visible || o.page != doc.active_page {
+            if !o.visible || o.deleted || o.page != doc.active_page {
                 continue;
             }
             if let Some(p) = doc.position(o.id) {

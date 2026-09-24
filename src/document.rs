@@ -47,6 +47,36 @@ impl Kind {
             }
         }
     }
+    fn remap(&self, ids: &[usize]) -> Self {
+        let m = |id: usize| ids[id];
+        match *self {
+            Kind::Free(p) => Kind::Free(p),
+            Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
+            Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
+            Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::PolarTranslatedPoint(a, angle, units, distance) => Kind::PolarTranslatedPoint(m(a), angle, units, distance),
+            Kind::ReflectedPoint(a, b) => Kind::ReflectedPoint(m(a), m(b)),
+            Kind::ReflectedCircle(a, b) => Kind::ReflectedCircle(m(a), m(b)),
+            Kind::ScaledPoint(a, b, factor) => Kind::ScaledPoint(m(a), m(b), factor),
+            Kind::ScaledCircle(a, b, factor) => Kind::ScaledCircle(m(a), m(b), factor),
+            Kind::RotatedPoint(a, b, angle) => Kind::RotatedPoint(m(a), m(b), angle),
+            Kind::Midpoint(a, b) => Kind::Midpoint(m(a), m(b)),
+            Kind::Segment(a, b) => Kind::Segment(m(a), m(b)),
+            Kind::Line(a, b) => Kind::Line(m(a), m(b)),
+            Kind::Ray(a, b) => Kind::Ray(m(a), m(b)),
+            Kind::Parallel(a, b) => Kind::Parallel(m(a), m(b)),
+            Kind::Perpendicular(a, b) => Kind::Perpendicular(m(a), m(b)),
+            Kind::Circle(a, b) => Kind::Circle(m(a), m(b)),
+            Kind::CircleBySegment(a, b) => Kind::CircleBySegment(m(a), m(b)),
+            Kind::Bisector(a, b, c) => Kind::Bisector(m(a), m(b), m(c)),
+            Kind::ThreePointArc(a, b, c) => Kind::ThreePointArc(m(a), m(b), m(c)),
+            Kind::ArcOnCircle(a, b, c) => Kind::ArcOnCircle(m(a), m(b), m(c)),
+            Kind::Intersection(a, b) => Kind::Intersection(m(a), m(b)),
+            Kind::LineCircleIntersection(a, b, root) => Kind::LineCircleIntersection(m(a), m(b), root),
+            Kind::CircleCircleIntersection(a, b, root) => Kind::CircleCircleIntersection(m(a), m(b), root),
+            Kind::Unsupported(code) => Kind::Unsupported(code),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +119,7 @@ pub struct Object {
     pub page: usize,
     pub kind: Kind,
     pub visible: bool,
+    pub deleted: bool,
     pub point_offset: Option<usize>,
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
@@ -704,6 +735,7 @@ impl Document {
                 page,
                 kind,
                 visible: raw & 0x10000 == 0,
+                deleted: false,
                 point_offset,
                 constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
@@ -759,23 +791,57 @@ impl Document {
             page: self.active_page,
             kind,
             visible: true,
+            deleted: false,
             point_offset: None,
             constraint_offset: None,
             header_offset: None,
         });
         id
     }
+    pub fn clear_selected(&mut self) -> Result<Vec<usize>, String> {
+        if !self.safe_structure || self.page_count != 1 {
+            return Err("Deleting objects in this document cannot be saved safely".into());
+        }
+        let mut removed: BTreeSet<usize> = self
+            .objects
+            .iter()
+            .filter(|o| !o.deleted && self.selected.contains(&o.id))
+            .map(|o| o.id)
+            .collect();
+        if removed.is_empty() {
+            return Ok(vec![]);
+        }
+        loop {
+            let before = removed.len();
+            for object in self.objects.iter().filter(|o| !o.deleted) {
+                if object.kind.dependencies().iter().any(|id| removed.contains(id)) {
+                    removed.insert(object.id);
+                }
+            }
+            if removed.len() == before {
+                break;
+            }
+        }
+        self.checkpoint();
+        for object in &mut self.objects {
+            if removed.contains(&object.id) {
+                object.deleted = true;
+            }
+        }
+        self.selected.clear();
+        Ok(removed.into_iter().collect())
+    }
     pub fn set_selected_visibility(&mut self, visible: bool) {
         if !self
             .objects
             .iter()
-            .any(|o| self.selected.contains(&o.id) && o.visible != visible)
+            .any(|o| !o.deleted && self.selected.contains(&o.id) && o.visible != visible)
         {
             return;
         }
         self.checkpoint();
         for o in &mut self.objects {
-            if self.selected.contains(&o.id) {
+            if !o.deleted && self.selected.contains(&o.id) {
                 o.visible = visible;
             }
         }
@@ -787,13 +853,13 @@ impl Document {
         if !self
             .objects
             .iter()
-            .any(|o| o.page == self.active_page && !o.visible)
+            .any(|o| !o.deleted && o.page == self.active_page && !o.visible)
         {
             return;
         }
         self.checkpoint();
         for o in &mut self.objects {
-            if o.page == self.active_page {
+            if !o.deleted && o.page == self.active_page {
                 o.visible = true;
             }
         }
@@ -803,7 +869,11 @@ impl Document {
             if !seen.insert(id) {
                 return None;
             }
-            let p = match &d.objects.get(id.checked_sub(1)?)?.kind {
+            let object = d.objects.get(id.checked_sub(1)?)?;
+            if object.deleted {
+                return None;
+            }
+            let p = match &object.kind {
                 Kind::Free(p) => Some(*p),
                 Kind::PointOnSegment(host, t) => {
                     let (a, b, LineMode::Segment) = d.line_points(*host)? else {
@@ -890,7 +960,11 @@ impl Document {
             if !seen.insert(id) {
                 return None;
             }
-            let result = match d.objects.get(id.checked_sub(1)?)?.kind {
+            let object = d.objects.get(id.checked_sub(1)?)?;
+            if object.deleted {
+                return None;
+            }
+            let result = match object.kind {
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
                 Kind::Line(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::Ray(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Ray)),
@@ -958,6 +1032,9 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        if self.objects.get(id.checked_sub(1)?)?.deleted {
+            return None;
+        }
         if let Kind::ReflectedCircle(source, mirror) = self.objects.get(id.checked_sub(1)?)?.kind {
             let (center, radius) = self.circle_points(source)?;
             let (a, b, _) = self.line_points(mirror)?;
@@ -1154,13 +1231,74 @@ impl Document {
             _ => None,
         }
     }
+    fn compact_deleted(&self, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        if !self.objects.iter().any(|o| o.deleted) {
+            return Ok(bytes);
+        }
+        let mut ids = vec![0; self.objects.len() + 1];
+        let mut kept = 0;
+        for object in &self.objects {
+            if !object.deleted {
+                kept += 1;
+                ids[object.id] = kept;
+            }
+        }
+        let rs = records(&bytes)?;
+        let mut out = bytes[..4].to_vec();
+        let mut group_id = 0;
+        let mut dropping = false;
+        for (index, record) in rs.iter().enumerate() {
+            if record.kind == 0x7d0 {
+                group_id += 1;
+                dropping = self.objects.get(group_id - 1).ok_or("Object group count mismatch")?.deleted;
+            }
+            if !dropping && record.kind != 0x2328 {
+                let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
+                let mut raw = bytes[record.start..end].to_vec();
+                if record.kind == 0x3e8 {
+                    if record.data.len() < 28 {
+                        return Err("Short page preamble".into());
+                    }
+                    raw[32..36].copy_from_slice(&(kept as u32).to_le_bytes());
+                }
+                if record.kind == 0x7d2 {
+                    let payload = &bytes[record.data.clone()];
+                    if payload.len() < 4 || (payload.len() - 4) % 4 != 0
+                        || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                    {
+                        return Err("Invalid object references during deletion".into());
+                    }
+                    for j in 0..(payload.len() - 4) / 4 {
+                        let old = u32_at(payload, 4 + j * 4) as usize;
+                        let new = *ids.get(old).filter(|&&id| id > 0).ok_or("Surviving object refers to a deleted object")?;
+                        raw[12 + j * 4..16 + j * 4].copy_from_slice(&(new as u32).to_le_bytes());
+                    }
+                }
+                out.extend_from_slice(&raw);
+            }
+            if record.kind == 0x7d7 {
+                dropping = false;
+            }
+        }
+        if group_id != self.objects.len() {
+            return Err("Object group count mismatch".into());
+        }
+        records(&out)?;
+        Ok(out)
+    }
     pub fn can_save(&self) -> Result<(), String> {
         if self.objects.len() < self.source_count {
             return Err("Removing saved objects is not yet supported by the GSP writer".into());
         }
+        if self.objects.iter().any(|o| o.deleted) && (!self.safe_structure || self.page_count != 1) {
+            return Err("Deleting objects in this document cannot be saved safely".into());
+        }
         for (i, o) in self.objects.iter().enumerate() {
             if o.id != i + 1 {
                 return Err("Invalid object ID".into());
+            }
+            if o.deleted {
+                continue;
             }
             if let Kind::Free(point) = o.kind
                 && (!point.x.is_finite() || !point.y.is_finite())
@@ -1176,7 +1314,7 @@ impl Document {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
             let refs = o.kind.dependencies();
-            if refs.iter().any(|&r| r == 0 || r >= o.id) {
+            if refs.iter().any(|&r| r == 0 || r >= o.id || self.objects[r-1].deleted) {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
             if i >= self.source_count
@@ -1356,7 +1494,7 @@ impl Document {
             }
         }
         if self.objects.len() == self.source_count {
-            return Ok(out);
+            return self.compact_deleted(out);
         }
         let preamble = rs
             .iter()
@@ -1491,20 +1629,27 @@ impl Document {
         }
         out.splice(insert_at..insert_at, added);
         records(&out)?;
-        Ok(out)
+        self.compact_deleted(out)
     }
     pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
         let data = self.encode()?;
         let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
-        if reparsed.objects.len() != self.objects.len()
+        let had_deletion = self.objects.iter().any(|o| o.deleted);
+        let mut ids = vec![0; self.objects.len() + 1];
+        let mut survivors = Vec::new();
+        for object in self.objects.iter().filter(|o| !o.deleted) {
+            ids[object.id] = survivors.len() + 1;
+            survivors.push(object);
+        }
+        if reparsed.objects.len() != survivors.len()
             || reparsed
                 .objects
                 .iter()
-                .zip(&self.objects)
+                .zip(survivors)
                 .any(|(saved, current)| {
-                    saved.id != current.id
+                    saved.id != ids[current.id]
                         || saved.page != current.page
-                        || saved.kind != current.kind
+                        || saved.kind != current.kind.remap(&ids)
                         || saved.visible != current.visible
                 })
         {
@@ -1535,10 +1680,9 @@ impl Document {
             let _ = fs::remove_file(&temp);
         }
         result?;
-        for (object, saved) in self.objects.iter_mut().zip(&reparsed.objects) {
-            object.point_offset = saved.point_offset;
-            object.constraint_offset = saved.constraint_offset;
-            object.header_offset = saved.header_offset;
+        self.objects = reparsed.objects.clone();
+        if had_deletion {
+            self.selected.clear();
         }
         self.original = data;
         self.source_count = self.objects.len();
@@ -1609,6 +1753,51 @@ mod tests {
         assert!(d.objects.is_empty());
         d.redo();
         assert_eq!(d.objects.len(), 1);
+    }
+    #[test]
+    fn clearing_source_removes_dependents_and_survives_save() {
+        let mut doc = Document::new();
+        let first = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let second = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let segment = doc.add(Kind::Segment(first, second));
+        let midpoint = doc.add(Kind::Midpoint(first, second));
+        let unrelated = doc.add(Kind::Free(Point { x: 330., y: 200. }));
+        doc.selected.insert(first);
+        assert_eq!(doc.clear_selected().unwrap(), vec![first, segment, midpoint]);
+        assert_eq!(doc.position(first), None);
+        assert_eq!(doc.position(second), Some(Point { x: 250., y: 120. }));
+        doc.undo();
+        assert_eq!(doc.position(midpoint), Some(Point { x: 200., y: 120. }));
+        doc.redo();
+        assert_eq!(doc.position(midpoint), None);
+        let bytes = doc.encode().unwrap();
+        let parsed = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(parsed.objects.len(), 2);
+        assert_eq!(parsed.position(1), doc.position(second));
+        assert_eq!(parsed.position(2), doc.position(unrelated));
+        assert!(!parsed.partial_view);
+        let path = std::env::temp_dir().join(format!("sketchpad_rs_clear_{}.gsp", std::process::id()));
+        doc.save_to(&path).unwrap();
+        assert_eq!(doc.objects.len(), 2);
+        assert_eq!(Document::open(&path).unwrap().objects, doc.objects);
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn clearing_independent_object_remaps_surviving_references() {
+        let mut doc = Document::new();
+        let removed = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let a = doc.add(Kind::Free(Point { x: 10., y: 10. }));
+        let b = doc.add(Kind::Free(Point { x: 20., y: 10. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let middle = doc.add(Kind::Midpoint(a, b));
+        doc.selected.insert(removed);
+        assert_eq!(doc.clear_selected().unwrap(), vec![removed]);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects.len(), 4);
+        assert_eq!(reopened.objects[2].kind, Kind::Segment(1, 2));
+        assert_eq!(reopened.objects[3].kind, Kind::Midpoint(1, 2));
+        assert_eq!(reopened.position(4), doc.position(middle));
+        assert_eq!(reopened.line_points(3), doc.line_points(segment));
     }
     #[test]
     fn invalid_ref() {

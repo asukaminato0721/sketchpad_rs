@@ -140,7 +140,7 @@ impl Editor {
             .doc
             .objects
             .iter()
-            .filter(|o| o.page == self.doc.active_page && o.visible)
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
             .filter_map(|o| self.doc.position(o.id))
             .collect();
         if pts.is_empty() {
@@ -270,7 +270,7 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| o.page == self.doc.active_page && o.visible)
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
             .filter_map(|o| {
                 self.doc
                     .position(o.id)
@@ -288,7 +288,7 @@ impl Editor {
             .objects
             .iter()
             .rev()
-            .filter(|o| o.page == self.doc.active_page && o.visible)
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
             .filter_map(|o| {
                 let distance = if let Some((a, b, mode)) = self.doc.line_points(o.id) {
                     let (a, b) = (v.screen(a), v.screen(b));
@@ -357,7 +357,7 @@ impl Editor {
             self.doc
                 .objects
                 .iter()
-                .filter(|object| object.page == self.doc.active_page && object.visible)
+                .filter(|object| object.page == self.doc.active_page && object.visible && !object.deleted)
                 .filter(|object| {
                     object
                         .kind
@@ -377,12 +377,22 @@ impl Editor {
                     self.doc
                         .objects
                         .get(id.saturating_sub(1))
-                        .is_some_and(|object| object.page == self.doc.active_page && object.visible)
+                        .is_some_and(|object| object.page == self.doc.active_page && object.visible && !object.deleted)
                 })
                 .collect()
         };
         self.doc.selected = related.iter().copied().collect();
         self.selection_order = related;
+    }
+    fn clear_selected(&mut self) {
+        match self.doc.clear_selected() {
+            Ok(removed) if removed.is_empty() => self.status = "Select objects to clear".into(),
+            Ok(removed) => {
+                self.selection_order.clear();
+                self.status = format!("Cleared {} object(s), including dependents", removed.len());
+            }
+            Err(error) => self.status = error,
+        }
     }
     fn click(&mut self, v: &Viewport, p: egui::Pos2, multi: bool) {
         if self.doc.partial_view && self.tool != Tool::Select {
@@ -760,6 +770,12 @@ impl Editor {
         self.select_only(id);
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
+        if root.input(|input| input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace))
+            && !root.ctx().egui_wants_keyboard_input()
+            && self.pending_action.is_none()
+        {
+            self.clear_selected();
+        }
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -836,12 +852,16 @@ impl Editor {
                         self.doc.redo();
                         ui.close();
                     }
+                    if ui.button("Clear").clicked() {
+                        self.clear_selected();
+                        ui.close();
+                    }
                     if ui.button("Select All").clicked() {
                         self.doc.selected = self
                             .doc
                             .objects
                             .iter()
-                            .filter(|o| o.page == self.doc.active_page && o.visible)
+                            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
                             .map(|o| o.id)
                             .collect();
                         self.selection_order = self.doc.selected.iter().copied().collect();
@@ -1058,7 +1078,7 @@ impl Editor {
                     .doc
                     .objects
                     .iter()
-                    .filter(|o| o.page == self.doc.active_page && o.visible)
+                    .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
                 {
                     if let Some(p) = self.doc.position(o.id) {
                         let at = vp.screen(p);
