@@ -106,6 +106,8 @@ struct Editor {
     translation_distance: f64,
     dilate_dialog: bool,
     dilation_factor: f64,
+    rotate_dialog: bool,
+    rotation_angle: f64,
     exit_requested: bool,
 }
 impl Editor {
@@ -126,6 +128,8 @@ impl Editor {
             translation_distance: 1.,
             dilate_dialog: false,
             dilation_factor: 0.5,
+            rotate_dialog: false,
+            rotation_angle: 60.,
             exit_requested: false,
         };
         e.fit();
@@ -736,6 +740,25 @@ impl Editor {
         let id = self.doc.add(kind);
         self.select_only(id);
     }
+    fn rotate_selected(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Rotation on this document cannot be saved safely".into();
+            return;
+        }
+        if self.selection_order.len() != 2 || !self.rotation_angle.is_finite() {
+            self.status = "Select a source point, then a center point; use a finite angle".into();
+            return;
+        }
+        let (source, center) = (self.selection_order[0], self.selection_order[1]);
+        if self.doc.position(source).is_none() || self.doc.position(center).is_none() {
+            self.status = "Select a source point, then a center point".into();
+            return;
+        }
+        let id = self
+            .doc
+            .add(Kind::RotatedPoint(source, center, self.rotation_angle));
+        self.select_only(id);
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -898,6 +921,10 @@ impl Editor {
                     }
                     if ui.button("Dilate by Ratio…").clicked() {
                         self.dilate_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Rotate Point…").clicked() {
+                        self.rotate_dialog = true;
                         ui.close();
                     }
                 });
@@ -1126,6 +1153,29 @@ impl Editor {
                 self.dilate_selected();
             } else if cancel {
                 self.dilate_dialog = false;
+            }
+        }
+        if self.rotate_dialog {
+            let mut angle = self.rotation_angle;
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("point_rotation")).show(root.ctx(), |ui| {
+                ui.heading("Rotate point");
+                ui.horizontal(|ui| {
+                    ui.label("Angle (degrees)");
+                    ui.add(egui::DragValue::new(&mut angle).speed(1.));
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Rotate").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            self.rotation_angle = angle;
+            if apply {
+                self.rotate_dialog = false;
+                self.rotate_selected();
+            } else if cancel {
+                self.rotate_dialog = false;
             }
         }
         let viewport = Viewport {

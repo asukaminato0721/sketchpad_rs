@@ -37,7 +37,9 @@ impl Kind {
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::ReflectedPoint(a, b)
             | Kind::ReflectedCircle(a, b) => vec![a, b],
-            Kind::ScaledPoint(source, center, _) | Kind::ScaledCircle(source, center, _) => {
+            Kind::ScaledPoint(source, center, _)
+            | Kind::ScaledCircle(source, center, _)
+            | Kind::RotatedPoint(source, center, _) => {
                 vec![source, center]
             }
             Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
@@ -58,6 +60,7 @@ pub enum Kind {
     ReflectedCircle(usize, usize),
     ScaledPoint(usize, usize, f64),
     ScaledCircle(usize, usize, f64),
+    RotatedPoint(usize, usize, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -184,6 +187,10 @@ fn header(kind: u16) -> [u8; 28] {
             30, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        27 => [
+            27, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0xdf, 0x3f, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         34 => [
             34, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0, 0, 0xc1, 0xbd,
             0xf0, 0xff, 0, 0, 0, 0,
@@ -233,6 +240,7 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PolarTranslatedPoint(_, _, _, _)
             | Kind::ReflectedPoint(_, _)
             | Kind::ScaledPoint(_, _, _)
+            | Kind::RotatedPoint(_, _, _)
             | Kind::Midpoint(_, _)
             | Kind::Intersection(_, _)
             | Kind::LineCircleIntersection(_, _, _)
@@ -518,7 +526,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x7d3 if code == 15 || code == 21 || code == 30 => {
+                    0x7d3 if code == 15 || code == 21 || code == 27 || code == 30 => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
@@ -622,6 +630,20 @@ impl Document {
                                     Some(kind) if is_circle_kind(kind) => Kind::ScaledCircle(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
                                 }
+                            }
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
+                    (27, _, [source, center])
+                        if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(center - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
+                    {
+                        match &constraint_payload {
+                            Some((payload, _)) if payload.len() == 36 && payload[..4] == [27, 0, 0, 0] && f64_at(payload, 20).is_finite()
+                                && f64_at(payload, 4).is_finite() && f64_at(payload, 12).is_finite()
+                                && (f64_at(payload, 4) + f64_at(payload, 20).to_radians().sin()).abs() < 1e-6
+                                && (f64_at(payload, 12) - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 => {
+                                Kind::RotatedPoint(*source, *center, f64_at(payload, 20))
                             }
                             _ => Kind::Unsupported(code),
                         }
@@ -820,6 +842,17 @@ impl Document {
                     Some(Point {
                         x: center.x + factor * (source.x - center.x),
                         y: center.y + factor * (source.y - center.y),
+                    })
+                }
+                Kind::RotatedPoint(source, center, angle) => {
+                    let source = go(d, *source, seen)?;
+                    let center = go(d, *center, seen)?;
+                    let theta = angle.to_radians();
+                    let dx = source.x - center.x;
+                    let dy = source.y - center.y;
+                    Some(Point {
+                        x: center.x + dx * theta.cos() + dy * theta.sin(),
+                        y: center.y - dx * theta.sin() + dy * theta.cos(),
                     })
                 }
                 Kind::Midpoint(a, b) => {
@@ -1138,6 +1171,7 @@ impl Document {
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
                 || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
                 || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) if !factor.is_finite() || factor == 0.)
+                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) if !angle.is_finite())
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -1188,6 +1222,14 @@ impl Document {
                 return Err(format!("Invalid point or center in dilation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::RotatedPoint(source, center, _)
+                    if self.position(source).is_none() || self.position(center).is_none()
+                    || !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind))
+                    || !matches!(self.objects.get(center.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind)))
+            {
+                return Err(format!("Invalid point or center in rotation {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(o.kind, Kind::ScaledCircle(source, center, _)
                     if self.circle_points(source).is_none() || self.position(center).is_none() || self.circle_points(o.id).is_none())
             {
@@ -1199,6 +1241,7 @@ impl Document {
                     Kind::PolarTranslatedPoint(_, _, _, _)
                         | Kind::ReflectedPoint(_, _)
                         | Kind::ScaledPoint(_, _, _)
+                        | Kind::RotatedPoint(_, _, _)
                 )
                 && !self
                     .position(o.id)
@@ -1350,6 +1393,7 @@ impl Document {
                 Kind::ScaledPoint(source, center, _) | Kind::ScaledCircle(source, center, _) => {
                     (30, vec![source, center])
                 }
+                Kind::RotatedPoint(source, center, _) => (27, vec![source, center]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1431,6 +1475,13 @@ impl Document {
                     Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) => {
                         let mut payload = vec![30, 0, 0, 0];
                         payload.extend_from_slice(&factor.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::RotatedPoint(_, _, angle) => {
+                        let mut payload = *include_bytes!("../assets/rotation_payload.bin");
+                        payload[4..12].copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
+                        payload[12..20].copy_from_slice(&angle.to_radians().cos().to_le_bytes());
+                        payload[20..28].copy_from_slice(&angle.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     _ => {}
@@ -1529,6 +1580,9 @@ mod tests {
             "wine_moved_reflection",
             "wine_moved_reflected_circle",
             "scale",
+            "wine_moved_dilation",
+            "rotation",
+            "wine_moved_rotation",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2213,5 +2267,45 @@ mod tests {
             reopened.circle_points(scaled_circle),
             created.circle_points(scaled_circle)
         );
+
+        let wine = Document::open(Path::new("tests/fixtures/wine_moved_dilation.gsp")).unwrap();
+        assert_eq!(wine.position(1), Some(Point { x: 171., y: 131. }));
+        assert_eq!(wine.position(3), Some(Point { x: 245.5, y: 115.5 }));
+        assert_eq!(
+            wine.circle_points(7),
+            Some((Point { x: 235.5, y: 185.5 }, 15.))
+        );
+    }
+    #[test]
+    fn rotation_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/rotation.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(original.objects[4].kind, Kind::RotatedPoint(2, 1, 60.));
+        assert_eq!(original.encode().unwrap(), bytes);
+        let rotated = original.position(5).unwrap();
+        assert!((rotated.x - 290.5).abs() < 1e-6);
+        assert!((rotated.y - (188. - 157. * 60f64.to_radians().sin())).abs() < 1e-6);
+        original.move_point(2, Point { x: 300., y: 188. });
+        assert_ne!(original.position(5), Some(rotated));
+
+        let mut created = Document::new();
+        let center = created.add(Kind::Free(Point { x: 200., y: 180. }));
+        let source = created.add(Kind::Free(Point { x: 300., y: 180. }));
+        let result = created.add(Kind::RotatedPoint(source, center, 90.));
+        let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.objects[2].kind,
+            Kind::RotatedPoint(source, center, 90.)
+        );
+        assert!((reopened.position(result).unwrap().x - 200.).abs() < 1e-6);
+        assert!((reopened.position(result).unwrap().y - 80.).abs() < 1e-6);
+
+        let wine = Document::open(Path::new("tests/fixtures/wine_moved_rotation.gsp")).unwrap();
+        assert_eq!(wine.objects[2].kind, Kind::RotatedPoint(2, 1, 90.));
+        assert_eq!(wine.position(2), Some(Point { x: 271., y: 160. }));
+        let rotated = wine.position(3).unwrap();
+        assert!((rotated.x - 180.).abs() < 1e-6);
+        assert!((rotated.y - 109.).abs() < 1e-6);
     }
 }

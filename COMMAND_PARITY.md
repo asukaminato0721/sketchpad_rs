@@ -94,8 +94,8 @@ The release gate is every sketch and document command verified after editing, sa
 | Mark Vector | Pending |
 | Mark Distance | Pending |
 | Translate | Partial: point translation by fixed polar angle and distance cross-opened |
-| Rotate | Pending |
-| Dilate | Pending |
+| Rotate | Partial: point around selected center by fixed angle; generated file opened, edited, and saved in Sketchpad 5 |
+| Dilate | Partial: point and circle by fixed ratio around a center point; generated file opened, edited, and saved in Sketchpad 5 |
 | Reflect | Partial: point and circle across selected segment or line; generated file opened, edited, and saved in Sketchpad 5 |
 | Iterate | Pending |
 | Define Custom Transform | Pending |
