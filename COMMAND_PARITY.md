@@ -27,10 +27,10 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Undo | Partial |
 | Redo | Partial |
-| Cut | Pending |
-| Copy | Pending |
-| Paste | Pending |
-| Clear | Pending |
+| Cut | Partial: supported single-page objects and their dependents; save/reopen tested |
+| Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5 |
+| Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5 |
+| Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5 |
 | Action Buttons | Pending |
 | Select All | Partial |
 | Select Parents | Partial: direct dependencies of supported objects |

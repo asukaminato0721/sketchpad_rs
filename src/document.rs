@@ -54,7 +54,9 @@ impl Kind {
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
-            Kind::PolarTranslatedPoint(a, angle, units, distance) => Kind::PolarTranslatedPoint(m(a), angle, units, distance),
+            Kind::PolarTranslatedPoint(a, angle, units, distance) => {
+                Kind::PolarTranslatedPoint(m(a), angle, units, distance)
+            }
             Kind::ReflectedPoint(a, b) => Kind::ReflectedPoint(m(a), m(b)),
             Kind::ReflectedCircle(a, b) => Kind::ReflectedCircle(m(a), m(b)),
             Kind::ScaledPoint(a, b, factor) => Kind::ScaledPoint(m(a), m(b), factor),
@@ -72,8 +74,12 @@ impl Kind {
             Kind::ThreePointArc(a, b, c) => Kind::ThreePointArc(m(a), m(b), m(c)),
             Kind::ArcOnCircle(a, b, c) => Kind::ArcOnCircle(m(a), m(b), m(c)),
             Kind::Intersection(a, b) => Kind::Intersection(m(a), m(b)),
-            Kind::LineCircleIntersection(a, b, root) => Kind::LineCircleIntersection(m(a), m(b), root),
-            Kind::CircleCircleIntersection(a, b, root) => Kind::CircleCircleIntersection(m(a), m(b), root),
+            Kind::LineCircleIntersection(a, b, root) => {
+                Kind::LineCircleIntersection(m(a), m(b), root)
+            }
+            Kind::CircleCircleIntersection(a, b, root) => {
+                Kind::CircleCircleIntersection(m(a), m(b), root)
+            }
             Kind::Unsupported(code) => Kind::Unsupported(code),
         }
     }
@@ -123,6 +129,18 @@ pub struct Object {
     pub point_offset: Option<usize>,
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
+}
+#[derive(Clone, Debug)]
+pub struct Clipboard {
+    objects: Vec<(usize, Kind, bool)>,
+}
+impl Clipboard {
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty()
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Record {
@@ -798,10 +816,97 @@ impl Document {
         });
         id
     }
-    pub fn clear_selected(&mut self) -> Result<Vec<usize>, String> {
-        if !self.safe_structure || self.page_count != 1 {
-            return Err("Deleting objects in this document cannot be saved safely".into());
+    pub fn dependencies_of(&self, id: usize) -> Option<Vec<usize>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let mut dependencies = object.kind.dependencies();
+        if let Kind::Midpoint(a, b) = object.kind {
+            if let Some(segment) = self.objects.iter().find(|candidate| {
+                !candidate.deleted && candidate.id < id
+                    && matches!(candidate.kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
+            }) {
+                dependencies.push(segment.id);
+            }
         }
+        Some(dependencies)
+    }
+    pub fn copy_selected(&self) -> Result<Clipboard, String> {
+        let mut included = BTreeSet::new();
+        let mut pending: Vec<usize> = self.selected.iter().copied().collect();
+        if pending.is_empty() {
+            return Err("Select objects to copy".into());
+        }
+        while let Some(id) = pending.pop() {
+            if !included.insert(id) {
+                continue;
+            }
+            let object = self
+                .objects
+                .get(id.checked_sub(1).ok_or("Invalid selection")?)
+                .ok_or("Invalid selection")?;
+            if object.deleted
+                || object.page != self.active_page
+                || matches!(object.kind, Kind::Unsupported(_))
+            {
+                return Err(format!("Object {id} cannot be copied safely"));
+            }
+            pending.extend(self.dependencies_of(id).ok_or("Invalid selection")?);
+        }
+        Ok(Clipboard {
+            objects: included
+                .into_iter()
+                .map(|id| {
+                    let object = &self.objects[id - 1];
+                    (id, object.kind.clone(), object.visible)
+                })
+                .collect(),
+        })
+    }
+    pub fn paste(&mut self, clipboard: &Clipboard) -> Result<Vec<usize>, String> {
+        if clipboard.is_empty() {
+            return Err("Clipboard is empty".into());
+        }
+        if !self.safe_structure || self.page_count != 1 {
+            return Err("Pasting objects in this document cannot be saved safely".into());
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.selected.clear();
+        let max_source = clipboard.objects.last().ok_or("Clipboard is empty")?.0;
+        let mut ids = vec![0; max_source + 1];
+        let mut created = Vec::with_capacity(clipboard.len());
+        for (old_id, kind, visible) in &clipboard.objects {
+            if kind
+                .dependencies()
+                .iter()
+                .any(|&id| id >= ids.len() || ids[id] == 0)
+            {
+                return Err("Clipboard has an unresolved dependency".into());
+            }
+            let mut remapped = kind.remap(&ids);
+            if let Kind::Free(ref mut point) = remapped {
+                point.x += 20.;
+                point.y += 20.;
+            }
+            let id = candidate.objects.len() + 1;
+            candidate.objects.push(Object {
+                id,
+                page: candidate.active_page,
+                kind: remapped,
+                visible: *visible,
+                deleted: false,
+                point_offset: None,
+                constraint_offset: None,
+                header_offset: None,
+            });
+            ids[*old_id] = id;
+            created.push(id);
+        }
+        candidate.selected.extend(created.iter().copied());
+        candidate.encode()?;
+        *self = candidate;
+        Ok(created)
+    }
+    pub fn clear_selected(&mut self) -> Result<Vec<usize>, String> {
         let mut removed: BTreeSet<usize> = self
             .objects
             .iter()
@@ -811,10 +916,18 @@ impl Document {
         if removed.is_empty() {
             return Ok(vec![]);
         }
+        if !self.safe_structure || self.page_count != 1 {
+            return Err("Deleting objects in this document cannot be saved safely".into());
+        }
         loop {
             let before = removed.len();
             for object in self.objects.iter().filter(|o| !o.deleted) {
-                if object.kind.dependencies().iter().any(|id| removed.contains(id)) {
+                if self
+                    .dependencies_of(object.id)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|id| removed.contains(id))
+                {
                     removed.insert(object.id);
                 }
             }
@@ -1250,7 +1363,11 @@ impl Document {
         for (index, record) in rs.iter().enumerate() {
             if record.kind == 0x7d0 {
                 group_id += 1;
-                dropping = self.objects.get(group_id - 1).ok_or("Object group count mismatch")?.deleted;
+                dropping = self
+                    .objects
+                    .get(group_id - 1)
+                    .ok_or("Object group count mismatch")?
+                    .deleted;
             }
             if !dropping && record.kind != 0x2328 {
                 let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
@@ -1263,14 +1380,18 @@ impl Document {
                 }
                 if record.kind == 0x7d2 {
                     let payload = &bytes[record.data.clone()];
-                    if payload.len() < 4 || (payload.len() - 4) % 4 != 0
+                    if payload.len() < 4
+                        || (payload.len() - 4) % 4 != 0
                         || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
                     {
                         return Err("Invalid object references during deletion".into());
                     }
                     for j in 0..(payload.len() - 4) / 4 {
                         let old = u32_at(payload, 4 + j * 4) as usize;
-                        let new = *ids.get(old).filter(|&&id| id > 0).ok_or("Surviving object refers to a deleted object")?;
+                        let new = *ids
+                            .get(old)
+                            .filter(|&&id| id > 0)
+                            .ok_or("Surviving object refers to a deleted object")?;
                         raw[12 + j * 4..16 + j * 4].copy_from_slice(&(new as u32).to_le_bytes());
                     }
                 }
@@ -1290,7 +1411,8 @@ impl Document {
         if self.objects.len() < self.source_count {
             return Err("Removing saved objects is not yet supported by the GSP writer".into());
         }
-        if self.objects.iter().any(|o| o.deleted) && (!self.safe_structure || self.page_count != 1) {
+        if self.objects.iter().any(|o| o.deleted) && (!self.safe_structure || self.page_count != 1)
+        {
             return Err("Deleting objects in this document cannot be saved safely".into());
         }
         for (i, o) in self.objects.iter().enumerate() {
@@ -1314,7 +1436,10 @@ impl Document {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
             let refs = o.kind.dependencies();
-            if refs.iter().any(|&r| r == 0 || r >= o.id || self.objects[r-1].deleted) {
+            if refs
+                .iter()
+                .any(|&r| r == 0 || r >= o.id || self.objects[r - 1].deleted)
+            {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
             if i >= self.source_count
@@ -1536,7 +1661,11 @@ impl Document {
                     let s = self
                         .objects
                         .iter()
-                        .find(|s| matches!(s.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a)))
+                        .find(|s| {
+                            (o.deleted || !s.deleted)
+                                && s.id < o.id
+                                && matches!(s.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a))
+                        })
                         .ok_or("Midpoint requires an existing segment")?;
                     (1, vec![s.id])
                 }
@@ -1727,6 +1856,8 @@ mod tests {
             "wine_moved_dilation",
             "rotation",
             "wine_moved_rotation",
+            "wine_deleted_source",
+            "wine_pasted_segment",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -1755,6 +1886,69 @@ mod tests {
         assert_eq!(d.objects.len(), 1);
     }
     #[test]
+    fn copy_segment_includes_parents_but_not_children_like_original() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        doc.add(Kind::Midpoint(a, b));
+        doc.add(Kind::Free(Point { x: 330., y: 200. }));
+        doc.selected.insert(segment);
+        let clipboard = doc.copy_selected().unwrap();
+        assert_eq!(clipboard.len(), 3);
+        assert_eq!(doc.paste(&clipboard).unwrap(), vec![6, 7, 8]);
+        assert_eq!(doc.objects[5].kind, Kind::Free(Point { x: 170., y: 140. }));
+        assert_eq!(doc.objects[6].kind, Kind::Free(Point { x: 270., y: 140. }));
+        assert_eq!(doc.objects[7].kind, Kind::Segment(6, 7));
+        let original = Document::open(Path::new("tests/fixtures/wine_pasted_segment.gsp")).unwrap();
+        assert_eq!(
+            doc.objects.iter().map(|o| &o.kind).collect::<Vec<_>>(),
+            original.objects.iter().map(|o| &o.kind).collect::<Vec<_>>()
+        );
+        doc.undo();
+        assert_eq!(doc.objects.len(), 5);
+        doc.redo();
+        assert_eq!(doc.objects.len(), 8);
+        let path =
+            std::env::temp_dir().join(format!("sketchpad_rs_paste_{}.gsp", std::process::id()));
+        doc.save_to(&path).unwrap();
+        assert_eq!(Document::open(&path).unwrap().objects, doc.objects);
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn paste_midpoint_across_documents_preserves_dependencies() {
+        let mut source = Document::new();
+        let a = source.add(Kind::Free(Point { x: 1., y: 2. }));
+        let b = source.add(Kind::Free(Point { x: 5., y: 8. }));
+        source.add(Kind::Segment(a, b));
+        let midpoint = source.add(Kind::Midpoint(a, b));
+        source.selected.insert(midpoint);
+        let clipboard = source.copy_selected().unwrap();
+        assert_eq!(clipboard.len(), 4);
+        let mut dest = Document::new();
+        assert_eq!(dest.paste(&clipboard).unwrap(), vec![1, 2, 3, 4]);
+        assert_eq!(dest.position(4), Some(Point { x: 23., y: 25. }));
+        assert_eq!(
+            Document::from_bytes(&dest.encode().unwrap(), None)
+                .unwrap()
+                .position(4),
+            dest.position(4)
+        );
+    }
+    #[test]
+    fn clearing_segment_also_clears_its_midpoint() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let b = doc.add(Kind::Free(Point { x: 30., y: 20. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let midpoint = doc.add(Kind::Midpoint(a, b));
+        doc.selected.insert(segment);
+        assert_eq!(doc.clear_selected().unwrap(), vec![segment, midpoint]);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects.len(), 2);
+        assert_eq!(reopened.position(1), Some(Point { x: 10., y: 20. }));
+    }
+    #[test]
     fn clearing_source_removes_dependents_and_survives_save() {
         let mut doc = Document::new();
         let first = doc.add(Kind::Free(Point { x: 150., y: 120. }));
@@ -1763,7 +1957,10 @@ mod tests {
         let midpoint = doc.add(Kind::Midpoint(first, second));
         let unrelated = doc.add(Kind::Free(Point { x: 330., y: 200. }));
         doc.selected.insert(first);
-        assert_eq!(doc.clear_selected().unwrap(), vec![first, segment, midpoint]);
+        assert_eq!(
+            doc.clear_selected().unwrap(),
+            vec![first, segment, midpoint]
+        );
         assert_eq!(doc.position(first), None);
         assert_eq!(doc.position(second), Some(Point { x: 250., y: 120. }));
         doc.undo();
@@ -1776,7 +1973,13 @@ mod tests {
         assert_eq!(parsed.position(1), doc.position(second));
         assert_eq!(parsed.position(2), doc.position(unrelated));
         assert!(!parsed.partial_view);
-        let path = std::env::temp_dir().join(format!("sketchpad_rs_clear_{}.gsp", std::process::id()));
+        let wine = Document::open(Path::new("tests/fixtures/wine_deleted_source.gsp")).unwrap();
+        assert_eq!(
+            wine.objects.iter().map(|o| &o.kind).collect::<Vec<_>>(),
+            parsed.objects.iter().map(|o| &o.kind).collect::<Vec<_>>()
+        );
+        let path =
+            std::env::temp_dir().join(format!("sketchpad_rs_clear_{}.gsp", std::process::id()));
         doc.save_to(&path).unwrap();
         assert_eq!(doc.objects.len(), 2);
         assert_eq!(Document::open(&path).unwrap().objects, doc.objects);
@@ -1798,6 +2001,36 @@ mod tests {
         assert_eq!(reopened.objects[3].kind, Kind::Midpoint(1, 2));
         assert_eq!(reopened.position(4), doc.position(middle));
         assert_eq!(reopened.line_points(3), doc.line_points(segment));
+    }
+    #[test]
+    fn clear_then_construct_and_unsupported_document_guard() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 10., y: 0. }));
+        doc.add(Kind::Segment(a, b));
+        doc.selected.insert(a);
+        assert_eq!(doc.clear_selected().unwrap(), vec![1, 3]);
+        let c = doc.add(Kind::Free(Point { x: 20., y: 0. }));
+        doc.add(Kind::Segment(b, c));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects.len(), 3);
+        assert_eq!(reopened.objects[2].kind, Kind::Segment(1, 2));
+
+        let mut source = Document::open(Path::new("tests/fixtures/segment.gsp")).unwrap();
+        source.selected.insert(1);
+        assert_eq!(source.clear_selected().unwrap(), vec![1, 3]);
+        let reopened = Document::from_bytes(&source.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects.len(), 1);
+        assert_eq!(reopened.objects[0].kind, source.objects[1].kind);
+
+        let mut unsupported =
+            Document::open(Path::new("tests/fixtures/example_tools.gsp")).unwrap();
+        unsupported.selected.insert(1);
+        assert!(unsupported.clear_selected().is_err());
+        assert_eq!(
+            unsupported.encode().unwrap(),
+            fs::read("tests/fixtures/example_tools.gsp").unwrap()
+        );
     }
     #[test]
     fn invalid_ref() {

@@ -1,4 +1,4 @@
-use sketchpad_rs::document::{Document, Kind, LineMode, Point};
+use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use std::{
     io::Write,
@@ -92,6 +92,7 @@ mod pdf_tests {
 }
 struct Editor {
     doc: Document,
+    clipboard: Option<Clipboard>,
     tool: Tool,
     pending: Option<usize>,
     selection_order: Vec<usize>,
@@ -114,6 +115,7 @@ impl Editor {
     fn new(doc: Document) -> Self {
         let mut e = Self {
             doc,
+            clipboard: None,
             tool: Tool::Select,
             pending: None,
             selection_order: Vec::new(),
@@ -169,11 +171,16 @@ impl Editor {
     fn open(&mut self, path: PathBuf) {
         match Document::open(&path) {
             Ok(d) => {
-                *self = Self::new(d);
+                self.replace_document(d);
                 self.status = format!("Opened {}", path.display());
             }
             Err(e) => self.status = format!("Open failed: {e}"),
         }
+    }
+    fn replace_document(&mut self, document: Document) {
+        let clipboard = self.clipboard.take();
+        *self = Self::new(document);
+        self.clipboard = clipboard;
     }
     fn save(&mut self, as_new: bool) -> bool {
         let path = if as_new || self.doc.path.is_none() {
@@ -259,7 +266,7 @@ impl Editor {
     }
     fn finish_pending_action(&mut self) {
         match self.pending_action.take() {
-            Some(PendingAction::New) => *self = Self::new(Document::new()),
+            Some(PendingAction::New) => self.replace_document(Document::new()),
             Some(PendingAction::Open(path)) => self.open(path),
             Some(PendingAction::Quit) => self.exit_requested = true,
             None => {}
@@ -357,11 +364,13 @@ impl Editor {
             self.doc
                 .objects
                 .iter()
-                .filter(|object| object.page == self.doc.active_page && object.visible && !object.deleted)
                 .filter(|object| {
-                    object
-                        .kind
-                        .dependencies()
+                    object.page == self.doc.active_page && object.visible && !object.deleted
+                })
+                .filter(|object| {
+                    self.doc
+                        .dependencies_of(object.id)
+                        .unwrap_or_default()
                         .iter()
                         .any(|id| current.contains(id))
                 })
@@ -372,12 +381,14 @@ impl Editor {
                 .objects
                 .iter()
                 .filter(|object| current.contains(&object.id))
-                .flat_map(|object| object.kind.dependencies())
+                .flat_map(|object| self.doc.dependencies_of(object.id).unwrap_or_default())
                 .filter(|id| {
                     self.doc
                         .objects
                         .get(id.saturating_sub(1))
-                        .is_some_and(|object| object.page == self.doc.active_page && object.visible && !object.deleted)
+                        .is_some_and(|object| {
+                            object.page == self.doc.active_page && object.visible && !object.deleted
+                        })
                 })
                 .collect()
         };
@@ -390,6 +401,49 @@ impl Editor {
             Ok(removed) => {
                 self.selection_order.clear();
                 self.status = format!("Cleared {} object(s), including dependents", removed.len());
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    fn copy_selected(&mut self) -> bool {
+        match self.doc.copy_selected() {
+            Ok(clipboard) => {
+                self.status = format!("Copied {} object(s)", clipboard.len());
+                self.clipboard = Some(clipboard);
+                true
+            }
+            Err(error) => {
+                self.status = error;
+                false
+            }
+        }
+    }
+    fn cut_selected(&mut self) {
+        let clipboard = match self.doc.copy_selected() {
+            Ok(clipboard) => clipboard,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        match self.doc.clear_selected() {
+            Ok(removed) => {
+                self.clipboard = Some(clipboard);
+                self.selection_order.clear();
+                self.status = format!("Cut {} object(s)", removed.len());
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    fn paste(&mut self) {
+        let Some(clipboard) = &self.clipboard else {
+            self.status = "Clipboard is empty".into();
+            return;
+        };
+        match self.doc.paste(clipboard) {
+            Ok(ids) => {
+                self.selection_order = ids;
+                self.status = format!("Pasted {} object(s)", self.selection_order.len());
             }
             Err(error) => self.status = error,
         }
@@ -770,8 +824,20 @@ impl Editor {
         self.select_only(id);
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
-        if root.input(|input| input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace))
-            && !root.ctx().egui_wants_keyboard_input()
+        if !root.ctx().egui_wants_keyboard_input() && self.pending_action.is_none() {
+            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::C)) {
+                self.copy_selected();
+            }
+            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::X)) {
+                self.cut_selected();
+            }
+            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::V)) {
+                self.paste();
+            }
+        }
+        if root.input(|input| {
+            input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace)
+        }) && !root.ctx().egui_wants_keyboard_input()
             && self.pending_action.is_none()
         {
             self.clear_selected();
@@ -783,7 +849,7 @@ impl Editor {
                         if self.doc.dirty {
                             self.pending_action = Some(PendingAction::New);
                         } else {
-                            *self = Self::new(Document::new());
+                            self.replace_document(Document::new());
                         }
                         ui.close();
                     }
@@ -791,7 +857,7 @@ impl Editor {
                         if self.doc.dirty {
                             self.pending_action = Some(PendingAction::New);
                         } else {
-                            *self = Self::new(Document::new());
+                            self.replace_document(Document::new());
                         }
                         ui.close();
                     }
@@ -850,6 +916,18 @@ impl Editor {
                         .clicked()
                     {
                         self.doc.redo();
+                        ui.close();
+                    }
+                    if ui.button("Cut").clicked() {
+                        self.cut_selected();
+                        ui.close();
+                    }
+                    if ui.button("Copy").clicked() {
+                        self.copy_selected();
+                        ui.close();
+                    }
+                    if ui.button("Paste").clicked() {
+                        self.paste();
                         ui.close();
                     }
                     if ui.button("Clear").clicked() {
