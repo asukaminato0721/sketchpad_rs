@@ -37,6 +37,9 @@ impl Kind {
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::ReflectedPoint(a, b)
             | Kind::ReflectedCircle(a, b) => vec![a, b],
+            Kind::ScaledPoint(source, center, _) | Kind::ScaledCircle(source, center, _) => {
+                vec![source, center]
+            }
             Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
                 vec![a, b, c]
             }
@@ -53,6 +56,8 @@ pub enum Kind {
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
     ReflectedCircle(usize, usize),
+    ScaledPoint(usize, usize, f64),
+    ScaledCircle(usize, usize, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -175,6 +180,10 @@ fn header(kind: u16) -> [u8; 28] {
             21, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        30 => [
+            30, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         34 => [
             34, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0, 0, 0xc1, 0xbd,
             0xf0, 0xff, 0, 0, 0, 0,
@@ -223,6 +232,7 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PointOnArc(_, _)
             | Kind::PolarTranslatedPoint(_, _, _, _)
             | Kind::ReflectedPoint(_, _)
+            | Kind::ScaledPoint(_, _, _)
             | Kind::Midpoint(_, _)
             | Kind::Intersection(_, _)
             | Kind::LineCircleIntersection(_, _, _)
@@ -233,7 +243,10 @@ fn is_point_kind(kind: &Kind) -> bool {
 fn is_circle_kind(kind: &Kind) -> bool {
     matches!(
         kind,
-        Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _)
+        Kind::Circle(_, _)
+            | Kind::CircleBySegment(_, _)
+            | Kind::ReflectedCircle(_, _)
+            | Kind::ScaledCircle(_, _, _)
     )
 }
 
@@ -505,7 +518,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x7d3 if code == 15 || code == 21 => {
+                    0x7d3 if code == 15 || code == 21 || code == 30 => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
@@ -547,7 +560,7 @@ impl Document {
                                 Kind::PointOnSegment(*host, f64_at(payload, 4))
                             }
                             (
-                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _)),
+                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)),
                                 Some((payload, _)),
                             ) if payload.len() == 20
                                 && payload[..4] == [15, 0, 28, 0]
@@ -575,14 +588,7 @@ impl Document {
                                 && f64_at(payload, 20).is_finite()
                                 && f64_at(payload, 32).is_finite()
                                 && f64_at(payload, 40).is_finite()
-                                && objects.get(origin - 1).is_some_and(|o| {
-                                    matches!(o.kind, Kind::Free(_) | Kind::PointOnSegment(_, _)
-                                        | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _)
-                                        | Kind::Midpoint(_, _) | Kind::Intersection(_, _)
-                                        | Kind::LineCircleIntersection(_, _, _)
-                                        | Kind::CircleCircleIntersection(_, _, _)
-                                        | Kind::PolarTranslatedPoint(_, _, _, _))
-                                }) =>
+                                && objects.get(origin - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                         {
                             Kind::PolarTranslatedPoint(
                                 *origin,
@@ -604,6 +610,21 @@ impl Document {
                             && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
                     {
                         Kind::ReflectedCircle(*source, *mirror)
+                    }
+                    (30, _, [source, center])
+                        if objects.get(center - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
+                    {
+                        match &constraint_payload {
+                            Some((payload, _)) if payload.len() == 12 && payload[..4] == [30, 0, 0, 0] && f64_at(payload, 4).is_finite() => {
+                                let factor = f64_at(payload, 4);
+                                match objects.get(source - 1).map(|o| &o.kind) {
+                                    Some(kind) if is_point_kind(kind) => Kind::ScaledPoint(*source, *center, factor),
+                                    Some(kind) if is_circle_kind(kind) => Kind::ScaledCircle(*source, *center, factor),
+                                    _ => Kind::Unsupported(code),
+                                }
+                            }
+                            _ => Kind::Unsupported(code),
+                        }
                     }
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
@@ -793,6 +814,14 @@ impl Document {
                     let (a, b, _) = d.line_points(*mirror)?;
                     reflect_point(source, a, b)
                 }
+                Kind::ScaledPoint(source, center, factor) => {
+                    let source = go(d, *source, seen)?;
+                    let center = go(d, *center, seen)?;
+                    Some(Point {
+                        x: center.x + factor * (source.x - center.x),
+                        y: center.y + factor * (source.y - center.y),
+                    })
+                }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
                     let b = go(d, *b, seen)?;
@@ -900,6 +929,22 @@ impl Document {
             let (center, radius) = self.circle_points(source)?;
             let (a, b, _) = self.line_points(mirror)?;
             return Some((reflect_point(center, a, b)?, radius));
+        }
+        if let Kind::ScaledCircle(source, center, factor) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (source_center, radius) = self.circle_points(source)?;
+            let center = self.position(center)?;
+            let scaled = Point {
+                x: center.x + factor * (source_center.x - center.x),
+                y: center.y + factor * (source_center.y - center.y),
+            };
+            let radius = radius * factor.abs();
+            return (scaled.x.is_finite()
+                && scaled.y.is_finite()
+                && radius.is_finite()
+                && radius > 0.)
+                .then_some((scaled, radius));
         }
         let (center_id, radius) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Circle(center, radius_point) => {
@@ -1060,7 +1105,10 @@ impl Document {
                 let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
                 Some(Kind::PointOnSegment(host, t.clamp(0., 1.)))
             }
-            Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) => {
+            Kind::Circle(_, _)
+            | Kind::CircleBySegment(_, _)
+            | Kind::ReflectedCircle(_, _)
+            | Kind::ScaledCircle(_, _, _) => {
                 let (center, _) = self.circle_points(host)?;
                 let dx = p.x - center.x;
                 let dy = p.y - center.y;
@@ -1089,6 +1137,7 @@ impl Document {
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
                 || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
+                || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) if !factor.is_finite() || factor == 0.)
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -1131,9 +1180,25 @@ impl Document {
                 return Err(format!("Invalid circle or mirror in reflection {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::ScaledPoint(source, center, _)
+                    if self.position(source).is_none() || self.position(center).is_none()
+                    || !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind))
+                    || !matches!(self.objects.get(center.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind)))
+            {
+                return Err(format!("Invalid point or center in dilation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::ScaledCircle(source, center, _)
+                    if self.circle_points(source).is_none() || self.position(center).is_none() || self.circle_points(o.id).is_none())
+            {
+                return Err(format!("Invalid circle or center in dilation {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(
                     o.kind,
-                    Kind::PolarTranslatedPoint(_, _, _, _) | Kind::ReflectedPoint(_, _)
+                    Kind::PolarTranslatedPoint(_, _, _, _)
+                        | Kind::ReflectedPoint(_, _)
+                        | Kind::ScaledPoint(_, _, _)
                 )
                 && !self
                     .position(o.id)
@@ -1282,6 +1347,9 @@ impl Document {
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
                 Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
                 Kind::ReflectedCircle(source, mirror) => (34, vec![source, mirror]),
+                Kind::ScaledPoint(source, center, _) | Kind::ScaledCircle(source, center, _) => {
+                    (30, vec![source, center])
+                }
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1310,9 +1378,12 @@ impl Document {
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
-            if matches!(o.kind, Kind::ReflectedCircle(_, _)) {
+            if matches!(
+                o.kind,
+                Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)
+            ) {
                 h = header(3);
-                h[0] = 34;
+                h[0] = code as u8;
                 h[18] = 0;
                 h[19] = 0;
             }
@@ -1355,6 +1426,11 @@ impl Document {
                         payload[20..28].copy_from_slice(&angle.to_le_bytes());
                         payload[32..40].copy_from_slice(&units.to_le_bytes());
                         payload[40..48].copy_from_slice(&distance.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) => {
+                        let mut payload = vec![30, 0, 0, 0];
+                        payload.extend_from_slice(&factor.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     _ => {}
@@ -1452,6 +1528,7 @@ mod tests {
             "reflection",
             "wine_moved_reflection",
             "wine_moved_reflected_circle",
+            "scale",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2101,5 +2178,40 @@ mod tests {
         let (center, radius) = wine_circle.circle_points(9).unwrap();
         assert_eq!(center, Point { x: 271., y: 139. });
         assert!((radius - 52.55473337388365).abs() < 1e-6);
+    }
+    #[test]
+    fn dilation_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/scale.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::ScaledPoint(1, 3, 1. / 3.));
+        assert_eq!(original.objects[12].kind, Kind::ScaledCircle(7, 1, 1. / 3.));
+        assert_eq!(original.encode().unwrap(), bytes);
+        let before = original.position(4);
+        original.move_point(1, Point { x: 330., y: 237. });
+        assert_ne!(original.position(4), before);
+        assert_eq!(
+            original.circle_points(13).unwrap().0,
+            Point { x: 245., y: 317. }
+        );
+
+        let mut created = Document::new();
+        let center = created.add(Kind::Free(Point { x: 100., y: 100. }));
+        let source = created.add(Kind::Free(Point { x: 160., y: 100. }));
+        let scaled = created.add(Kind::ScaledPoint(source, center, 0.5));
+        let radius = created.add(Kind::Free(Point { x: 180., y: 100. }));
+        let circle = created.add(Kind::Circle(source, radius));
+        let scaled_circle = created.add(Kind::ScaledCircle(circle, center, 0.5));
+        assert_eq!(created.position(scaled), Some(Point { x: 130., y: 100. }));
+        assert_eq!(
+            created.circle_points(scaled_circle),
+            Some((Point { x: 130., y: 100. }, 10.))
+        );
+        let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(scaled), created.position(scaled));
+        assert_eq!(
+            reopened.circle_points(scaled_circle),
+            created.circle_points(scaled_circle)
+        );
     }
 }

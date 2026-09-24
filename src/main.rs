@@ -104,6 +104,8 @@ struct Editor {
     translate_dialog: bool,
     translation_angle: f64,
     translation_distance: f64,
+    dilate_dialog: bool,
+    dilation_factor: f64,
     exit_requested: bool,
 }
 impl Editor {
@@ -122,6 +124,8 @@ impl Editor {
             translate_dialog: false,
             translation_angle: 90.,
             translation_distance: 1.,
+            dilate_dialog: false,
+            dilation_factor: 0.5,
             exit_requested: false,
         };
         e.fit();
@@ -300,7 +304,8 @@ impl Editor {
                     match o.kind {
                         Kind::Circle(_, _)
                         | Kind::CircleBySegment(_, _)
-                        | Kind::ReflectedCircle(_, _) => {
+                        | Kind::ReflectedCircle(_, _)
+                        | Kind::ScaledCircle(_, _, _) => {
                             let (center, radius) = self.doc.circle_points(o.id)?;
                             ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                         }
@@ -527,6 +532,7 @@ impl Editor {
                         | Kind::Circle(_, _)
                         | Kind::CircleBySegment(_, _)
                         | Kind::ReflectedCircle(_, _)
+                        | Kind::ScaledCircle(_, _, _)
                         | Kind::ThreePointArc(_, _, _)
                         | Kind::ArcOnCircle(_, _, _)
                 )
@@ -701,6 +707,35 @@ impl Editor {
         let id = self.doc.add(kind);
         self.select_only(id);
     }
+    fn dilate_selected(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Dilation on this document cannot be saved safely".into();
+            return;
+        }
+        if self.selection_order.len() != 2
+            || !self.dilation_factor.is_finite()
+            || self.dilation_factor == 0.
+        {
+            self.status =
+                "Select a point or circle, then a center point; use a nonzero ratio".into();
+            return;
+        }
+        let (source, center) = (self.selection_order[0], self.selection_order[1]);
+        if self.doc.position(center).is_none() {
+            self.status = "Select a point or circle, then a center point".into();
+            return;
+        }
+        let kind = if self.doc.position(source).is_some() {
+            Kind::ScaledPoint(source, center, self.dilation_factor)
+        } else if self.doc.circle_points(source).is_some() {
+            Kind::ScaledCircle(source, center, self.dilation_factor)
+        } else {
+            self.status = "Select a point or circle, then a center point".into();
+            return;
+        };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -859,6 +894,10 @@ impl Editor {
                     }
                     if ui.button("Reflect across Line").clicked() {
                         self.reflect_selected();
+                        ui.close();
+                    }
+                    if ui.button("Dilate by Ratio…").clicked() {
+                        self.dilate_dialog = true;
                         ui.close();
                     }
                 });
@@ -1064,6 +1103,29 @@ impl Editor {
                 self.translate_selected();
             } else if cancel {
                 self.translate_dialog = false;
+            }
+        }
+        if self.dilate_dialog {
+            let mut factor = self.dilation_factor;
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("dilation_ratio")).show(root.ctx(), |ui| {
+                ui.heading("Dilate object");
+                ui.horizontal(|ui| {
+                    ui.label("Ratio");
+                    ui.add(egui::DragValue::new(&mut factor).speed(0.05));
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Dilate").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            self.dilation_factor = factor;
+            if apply {
+                self.dilate_dialog = false;
+                self.dilate_selected();
+            } else if cancel {
+                self.dilate_dialog = false;
             }
         }
         let viewport = Viewport {

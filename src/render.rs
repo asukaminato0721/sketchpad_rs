@@ -262,7 +262,10 @@ impl GeometryRenderer {
                 }
             }
             match o.kind {
-                Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) => {
+                Kind::Circle(_, _)
+                | Kind::CircleBySegment(_, _)
+                | Kind::ReflectedCircle(_, _)
+                | Kind::ScaledCircle(_, _, _) => {
                     if let Some((a, radius)) = doc.circle_points(o.id) {
                         let c = vp.screen(a);
                         let r = (radius as f32 * vp.scale).abs();
