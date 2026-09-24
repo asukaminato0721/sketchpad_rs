@@ -56,24 +56,35 @@ The generated file did not need the original's extra `0x04b3`, `0x232d`, or
 `0x0961 = 2` records to display and update the slope. The writer still needs
 to retain those records when opening an existing original file.
 
-## Integration into the document model
+## Integrated behavior and verification
 
-1. Export the module with `pub mod graph;` in `src/lib.rs`.
-2. While parsing each object group, gather `(record_kind, payload)` for the
-   five graph codes and pass the references to `decode_graph_object`. Keep
-   unrecognized payloads as unsupported, retaining their bytes for round trip.
-3. Add model variants for the six frame objects and slope, with the dependency
-   lists returned by `GraphObject::dependencies`. For the observed default
-   frame, the X-unit point is origin plus one step in screen X, and the Y-unit
-   point is origin minus one step in screen Y. More general constructed frames
-   should use their evaluated axis-unit point positions in `CoordinateFrame`.
-4. Append the template groups before the page trailer and update the page
-   object count. Validate the line, frame, and all internal references before
-   serialization. Keep page/grid style records when an imported file has them.
-5. Add menu actions for Graph > Define Coordinate System, Show Grid, and
-   Measure > Slope, then render and hit-test axis geometry through the common
-   viewport transform.
+The document model decodes the six frame objects and slope, evaluates their
+dependencies, and writes the observed default frame template. The native UI
+has Define Coordinate System, Show Grid, and Slope commands. The renderer and
+SVG exporter draw the grid using the same viewport transform as the sketch.
+The replay harness has `coordinate_system`, `show_grid`, and `slope` commands.
+
+Original files include a trailing `0x232d` page-link record whose four-byte
+payload is the coordinate-system object ID. The first writer omitted it; the
+original app still displayed the initial grid and slope, but its grid toggle
+was inconsistent. The writer now emits and validates the page link, including
+ID remapping when objects are deleted. In the code 54 Y-unit object header,
+byte 10 is `0x04`; treating its visual invisibility as the generic hide bit
+produced a file that the original refused. The model therefore retains that
+header byte and the native renderer skips its point glyph.
+
+`cargo test --offline` passed 74 library tests and one binary test on
+2026-09-24. Replay generated a 10-object slope sketch; Sketchpad 5 opened it,
+displayed `0.00`, and saved with zero changed record slots. Dragging an
+endpoint in Sketchpad 5 displayed `-0.33`; Rust reopened and verified all ten
+objects. A blank-document replay generated a six-object coordinate system
+with IDs 1–6; Sketchpad 5 opened and saved it with zero changed record slots.
+The hidden-grid replay generated the same page flag and `0x232d` page link as
+the corresponding original file, and Sketchpad 5 saved it byte-for-byte.
+However, Wine screenshots of the same hidden-grid bytes differed between
+runs: one showed the grid and one did not. The visual persistence of Show Grid
+therefore remains unverified in the original app despite the matching records.
 
 These probes cover the default Cartesian frame and segment slope. They do not
-establish the behavior of frames constructed from selected objects, grid form,
-axis dragging, or the other graph commands.
+establish selected-object frames, grid form, axis dragging, or the other Graph
+commands.

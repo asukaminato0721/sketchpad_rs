@@ -1,3 +1,4 @@
+use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use std::{
     collections::BTreeSet,
@@ -35,6 +36,9 @@ impl Kind {
         )
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Kind::HideShowButton { target, .. } = self {
+            return vec![*target];
+        }
         if let Kind::Polygon(vertices) = self {
             return vertices.clone();
         }
@@ -84,10 +88,14 @@ impl Kind {
             }
             Kind::PointRatio(a, b, c) => vec![a, b, c],
             Kind::Polygon(_) => unreachable!(),
+            Kind::HideShowButton { .. } => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::HideShowButton { target, action, label, anchor } = self {
+            return Kind::HideShowButton { target: m(*target), action: *action, label: label.clone(), anchor: *anchor };
+        }
         if let Kind::Polygon(vertices) = self {
             return Kind::Polygon(vertices.iter().map(|&id| m(id)).collect());
         }
@@ -139,12 +147,19 @@ impl Kind {
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
             Kind::Polygon(_) => unreachable!(),
+            Kind::HideShowButton { .. } => unreachable!(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
+    HideShowButton {
+        target: usize,
+        action: VisibilityAction,
+        label: String,
+        anchor: (i16, i16),
+    },
     Free(Point),
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
@@ -642,6 +657,7 @@ impl Document {
                 return Err(format!("Invalid object header at {:#x}", rs[i].start));
             }
             let header_offset = rs[i].data.start;
+            let group_start = rs[i].start;
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let mut point = None;
@@ -745,6 +761,7 @@ impl Document {
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 58 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
+                    && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                 {
                     safe = false;
                 }
@@ -753,6 +770,13 @@ impl Document {
             if i == rs.len() {
                 return Err("Unterminated object group".into());
             }
+            let action_group = (code == 62)
+                .then(|| HideShowButtonGroup::parse(&b[group_start..rs[i].data.end]))
+                .transpose();
+            if action_group.is_err() {
+                safe = false;
+            }
+            let action_group = action_group.ok().flatten();
             let graph_borrowed = graph_records
                 .iter()
                 .map(|(kind, payload)| (*kind, payload.as_slice()))
@@ -815,6 +839,20 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (62, _, [target]) if action_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == vec![(*target - page_base) as u32]
+                    }) => {
+                        let group = action_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::HideShowButton {
+                                target: *target,
+                                action: group.action(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
                     (0, Some(p), _) => Kind::Free(p),
                     (36, _, [host])
                         if measurement_format && measurement_style
@@ -1361,6 +1399,59 @@ impl Document {
                 o.visible = true;
             }
         }
+    }
+    pub fn add_hide_show_button(&mut self, target: usize) -> Result<usize, String> {
+        let object = self.objects.get(target.checked_sub(1).ok_or("Invalid button target")?)
+            .ok_or("Invalid button target")?;
+        if self.partial_view || object.deleted || !object.visible || object.page != self.active_page
+            || matches!(object.kind, Kind::HideShowButton { .. } | Kind::Unsupported(_))
+        {
+            return Err("A Hide/Show button needs a visible supported object on this page".into());
+        }
+        let row = self.objects.iter().filter(|object| object.page == self.active_page
+            && !object.deleted && matches!(object.kind, Kind::HideShowButton { .. })).count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        let label = if matches!(object.kind, Kind::Segment(_, _)) {
+            "Hide Segment"
+        } else {
+            "Hide Objects"
+        };
+        Ok(self.add(Kind::HideShowButton {
+            target,
+            action: VisibilityAction::Hide,
+            label: label.into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
+        let button = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if button.deleted || !button.visible || button.page != self.active_page {
+            return Err("Button is not visible on this page".into());
+        }
+        let Kind::HideShowButton { target, action, .. } = &button.kind else {
+            return Err("Object is not a Hide/Show button".into());
+        };
+        let (target, action) = (*target, *action);
+        if self.objects.get(target - 1).is_none_or(|object| object.deleted || object.page != self.active_page) {
+            return Err("Button target is unavailable".into());
+        }
+        self.checkpoint();
+        self.objects[target - 1].visible = action == VisibilityAction::Show;
+        if let Kind::HideShowButton { action: current, label, .. } = &mut self.objects[id - 1].kind {
+            *current = match action { VisibilityAction::Hide => VisibilityAction::Show, VisibilityAction::Show => VisibilityAction::Hide };
+            *label = match label.as_str() {
+                "Hide Segment" => "Show Segment".into(),
+                "Show Segment" => "Hide Segment".into(),
+                "Hide Objects" => "Show Objects".into(),
+                "Show Objects" => "Hide Objects".into(),
+                "隐藏线段" => "显示线段".into(),
+                "显示线段" => "隐藏线段".into(),
+                _ => label.clone(),
+            };
+        }
+        self.selected.clear();
+        Ok(())
     }
     pub fn position(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
@@ -2025,6 +2116,13 @@ impl Document {
             {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
+            if let Kind::HideShowButton { target, label, .. } = &o.kind {
+                if self.page_count != 1 || self.objects[*target - 1].page != o.page
+                    || label.len() > u16::MAX as usize
+                {
+                    return Err(format!("Invalid Hide/Show button {}", o.id));
+                }
+            }
             if let Kind::Midpoint(a, b) = o.kind {
                 let Some(host) = o.midpoint_host else {
                     return Err(format!("Midpoint {} has no segment host", o.id));
@@ -2405,6 +2503,24 @@ impl Document {
                     _ => {}
                 }
             }
+            if let (Kind::HideShowButton { action, label, anchor, .. }, Some(i)) = (&o.kind, o.header_offset) {
+                let start_record = rs.iter().position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved action button header")?;
+                let end_record = rs[start_record..].iter().position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index).ok_or("Missing saved action button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = HideShowButtonGroup::parse(&out[start..end])?;
+                group.set_action(*action);
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err("Editing a saved button label cannot change its byte length".into());
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
         }
         let mut page_index = 0;
         for record in rs.iter().filter(|r| r.kind == 0x3e8) {
@@ -2448,6 +2564,13 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::HideShowButton { target, action, label, anchor } = &o.kind {
+                let mut group = HideShowButtonGroup::from_original_template(*target as u32, label, *anchor)?;
+                group.set_action(*action);
+                group.set_hidden(!o.visible);
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
             if let Some(group) = self.graph_template_group(o)? {
                 added.extend_from_slice(&group);
                 continue;

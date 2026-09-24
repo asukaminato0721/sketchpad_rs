@@ -326,6 +326,16 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::PolygonPerimeter(polygon));
                     println!("line {}: perimeter -> object {id}", index + 1);
                 }
+                "hide_show_button" => {
+                    let target: usize = rest.parse().map_err(|_| "invalid button target ID")?;
+                    let id = document.add_hide_show_button(target)?;
+                    println!("line {}: hide_show_button -> object {id}", index + 1);
+                }
+                "activate_button" => {
+                    let id: usize = rest.parse().map_err(|_| "invalid button ID")?;
+                    document.activate_hide_show_button(id)?;
+                    println!("line {}: activate_button {id}", index + 1);
+                }
                 "arc_angle" => {
                     let arc: usize = rest.parse().map_err(|_| "invalid arc ID")?;
                     let id = document.add(Kind::ArcAngle(arc));

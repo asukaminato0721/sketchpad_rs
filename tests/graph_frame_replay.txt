@@ -1,0 +1,4 @@
+new
+coordinate_system 199 125
+check
+save /tmp/sketchpad_graph_frame.gsp

@@ -42,6 +42,29 @@ pub fn set_point_style(payload: &mut [u8], style: PointStyle) -> Result<(), Stri
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PointColor {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+pub fn point_color(payload: &[u8]) -> Option<PointColor> {
+    is_point_header(payload).then_some(PointColor {
+        red: payload[12],
+        green: payload[13],
+        blue: payload[14],
+    })
+}
+
+pub fn set_point_color(payload: &mut [u8], color: PointColor) -> Result<(), String> {
+    if !is_point_header(payload) {
+        return Err("Expected a point object header".into());
+    }
+    payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum LineWidth {
     Hairline = 0,
@@ -151,6 +174,21 @@ mod tests {
         assert_eq!(point_style(&changed), Some(PointStyle::Large));
         changed[11] = original[11];
         assert_eq!(changed, original);
+    }
+
+    #[test]
+    fn original_point_color_menu_writes_rgb_bytes() {
+        let red = first_point_header(include_bytes!("../tests/fixtures/point.gsp"));
+        let orange = first_point_header(include_bytes!("../tests/fixtures/style_orange_point.gsp"));
+        let blue = first_point_header(include_bytes!("../tests/fixtures/style_blue_point.gsp"));
+        assert_eq!(point_color(red), Some(PointColor { red: 255, green: 0, blue: 0 }));
+        assert_eq!(point_color(orange), Some(PointColor { red: 255, green: 128, blue: 0 }));
+        assert_eq!(point_color(blue), Some(PointColor { red: 0, green: 0, blue: 255 }));
+        let mut edited = red.to_vec();
+        set_point_color(&mut edited, PointColor { red: 0, green: 0, blue: 255 }).unwrap();
+        assert_eq!(point_color(&edited), point_color(blue));
+        edited[12..15].copy_from_slice(&red[12..15]);
+        assert_eq!(edited, red);
     }
 
     #[test]

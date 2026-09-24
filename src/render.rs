@@ -31,6 +31,15 @@ impl Viewport {
         }
     }
 }
+pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rect {
+    let min = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
+    let width = (label.chars().count() as f32 * 8. + 20.).max(88.);
+    Rect::from_min_size(min, egui::vec2(width, 24.))
+}
+
+fn xml_text(value: &str) -> String {
+    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
 fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, Pos2)> {
     let d = b - a;
     if d.length_sq() < 1e-8 {
@@ -383,7 +392,15 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             row += 1;
         }
     }
-    svg.push_str("</g>\n</svg>\n");
+    svg.push_str("</g>\n");
+    for object in doc.objects.iter().filter(|object| object.page == doc.active_page && object.visible && !object.deleted) {
+        if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
+            let box_rect = action_button_rect(vp, *anchor, label);
+            writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
+            writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
+        }
+    }
+    svg.push_str("</svg>\n");
     Ok(svg)
 }
 struct Mesh {

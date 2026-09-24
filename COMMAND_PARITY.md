@@ -120,7 +120,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Abscissa (x) | Pending |
 | Ordinate (y) | Pending |
 | Coordinate Distance | Pending |
-| Slope | Pending: original command creates a coordinate system and a two-reference measurement |
+| Slope | Partial: Cartesian frame and segment slope, live update, generated file edited in Sketchpad 5 |
 | Equation | Pending |
 
 ## Number
@@ -140,10 +140,10 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Graph Menu &gt; Define Coordinate System | Pending |
+| Graph Menu &gt; Define Coordinate System | Partial: default Cartesian frame, generated file opened and saved in Sketchpad 5 |
 | Graph Menu &gt; Mark Coordinate System | Pending |
 | Graph Menu &gt; Grid Form | Pending |
-| Graph Menu &gt; Show Grid | Pending |
+| Graph Menu &gt; Show Grid | Partial: page flag and coordinate-system link preserved; visual persistence in Wine remains unverified |
 | Graph Menu &gt; Dotted Grid | Pending |
 | Graph Menu &gt; Snap Points | Pending |
 | Graph Menu &gt; Plot Value on Axis | Pending |

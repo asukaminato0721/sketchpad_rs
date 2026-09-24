@@ -1,0 +1,5 @@
+new
+coordinate_system 199 125
+show_grid off
+check
+save /tmp/sketchpad_graph_hidden.gsp

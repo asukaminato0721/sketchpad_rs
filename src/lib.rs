@@ -1,3 +1,4 @@
+pub mod action_records;
 pub mod document;
 pub mod graph;
 pub mod render;

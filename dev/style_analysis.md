@@ -20,3 +20,9 @@ For a port-generated segment, I used Display > Line Style in the original applic
 | Medium, Dotted | `0x02` |
 
 The low nibble is the width (0–3) and the high nibble is the pattern (0 dotted, 1 dashed, 2 solid) for these observed variants. `src/style_records.rs` reads and updates the byte for code-2 segment headers only, preserving every other header byte. The five standalone style tests and all six line fixtures pass. The native model, drawing code, and menus still need to expose line styles; line, ray, circle, and arc codes have not been probed for this field.
+
+## Point color
+
+Changing the same original-app point from red to orange and blue changed only its `0x07d0` payload bytes 12–14 among the object records. They are direct RGB bytes: red `(255, 0, 0)`, orange `(255, 128, 0)`, blue `(0, 0, 255)`. `tests/fixtures/style_orange_point.gsp` and `style_blue_point.gsp` preserve the original saves. `PointColor` in `src/style_records.rs` reads and updates these three bytes for point headers; the sixth standalone test checks both original variants and lossless editing. Other object color fields have not been probed.
+
+`dev/style_record_probe.rs` applies the observed fields to a GSP copy. A Rust-patched blue point opened, displayed blue, and saved in Sketchpad 5. A Rust-patched thick dashed segment likewise opened, displayed the expected line, and saved. Both saved files passed the port's byte-exact `gsp_probe verify` check.
