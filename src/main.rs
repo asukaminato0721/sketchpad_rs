@@ -268,6 +268,46 @@ impl Editor {
         self.doc.selected.clear();
         self.doc.selected.insert(id);
     }
+    fn intersection(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids: Vec<_> = self.doc.selected.iter().copied().collect();
+        if ids.len() != 2 {
+            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            return;
+        }
+        let (a, b) = (ids[0], ids[1]);
+        let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
+            vec![Kind::Intersection(a, b)]
+        } else if (self.doc.line_points(a).is_some() && self.doc.circle_points(b).is_some())
+            || (self.doc.circle_points(a).is_some() && self.doc.line_points(b).is_some())
+        {
+            let (line, circle) = if self.doc.line_points(a).is_some() {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            vec![
+                Kind::LineCircleIntersection(line, circle, 0),
+                Kind::LineCircleIntersection(line, circle, 1),
+            ]
+        } else if self.doc.circle_points(a).is_some() && self.doc.circle_points(b).is_some() {
+            vec![
+                Kind::CircleCircleIntersection(a, b, 0),
+                Kind::CircleCircleIntersection(a, b, 1),
+            ]
+        } else {
+            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            return;
+        };
+        self.doc.selected.clear();
+        for kind in kinds {
+            let id = self.doc.add(kind);
+            self.doc.selected.insert(id);
+        }
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -339,6 +379,10 @@ impl Editor {
                     }
                     if ui.button("Midpoint").clicked() {
                         self.pair(2);
+                        ui.close();
+                    }
+                    if ui.button("Intersection").clicked() {
+                        self.intersection();
                         ui.close();
                     }
                     if ui.button("Parallel Line").clicked() {

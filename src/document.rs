@@ -26,6 +26,9 @@ pub enum Kind {
     Parallel(usize, usize),
     Perpendicular(usize, usize),
     Circle(usize, usize),
+    Intersection(usize, usize),
+    LineCircleIntersection(usize, usize, usize),
+    CircleCircleIntersection(usize, usize, usize),
     Unsupported(u16),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +120,10 @@ fn header(kind: u16) -> [u8; 28] {
             6, 0, 0, 0, 0, 0, 2, 0, 46, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        9 | 11..=14 => [
+            kind as u8, 0, 0, 0, 0, 0, 1, 0, 0x2d, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39,
+            0x20, 0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         63 => [
             63, 0, 0, 0, 0, 0, 2, 0, 12, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
@@ -127,6 +134,144 @@ fn header(kind: u16) -> [u8; 28] {
         ],
         _ => unreachable!(),
     }
+}
+fn is_straight_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(_, _)
+            | Kind::Line(_, _)
+            | Kind::Ray(_, _)
+            | Kind::Parallel(_, _)
+            | Kind::Perpendicular(_, _)
+    )
+}
+
+fn intersect_straight(
+    first: (Point, Point, LineMode),
+    second: (Point, Point, LineMode),
+) -> Option<Point> {
+    let (a, b, first_mode) = first;
+    let (c, d, second_mode) = second;
+    let r = Point {
+        x: b.x - a.x,
+        y: b.y - a.y,
+    };
+    let s = Point {
+        x: d.x - c.x,
+        y: d.y - c.y,
+    };
+    let (r_len, s_len) = (r.x.hypot(r.y), s.x.hypot(s.y));
+    if r_len < 1e-12 || s_len < 1e-12 {
+        return None;
+    }
+    let cross = |p: Point, q: Point| p.x * q.y - p.y * q.x;
+    let denominator = cross(r, s);
+    if denominator.abs() <= r_len * s_len * 1e-12 {
+        return None;
+    }
+    let delta = Point {
+        x: c.x - a.x,
+        y: c.y - a.y,
+    };
+    let t = cross(delta, s) / denominator;
+    let u = cross(delta, r) / denominator;
+    let contains = |mode: LineMode, parameter: f64| match mode {
+        LineMode::Segment => parameter >= -1e-10 && parameter <= 1. + 1e-10,
+        LineMode::Ray => parameter >= -1e-10,
+        LineMode::Line => true,
+    };
+    if !contains(first_mode, t) || !contains(second_mode, u) {
+        return None;
+    }
+    let result = Point {
+        x: a.x + r.x * t,
+        y: a.y + r.y * t,
+    };
+    (result.x.is_finite() && result.y.is_finite()).then_some(result)
+}
+fn line_circle_intersection(
+    line: (Point, Point, LineMode),
+    circle: (Point, f64),
+    variant: usize,
+) -> Option<Point> {
+    let (a, b, mode) = line;
+    let (center, radius) = circle;
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length_squared = dx * dx + dy * dy;
+    if length_squared <= 1e-18 || radius <= 1e-9 {
+        return None;
+    }
+    let (fx, fy) = (a.x - center.x, a.y - center.y);
+    let linear = 2. * (fx * dx + fy * dy);
+    let constant = fx * fx + fy * fy - radius * radius;
+    let discriminant = linear * linear - 4. * length_squared * constant;
+    if discriminant < -1e-9 {
+        return None;
+    }
+    let root = discriminant.max(0.).sqrt();
+    let mut parameters = [
+        (-linear - root) / (2. * length_squared),
+        (-linear + root) / (2. * length_squared),
+    ]
+    .into_iter()
+    .filter(|t| match mode {
+        LineMode::Segment => *t >= -1e-10 && *t <= 1. + 1e-10,
+        LineMode::Ray => *t >= -1e-10,
+        LineMode::Line => true,
+    })
+    .collect::<Vec<_>>();
+    parameters.sort_by(f64::total_cmp);
+    let t = *parameters.get(variant.min(parameters.len().checked_sub(1)?))?;
+    let result = Point {
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+    };
+    (result.x.is_finite() && result.y.is_finite()).then_some(result)
+}
+fn circle_circle_intersection(
+    first: (Point, f64),
+    second: (Point, f64),
+    variant: usize,
+) -> Option<Point> {
+    let (a, first_radius) = first;
+    let (b, second_radius) = second;
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let distance = dx.hypot(dy);
+    if first_radius <= 1e-9
+        || second_radius <= 1e-9
+        || distance <= 1e-9
+        || distance > first_radius + second_radius + 1e-9
+        || distance < (first_radius - second_radius).abs() - 1e-9
+    {
+        return None;
+    }
+    let along = (first_radius * first_radius - second_radius * second_radius + distance * distance)
+        / (2. * distance);
+    let height_squared = first_radius * first_radius - along * along;
+    if height_squared < -1e-9 {
+        return None;
+    }
+    let height = height_squared.max(0.).sqrt();
+    let (ux, uy) = (dx / distance, dy / distance);
+    let base = Point {
+        x: a.x + along * ux,
+        y: a.y + along * uy,
+    };
+    let mut results = [
+        Point {
+            x: base.x - height * uy,
+            y: base.y + height * ux,
+        },
+        Point {
+            x: base.x + height * uy,
+            y: base.y - height * ux,
+        },
+    ];
+    results.sort_by(|a, b| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)));
+    results
+        .get(variant)
+        .copied()
+        .filter(|p| p.x.is_finite() && p.y.is_finite())
 }
 #[derive(Clone, Debug)]
 pub struct Document {
@@ -164,6 +309,12 @@ impl Document {
     }
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
         let rs = records(b)?;
+        let baseline_records = records(include_bytes!("../assets/point_template.gsp"))?;
+        let safe_outside: BTreeSet<u32> = baseline_records
+            .iter()
+            .map(|record| record.kind)
+            .chain([0x2328])
+            .collect();
         let mut objects: Vec<Object> = Vec::new();
         let mut i = 0;
         let mut safe = true;
@@ -179,6 +330,9 @@ impl Document {
                 continue;
             }
             if rs[i].kind != 0x7d0 {
+                if !safe_outside.contains(&rs[i].kind) {
+                    safe = false;
+                }
                 i += 1;
                 continue;
             }
@@ -237,6 +391,29 @@ impl Document {
                 (3, _, [a, b]) => Kind::Circle(*a, *b),
                 (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
                 (6, _, [a, b]) => Kind::Parallel(*a, *b),
+                (9, _, [a, b]) => Kind::Intersection(*a, *b),
+                (11, _, [a, b])
+                    if objects
+                        .get(a.saturating_sub(1))
+                        .is_some_and(|object| is_straight_kind(&object.kind))
+                        && objects
+                            .get(b.saturating_sub(1))
+                            .is_some_and(|object| matches!(object.kind, Kind::Circle(_, _))) =>
+                {
+                    Kind::LineCircleIntersection(*a, *b, 1)
+                }
+                (12, _, [a, b])
+                    if objects
+                        .get(a.saturating_sub(1))
+                        .is_some_and(|object| is_straight_kind(&object.kind))
+                        && objects
+                            .get(b.saturating_sub(1))
+                            .is_some_and(|object| matches!(object.kind, Kind::Circle(_, _))) =>
+                {
+                    Kind::LineCircleIntersection(*a, *b, 0)
+                }
+                (13, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 1),
+                (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
                 (63, _, [a, b]) => Kind::Line(*a, *b),
                 (64, _, [a, b]) => Kind::Ray(*a, *b),
                 _ => Kind::Unsupported(code),
@@ -356,6 +533,17 @@ impl Document {
                         y: (a.y + b.y) / 2.,
                     })
                 }
+                Kind::Intersection(a, b) => {
+                    let first = d.line_points(*a)?;
+                    let second = d.line_points(*b)?;
+                    intersect_straight(first, second)
+                }
+                Kind::LineCircleIntersection(a, b, variant) => {
+                    line_circle_intersection(d.line_points(*a)?, d.circle_points(*b)?, *variant)
+                }
+                Kind::CircleCircleIntersection(a, b, variant) => {
+                    circle_circle_intersection(d.circle_points(*a)?, d.circle_points(*b)?, *variant)
+                }
                 _ => None,
             };
             seen.remove(&id);
@@ -405,6 +593,14 @@ impl Document {
         }
         go(self, id, &mut BTreeSet::new())
     }
+    pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        let Kind::Circle(center_id, radius_id) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let center = self.position(center_id)?;
+        let radius = center.distance(self.position(radius_id)?);
+        (radius.is_finite() && radius > 0.).then_some((center, radius))
+    }
     pub fn move_point(&mut self, id: usize, p: Point) -> bool {
         if !p.x.is_finite() || !p.y.is_finite() {
             return false;
@@ -441,7 +637,10 @@ impl Document {
                 | Kind::Ray(a, b)
                 | Kind::Parallel(a, b)
                 | Kind::Perpendicular(a, b)
-                | Kind::Circle(a, b) => vec![a, b],
+                | Kind::Circle(a, b)
+                | Kind::Intersection(a, b)
+                | Kind::LineCircleIntersection(a, b, _)
+                | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
                 _ => vec![],
             };
             if refs.iter().any(|&r| r == 0 || r >= o.id) {
@@ -462,6 +661,23 @@ impl Document {
                 && matches!(o.kind,Kind::Parallel(point,_)|Kind::Perpendicular(point,_) if self.position(point).is_none())
             {
                 return Err(format!("Invalid anchor point in object {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::Intersection(a,b) if self.line_points(a).is_none() || self.line_points(b).is_none())
+            {
+                return Err(format!("Invalid straight objects in intersection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::LineCircleIntersection(a,b,variant)
+                    if variant > 1 || self.line_points(a).is_none() || self.circle_points(b).is_none())
+            {
+                return Err(format!("Invalid line and circle in intersection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::CircleCircleIntersection(a,b,variant)
+                    if variant > 1 || self.circle_points(a).is_none() || self.circle_points(b).is_none())
+            {
+                return Err(format!("Invalid circles in intersection {}", o.id));
             }
             if matches!(o.kind, Kind::Unsupported(_)) && i >= self.source_count {
                 return Err("Unsupported new object".into());
@@ -532,6 +748,13 @@ impl Document {
                 Kind::Circle(a, b) => (3, vec![a, b]),
                 Kind::Perpendicular(a, b) => (5, vec![a, b]),
                 Kind::Parallel(a, b) => (6, vec![a, b]),
+                Kind::Intersection(a, b) => (9, vec![a, b]),
+                Kind::LineCircleIntersection(a, b, variant) => {
+                    (if variant == 0 { 12 } else { 11 }, vec![a, b])
+                }
+                Kind::CircleCircleIntersection(a, b, variant) => {
+                    (if variant == 0 { 14 } else { 13 }, vec![a, b])
+                }
                 Kind::Line(a, b) => (63, vec![a, b]),
                 Kind::Ray(a, b) => (64, vec![a, b]),
                 _ => return Err("Unsupported new object".into()),
@@ -564,12 +787,16 @@ impl Document {
         let data = self.encode()?;
         let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
         if reparsed.objects.len() != self.objects.len()
-            || reparsed.objects.iter().zip(&self.objects).any(|(saved, current)| {
-                saved.id != current.id
-                    || saved.page != current.page
-                    || saved.kind != current.kind
-                    || saved.visible != current.visible
-            })
+            || reparsed
+                .objects
+                .iter()
+                .zip(&self.objects)
+                .any(|(saved, current)| {
+                    saved.id != current.id
+                        || saved.page != current.page
+                        || saved.kind != current.kind
+                        || saved.visible != current.visible
+                })
         {
             return Err("Serialized sketch does not preserve the edited objects".into());
         }
@@ -627,10 +854,14 @@ mod tests {
             "circle",
             "middle_point",
             "line",
+            "line_intersection",
+            "line_circle_intersection",
+            "circle_circle_intersection",
             "ray",
             "parallel",
             "perp",
             "example_tools",
+            "wine_moved_demo",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -732,5 +963,186 @@ mod tests {
         let r = Document::open(&p).unwrap();
         assert_eq!(r.position(id), Some(Point { x: 56., y: 78. }));
         fs::remove_file(p).unwrap();
+    }
+    #[test]
+    fn invalid_coordinates_do_not_replace_a_file() {
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_invalid_save_{}.gsp",
+            std::process::id()
+        ));
+        fs::write(&path, b"existing content").unwrap();
+        let mut document = Document::new();
+        document.add(Kind::Free(Point { x: f64::NAN, y: 1. }));
+        assert!(document.save_to(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"existing content");
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn sketchpad_saved_edit_updates_dependents() {
+        let document = Document::open(Path::new("tests/fixtures/wine_moved_demo.gsp")).unwrap();
+        assert_eq!(document.objects.len(), 9);
+        assert_eq!(document.position(1), Some(Point { x: 261., y: 181. }));
+        assert_eq!(document.position(5), Some(Point { x: 370.5, y: 270.5 }));
+        assert_eq!(
+            document.line_points(8).unwrap().0,
+            document.position(1).unwrap()
+        );
+    }
+    #[test]
+    fn unknown_page_record_blocks_structural_save() {
+        let mut bytes = fs::read("tests/fixtures/point.gsp").unwrap();
+        let trailer = records(&bytes)
+            .unwrap()
+            .iter()
+            .find(|record| record.kind == 0x3e9)
+            .unwrap()
+            .start;
+        let mut unknown = Vec::new();
+        put_record(&mut unknown, 0x4444, &[1, 2, 3, 4]);
+        bytes.splice(trailer..trailer, unknown);
+        let mut document = Document::from_bytes(&bytes, None).unwrap();
+        assert!(document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        document.add(Kind::Free(Point { x: 4., y: 5. }));
+        assert!(document.encode().is_err());
+    }
+    #[test]
+    fn straight_intersections_update_and_reopen() {
+        let source = Document::open(Path::new("tests/fixtures/line_intersection.gsp")).unwrap();
+        assert_eq!(source.objects[6].kind, Kind::Intersection(3, 6));
+        assert!(source.position(7).is_some());
+        assert!(!source.partial_view);
+
+        let mut document = Document::new();
+        let a = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = document.add(Kind::Free(Point { x: 10., y: 0. }));
+        let c = document.add(Kind::Free(Point { x: 5., y: -5. }));
+        let d = document.add(Kind::Free(Point { x: 5., y: 5. }));
+        let horizontal = document.add(Kind::Segment(a, b));
+        let vertical = document.add(Kind::Segment(c, d));
+        let crossing = document.add(Kind::Intersection(horizontal, vertical));
+        assert_eq!(document.position(crossing), Some(Point { x: 5., y: 0. }));
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(crossing), document.position(crossing));
+        document.move_point(d, Point { x: 5., y: -1. });
+        assert_eq!(document.position(crossing), None);
+    }
+    #[test]
+    fn straight_intersection_handles_parallel_and_rays() {
+        let a = Point { x: 0., y: 0. };
+        let b = Point { x: 1., y: 0. };
+        let c = Point { x: 2., y: -1. };
+        let d = Point { x: 2., y: 1. };
+        assert_eq!(
+            intersect_straight((a, b, LineMode::Segment), (c, d, LineMode::Line)),
+            None
+        );
+        assert_eq!(
+            intersect_straight((a, b, LineMode::Ray), (c, d, LineMode::Line)),
+            Some(Point { x: 2., y: 0. })
+        );
+        assert_eq!(
+            intersect_straight(
+                (a, b, LineMode::Line),
+                (
+                    Point { x: 0., y: 1. },
+                    Point { x: 1., y: 1. },
+                    LineMode::Line
+                )
+            ),
+            None
+        );
+    }
+    #[test]
+    fn circle_intersections_update_and_reopen() {
+        let original =
+            Document::open(Path::new("tests/fixtures/circle_circle_intersection.gsp")).unwrap();
+        assert_eq!(
+            original.objects[6].kind,
+            Kind::CircleCircleIntersection(6, 5, 0)
+        );
+        assert_eq!(
+            original.objects[7].kind,
+            Kind::CircleCircleIntersection(6, 5, 1)
+        );
+        assert!(original.position(7).is_some());
+        assert!(original.position(8).is_some());
+        let original_line_circle =
+            Document::open(Path::new("tests/fixtures/line_circle_intersection.gsp")).unwrap();
+        assert_eq!(
+            original_line_circle.objects[6].kind,
+            Kind::LineCircleIntersection(3, 6, 0)
+        );
+        assert!(original_line_circle.position(7).is_some());
+
+        let mut document = Document::new();
+        let left = document.add(Kind::Free(Point { x: -10., y: 0. }));
+        let right = document.add(Kind::Free(Point { x: 10., y: 0. }));
+        let origin = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let radius = document.add(Kind::Free(Point { x: 5., y: 0. }));
+        let other_center = document.add(Kind::Free(Point { x: 4., y: 0. }));
+        let other_radius = document.add(Kind::Free(Point { x: 9., y: 0. }));
+        let line = document.add(Kind::Segment(left, right));
+        let first_circle = document.add(Kind::Circle(origin, radius));
+        let second_circle = document.add(Kind::Circle(other_center, other_radius));
+        let near = document.add(Kind::LineCircleIntersection(line, first_circle, 0));
+        let far = document.add(Kind::LineCircleIntersection(line, first_circle, 1));
+        let upper = document.add(Kind::CircleCircleIntersection(
+            first_circle,
+            second_circle,
+            0,
+        ));
+        let lower = document.add(Kind::CircleCircleIntersection(
+            first_circle,
+            second_circle,
+            1,
+        ));
+        assert_eq!(document.position(near), Some(Point { x: -5., y: 0. }));
+        assert_eq!(document.position(far), Some(Point { x: 5., y: 0. }));
+        assert!(document.position(upper).unwrap().y < 0.);
+        assert!(document.position(lower).unwrap().y > 0.);
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        for id in [near, far, upper, lower] {
+            assert_eq!(reopened.position(id), document.position(id));
+        }
+        document.move_point(other_center, Point { x: 30., y: 0. });
+        assert!(document.position(upper).is_none());
+        assert!(document.position(lower).is_none());
+    }
+    #[test]
+    fn line_circle_second_root_uses_remaining_segment_crossing() {
+        let mut document = Document::new();
+        let center = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let end = document.add(Kind::Free(Point { x: 10., y: 0. }));
+        let radius = document.add(Kind::Free(Point { x: 0., y: 5. }));
+        let segment = document.add(Kind::Segment(center, end));
+        let circle = document.add(Kind::Circle(center, radius));
+        let second = document.add(Kind::LineCircleIntersection(segment, circle, 1));
+        assert_eq!(document.position(second), Some(Point { x: 5., y: 0. }));
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(second), document.position(second));
+    }
+    #[test]
+    fn line_circle_record_requires_straight_object_first() {
+        let mut document = Document::new();
+        let center = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let radius = document.add(Kind::Free(Point { x: 0., y: 5. }));
+        let circle = document.add(Kind::Circle(center, radius));
+        let end = document.add(Kind::Free(Point { x: 10., y: 0. }));
+        let segment = document.add(Kind::Segment(center, end));
+        let intersection = document.add(Kind::LineCircleIntersection(segment, circle, 0));
+        assert_eq!(
+            document.position(intersection),
+            Some(Point { x: 5., y: 0. })
+        );
+        let encoded = document.encode().unwrap();
+        assert_eq!(
+            Document::from_bytes(&encoded, None)
+                .unwrap()
+                .position(intersection),
+            document.position(intersection)
+        );
+        document.objects[intersection - 1].kind = Kind::LineCircleIntersection(circle, segment, 0);
+        assert!(document.encode().is_err());
     }
 }
