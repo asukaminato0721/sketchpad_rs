@@ -192,6 +192,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             .unwrap();
             row += 1;
         }
+        if let Some(angle) = doc.arc_angle_degrees(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Arc Angle = {:.2}°</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                angle
+            )
+            .unwrap();
+            row += 1;
+        }
         if let Some(angle) = doc.angle_degrees(object.id) {
             writeln!(
                 svg,
