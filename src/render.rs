@@ -38,7 +38,10 @@ pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rec
 }
 
 fn xml_text(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, Pos2)> {
     let d = b - a;
@@ -393,7 +396,11 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("</g>\n");
-    for object in doc.objects.iter().filter(|object| object.page == doc.active_page && object.visible && !object.deleted) {
+    for object in doc
+        .objects
+        .iter()
+        .filter(|object| object.page == doc.active_page && object.visible && !object.deleted)
+    {
         if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
             let box_rect = action_button_rect(vp, *anchor, label);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
@@ -735,6 +742,36 @@ mod tests {
         );
         assert_eq!(clipped_line(a, b, LineMode::Segment, r), Some((a, b)));
         assert_eq!(clipped_line(a, a, LineMode::Line, r), None);
+    }
+    #[test]
+    fn action_button_uses_same_rectangle_for_export_and_hit_testing() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let b = doc.add(Kind::Free(Point { x: 100., y: 20. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let button = doc.add_hide_show_button(segment).unwrap();
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::new(50., 70.), egui::vec2(300., 200.)),
+            scale: 1.,
+            center: Point { x: 150., y: 100. },
+        };
+        let Kind::HideShowButton { label, anchor, .. } = &doc.objects[button - 1].kind else {
+            unreachable!()
+        };
+        let bounds = action_button_rect(&viewport, *anchor, label);
+        assert_eq!(bounds.min, Pos2::new(60., 75.));
+        assert!(bounds.contains(Pos2::new(105., 85.)));
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Hide Segment</text>")
+        );
+        doc.activate_hide_show_button(button).unwrap();
+        assert!(
+            svg_page(&doc, &viewport)
+                .unwrap()
+                .contains("Show Segment</text>")
+        );
     }
     #[test]
     fn svg_length_tracks_geometry_and_visibility() {

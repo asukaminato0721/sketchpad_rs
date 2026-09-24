@@ -20,16 +20,28 @@ pub struct TextRect {
 impl TextRect {
     pub fn roomy_at(left: i16, top: i16, text: &str) -> Result<Self, String> {
         let mut width: i32 = 8;
-        for ch in text.chars() {
-            width = width
-                .checked_add(if ch.is_ascii() { 10 } else { 22 })
-                .ok_or("Text box width overflow")?;
+        let mut lines: i32 = 0;
+        for line in text.split('\n') {
+            lines += 1;
+            let mut line_width = 8_i32;
+            for ch in line.chars() {
+                line_width = line_width
+                    .checked_add(if ch.is_ascii() { 10 } else { 22 })
+                    .ok_or("Text box width overflow")?;
+            }
+            width = width.max(line_width);
         }
         let right =
             i16::try_from(i32::from(left) + width).map_err(|_| "Text box x coordinate overflow")?;
-        let bottom = top
-            .checked_add(23)
-            .ok_or("Text box y coordinate overflow")?;
+        let height = 23_i32
+            .checked_add(
+                (lines - 1)
+                    .checked_mul(19)
+                    .ok_or("Text box height overflow")?,
+            )
+            .ok_or("Text box height overflow")?;
+        let bottom =
+            i16::try_from(i32::from(top) + height).map_err(|_| "Text box y coordinate overflow")?;
         Ok(Self {
             left,
             top,
@@ -51,14 +63,18 @@ pub fn encode_plain_text_group(text: &str, rect: TextRect) -> Result<Vec<u8>, St
     if text.is_empty() {
         return Err("Text object cannot be empty".into());
     }
-    if text.bytes().any(|byte| matches!(byte, 0 | b'\r' | b'\n')) {
-        return Err("Text contains a NUL or line break; multiline markup is not decoded".into());
+    if text.bytes().any(|byte| matches!(byte, 0 | b'\r')) {
+        return Err("Text contains a NUL or carriage return".into());
     }
     rect.validate()?;
 
-    let mut markup = format!("<VL<T{:X}x", text.len()).into_bytes();
-    markup.extend_from_slice(text.as_bytes());
-    markup.extend_from_slice(b">>");
+    let mut markup = b"<VL".to_vec();
+    for line in text.split('\n') {
+        markup.extend_from_slice(format!("<T{:X}x", line.len()).as_bytes());
+        markup.extend_from_slice(line.as_bytes());
+        markup.push(b'>');
+    }
+    markup.push(b'>');
     let markup_len = u16::try_from(markup.len()).map_err(|_| "Text markup exceeds 65535 bytes")?;
 
     let mut rich = Vec::new();
@@ -200,6 +216,22 @@ mod tests {
                 top: 81,
                 right: 137,
                 bottom: 104,
+            },
+        )
+        .unwrap();
+        assert_eq!(&generated, object_group(original));
+    }
+
+    #[test]
+    fn generated_multiline_group_matches_original() {
+        let original = include_bytes!("../tests/fixtures/text_object_original_multiline.gsp");
+        let generated = encode_plain_text_group(
+            "A\nB",
+            TextRect {
+                left: 91,
+                top: 81,
+                right: 109,
+                bottom: 123,
             },
         )
         .unwrap();

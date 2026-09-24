@@ -27,6 +27,7 @@ impl PointStyle {
 fn is_point_header(payload: &[u8]) -> bool {
     (payload.len() == 16 || payload.len() == 28)
         && u16::from_le_bytes([payload[0], payload[1]]) == 0
+        && u16::from_le_bytes([payload[8], payload[9]]) == 4
 }
 
 pub fn point_style(payload: &[u8]) -> Option<PointStyle> {
@@ -59,6 +60,22 @@ pub fn point_color(payload: &[u8]) -> Option<PointColor> {
 pub fn set_point_color(payload: &mut [u8], color: PointColor) -> Result<(), String> {
     if !is_point_header(payload) {
         return Err("Expected a point object header".into());
+    }
+    payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
+    Ok(())
+}
+
+pub fn segment_color(payload: &[u8]) -> Option<PointColor> {
+    is_segment_header(payload).then_some(PointColor {
+        red: payload[12],
+        green: payload[13],
+        blue: payload[14],
+    })
+}
+
+pub fn set_segment_color(payload: &mut [u8], color: PointColor) -> Result<(), String> {
+    if !is_segment_header(payload) {
+        return Err("Expected a segment object header".into());
     }
     payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
     Ok(())
@@ -199,6 +216,11 @@ mod tests {
         assert_eq!(point_style(&header), None);
         header[0] = 1;
         assert!(set_point_style(&mut header, PointStyle::Dot).is_err());
+        let text = include_bytes!("../tests/fixtures/text_on_point.gsp");
+        let mut text_header = first_point_header(text).to_vec();
+        text_header[8..10].copy_from_slice(&19_u16.to_le_bytes());
+        assert_eq!(point_style(&text_header), None);
+        assert_eq!(point_color(&text_header), None);
     }
 
     #[test]
@@ -217,6 +239,19 @@ mod tests {
             let payload = first_segment_header(bytes);
             assert_eq!(segment_line_style(payload), Some(SegmentLineStyle { width: *width, pattern: *pattern }));
         }
+    }
+
+    #[test]
+    fn original_segment_color_menu_writes_rgb_bytes() {
+        let navy = first_segment_header(include_bytes!("../tests/fixtures/style_medium_solid_line.gsp"));
+        let blue = first_segment_header(include_bytes!("../tests/fixtures/style_blue_line.gsp"));
+        assert_eq!(segment_color(navy), Some(PointColor { red: 0, green: 0, blue: 128 }));
+        assert_eq!(segment_color(blue), Some(PointColor { red: 0, green: 0, blue: 255 }));
+        let mut edited = navy.to_vec();
+        set_segment_color(&mut edited, PointColor { red: 0, green: 0, blue: 255 }).unwrap();
+        assert_eq!(segment_color(&edited), segment_color(blue));
+        edited[12..15].copy_from_slice(&navy[12..15]);
+        assert_eq!(edited, navy);
     }
 
     fn first_segment_header(bytes: &[u8]) -> &[u8] {

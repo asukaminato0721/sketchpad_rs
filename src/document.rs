@@ -93,8 +93,19 @@ impl Kind {
     }
     fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
-        if let Kind::HideShowButton { target, action, label, anchor } = self {
-            return Kind::HideShowButton { target: m(*target), action: *action, label: label.clone(), anchor: *anchor };
+        if let Kind::HideShowButton {
+            target,
+            action,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::HideShowButton {
+                target: m(*target),
+                action: *action,
+                label: label.clone(),
+                anchor: *anchor,
+            };
         }
         if let Kind::Polygon(vertices) = self {
             return Kind::Polygon(vertices.iter().map(|&id| m(id)).collect());
@@ -1087,12 +1098,16 @@ impl Document {
         {
             safe = false;
         }
-        if rs.iter().filter(|record| record.kind == 0x232d).any(|record| {
-            record.data.len() != 4
-                || !objects
-                    .get((u32_at(b, record.data.start) as usize).saturating_sub(1))
-                    .is_some_and(|object| matches!(object.kind, Kind::CoordinateSystem(_, _)))
-        }) {
+        if rs
+            .iter()
+            .filter(|record| record.kind == 0x232d)
+            .any(|record| {
+                record.data.len() != 4
+                    || !objects
+                        .get((u32_at(b, record.data.start) as usize).saturating_sub(1))
+                        .is_some_and(|object| matches!(object.kind, Kind::CoordinateSystem(_, _)))
+            })
+        {
             safe = false;
         }
         Ok(Self {
@@ -1401,15 +1416,30 @@ impl Document {
         }
     }
     pub fn add_hide_show_button(&mut self, target: usize) -> Result<usize, String> {
-        let object = self.objects.get(target.checked_sub(1).ok_or("Invalid button target")?)
+        let object = self
+            .objects
+            .get(target.checked_sub(1).ok_or("Invalid button target")?)
             .ok_or("Invalid button target")?;
-        if self.partial_view || object.deleted || !object.visible || object.page != self.active_page
-            || matches!(object.kind, Kind::HideShowButton { .. } | Kind::Unsupported(_))
+        if self.partial_view
+            || object.deleted
+            || !object.visible
+            || object.page != self.active_page
+            || matches!(
+                object.kind,
+                Kind::HideShowButton { .. } | Kind::Unsupported(_)
+            )
         {
             return Err("A Hide/Show button needs a visible supported object on this page".into());
         }
-        let row = self.objects.iter().filter(|object| object.page == self.active_page
-            && !object.deleted && matches!(object.kind, Kind::HideShowButton { .. })).count();
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(object.kind, Kind::HideShowButton { .. })
+            })
+            .count();
         let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
         let label = if matches!(object.kind, Kind::Segment(_, _)) {
             "Hide Segment"
@@ -1424,7 +1454,9 @@ impl Document {
         }))
     }
     pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
-        let button = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+        let button = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
             .ok_or("Invalid button ID")?;
         if button.deleted || !button.visible || button.page != self.active_page {
             return Err("Button is not visible on this page".into());
@@ -1433,13 +1465,25 @@ impl Document {
             return Err("Object is not a Hide/Show button".into());
         };
         let (target, action) = (*target, *action);
-        if self.objects.get(target - 1).is_none_or(|object| object.deleted || object.page != self.active_page) {
+        if self
+            .objects
+            .get(target - 1)
+            .is_none_or(|object| object.deleted || object.page != self.active_page)
+        {
             return Err("Button target is unavailable".into());
         }
         self.checkpoint();
         self.objects[target - 1].visible = action == VisibilityAction::Show;
-        if let Kind::HideShowButton { action: current, label, .. } = &mut self.objects[id - 1].kind {
-            *current = match action { VisibilityAction::Hide => VisibilityAction::Show, VisibilityAction::Show => VisibilityAction::Hide };
+        if let Kind::HideShowButton {
+            action: current,
+            label,
+            ..
+        } = &mut self.objects[id - 1].kind
+        {
+            *current = match action {
+                VisibilityAction::Hide => VisibilityAction::Show,
+                VisibilityAction::Show => VisibilityAction::Hide,
+            };
             *label = match label.as_str() {
                 "Hide Segment" => "Show Segment".into(),
                 "Show Segment" => "Hide Segment".into(),
@@ -2117,7 +2161,8 @@ impl Document {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
             if let Kind::HideShowButton { target, label, .. } = &o.kind {
-                if self.page_count != 1 || self.objects[*target - 1].page != o.page
+                if self.page_count != 1
+                    || self.objects[*target - 1].page != o.page
                     || label.len() > u16::MAX as usize
                 {
                     return Err(format!("Invalid Hide/Show button {}", o.id));
@@ -2503,11 +2548,25 @@ impl Document {
                     _ => {}
                 }
             }
-            if let (Kind::HideShowButton { action, label, anchor, .. }, Some(i)) = (&o.kind, o.header_offset) {
-                let start_record = rs.iter().position(|record| record.kind == 0x7d0 && record.data.start == i)
+            if let (
+                Kind::HideShowButton {
+                    action,
+                    label,
+                    anchor,
+                    ..
+                },
+                Some(i),
+            ) = (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
                     .ok_or("Missing saved action button header")?;
-                let end_record = rs[start_record..].iter().position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index).ok_or("Missing saved action button terminator")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved action button terminator")?;
                 let start = rs[start_record].start;
                 let end = rs[end_record].data.end;
                 let mut group = HideShowButtonGroup::parse(&out[start..end])?;
@@ -2564,8 +2623,15 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
-            if let Kind::HideShowButton { target, action, label, anchor } = &o.kind {
-                let mut group = HideShowButtonGroup::from_original_template(*target as u32, label, *anchor)?;
+            if let Kind::HideShowButton {
+                target,
+                action,
+                label,
+                anchor,
+            } = &o.kind
+            {
+                let mut group =
+                    HideShowButtonGroup::from_original_template(*target as u32, label, *anchor)?;
                 group.set_action(*action);
                 group.set_hidden(!o.visible);
                 added.extend_from_slice(&group.encode());
@@ -2941,6 +3007,14 @@ mod tests {
             "wine_offline_ratio",
             "wine_polygon_perimeter",
             "wine_moved_generated_polygon_perimeter",
+            "action_hide_show",
+            "action_hide_show_clicked",
+            "action_hide_show_reclicked",
+            "action_generated_english",
+            "action_generated_english_clicked",
+            "action_port_generated",
+            "action_port_clicked",
+            "action_port_wine_clicked",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -2958,6 +3032,40 @@ mod tests {
         assert_eq!(d.position(m), Some(Point { x: 20., y: 30. }));
         let reopened = Document::from_bytes(&d.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(m), d.position(m));
+    }
+    #[test]
+    fn hide_show_button_survives_original_click_and_port_edit() {
+        let mut doc = Document::open(Path::new("tests/fixtures/action_hide_show.gsp")).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.objects[3].kind.dependencies(), vec![3]);
+        doc.activate_hide_show_button(4).unwrap();
+        assert!(!doc.objects[2].visible);
+        assert!(matches!(
+            doc.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert_eq!(reopened.objects[2].visible, doc.objects[2].visible);
+        assert_eq!(reopened.objects[3].kind, doc.objects[3].kind);
+        doc.undo();
+        assert!(doc.objects[2].visible);
+        doc.redo();
+        assert!(!doc.objects[2].visible);
+        let wine =
+            Document::open(Path::new("tests/fixtures/action_port_wine_clicked.gsp")).unwrap();
+        assert!(!wine.partial_view);
+        assert!(!wine.objects[2].visible);
+        assert!(matches!(
+            wine.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
     }
     #[test]
     fn polygon_perimeter_matches_original_and_updates_after_drag() {

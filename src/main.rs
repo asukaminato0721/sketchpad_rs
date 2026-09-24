@@ -305,7 +305,9 @@ impl Editor {
     }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page && object.visible && !object.deleted
+            object.page == self.doc.active_page
+                && object.visible
+                && !object.deleted
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
                     if sketchpad_rs::render::action_button_rect(v, *anchor, label).contains(p))
         }) {
@@ -736,8 +738,10 @@ impl Editor {
         match self.tool {
             Tool::Select => {
                 let hit = self.hit(v, p);
-                if !multi && let Some(id) = hit
-                    && matches!(self.doc.objects[id - 1].kind, Kind::HideShowButton { .. }) {
+                if !multi
+                    && let Some(id) = hit
+                    && matches!(self.doc.objects[id - 1].kind, Kind::HideShowButton { .. })
+                {
                     match self.doc.activate_hide_show_button(id) {
                         Ok(()) => self.status = format!("Activated button {id}"),
                         Err(error) => self.status = error,
@@ -1207,12 +1211,23 @@ impl Editor {
                 ui.menu_button("Edit", |ui| {
                     ui.menu_button("Action Buttons", |ui| {
                         let target = self.selection_order.iter().copied().find(|id| {
-                            self.doc.objects.get(id - 1).is_some_and(|object|
-                                object.page == self.doc.active_page && object.visible && !object.deleted
-                                && !matches!(object.kind, Kind::HideShowButton { .. } | Kind::Unsupported(_)))
+                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                                object.page == self.doc.active_page
+                                    && object.visible
+                                    && !object.deleted
+                                    && !matches!(
+                                        object.kind,
+                                        Kind::HideShowButton { .. } | Kind::Unsupported(_)
+                                    )
+                            })
                         });
-                        if ui.add_enabled(target.is_some() && !self.doc.partial_view,
-                            egui::Button::new("Hide/Show")).clicked() {
+                        if ui
+                            .add_enabled(
+                                target.is_some() && !self.doc.partial_view,
+                                egui::Button::new("Hide/Show"),
+                            )
+                            .clicked()
+                        {
                             if let Some(target) = target {
                                 match self.doc.add_hide_show_button(target) {
                                     Ok(id) => self.select_only(id),
@@ -1546,11 +1561,26 @@ impl Editor {
                     object.page == self.doc.active_page && object.visible && !object.deleted
                 }) {
                     if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
-                        let box_rect = sketchpad_rs::render::action_button_rect(&vp, *anchor, label);
-                        ui.painter().rect_filled(box_rect, 3., egui::Color32::from_rgb(231, 233, 237));
-                        ui.painter().rect_stroke(box_rect, 3., egui::Stroke::new(1., egui::Color32::from_rgb(94, 102, 114)), egui::StrokeKind::Inside);
-                        ui.painter().text(box_rect.min + egui::vec2(8., 5.), egui::Align2::LEFT_TOP,
-                            label, egui::FontId::proportional(14.), egui::Color32::from_rgb(32, 36, 42));
+                        let box_rect =
+                            sketchpad_rs::render::action_button_rect(&vp, *anchor, label);
+                        ui.painter().rect_filled(
+                            box_rect,
+                            3.,
+                            egui::Color32::from_rgb(231, 233, 237),
+                        );
+                        ui.painter().rect_stroke(
+                            box_rect,
+                            3.,
+                            egui::Stroke::new(1., egui::Color32::from_rgb(94, 102, 114)),
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter().text(
+                            box_rect.min + egui::vec2(8., 5.),
+                            egui::Align2::LEFT_TOP,
+                            label,
+                            egui::FontId::proportional(14.),
+                            egui::Color32::from_rgb(32, 36, 42),
+                        );
                     }
                 }
                 for o in self.doc.objects.iter().filter(|o| {

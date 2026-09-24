@@ -40,7 +40,13 @@ xvfb-run -a bash -c '
   xdotool mousemove 150 150 click --repeat 2 --delay 100 1
   sleep 0.4
   import -window root /tmp/sketchpad_text_object_started.png
-  xdotool type --clearmodifiers --delay 80 "$3"
+  if [[ "${SKETCHPAD_TEXT_OBJECT_MULTILINE:-}" == "1" ]]; then
+    xdotool type --clearmodifiers --delay 80 A
+    xdotool key Return
+    xdotool type --clearmodifiers --delay 80 B
+  else
+    xdotool type --clearmodifiers --delay 80 "$3"
+  fi
   sleep 0.4
   import -window root /tmp/sketchpad_text_object_typed.png
   xdotool mousemove 30 95 click 1
