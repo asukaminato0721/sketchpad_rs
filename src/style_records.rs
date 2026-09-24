@@ -50,7 +50,7 @@ pub struct RgbColor {
 }
 
 pub fn point_color(payload: &[u8]) -> Option<RgbColor> {
-    is_point_header(payload).then_some(RgbColor {
+    is_point_header(payload).then(|| RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
@@ -66,7 +66,7 @@ pub fn set_point_color(payload: &mut [u8], color: RgbColor) -> Result<(), String
 }
 
 pub fn segment_color(payload: &[u8]) -> Option<RgbColor> {
-    is_segment_header(payload).then_some(RgbColor {
+    is_segment_header(payload).then(|| RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
@@ -87,7 +87,7 @@ fn is_circle_header(payload: &[u8]) -> bool {
 }
 
 pub fn circle_color(payload: &[u8]) -> Option<RgbColor> {
-    is_circle_header(payload).then_some(RgbColor {
+    is_circle_header(payload).then(|| RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
@@ -108,7 +108,7 @@ fn is_polygon_header(payload: &[u8]) -> bool {
 }
 
 pub fn polygon_color(payload: &[u8]) -> Option<RgbColor> {
-    is_polygon_header(payload).then_some(RgbColor {
+    is_polygon_header(payload).then(|| RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
@@ -224,7 +224,7 @@ pub fn set_straight_or_arc_line_style(
 }
 
 pub fn straight_or_arc_color(payload: &[u8]) -> Option<RgbColor> {
-    is_straight_or_arc_header(payload).then_some(RgbColor {
+    is_straight_or_arc_header(payload).then(|| RgbColor {
         red: payload[12],
         green: payload[13],
         blue: payload[14],
@@ -237,6 +237,54 @@ pub fn set_straight_or_arc_color(payload: &mut [u8], color: RgbColor) -> Result<
     }
     payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VisualStyle {
+    Point { shape: PointStyle, color: RgbColor },
+    Stroke { line: SegmentLineStyle, color: RgbColor },
+    Polygon { color: RgbColor },
+}
+
+pub fn visual_style(payload: &[u8]) -> Option<VisualStyle> {
+    if let (Some(shape), Some(color)) = (point_style(payload), point_color(payload)) {
+        return Some(VisualStyle::Point { shape, color });
+    }
+    let line = segment_line_style(payload)
+        .or_else(|| circle_line_style(payload))
+        .or_else(|| straight_or_arc_line_style(payload));
+    let color = segment_color(payload)
+        .or_else(|| circle_color(payload))
+        .or_else(|| straight_or_arc_color(payload));
+    if let (Some(line), Some(color)) = (line, color) {
+        return Some(VisualStyle::Stroke { line, color });
+    }
+    polygon_color(payload).map(|color| VisualStyle::Polygon { color })
+}
+
+pub fn set_visual_style(payload: &mut [u8], style: VisualStyle) -> Result<(), String> {
+    match style {
+        VisualStyle::Point { shape, color } if point_style(payload).is_some() => {
+            set_point_style(payload, shape)?;
+            set_point_color(payload, color)
+        }
+        VisualStyle::Stroke { line, color } if segment_line_style(payload).is_some() => {
+            set_segment_line_style(payload, line)?;
+            set_segment_color(payload, color)
+        }
+        VisualStyle::Stroke { line, color } if circle_line_style(payload).is_some() => {
+            set_circle_line_style(payload, line)?;
+            set_circle_color(payload, color)
+        }
+        VisualStyle::Stroke { line, color } if straight_or_arc_line_style(payload).is_some() => {
+            set_straight_or_arc_line_style(payload, line)?;
+            set_straight_or_arc_color(payload, color)
+        }
+        VisualStyle::Polygon { color } if polygon_color(payload).is_some() => {
+            set_polygon_color(payload, color)
+        }
+        _ => Err("Style does not match object header".into()),
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +531,29 @@ mod tests {
         assert_eq!(polygon_color(&edited), Some(RgbColor { red: 0, green: 0, blue: 255 }));
         edited[12..15].copy_from_slice(&header[12..15]);
         assert_eq!(edited, header);
+    }
+
+    #[test]
+    fn visual_style_round_trip_preserves_unrelated_header_bytes() {
+        assert_eq!(visual_style(&[]), None);
+        for bytes in [
+            include_bytes!("../tests/fixtures/point.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/style_medium_solid_line.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/style_green_circle.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/line.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/three_point_arc.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/wine_polygon_perimeter.gsp").as_slice(),
+        ] {
+            for header in records_headers(bytes) {
+                if let Some(style) = visual_style(&header) {
+                    let mut edited = header.clone();
+                    set_visual_style(&mut edited, style).unwrap();
+                    assert_eq!(edited, header);
+                }
+            }
+        }
+        let mut point = first_point_header(include_bytes!("../tests/fixtures/point.gsp")).to_vec();
+        assert!(set_visual_style(&mut point, VisualStyle::Polygon { color: RgbColor { red: 1, green: 2, blue: 3 } }).is_err());
     }
 
     #[test]
