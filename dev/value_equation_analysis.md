@@ -94,6 +94,8 @@ The three unedited port files opened in the supplied Sketchpad 5 under Wine.
 It displayed `0.50`, `y = −0.50x − 0.52`, and
 `(x + 1.30)² + (y − 0.13)² = 1.85²`, then saved each file byte-for-byte
 unchanged. Captures are `/tmp/value_equation_port_{point,line,circle}_wine_before_save.png`.
+The native KDE screenshot `/tmp/sketchpad_native_equation.png` shows the live
+line equation above the rendered line and grid without a runtime error.
 The original point-value source file contains an additional document-level
 font record and remains a partial view; its generated counterpart is a full
 view. Arc point values, custom equation labels, skewed frames, and

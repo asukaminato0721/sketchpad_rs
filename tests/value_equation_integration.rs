@@ -35,6 +35,15 @@ fn original_equation_variants_decode_and_update_after_drag() {
 }
 
 #[test]
+fn original_circle_point_value_uses_normalized_turn() {
+    let bytes = include_bytes!("fixtures/value_equation_circle_point_value_original.gsp");
+    let doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(doc.objects[4].kind, Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: 4, second: 3 }));
+    assert_eq!(doc.value_equation_text(5).as_deref(), Some("Value of Point = 0.38"));
+    assert_eq!(doc.encode().unwrap(), bytes);
+}
+
+#[test]
 fn port_writes_live_point_line_and_circle_results() {
     let cases: &[(&[u8], ValueEquationKind, usize, usize, usize, Point)] = &[
         (

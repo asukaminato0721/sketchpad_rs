@@ -9,4 +9,5 @@ pub mod style_records;
 pub mod table_records;
 pub mod text_object;
 pub mod text_records;
+pub mod text_style_records;
 pub mod value_equation_records;
