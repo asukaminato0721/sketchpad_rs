@@ -67,7 +67,7 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Point on Object | Pending |
+| Point on Object | Partial: segment and circle hosts, including drag and generated-file cross-open |
 | Midpoint | Partial |
 | Intersection | Partial: straight, line-circle, and circle-circle constructions; generated examples opened in Sketchpad 5 |
 | Segment | Partial |

@@ -31,6 +31,7 @@ pub enum Kind {
     CircleBySegment(usize, usize),
     Bisector(usize, usize, usize),
     ThreePointArc(usize, usize, usize),
+    ArcOnCircle(usize, usize, usize),
     Intersection(usize, usize),
     LineCircleIntersection(usize, usize, usize),
     CircleCircleIntersection(usize, usize, usize),
@@ -152,6 +153,10 @@ fn header(kind: u16) -> [u8; 28] {
         ],
         81 => [
             81, 0, 0, 0, 0, 0, 12, 0, 67, 0, 0x22, 1, 0, 0x80, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
+        79 => [
+            79, 0, 0, 0, 0, 0, 12, 0, 67, 0, 0x22, 1, 0, 0x80, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         _ => unreachable!(),
@@ -516,6 +521,13 @@ impl Document {
                     (63, _, [a, b]) => Kind::Line(*a, *b),
                     (64, _, [a, b]) => Kind::Ray(*a, *b),
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
+                    (79, _, [circle, start, end])
+                        if objects.get(circle - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                            && objects.get(start - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle))
+                            && objects.get(end - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle)) =>
+                    {
+                        Kind::ArcOnCircle(*circle, *start, *end)
+                    }
                     _ => Kind::Unsupported(code),
                 }
             };
@@ -641,7 +653,7 @@ impl Document {
                     let (center, radius) = d.circle_points(*host)?;
                     Some(Point {
                         x: center.x + radius * unit_x,
-                        y: center.y + radius * unit_y,
+                        y: center.y - radius * unit_y,
                     })
                 }
                 Kind::Midpoint(a, b) => {
@@ -767,11 +779,27 @@ impl Document {
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
-        let Kind::ThreePointArc(a, b, c) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
-        };
-        let (center, radius, start, sweep) =
-            three_point_arc_geometry(self.position(a)?, self.position(b)?, self.position(c)?)?;
+        let (center, radius, start, sweep, clockwise_y) =
+            match self.objects.get(id.checked_sub(1)?)?.kind {
+                Kind::ThreePointArc(a, b, c) => {
+                    let (center, radius, start, sweep) = three_point_arc_geometry(
+                        self.position(a)?,
+                        self.position(b)?,
+                        self.position(c)?,
+                    )?;
+                    (center, radius, start, sweep, false)
+                }
+                Kind::ArcOnCircle(circle, start, end) => {
+                    let (center, radius) = self.circle_points(circle)?;
+                    let start_point = self.position(start)?;
+                    let end_point = self.position(end)?;
+                    let a = (center.y - start_point.y).atan2(start_point.x - center.x);
+                    let b = (center.y - end_point.y).atan2(end_point.x - center.x);
+                    let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
+                    (center, radius, a, sweep, true)
+                }
+                _ => return None,
+            };
         let count = subdivisions.max(2);
         Some(
             (0..=count)
@@ -779,7 +807,12 @@ impl Document {
                     let angle = start + sweep * step as f64 / count as f64;
                     Point {
                         x: center.x + radius * angle.cos(),
-                        y: center.y + radius * angle.sin(),
+                        y: center.y
+                            + if clockwise_y {
+                                -radius * angle.sin()
+                            } else {
+                                radius * angle.sin()
+                            },
                     }
                 })
                 .collect(),
@@ -816,7 +849,7 @@ impl Document {
                 if length < 1e-9 {
                     return false;
                 }
-                Kind::PointOnCircle(host, dx / length, dy / length)
+                Kind::PointOnCircle(host, dx / length, -dy / length)
             }
             _ => return false,
         };
@@ -842,7 +875,7 @@ impl Document {
                 let dx = p.x - center.x;
                 let dy = p.y - center.y;
                 let length = dx.hypot(dy);
-                (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, dy / length))
+                (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
             _ => None,
         }
@@ -878,7 +911,9 @@ impl Document {
                 | Kind::Intersection(a, b)
                 | Kind::LineCircleIntersection(a, b, _)
                 | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
-                Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) => vec![a, b, c],
+                Kind::Bisector(a, b, c)
+                | Kind::ThreePointArc(a, b, c)
+                | Kind::ArcOnCircle(a, b, c) => vec![a, b, c],
                 _ => vec![],
             };
             if refs.iter().any(|&r| r == 0 || r >= o.id) {
@@ -936,6 +971,14 @@ impl Document {
                     if self.position(a).is_none() || self.position(b).is_none() || self.position(c).is_none())
             {
                 return Err(format!("Invalid points in three-point arc {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::ArcOnCircle(circle,start,end)
+                    if self.circle_points(circle).is_none()
+                    || !matches!(self.objects.get(start.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle)
+                    || !matches!(self.objects.get(end.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle))
+            {
+                return Err(format!("Invalid circle or endpoints in arc {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::LineCircleIntersection(a,b,variant)
@@ -1043,6 +1086,7 @@ impl Document {
                 Kind::Line(a, b) => (63, vec![a, b]),
                 Kind::Ray(a, b) => (64, vec![a, b]),
                 Kind::ThreePointArc(a, b, c) => (81, vec![a, b, c]),
+                Kind::ArcOnCircle(a, b, c) => (79, vec![a, b, c]),
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
@@ -1616,10 +1660,42 @@ mod tests {
                 .constrained_point(circle, Point { x: 0., y: 9. })
                 .unwrap(),
         );
+        assert_eq!(
+            created.objects[on_circle - 1].kind,
+            Kind::PointOnCircle(circle, 0., -1.)
+        );
         assert_eq!(created.position(on_segment), Some(Point { x: 4., y: 0. }));
         assert_eq!(created.position(on_circle), Some(Point { x: 0., y: 10. }));
         let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(on_segment), created.position(on_segment));
         assert_eq!(reopened.position(on_circle), created.position(on_circle));
+    }
+    #[test]
+    fn arc_on_circle_matches_original_and_updates() {
+        let bytes = fs::read("tests/fixtures/arc_on_circle.gsp").unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(original.objects[5].kind, Kind::ArcOnCircle(3, 4, 5));
+        assert_eq!(original.encode().unwrap(), bytes);
+        let points = original.arc_points(6, 48).unwrap();
+        assert!((points[0].distance(original.position(4).unwrap())) < 1e-6);
+        assert!((points[48].distance(original.position(5).unwrap())) < 1e-6);
+        original.move_point(4, Point { x: 300., y: 300. });
+        assert_ne!(original.arc_points(6, 48).unwrap(), points);
+
+        let mut created = Document::new();
+        let center = created.add(Kind::Free(Point { x: 100., y: 100. }));
+        let radius = created.add(Kind::Free(Point { x: 140., y: 100. }));
+        let circle = created.add(Kind::Circle(center, radius));
+        let start = created.add(Kind::PointOnCircle(circle, 1., 0.));
+        let end = created.add(Kind::PointOnCircle(circle, 0., 1.));
+        let arc = created.add(Kind::ArcOnCircle(circle, start, end));
+        let generated = created.encode().unwrap();
+        let reopened = Document::from_bytes(&generated, None).unwrap();
+        assert_eq!(
+            reopened.objects[arc - 1].kind,
+            Kind::ArcOnCircle(circle, start, end)
+        );
+        assert_eq!(reopened.arc_points(arc, 48), created.arc_points(arc, 48));
+        assert!(!reopened.partial_view);
     }
 }

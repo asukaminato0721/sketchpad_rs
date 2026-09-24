@@ -162,7 +162,7 @@ impl Editor {
                             let (center, radius) = self.doc.circle_points(o.id)?;
                             ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                         }
-                        Kind::ThreePointArc(_, _, _) => {
+                        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
                             let points = self.doc.arc_points(o.id, 96)?;
                             points
                                 .windows(2)
@@ -339,6 +339,51 @@ impl Editor {
         let id = self.doc.add(Kind::CircleBySegment(centers[0], segments[0]));
         self.select_only(id);
     }
+    fn point_on_object(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let host = self.selection_order.iter().copied().find(|id| {
+            matches!(
+                self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                Some(Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+            )
+        });
+        let Some(host) = host else {
+            self.status = "Select a segment or circle".into();
+            return;
+        };
+        if self.selection_order.len() > 2 {
+            self.status = "Select one host, optionally with a point to project".into();
+            return;
+        }
+        let position = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|id| *id != host)
+            .find_map(|id| self.doc.position(id))
+            .or_else(|| {
+                if let Some((a, b, _)) = self.doc.line_points(host) {
+                    Some(Point {
+                        x: (a.x + b.x) / 2.,
+                        y: (a.y + b.y) / 2.,
+                    })
+                } else {
+                    self.doc.circle_points(host).map(|(center, radius)| Point {
+                        x: center.x + radius,
+                        y: center.y,
+                    })
+                }
+            });
+        let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {
+            self.status = "Selected host has no usable geometry".into();
+            return;
+        };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
     fn intersection(&mut self) {
         if self.doc.partial_view {
             self.status = "Construction on this document cannot be saved safely".into();
@@ -405,6 +450,25 @@ impl Editor {
             return;
         }
         let id = self.doc.add(Kind::ThreePointArc(ids[0], ids[1], ids[2]));
+        self.select_only(id);
+    }
+    fn arc_on_circle(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 {
+            self.status = "Select a circle, then its start and end points".into();
+            return;
+        }
+        let (circle, start, end) = (ids[0], ids[1], ids[2]);
+        let valid = [start,end].iter().all(|id| matches!(self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle));
+        if !valid || self.doc.circle_points(circle).is_none() {
+            self.status = "Select a circle and two points constrained to it".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ArcOnCircle(circle, start, end));
         self.select_only(id);
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
@@ -485,6 +549,10 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Construct", |ui| {
+                    if ui.button("Point on Object").clicked() {
+                        self.point_on_object();
+                        ui.close();
+                    }
                     if ui.button("Segment").clicked() {
                         self.pair(0);
                         ui.close();
@@ -519,6 +587,10 @@ impl Editor {
                     }
                     if ui.button("Arc through 3 Points").clicked() {
                         self.three_point_arc();
+                        ui.close();
+                    }
+                    if ui.button("Arc on Circle").clicked() {
+                        self.arc_on_circle();
                         ui.close();
                     }
                     if ui.button("Parallel Line").clicked() {
