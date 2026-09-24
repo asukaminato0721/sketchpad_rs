@@ -298,7 +298,9 @@ impl Editor {
                     (p - (a + ab * t)).length()
                 } else {
                     match o.kind {
-                        Kind::Circle(_, _) | Kind::CircleBySegment(_, _) => {
+                        Kind::Circle(_, _)
+                        | Kind::CircleBySegment(_, _)
+                        | Kind::ReflectedCircle(_, _) => {
                             let (center, radius) = self.doc.circle_points(o.id)?;
                             ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                         }
@@ -524,6 +526,7 @@ impl Editor {
                     Kind::Segment(_, _)
                         | Kind::Circle(_, _)
                         | Kind::CircleBySegment(_, _)
+                        | Kind::ReflectedCircle(_, _)
                         | Kind::ThreePointArc(_, _, _)
                         | Kind::ArcOnCircle(_, _, _)
                 )
@@ -683,11 +686,19 @@ impl Editor {
             return;
         }
         let (source, mirror) = (self.selection_order[0], self.selection_order[1]);
-        if self.doc.position(source).is_none() || self.doc.line_points(mirror).is_none() {
-            self.status = "Select a point, then a mirror line".into();
+        if self.doc.line_points(mirror).is_none() {
+            self.status = "Select a point or circle, then a mirror line".into();
             return;
         }
-        let id = self.doc.add(Kind::ReflectedPoint(source, mirror));
+        let kind = if self.doc.position(source).is_some() {
+            Kind::ReflectedPoint(source, mirror)
+        } else if self.doc.circle_points(source).is_some() {
+            Kind::ReflectedCircle(source, mirror)
+        } else {
+            self.status = "Select a point or circle, then a mirror line".into();
+            return;
+        };
+        let id = self.doc.add(kind);
         self.select_only(id);
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
@@ -846,7 +857,7 @@ impl Editor {
                         self.translate_dialog = true;
                         ui.close();
                     }
-                    if ui.button("Reflect Point across Line").clicked() {
+                    if ui.button("Reflect across Line").clicked() {
                         self.reflect_selected();
                         ui.close();
                     }

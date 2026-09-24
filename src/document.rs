@@ -35,7 +35,8 @@ impl Kind {
             | Kind::Intersection(a, b)
             | Kind::LineCircleIntersection(a, b, _)
             | Kind::CircleCircleIntersection(a, b, _)
-            | Kind::ReflectedPoint(a, b) => vec![a, b],
+            | Kind::ReflectedPoint(a, b)
+            | Kind::ReflectedCircle(a, b) => vec![a, b],
             Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::ArcOnCircle(a, b, c) => {
                 vec![a, b, c]
             }
@@ -51,6 +52,7 @@ pub enum Kind {
     PointOnArc(usize, f64),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
+    ReflectedCircle(usize, usize),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -174,8 +176,8 @@ fn header(kind: u16) -> [u8; 28] {
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         34 => [
-            34, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0, 0,
-            0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+            34, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0, 0, 0xc1, 0xbd,
+            0xf0, 0xff, 0, 0, 0, 0,
         ],
         9 | 11..=14 => [
             kind as u8, 0, 0, 0, 0, 0, 1, 0, 0x2d, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39,
@@ -213,10 +215,26 @@ fn is_straight_kind(kind: &Kind) -> bool {
 }
 
 fn is_point_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _)
-        | Kind::PointOnArc(_, _) | Kind::PolarTranslatedPoint(_, _, _, _)
-        | Kind::ReflectedPoint(_, _) | Kind::Midpoint(_, _) | Kind::Intersection(_, _)
-        | Kind::LineCircleIntersection(_, _, _) | Kind::CircleCircleIntersection(_, _, _))
+    matches!(
+        kind,
+        Kind::Free(_)
+            | Kind::PointOnSegment(_, _)
+            | Kind::PointOnCircle(_, _, _)
+            | Kind::PointOnArc(_, _)
+            | Kind::PolarTranslatedPoint(_, _, _, _)
+            | Kind::ReflectedPoint(_, _)
+            | Kind::Midpoint(_, _)
+            | Kind::Intersection(_, _)
+            | Kind::LineCircleIntersection(_, _, _)
+            | Kind::CircleCircleIntersection(_, _, _)
+    )
+}
+
+fn is_circle_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _)
+    )
 }
 
 fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
@@ -227,8 +245,14 @@ fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
         return None;
     }
     let t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / length_sq;
-    let projected = Point { x: a.x + t * dx, y: a.y + t * dy };
-    let reflected = Point { x: 2. * projected.x - point.x, y: 2. * projected.y - point.y };
+    let projected = Point {
+        x: a.x + t * dx,
+        y: a.y + t * dy,
+    };
+    let reflected = Point {
+        x: 2. * projected.x - point.x,
+        y: 2. * projected.y - point.y,
+    };
     (reflected.x.is_finite() && reflected.y.is_finite()).then_some(reflected)
 }
 
@@ -523,7 +547,7 @@ impl Document {
                                 Kind::PointOnSegment(*host, f64_at(payload, 4))
                             }
                             (
-                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)),
+                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _)),
                                 Some((payload, _)),
                             ) if payload.len() == 20
                                 && payload[..4] == [15, 0, 28, 0]
@@ -575,6 +599,12 @@ impl Document {
                     {
                         Kind::ReflectedPoint(*source, *mirror)
                     }
+                    (34, _, [source, mirror])
+                        if objects.get(source - 1).is_some_and(|o| is_circle_kind(&o.kind))
+                            && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
+                    {
+                        Kind::ReflectedCircle(*source, *mirror)
+                    }
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
                             Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
@@ -593,10 +623,7 @@ impl Document {
                             .get(a.saturating_sub(1))
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
-                                matches!(
-                                    object.kind,
-                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-                                )
+                                is_circle_kind(&object.kind)
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 1)
@@ -606,10 +633,7 @@ impl Document {
                             .get(a.saturating_sub(1))
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
-                                matches!(
-                                    object.kind,
-                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-                                )
+                                is_circle_kind(&object.kind)
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 0)
@@ -620,7 +644,7 @@ impl Document {
                     (64, _, [a, b]) => Kind::Ray(*a, *b),
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
                     (79, _, [circle, start, end])
-                        if objects.get(circle - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                        if objects.get(circle - 1).is_some_and(|o| is_circle_kind(&o.kind))
                             && objects.get(start - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle))
                             && objects.get(end - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle)) =>
                     {
@@ -872,6 +896,11 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        if let Kind::ReflectedCircle(source, mirror) = self.objects.get(id.checked_sub(1)?)?.kind {
+            let (center, radius) = self.circle_points(source)?;
+            let (a, b, _) = self.line_points(mirror)?;
+            return Some((reflect_point(center, a, b)?, radius));
+        }
         let (center_id, radius) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Circle(center, radius_point) => {
                 let center_position = self.position(center)?;
@@ -1031,7 +1060,7 @@ impl Document {
                 let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
                 Some(Kind::PointOnSegment(host, t.clamp(0., 1.)))
             }
-            Kind::Circle(_, _) | Kind::CircleBySegment(_, _) => {
+            Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) => {
                 let (center, _) = self.circle_points(host)?;
                 let dx = p.x - center.x;
                 let dy = p.y - center.y;
@@ -1093,6 +1122,24 @@ impl Document {
                     || !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if is_point_kind(kind)))
             {
                 return Err(format!("Invalid point or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::ReflectedCircle(source, mirror)
+                    if self.circle_points(source).is_none() || self.line_points(mirror).is_none()
+                    || self.circle_points(o.id).is_none())
+            {
+                return Err(format!("Invalid circle or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(
+                    o.kind,
+                    Kind::PolarTranslatedPoint(_, _, _, _) | Kind::ReflectedPoint(_, _)
+                )
+                && !self
+                    .position(o.id)
+                    .is_some_and(|p| p.x.is_finite() && p.y.is_finite())
+            {
+                return Err(format!("Undefined transformed point {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
@@ -1234,6 +1281,7 @@ impl Document {
                 | Kind::PointOnArc(host, _) => (15, vec![host]),
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
                 Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
+                Kind::ReflectedCircle(source, mirror) => (34, vec![source, mirror]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -1262,6 +1310,12 @@ impl Document {
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
+            if matches!(o.kind, Kind::ReflectedCircle(_, _)) {
+                h = header(3);
+                h[0] = 34;
+                h[18] = 0;
+                h[19] = 0;
+            }
             if !o.visible {
                 h[2] = 1;
             }
@@ -1356,6 +1410,7 @@ impl Document {
         result?;
         for (object, saved) in self.objects.iter_mut().zip(&reparsed.objects) {
             object.point_offset = saved.point_offset;
+            object.constraint_offset = saved.constraint_offset;
             object.header_offset = saved.header_offset;
         }
         self.original = data;
@@ -1395,6 +1450,8 @@ mod tests {
             "example_tools",
             "wine_moved_demo",
             "reflection",
+            "wine_moved_reflection",
+            "wine_moved_reflected_circle",
         ] {
             let p = format!("tests/fixtures/{name}.gsp");
             let b = fs::read(p).unwrap();
@@ -1496,6 +1553,27 @@ mod tests {
         let r = Document::open(&p).unwrap();
         assert_eq!(r.position(id), Some(Point { x: 56., y: 78. }));
         fs::remove_file(p).unwrap();
+    }
+    #[test]
+    fn constrained_point_can_move_after_first_save() {
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_constraint_save_{}.gsp",
+            std::process::id()
+        ));
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 100., y: 0. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let constrained = doc.add(Kind::PointOnSegment(segment, 0.25));
+        doc.save_to(&path).unwrap();
+        assert!(doc.move_point(constrained, Point { x: 75., y: 10. }));
+        doc.save_to(&path).unwrap();
+        let reopened = Document::open(&path).unwrap();
+        assert_eq!(
+            reopened.position(constrained),
+            Some(Point { x: 75., y: 0. })
+        );
+        fs::remove_file(path).unwrap();
     }
     #[test]
     fn invalid_coordinates_do_not_replace_a_file() {
@@ -1938,7 +2016,10 @@ mod tests {
 
         let moved = Document::open(Path::new("tests/fixtures/wine_moved_translation.gsp")).unwrap();
         assert_eq!(moved.position(1), Some(Point { x: 241., y: 221. }));
-        assert!(matches!(moved.objects[1].kind, Kind::PolarTranslatedPoint(1, 90., _, 1.)));
+        assert!(matches!(
+            moved.objects[1].kind,
+            Kind::PolarTranslatedPoint(1, 90., _, 1.)
+        ));
         assert!((moved.position(2).unwrap().y - 183.20472440944883).abs() < 1e-6);
     }
     #[test]
@@ -1946,14 +2027,19 @@ mod tests {
         let bytes = fs::read("tests/fixtures/reflection.gsp").unwrap();
         let mut original = Document::from_bytes(&bytes, None).unwrap();
         assert_eq!(original.objects[13].kind, Kind::ReflectedPoint(1, 4));
+        assert_eq!(original.objects[14].kind, Kind::ReflectedCircle(12, 4));
         assert_eq!(original.encode().unwrap(), bytes);
         let (a, b, _) = original.line_points(4).unwrap();
-        assert_eq!(original.position(14), reflect_point(original.position(1).unwrap(), a, b));
+        assert_eq!(
+            original.position(14),
+            reflect_point(original.position(1).unwrap(), a, b)
+        );
         let prior = original.position(14);
         original.move_point(1, Point { x: 300., y: 150. });
         assert_ne!(original.position(14), prior);
         let reopened = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(14), original.position(14));
+        assert_eq!(reopened.circle_points(15), original.circle_points(15));
 
         let mut created = Document::new();
         let source = created.add(Kind::Free(Point { x: 50., y: 50. }));
@@ -1963,11 +2049,57 @@ mod tests {
         let result = created.add(Kind::ReflectedPoint(source, mirror));
         assert_eq!(created.position(result), Some(Point { x: 50., y: 150. }));
         let encoded = created.encode().unwrap();
-        let headers: Vec<_> = records(&encoded).unwrap().into_iter().filter(|r| r.kind == 0x7d0).collect();
+        let headers: Vec<_> = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == 0x7d0)
+            .collect();
         assert_eq!(&encoded[headers[4].data.clone()], &header(34));
         let reopened = Document::from_bytes(&encoded, None).unwrap();
         assert!(!reopened.partial_view);
-        assert_eq!(reopened.objects[4].kind, Kind::ReflectedPoint(source, mirror));
+        assert_eq!(
+            reopened.objects[4].kind,
+            Kind::ReflectedPoint(source, mirror)
+        );
         assert_eq!(reopened.position(result), created.position(result));
+
+        let radius_point = created.add(Kind::Free(Point { x: 70., y: 50. }));
+        let circle = created.add(Kind::Circle(source, radius_point));
+        let reflected_circle = created.add(Kind::ReflectedCircle(circle, mirror));
+        assert_eq!(
+            created.circle_points(reflected_circle),
+            Some((Point { x: 50., y: 150. }, 20.))
+        );
+        let encoded = created.encode().unwrap();
+        let headers: Vec<_> = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == 0x7d0)
+            .collect();
+        assert_eq!(
+            &encoded[headers[7].data.clone()],
+            &[
+                34, 0, 0, 0, 0, 0, 3, 0, 28, 0, 34, 1, 0, 128, 0, 0, 255, 255, 0, 0, 193, 189, 240,
+                255, 0, 0, 0, 0
+            ]
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.circle_points(reflected_circle),
+            created.circle_points(reflected_circle)
+        );
+
+        let wine = Document::open(Path::new("tests/fixtures/wine_moved_reflection.gsp")).unwrap();
+        assert_eq!(wine.objects[4].kind, Kind::ReflectedPoint(1, 4));
+        assert_eq!(wine.position(1), Some(Point { x: 241., y: 130. }));
+        assert_eq!(wine.position(5), Some(Point { x: 241., y: 210. }));
+
+        let wine_circle =
+            Document::open(Path::new("tests/fixtures/wine_moved_reflected_circle.gsp")).unwrap();
+        assert_eq!(wine_circle.objects[8].kind, Kind::ReflectedCircle(8, 4));
+        let (center, radius) = wine_circle.circle_points(9).unwrap();
+        assert_eq!(center, Point { x: 271., y: 139. });
+        assert!((radius - 52.55473337388365).abs() < 1e-6);
     }
 }
