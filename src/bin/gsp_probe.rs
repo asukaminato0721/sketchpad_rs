@@ -246,6 +246,20 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::PointDistance(a, b));
                     println!("line {}: distance -> object {id}", index + 1);
                 }
+                "ratio" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [a, b, c] = ids.as_slice() else {
+                        return Err("expected origin, base, and target point IDs".into());
+                    };
+                    if document.ratio_for_points(*a, *b, *c).is_none() {
+                        return Err("ratio requires a nonzero base between two points".into());
+                    }
+                    let id = document.add(Kind::PointRatio(*a, *b, *c));
+                    println!("line {}: ratio -> object {id}", index + 1);
+                }
                 "circumference" => {
                     let circle: usize = rest.parse().map_err(|_| "invalid circle ID")?;
                     let id = document.add(Kind::CircleCircumference(circle));

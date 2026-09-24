@@ -22,6 +22,7 @@ impl Kind {
             self,
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
+                | Kind::PointRatio(_, _, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
                 | Kind::CircleRadius(_)
@@ -73,6 +74,7 @@ impl Kind {
             | Kind::AngleMeasurement(a, b, c) => {
                 vec![a, b, c]
             }
+            Kind::PointRatio(a, b, c) => vec![a, b, c],
             Kind::Polygon(_) => unreachable!(),
         }
     }
@@ -95,6 +97,7 @@ impl Kind {
             Kind::ArcLength(a) => Kind::ArcLength(m(a)),
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
+            Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
             }
@@ -142,6 +145,7 @@ pub enum Kind {
     ArcLength(usize),
     AngleMeasurement(usize, usize, usize),
     PointDistance(usize, usize),
+    PointRatio(usize, usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     ReflectedPoint(usize, usize),
     ReflectedCircle(usize, usize),
@@ -634,7 +638,7 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46) => {
+                    0x0903 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
@@ -652,6 +656,7 @@ impl Document {
                             }
                             44 => &include_bytes!("../assets/arc_length_measurement_group.bin")
                                 [60..92],
+                            47 => &include_bytes!("../assets/ratio_measurement_group.bin")[68..100],
                             _ => &include_bytes!("../assets/radius_measurement_group.bin")[60..92],
                         };
                         measurement_format = d.len() == sample.len()
@@ -663,7 +668,7 @@ impl Document {
                                     matches!(i, 12..=15 | 22 | 30 | 31) || actual == expected
                                 });
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46) => {
+                    0x07d8 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
@@ -682,6 +687,8 @@ impl Document {
                                 [100..102],
                             44 => &include_bytes!("../assets/arc_length_measurement_group.bin")
                                 [100..102],
+                            47 => &include_bytes!("../assets/ratio_measurement_group.bin")
+                                [108..110],
                             _ => {
                                 &include_bytes!("../assets/radius_measurement_group.bin")[100..102]
                             }
@@ -705,7 +712,7 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46)
+                    && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                 {
                     safe = false;
@@ -735,6 +742,12 @@ impl Document {
                             && objects.get(b - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
                         Kind::PointDistance(*a, *b)
+                    }
+                    (47, _, [a, b, c])
+                        if measurement_format && measurement_style
+                            && [a, b, c].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| is_point_kind(&o.kind))) =>
+                    {
+                        Kind::PointRatio(*a, *b, *c)
                     }
                     (39, _, [host])
                         if measurement_format && measurement_style
@@ -1279,6 +1292,26 @@ impl Document {
         };
         Some(self.position(a)?.distance(self.position(b)?) / 37.79527559055118)
     }
+    pub fn ratio_for_points(&self, a: usize, b: usize, c: usize) -> Option<f64> {
+        let (a, b, c) = (self.position(a)?, self.position(b)?, self.position(c)?);
+        let (bx, by) = (b.x - a.x, b.y - a.y);
+        let denominator = bx.mul_add(bx, by * by);
+        if !denominator.is_finite() || denominator <= 0.0 {
+            return None;
+        }
+        let value = ((c.x - a.x) * bx + (c.y - a.y) * by) / denominator;
+        value.is_finite().then_some(value)
+    }
+    pub fn ratio_value(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::PointRatio(a, b, c) = object.kind else {
+            return None;
+        };
+        self.ratio_for_points(a, b, c)
+    }
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
@@ -1814,6 +1847,11 @@ impl Document {
             {
                 return Err(format!("Invalid points in distance measurement {}", o.id));
             }
+            if matches!(o.kind, Kind::PointRatio(_, _, _))
+                && self.ratio_value(o.id).is_none()
+            {
+                return Err(format!("Invalid points in ratio measurement {}", o.id));
+            }
             if matches!(o.kind, Kind::PolygonPerimeter(_))
                 && self
                     .perimeter_cm(o.id)
@@ -2104,6 +2142,18 @@ impl Document {
                 group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 64, &mut measurement_row)?;
+                if !o.visible {
+                    group[10] = 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::PointRatio(a, b, c) = o.kind {
+                let mut group = *include_bytes!("../assets/ratio_measurement_group.bin");
+                group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
+                group[56..60].copy_from_slice(&(c as u32).to_le_bytes());
+                Self::place_measurement(&mut group, 68, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -2416,6 +2466,8 @@ mod tests {
             "wine_segment_slope",
             "wine_point_ratio",
             "wine_moved_ratio",
+            "wine_opposite_ratio",
+            "wine_offline_ratio",
             "wine_polygon_perimeter",
             "wine_moved_generated_polygon_perimeter",
         ] {
@@ -2490,6 +2542,37 @@ mod tests {
         let b = doc.add(Kind::Free(Point { x: 20., y: 0. }));
         doc.add(Kind::Polygon(vec![a, b, a]));
         assert!(doc.encode().is_err());
+    }
+    #[test]
+    fn ratio_matches_signed_projection_after_drag_and_reopen() {
+        for (path, expected) in [
+            ("wine_point_ratio", 1.2),
+            ("wine_moved_ratio", 1.4),
+            ("wine_opposite_ratio", -1.0),
+            ("wine_offline_ratio", 1.2),
+        ] {
+            let path = format!("tests/fixtures/{path}.gsp");
+            let doc = Document::open(Path::new(&path)).unwrap();
+            assert_eq!(doc.objects[3].kind, Kind::PointRatio(1, 2, 3));
+            assert!((doc.ratio_value(4).unwrap() - expected).abs() < 1e-9);
+        }
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 150., y: 100. }));
+        let b = doc.add(Kind::Free(Point { x: 250., y: 100. }));
+        let c = doc.add(Kind::Free(Point { x: 270., y: 100. }));
+        let ratio = doc.add(Kind::PointRatio(a, b, c));
+        assert!((doc.ratio_value(ratio).unwrap() - 1.2).abs() < 1e-9);
+        let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::PointRatio(a, b, c));
+        reopened.checkpoint();
+        assert!(reopened.move_point(c, Point { x: 50., y: 150. }));
+        assert!((reopened.ratio_value(ratio).unwrap() + 1.0).abs() < 1e-9);
+        reopened.undo();
+        assert!((reopened.ratio_value(ratio).unwrap() - 1.2).abs() < 1e-9);
+        reopened.redo();
+        assert!((reopened.ratio_value(ratio).unwrap() + 1.0).abs() < 1e-9);
+        let saved = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+        assert!((saved.ratio_value(ratio).unwrap() + 1.0).abs() < 1e-9);
     }
     #[test]
     fn undo_redo() {

@@ -6,7 +6,9 @@ I inspected 397 `0x07d5` label payloads and 49 `0x08fc` rich-text payloads acros
 
 `text_point_label.gsp`, `text_ray_label_hide.gsp`, and `text_on_point.gsp` are copies of the sibling project's original Sketchpad fixtures. `text_point_label_dragged.gsp` was edited and saved in the supplied Sketchpad 5 through Wine. Dragging the visible `A` label above its point changed only the label's offset among its object records, from `(8, 5)` to `(8, -34)`. The label remained attached to its point. The application also updated unrelated document preference bytes, which this module preserves untouched.
 
-I generated a one-point document with `gsp_probe demo`, inserted the module's canonical point-label records with `dev/text_label_probe.rs`, and opened it through the Wine harness. The harness verified the Sketchpad window title and saved an 1880-byte file. The shared screenshot path was overwritten by another concurrent probe, so that run alone is not visual confirmation of the generated label.
+I generated a one-point document with `gsp_probe replay`, inserted the module's canonical point-label records with `dev/text_label_probe.rs`, and opened it through the Wine harness. The dedicated screenshot showed the red point and its `P` label in Sketchpad 5. The application accepted and saved the 1880-byte file.
+
+I changed the plain text fixture's four-byte `text` literal to `More` through `dev/text_plain_probe.rs`. Sketchpad 5 opened it and displayed `More`; the port reopened it byte-for-byte. A five-byte replacement (`Hello`) did not open in Sketchpad despite internally consistent `0x08fc` lengths. There is another length or layout dependency, so the helper now rejects replacements with a different byte count.
 
 ## Observed layouts
 
@@ -32,11 +34,17 @@ For an existing object, parse its `0x07d5` payload with `LabelAux::parse`, expos
 
 For a plain text object, `RichTextPayload` exposes the anchor and raw markup, and `TextBox` exposes its screen rectangle. A text object in `text_on_point.gsp` has object code 0 but no `0x0899` coordinate record; it contains `0x08fc`, `0x07d8`, and `0x0898`. The core parser should distinguish it from a free point. Dynamic rich-text markup can contain group references, so structural edits should remain blocked for those objects until reference decoding and remapping are implemented.
 
+`RichTextPayload::replace_simple_text` supports only the fixture's literal `<VL<T4x...>>` form and replacements with the same UTF-8 byte length. It rejects markup delimiters. Its successful `text` to `More` edit was visually checked in Sketchpad 5. Do not expose arbitrary-length text editing through this helper yet.
+
 To repeat the generated label probe:
 
 ```sh
 cargo run --offline --bin gsp_probe -- replay tests/text_label_replay.txt
 rustc --edition=2024 -Awarnings dev/text_label_probe.rs -o /tmp/sketchpad_text_label_probe
 /tmp/sketchpad_text_label_probe /tmp/sketchpad_text_generated_unlabeled.gsp /tmp/sketchpad_text_generated_labeled.gsp P
-./dev/wine_roundtrip.sh /tmp/sketchpad_text_generated_labeled.gsp
+SKETCHPAD_WINE_CAPTURE_PREFIX=/tmp/sketchpad_text_probe ./dev/wine_roundtrip.sh /tmp/sketchpad_text_generated_labeled.gsp
+
+rustc --edition=2024 -Awarnings dev/text_plain_probe.rs -o /tmp/sketchpad_text_plain_probe
+/tmp/sketchpad_text_plain_probe tests/fixtures/text_on_point.gsp /tmp/sketchpad_text_more.gsp More
+SKETCHPAD_WINE_CAPTURE_PREFIX=/tmp/sketchpad_text_more_probe ./dev/wine_roundtrip.sh /tmp/sketchpad_text_more.gsp
 ```

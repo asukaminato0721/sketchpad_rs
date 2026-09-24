@@ -175,6 +175,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             .unwrap();
             row += 1;
         }
+        if let Some(ratio) = doc.ratio_value(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Ratio = {:.2}</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                ratio
+            )
+            .unwrap();
+            row += 1;
+        }
         if let Some(perimeter) = doc.perimeter_cm(object.id) {
             writeln!(
                 svg,

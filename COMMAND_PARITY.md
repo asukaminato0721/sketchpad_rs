@@ -107,14 +107,14 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Length | Partial: segment length, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Distance | Partial: two-point distance, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Perimeter | Pending |
+| Perimeter | Partial: polygon interior perimeter, dynamic value, SVG, generated file edited in Sketchpad 5 |
 | Circumference | Partial: circle circumference, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Angle | Partial: three-point angle, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Area | Partial: circle area, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Arc Angle | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Arc Length | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Ratio | Pending: original three-collinear-point record and live update captured |
+| Ratio | Partial: signed point ratio, dynamic projection after drag, SVG, generated positive and negative files opened in Sketchpad 5 |
 | Value of Point | Pending |
 | Coordinates | Pending |
 | Abscissa (x) | Pending |

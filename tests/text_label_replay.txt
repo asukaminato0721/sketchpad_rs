@@ -1,3 +1,3 @@
 # Create an unlabeled point in Rust, then add a label with dev/text_label_probe.rs.
-point 220 230
+point 220 120
 save /tmp/sketchpad_text_generated_unlabeled.gsp

@@ -170,6 +170,38 @@ impl RichTextPayload {
         let len = u16::from_le_bytes(self.payload[16..18].try_into().unwrap()) as usize;
         &self.payload[18..18 + len]
     }
+
+    /// Decode only the simple literal form used by the original plain text
+    /// fixture. Dynamic text, formatting runs, and hot references stay raw.
+    pub fn simple_text(&self) -> Option<&str> {
+        let markup = self.markup_bytes();
+        let content = markup.strip_prefix(b"<VL<T4x")?.strip_suffix(b">>")?;
+        (!content.contains(&b'<') && !content.contains(&b'>'))
+            .then(|| std::str::from_utf8(content).ok())
+            .flatten()
+    }
+
+    pub fn replace_simple_text(&mut self, replacement: &str) -> Result<(), String> {
+        let old = self
+            .simple_text()
+            .ok_or("Rich text is not a simple literal label")?;
+        if replacement.len() != old.len() {
+            return Err("Changing text byte length requires unsupported layout updates".into());
+        }
+        if replacement
+            .bytes()
+            .any(|byte| matches!(byte, b'<' | b'>' | 0))
+        {
+            return Err("Literal text contains a markup delimiter".into());
+        }
+        let old_suffix = &self.payload[18 + self.markup_bytes().len()..];
+        let internal_size = u32::from_le_bytes(self.payload[4..8].try_into().unwrap()) as usize;
+        if internal_size != self.payload.len() || old_suffix.iter().any(|&byte| byte != 0) {
+            return Err("Rich text has unsupported trailing data".into());
+        }
+        self.payload[25..25 + replacement.len()].copy_from_slice(replacement.as_bytes());
+        Ok(())
+    }
 }
 
 /// Two opposite corners of a plain text object's 0x0898 screen rectangle.
@@ -275,6 +307,7 @@ mod tests {
         let mut text = RichTextPayload::parse(payload).unwrap();
         assert_eq!(text.anchor(), (102, 78));
         assert_eq!(text.markup_bytes(), b"<VL<T4xtext>>");
+        assert_eq!(text.simple_text(), Some("text"));
         text.set_anchor((222, -17));
         assert_eq!(text.anchor(), (222, -17));
         assert_eq!(&text.payload()[..12], &payload[..12]);
@@ -283,6 +316,23 @@ mod tests {
         assert_eq!(bbox.corners(), ((102, 78), (139, 101)));
         bbox.translate(120, -95).unwrap();
         assert_eq!(bbox.corners(), ((222, -17), (259, 6)));
+    }
+
+    #[test]
+    fn simple_text_replacement_preserves_wrapper_and_lengths() {
+        let bytes = include_bytes!("../tests/fixtures/text_on_point.gsp");
+        let payload = record_payloads(bytes, RICH_TEXT_KIND)[0];
+        let mut text = RichTextPayload::parse(payload).unwrap();
+        text.replace_simple_text("More").unwrap();
+        assert_eq!(text.simple_text(), Some("More"));
+        assert_eq!(text.payload().len() % 2, 0);
+        assert_eq!(
+            u32::from_le_bytes(text.payload()[4..8].try_into().unwrap()) as usize,
+            text.payload().len()
+        );
+        assert_eq!(RichTextPayload::parse(text.payload()).unwrap(), text);
+        assert!(text.replace_simple_text("<expr>").is_err());
+        assert!(text.replace_simple_text("Hello").is_err());
     }
 
     #[test]

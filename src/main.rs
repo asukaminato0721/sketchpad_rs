@@ -485,6 +485,34 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
     }
+    fn measure_ratio(&mut self) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [a, b, c] = self.selection_order.as_slice() else {
+            self.status = "Select three collinear points in origin, base, target order".into();
+            return;
+        };
+        let (a, b, c) = (*a, *b, *c);
+        let (Some(origin), Some(base), Some(target)) =
+            (self.doc.position(a), self.doc.position(b), self.doc.position(c))
+        else {
+            self.status = "Select three points to measure".into();
+            return;
+        };
+        let (bx, by) = (base.x - origin.x, base.y - origin.y);
+        let (cx, cy) = (target.x - origin.x, target.y - origin.y);
+        let cross = bx * cy - by * cx;
+        let tolerance = 1e-8 * bx.hypot(by) * cx.hypot(cy);
+        if self.doc.ratio_for_points(a, b, c).is_none() || cross.abs() > tolerance {
+            self.status = "Ratio construction needs three collinear points and a nonzero base".into();
+            return;
+        }
+        let id = self.doc.add(Kind::PointRatio(a, b, c));
+        self.select_only(id);
+        self.status = format!("Measured ratio from points {a}, {b}, {c}");
+    }
     fn measure_perimeter(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
             self.status = "This document cannot accept a measurement safely".into();
@@ -1222,6 +1250,10 @@ impl Editor {
                         self.measure_distance();
                         ui.close();
                     }
+                    if ui.button("Ratio").clicked() {
+                        self.measure_ratio();
+                        ui.close();
+                    }
                     if ui.button("Perimeter").clicked() {
                         self.measure_perimeter();
                         ui.close();
@@ -1433,6 +1465,16 @@ impl Editor {
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
                             format!("Distance = {distance:.2} cm"),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(ratio) = self.doc.ratio_value(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            format!("Ratio = {ratio:.2}"),
                             egui::FontId::proportional(16.),
                             egui::Color32::from_gray(35),
                         );
