@@ -1,0 +1,14 @@
+new
+parameter 10 5
+tabulate 1
+table_add 2
+number_move 2 100 116
+check
+save /tmp/sketchpad_number_replay.gsp
+open /tmp/sketchpad_number_replay.gsp
+check
+table_remove 2
+check
+save /tmp/sketchpad_number_replay.gsp
+open /tmp/sketchpad_number_replay.gsp
+check

@@ -1,0 +1,10 @@
+new
+calculate_2_plus_3 10 38
+check
+save /tmp/sketchpad_calculation_replay.gsp
+open /tmp/sketchpad_calculation_replay.gsp
+number_move 1 100 116
+check
+save /tmp/sketchpad_calculation_replay.gsp
+open /tmp/sketchpad_calculation_replay.gsp
+check

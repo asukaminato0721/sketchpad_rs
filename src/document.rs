@@ -2,6 +2,7 @@ use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::image_records::ImageFile;
+use crate::style_records::{self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle};
 use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
@@ -272,10 +273,11 @@ pub struct Object {
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
     pub label: Option<LabelAux>,
+    pub visual_style: Option<VisualStyle>,
 }
 #[derive(Clone, Debug)]
 pub struct Clipboard {
-    objects: Vec<(usize, Kind, bool, Option<usize>)>,
+    objects: Vec<(usize, Kind, bool, Option<usize>, Option<VisualStyle>)>,
 }
 impl Clipboard {
     pub fn len(&self) -> usize {
@@ -455,6 +457,29 @@ fn is_circle_kind(kind: &Kind) -> bool {
             | Kind::ReflectedCircle(_, _)
             | Kind::ScaledCircle(_, _, _)
     )
+}
+
+fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
+    let red = RgbColor { red: 255, green: 0, blue: 0 };
+    let navy = RgbColor { red: 0, green: 0, blue: 128 };
+    let green = RgbColor { red: 0, green: 128, blue: 0 };
+    let line = SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid };
+    match kind {
+        Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _)
+        | Kind::PointOnArc(_, _) | Kind::PolarTranslatedPoint(_, _, _, _)
+        | Kind::ReflectedPoint(_, _) | Kind::ScaledPoint(_, _, _)
+        | Kind::RotatedPoint(_, _, _) | Kind::Midpoint(_, _)
+        | Kind::Intersection(_, _) | Kind::LineCircleIntersection(_, _, _)
+        | Kind::CircleCircleIntersection(_, _, _) => Some(VisualStyle::Point { shape: PointStyle::Medium, color: red }),
+        Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
+        | Kind::Parallel(_, _) | Kind::Perpendicular(_, _)
+        | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),
+        Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+        | Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)
+        | Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
+        Kind::Polygon(_) => Some(VisualStyle::Polygon { color: RgbColor { red: 255, green: 128, blue: 0 } }),
+        _ => None,
+    }
 }
 
 fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
@@ -1210,6 +1235,7 @@ impl Document {
                 constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
                 label,
+                visual_style: style_records::visual_style(h),
             });
             if matches!(objects.last().map(|o| &o.kind), Some(Kind::Unsupported(_))) {
                 safe = false;
@@ -1445,6 +1471,7 @@ impl Document {
         self.objects.push(Object {
             id,
             page: self.active_page,
+            visual_style: default_visual_style(&kind),
             kind,
             visible: true,
             deleted: false,
@@ -1685,6 +1712,7 @@ impl Document {
                         object.kind.clone(),
                         object.visible,
                         object.midpoint_host,
+                        object.visual_style,
                     )
                 })
                 .collect(),
@@ -1703,7 +1731,7 @@ impl Document {
         let max_source = clipboard.objects.last().ok_or("Clipboard is empty")?.0;
         let mut ids = vec![0; max_source + 1];
         let mut created = Vec::with_capacity(clipboard.len());
-        for (old_id, kind, visible, midpoint_host) in &clipboard.objects {
+        for (old_id, kind, visible, midpoint_host, visual_style) in &clipboard.objects {
             if kind
                 .dependencies()
                 .into_iter()
@@ -1729,6 +1757,7 @@ impl Document {
                 constraint_offset: None,
                 header_offset: None,
                 label: None,
+                visual_style: *visual_style,
             });
             ids[*old_id] = id;
             created.push(id);
@@ -1799,6 +1828,54 @@ impl Document {
         if !visible {
             self.selected.clear();
         }
+    }
+    fn update_selected_visual_style(
+        &mut self,
+        update: impl Fn(VisualStyle) -> Option<VisualStyle>,
+    ) -> Result<usize, String> {
+        if self.partial_view {
+            return Err("Cannot edit styles in a sketch with unsupported records safely".into());
+        }
+        let changes: Vec<_> = self.objects.iter().filter_map(|object| {
+            if object.deleted || object.page != self.active_page || !self.selected.contains(&object.id) {
+                return None;
+            }
+            let old = object.visual_style?;
+            let new = update(old)?;
+            (new != old).then_some((object.id, new))
+        }).collect();
+        if !changes.is_empty() {
+            self.checkpoint();
+            for (id, style) in &changes {
+                self.objects[*id - 1].visual_style = Some(*style);
+            }
+        }
+        Ok(changes.len())
+    }
+    pub fn set_selected_point_style(&mut self, shape: PointStyle) -> Result<usize, String> {
+        self.update_selected_visual_style(|style| match style {
+            VisualStyle::Point { color, .. } => Some(VisualStyle::Point { shape, color }),
+            _ => None,
+        })
+    }
+    pub fn set_selected_line_width(&mut self, width: LineWidth) -> Result<usize, String> {
+        self.update_selected_visual_style(|style| match style {
+            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke { line: SegmentLineStyle { width, ..line }, color }),
+            _ => None,
+        })
+    }
+    pub fn set_selected_line_pattern(&mut self, pattern: LinePattern) -> Result<usize, String> {
+        self.update_selected_visual_style(|style| match style {
+            VisualStyle::Stroke { line, color } => Some(VisualStyle::Stroke { line: SegmentLineStyle { pattern, ..line }, color }),
+            _ => None,
+        })
+    }
+    pub fn set_selected_color(&mut self, color: RgbColor) -> Result<usize, String> {
+        self.update_selected_visual_style(|style| Some(match style {
+            VisualStyle::Point { shape, .. } => VisualStyle::Point { shape, color },
+            VisualStyle::Stroke { line, .. } => VisualStyle::Stroke { line, color },
+            VisualStyle::Polygon { .. } => VisualStyle::Polygon { color },
+        }))
     }
     pub fn show_all_hidden(&mut self) {
         if !self
@@ -3489,7 +3566,24 @@ impl Document {
                 .start;
             out.splice(resource_at..resource_at, resource);
         }
-        self.patch_text_and_labels(self.compact_deleted(out)?)
+        self.patch_visual_styles(self.patch_text_and_labels(self.compact_deleted(out)?)?)
+    }
+    fn patch_visual_styles(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let survivors: Vec<_> = self.objects.iter().filter(|object| !object.deleted).collect();
+        let mut ordinal = 0;
+        for record in rs.iter().filter(|record| record.kind == 0x07d0) {
+            let object = survivors.get(ordinal).ok_or("Object group count mismatch")?;
+            ordinal += 1;
+            if let Some(style) = object.visual_style {
+                style_records::set_visual_style(&mut bytes[record.data.clone()], style)
+                    .map_err(|error| format!("Invalid style in object {}: {error}", object.id))?;
+            }
+        }
+        if ordinal != survivors.len() {
+            return Err("Object group count mismatch".into());
+        }
+        Ok(bytes)
     }
     fn patch_text_and_labels(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
@@ -3600,6 +3694,7 @@ impl Document {
                         || saved.kind != current.kind.remap(&ids)
                         || saved.visible != current.visible
                         || saved.label != current.label
+                        || saved.visual_style != current.visual_style
                         || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
                 })
         {
@@ -3650,6 +3745,56 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_point_style_undoes_and_survives_save() {
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/style_blue_point.gsp"), None,
+        ).unwrap();
+        document.selected.insert(1);
+        assert_eq!(document.set_selected_point_style(PointStyle::Large).unwrap(), 1);
+        assert_eq!(document.objects[0].visual_style, Some(VisualStyle::Point {
+            shape: PointStyle::Large, color: RgbColor { red: 0, green: 0, blue: 255 },
+        }));
+        document.undo();
+        assert!(matches!(document.objects[0].visual_style, Some(VisualStyle::Point { shape: PointStyle::Medium, .. })));
+        document.redo();
+        let check = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(check.objects[0].visual_style, document.objects[0].visual_style);
+        assert_eq!(check.objects[0].kind, document.objects[0].kind);
+        let path = std::env::temp_dir().join(format!("sketchpad-style-point-{}.gsp", std::process::id()));
+        document.save_to(&path).unwrap();
+        let reopened = Document::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(reopened.objects[0].visual_style, document.objects[0].visual_style);
+        assert!(!reopened.partial_view);
+    }
+
+    #[test]
+    fn new_styled_segment_and_copied_points_reopen() {
+        let mut document = Document::new();
+        let a = document.add(Kind::Free(Point { x: 100., y: 120. }));
+        let b = document.add(Kind::Free(Point { x: 200., y: 120. }));
+        let segment = document.add(Kind::Segment(a, b));
+        document.selected.insert(segment);
+        assert_eq!(document.set_selected_line_width(LineWidth::Thick).unwrap(), 1);
+        assert_eq!(document.set_selected_line_pattern(LinePattern::Dashed).unwrap(), 1);
+        assert_eq!(document.set_selected_color(RgbColor { red: 0, green: 0, blue: 255 }).unwrap(), 1);
+        document.selected.clear();
+        document.selected.insert(a);
+        document.set_selected_point_style(PointStyle::Small).unwrap();
+        let copied = document.copy_selected().unwrap();
+        let pasted = document.paste(&copied).unwrap();
+        assert_eq!(document.objects[pasted[0] - 1].visual_style, document.objects[a - 1].visual_style);
+        let path = std::env::temp_dir().join(format!("sketchpad-style-segment-{}.gsp", std::process::id()));
+        document.save_to(&path).unwrap();
+        let reopened = Document::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(reopened.objects[segment - 1].visual_style, Some(VisualStyle::Stroke {
+            line: SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Dashed },
+            color: RgbColor { red: 0, green: 0, blue: 255 },
+        }));
+        assert_eq!(reopened.objects[pasted[0] - 1].visual_style, document.objects[a - 1].visual_style);
+    }
     #[test]
     fn imported_picture_moves_undoes_and_survives_save() {
         let png = include_bytes!("../tests/fixtures/image_tiny.png");
