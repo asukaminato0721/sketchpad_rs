@@ -19,6 +19,8 @@ impl Point {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
     Free(Point),
+    PointOnSegment(usize, f64),
+    PointOnCircle(usize, f64, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -47,6 +49,7 @@ pub struct Object {
     pub kind: Kind,
     pub visible: bool,
     pub point_offset: Option<usize>,
+    pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
 }
 #[derive(Clone, Debug)]
@@ -129,6 +132,10 @@ fn header(kind: u16) -> [u8; 28] {
         ],
         7 => [
             7, 0, 0, 0, 0, 0, 2, 0, 44, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
+        15 => [
+            15, 0, 0, 0, 0, 0, 1, 0, 10, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         9 | 11..=14 => [
@@ -397,6 +404,7 @@ impl Document {
             let code = raw as u16;
             let mut point = None;
             let mut point_offset = None;
+            let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
             let mut refs = Vec::new();
             i += 1;
             while i < rs.len() && rs[i].kind != 0x7d7 {
@@ -409,6 +417,9 @@ impl Document {
                             y: f64_at(d, 8),
                         });
                         point_offset = Some(r.data.start);
+                    }
+                    0x7d3 if code == 15 => {
+                        constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
                         let n = u32_at(d, 0) as usize;
@@ -439,6 +450,28 @@ impl Document {
             } else {
                 match (code, point, refs.as_slice()) {
                     (0, Some(p), _) => Kind::Free(p),
+                    (15, _, [host]) => {
+                        match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
+                            (Some(Kind::Segment(_, _)), Some((payload, _)))
+                                if payload.len() == 12
+                                    && payload[..4] == [15, 0, 14, 0]
+                                    && f64_at(payload, 4).is_finite() =>
+                            {
+                                Kind::PointOnSegment(*host, f64_at(payload, 4))
+                            }
+                            (
+                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)),
+                                Some((payload, _)),
+                            ) if payload.len() == 20
+                                && payload[..4] == [15, 0, 28, 0]
+                                && f64_at(payload, 4).is_finite()
+                                && f64_at(payload, 12).is_finite() =>
+                            {
+                                Kind::PointOnCircle(*host, f64_at(payload, 4), f64_at(payload, 12))
+                            }
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
                             Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
@@ -495,6 +528,7 @@ impl Document {
                 kind,
                 visible: raw & 0x10000 == 0,
                 point_offset,
+                constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
             });
             i += 1;
@@ -549,6 +583,7 @@ impl Document {
             kind,
             visible: true,
             point_offset: None,
+            constraint_offset: None,
             header_offset: None,
         });
         id
@@ -593,6 +628,22 @@ impl Document {
             }
             let p = match &d.objects.get(id.checked_sub(1)?)?.kind {
                 Kind::Free(p) => Some(*p),
+                Kind::PointOnSegment(host, t) => {
+                    let (a, b, LineMode::Segment) = d.line_points(*host)? else {
+                        return None;
+                    };
+                    Some(Point {
+                        x: a.x + (b.x - a.x) * t,
+                        y: a.y + (b.y - a.y) * t,
+                    })
+                }
+                Kind::PointOnCircle(host, unit_x, unit_y) => {
+                    let (center, radius) = d.circle_points(*host)?;
+                    Some(Point {
+                        x: center.x + radius * unit_x,
+                        y: center.y + radius * unit_y,
+                    })
+                }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
                     let b = go(d, *b, seen)?;
@@ -738,16 +789,62 @@ impl Document {
         if !p.x.is_finite() || !p.y.is_finite() {
             return false;
         }
-        if let Some(Object {
-            kind: Kind::Free(old),
-            ..
-        }) = self.objects.get_mut(id.saturating_sub(1))
-        {
-            *old = p;
-            self.dirty = true;
-            true
-        } else {
-            false
+        let kind = match self.objects.get(id.saturating_sub(1)).map(|o| &o.kind) {
+            Some(Kind::Free(_)) => Kind::Free(p),
+            Some(Kind::PointOnSegment(host, _)) => {
+                let host = *host;
+                let Some((a, b, LineMode::Segment)) = self.line_points(host) else {
+                    return false;
+                };
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let length_sq = dx * dx + dy * dy;
+                if length_sq < 1e-18 {
+                    return false;
+                }
+                let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
+                Kind::PointOnSegment(host, t.clamp(0., 1.))
+            }
+            Some(Kind::PointOnCircle(host, _, _)) => {
+                let host = *host;
+                let Some((center, _)) = self.circle_points(host) else {
+                    return false;
+                };
+                let dx = p.x - center.x;
+                let dy = p.y - center.y;
+                let length = dx.hypot(dy);
+                if length < 1e-9 {
+                    return false;
+                }
+                Kind::PointOnCircle(host, dx / length, dy / length)
+            }
+            _ => return false,
+        };
+        self.objects[id - 1].kind = kind;
+        self.dirty = true;
+        true
+    }
+    pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
+        match self.objects.get(host.checked_sub(1)?)?.kind {
+            Kind::Segment(_, _) => {
+                let (a, b, _) = self.line_points(host)?;
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let length_sq = dx * dx + dy * dy;
+                if length_sq < 1e-18 {
+                    return None;
+                }
+                let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
+                Some(Kind::PointOnSegment(host, t.clamp(0., 1.)))
+            }
+            Kind::Circle(_, _) | Kind::CircleBySegment(_, _) => {
+                let (center, _) = self.circle_points(host)?;
+                let dx = p.x - center.x;
+                let dy = p.y - center.y;
+                let length = dx.hypot(dy);
+                (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, dy / length))
+            }
+            _ => None,
         }
     }
     pub fn can_save(&self) -> Result<(), String> {
@@ -763,7 +860,13 @@ impl Document {
             {
                 return Err(format!("Non-finite coordinates in object {}", o.id));
             }
+            if matches!(o.kind, Kind::PointOnSegment(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
+                || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
+            {
+                return Err(format!("Invalid point constraint in object {}", o.id));
+            }
             let refs = match o.kind {
+                Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => vec![host],
                 Kind::Midpoint(a, b)
                 | Kind::Segment(a, b)
                 | Kind::Line(a, b)
@@ -780,6 +883,16 @@ impl Document {
             };
             if refs.iter().any(|&r| r == 0 || r >= o.id) {
                 return Err(format!("Invalid dependency in object {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
+            {
+                return Err(format!("Invalid segment host in point {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PointOnCircle(host, _, _) if self.circle_points(host).is_none())
+            {
+                return Err(format!("Invalid circle host in point {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
@@ -863,6 +976,18 @@ impl Document {
                 out[i..i + 8].copy_from_slice(&p.x.to_le_bytes());
                 out[i + 8..i + 16].copy_from_slice(&p.y.to_le_bytes());
             }
+            if let Some(i) = o.constraint_offset {
+                match o.kind {
+                    Kind::PointOnSegment(_, t) if out.get(i..i + 4) == Some(&[15, 0, 14, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnCircle(_, x, y) if out.get(i..i + 4) == Some(&[15, 0, 28, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&x.to_le_bytes());
+                        out[i + 12..i + 20].copy_from_slice(&y.to_le_bytes());
+                    }
+                    _ => {}
+                }
+            }
         }
         if self.objects.len() == self.source_count {
             return Ok(out);
@@ -893,6 +1018,7 @@ impl Document {
         for o in self.objects.iter().skip(self.source_count) {
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
+                Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) => (15, vec![host]),
                 Kind::Midpoint(a, b) => {
                     let s = self
                         .objects
@@ -936,6 +1062,20 @@ impl Document {
                     idx.extend_from_slice(&(r as u32).to_le_bytes());
                 }
                 put_record(&mut added, 0x7d2, &idx);
+                match o.kind {
+                    Kind::PointOnSegment(_, t) => {
+                        let mut payload = vec![15, 0, 14, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PointOnCircle(_, x, y) => {
+                        let mut payload = vec![15, 0, 28, 0];
+                        payload.extend_from_slice(&x.to_le_bytes());
+                        payload.extend_from_slice(&y.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    _ => {}
+                }
             }
             put_record(&mut added, 0x7d7, &[]);
         }
@@ -1425,5 +1565,61 @@ mod tests {
             document.circle_points(circle),
             Some((Point { x: 10., y: 10. }, 7.))
         );
+    }
+    #[test]
+    fn constrained_points_match_original_and_reopen_after_drag() {
+        let segment_fixture = fs::read("tests/fixtures/point_on_segment.gsp").unwrap();
+        let mut segment_doc = Document::from_bytes(&segment_fixture, None).unwrap();
+        assert!(matches!(
+            segment_doc.objects[3].kind,
+            Kind::PointOnSegment(3, _)
+        ));
+        assert_eq!(segment_doc.encode().unwrap(), segment_fixture);
+        let before = segment_doc.position(4).unwrap();
+        segment_doc.move_point(1, Point { x: 270., y: 180. });
+        assert_ne!(segment_doc.position(4), Some(before));
+        assert!(segment_doc.move_point(4, Point { x: 300., y: 200. }));
+        let reparsed = Document::from_bytes(&segment_doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reparsed.position(4), segment_doc.position(4));
+
+        let circle_fixture = fs::read("tests/fixtures/point_on_circle.gsp").unwrap();
+        let mut circle_doc = Document::from_bytes(&circle_fixture, None).unwrap();
+        assert!(matches!(
+            circle_doc.objects[3].kind,
+            Kind::PointOnCircle(3, _, _)
+        ));
+        assert_eq!(circle_doc.encode().unwrap(), circle_fixture);
+        let (center, radius) = circle_doc.circle_points(3).unwrap();
+        assert!((circle_doc.position(4).unwrap().distance(center) - radius).abs() < 1e-6);
+        assert!(circle_doc.move_point(
+            4,
+            Point {
+                x: center.x,
+                y: center.y + radius
+            }
+        ));
+        let reparsed = Document::from_bytes(&circle_doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reparsed.position(4), circle_doc.position(4));
+
+        let mut created = Document::new();
+        let a = created.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = created.add(Kind::Free(Point { x: 10., y: 0. }));
+        let segment = created.add(Kind::Segment(a, b));
+        let on_segment = created.add(
+            created
+                .constrained_point(segment, Point { x: 4., y: 2. })
+                .unwrap(),
+        );
+        let circle = created.add(Kind::Circle(a, b));
+        let on_circle = created.add(
+            created
+                .constrained_point(circle, Point { x: 0., y: 9. })
+                .unwrap(),
+        );
+        assert_eq!(created.position(on_segment), Some(Point { x: 4., y: 0. }));
+        assert_eq!(created.position(on_circle), Some(Point { x: 0., y: 10. }));
+        let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(on_segment), created.position(on_segment));
+        assert_eq!(reopened.position(on_circle), created.position(on_circle));
     }
 }

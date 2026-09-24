@@ -77,7 +77,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Perpendicular Line | Partial |
 | Circle by Center+Point | Partial |
 | Angle Bisector | Partial: original fixture and generated ray cross-opened |
-| Circle by Center+Radius | Pending |
+| Circle by Center+Radius | Partial: segment radius variant cross-opened |
 | Arc on Circle | Pending |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Pending |

@@ -184,8 +184,15 @@ impl Editor {
             .map(|x| x.0)
     }
     fn point_at(&mut self, v: &Viewport, p: egui::Pos2) -> usize {
-        self.hit_point(v, p)
-            .unwrap_or_else(|| self.doc.add(Kind::Free(v.world(p))))
+        if let Some(id) = self.hit_point(v, p) {
+            return id;
+        }
+        if let Some(host) = self.hit(v, p)
+            && let Some(kind) = self.doc.constrained_point(host, v.world(p))
+        {
+            return self.doc.add(kind);
+        }
+        self.doc.add(Kind::Free(v.world(p)))
     }
     fn select_only(&mut self, id: usize) {
         self.doc.selected.clear();
@@ -622,7 +629,12 @@ impl Editor {
                 if response.drag_started() && self.tool == Tool::Select {
                     if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
                         if let Some(id) = self.hit(&vp, p) {
-                            if matches!(self.doc.objects[id - 1].kind, Kind::Free(_)) {
+                            if matches!(
+                                self.doc.objects[id - 1].kind,
+                                Kind::Free(_)
+                                    | Kind::PointOnSegment(_, _)
+                                    | Kind::PointOnCircle(_, _, _)
+                            ) {
                                 self.doc.checkpoint();
                                 self.dragging = Some(id);
                             }
