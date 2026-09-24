@@ -2,6 +2,7 @@
 
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
+use sketchpad_rs::value_equation_records::ValueEquationKind;
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use std::{env, fs, path::Path};
@@ -347,6 +348,30 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::SlopeMeasurement(line, frame));
                     println!("line {}: slope -> object {id}", index + 1);
                 }
+                "point_value" => {
+                    let first: usize = rest.parse().map_err(|_| "invalid constrained point ID")?;
+                    let second = match document.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
+                        Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) => *host,
+                        _ => return Err("point_value requires a point on a segment or circle".into()),
+                    };
+                    let id = document.add(Kind::ValueEquation { kind: ValueEquationKind::PointValue, first, second });
+                    println!("line {}: point_value -> object {id}", index + 1);
+                }
+                "equation" => {
+                    let first: usize = rest.parse().map_err(|_| "invalid line or circle ID")?;
+                    let kind = match document.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
+                        Some(Kind::Line(_, _)) => ValueEquationKind::LineEquation,
+                        Some(Kind::Circle(_, _)) => ValueEquationKind::CircleEquation,
+                        _ => return Err("equation requires a line or circle".into()),
+                    };
+                    let second = match document.active_coordinate_system() {
+                        Some(frame) => frame,
+                        None => document.add_default_coordinate_system(Point { x: 199., y: 125. })?,
+                    };
+                    let id = document.add(Kind::ValueEquation { kind, first, second });
+                    if document.value_equation_value(id).is_none() { return Err("equation is undefined for this geometry".into()); }
+                    println!("line {}: equation -> object {id}", index + 1);
+                }
                 "coordinates" | "abscissa" | "ordinate" | "coordinate_distance" => {
                     let kind = match command {
                         "coordinates" => CoordinateMeasureKind::Coordinates,
@@ -662,9 +687,9 @@ fn replay(path: &str) -> Result<(), String> {
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
                     if !matches!(
                         document.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                        Some(Kind::Free(_))
+                        Some(Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _))
                     ) {
-                        return Err("move requires a free point".into());
+                        return Err("move requires a movable point".into());
                     }
                     document.checkpoint();
                     if !document.move_point(id, Point { x, y }) {

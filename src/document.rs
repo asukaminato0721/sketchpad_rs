@@ -1,5 +1,6 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::coordinate_measure_records::{self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint};
+use crate::value_equation_records::{self, CartesianFrame, EquationValue, ValueEquationKind};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::image_records::ImageFile;
@@ -41,6 +42,7 @@ impl Kind {
                 | Kind::AngleMeasurement(_, _, _)
                 | Kind::SlopeMeasurement(_, _)
                 | Kind::CoordinateMeasurement { .. }
+                | Kind::ValueEquation { .. }
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
         )
@@ -57,6 +59,9 @@ impl Kind {
             if let Some(second) = second { ids.push(*second); }
             ids.push(*frame);
             return ids;
+        }
+        if let Kind::ValueEquation { first, second, .. } = self {
+            return vec![*first, *second];
         }
         match *self {
             Kind::Free(_)
@@ -114,6 +119,7 @@ impl Kind {
             Kind::Polygon(_) => unreachable!(),
             Kind::HideShowButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
+            Kind::ValueEquation { .. } => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
@@ -137,6 +143,9 @@ impl Kind {
         }
         if let Kind::CoordinateMeasurement { kind, first, second, frame } = self {
             return Kind::CoordinateMeasurement { kind: *kind, first: m(*first), second: second.map(m), frame: m(*frame) };
+        }
+        if let Kind::ValueEquation { kind, first, second } = self {
+            return Kind::ValueEquation { kind: *kind, first: m(*first), second: m(*second) };
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
@@ -203,6 +212,7 @@ impl Kind {
             Kind::Polygon(_) => unreachable!(),
             Kind::HideShowButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
+            Kind::ValueEquation { .. } => unreachable!(),
         }
     }
 }
@@ -236,6 +246,7 @@ pub enum Kind {
     CoordinateSystem(usize, usize),
     SlopeMeasurement(usize, usize),
     CoordinateMeasurement { kind: CoordinateMeasureKind, first: usize, second: Option<usize>, frame: usize },
+    ValueEquation { kind: ValueEquationKind, first: usize, second: usize },
     FunctionDefinition(SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
     SegmentLength(usize),
@@ -927,6 +938,8 @@ impl Document {
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 49 | 65 | 66 | 86)
                         && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
+                    && !(matches!(code, 50 | 51 | 94)
+                        && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
@@ -952,6 +965,11 @@ impl Document {
                 .transpose();
             if coordinate_group.is_err() { safe = false; }
             let coordinate_group = coordinate_group.ok().flatten();
+            let value_equation_group = matches!(code, 50 | 51 | 94)
+                .then(|| value_equation_records::decode_group(&b[group_start..rs[i].data.end]))
+                .transpose();
+            if value_equation_group.is_err() { safe = false; }
+            let value_equation_group = value_equation_group.ok().flatten();
             let graph_borrowed = graph_records
                 .iter()
                 .map(|(kind, payload)| (*kind, payload.as_slice()))
@@ -1014,6 +1032,20 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
+                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) if host == *second)) => {
+                        Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
+                    }
+                    (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
+                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::Line(_, _)))
+                        && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        Kind::ValueEquation { kind: ValueEquationKind::LineEquation, first: *first, second: *second }
+                    }
+                    (51, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::CircleEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
+                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _)))
+                        && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first: *first, second: *second }
+                    }
                     (49 | 65 | 66, _, [first, frame]) if coordinate_group.as_ref().is_some_and(|g| {
                         g.references == vec![(*first - page_base) as u32, (*frame - page_base) as u32]
                     }) && objects.get(first - 1).is_some_and(|o| is_point_kind(&o.kind))
@@ -1765,6 +1797,59 @@ impl Document {
             (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(d)) => Some(format!("Coordinate Distance = {d:.2}")),
             _ => None,
         }
+    }
+    pub fn value_equation_value(&self, id: usize) -> Option<EquationValue> {
+        let Kind::ValueEquation { kind, first, second } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let screen = |point: Point| value_equation_records::ScreenPoint { x: point.x, y: point.y };
+        match kind {
+            ValueEquationKind::PointValue => {
+                let point = screen(self.position(first)?);
+                match self.objects.get(second - 1)?.kind {
+                    Kind::Segment(_, _) => {
+                        let (a, b, _) = self.line_points(second)?;
+                        value_equation_records::segment_point_value(point, screen(a), screen(b))
+                    }
+                    Kind::Circle(_, _) => {
+                        let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind else { return None; };
+                        (host == second).then(|| value_equation_records::circle_point_value(x, y)).flatten()
+                    }
+                    _ => None,
+                }
+            }
+            ValueEquationKind::LineEquation | ValueEquationKind::CircleEquation => {
+                let graph = self.graph_frame(second)?;
+                let frame = CartesianFrame {
+                    origin: value_equation_records::ScreenPoint { x: graph.origin.x, y: graph.origin.y },
+                    x_unit: value_equation_records::ScreenPoint { x: graph.x_unit.x, y: graph.x_unit.y },
+                    y_unit: value_equation_records::ScreenPoint { x: graph.y_unit.x, y: graph.y_unit.y },
+                };
+                match kind {
+                    ValueEquationKind::LineEquation => {
+                        let (a, b, _) = self.line_points(first)?;
+                        value_equation_records::line_equation(frame, screen(a), screen(b))
+                    }
+                    ValueEquationKind::CircleEquation => {
+                        let (center, radius) = self.circle_points(first)?;
+                        value_equation_records::circle_equation(frame, screen(center), screen(Point { x: center.x + radius, y: center.y }))
+                    }
+                    ValueEquationKind::PointValue => unreachable!(),
+                }
+            }
+        }
+    }
+    pub fn value_equation_text(&self, id: usize) -> Option<String> {
+        let value = self.value_equation_value(id)?;
+        let signed = |number: f64| if number < 0. { format!("−{:.2}", -number) } else { format!("{number:.2}") };
+        let shifted = |number: f64| if number < 0. { format!("+ {:.2}", -number) } else { format!("− {number:.2}") };
+        Some(match value {
+            EquationValue::PointValue(t) => format!("Value of Point = {t:.2}"),
+            EquationValue::Line { slope, intercept } => {
+                let sign = if intercept < 0. { "−" } else { "+" };
+                format!("y = {}x {sign} {:.2}", signed(slope), intercept.abs())
+            }
+            EquationValue::VerticalLine { x } => format!("x = {}", signed(x)),
+            EquationValue::Circle { center, radius } => format!("(x {})² + (y {})² = {radius:.2}²", shifted(center.x), shifted(center.y)),
+        })
     }
     fn coordinate_point_name(&self, first: usize) -> Option<String> {
         Some(self.objects.get(first - 1)?.label.as_ref().and_then(|label| label.name_utf8().ok()).map(str::to_owned).unwrap_or_else(|| {
@@ -2936,6 +3021,18 @@ impl Document {
                     return Err(format!("Invalid coordinate measurement {}", o.id));
                 }
             }
+            if let Kind::ValueEquation { kind, first, second } = o.kind {
+                let hosts_match = match kind {
+                    ValueEquationKind::PointValue => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second),
+                    ValueEquationKind::LineEquation => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Line(_, _)))
+                        && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _))),
+                    ValueEquationKind::CircleEquation => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _)))
+                        && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _))),
+                };
+                if !hosts_match || self.value_equation_value(o.id).is_none() {
+                    return Err(format!("Invalid Value/Equation measurement {}", o.id));
+                }
+            }
             if matches!(o.kind, Kind::PolygonPerimeter(_))
                 && self
                     .perimeter_cm(o.id)
@@ -3441,6 +3538,16 @@ impl Document {
                 }
                 let format_offset = if second.is_some() { 68 } else { 64 };
                 Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
+                if !o.visible { group[10] |= 1; }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::ValueEquation { kind, first, second } = o.kind {
+                let references = [u32::try_from(first).map_err(|_| "Too many objects")?, u32::try_from(second).map_err(|_| "Too many objects")?];
+                let mut group = value_equation_records::encode_group(kind, references)?;
+                if kind == ValueEquationKind::PointValue {
+                    Self::place_measurement(&mut group, 64, &mut measurement_row)?;
+                }
                 if !o.visible { group[10] |= 1; }
                 added.extend_from_slice(&group);
                 continue;

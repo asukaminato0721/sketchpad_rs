@@ -646,6 +646,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             .unwrap();
             row += 1;
         }
+        if let Some(value) = doc.value_equation_text(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">{}</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                xml_text(&value)
+            )
+            .unwrap();
+            row += 1;
+        }
         if let Kind::FunctionDefinition(expression) = object.kind {
             writeln!(
                 svg,

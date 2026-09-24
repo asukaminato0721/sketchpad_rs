@@ -1,5 +1,6 @@
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
+use sketchpad_rs::value_equation_records::ValueEquationKind;
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
@@ -654,6 +655,43 @@ impl Editor {
         let id = self.doc.add(Kind::SlopeMeasurement(line, frame));
         self.select_only(id);
         self.status = format!("Measured slope of object {line}");
+    }
+    fn measure_value_equation(&mut self, equation: bool) {
+        if self.doc.partial_view || self.doc.page_count != 1 {
+            self.status = "This document cannot accept a measurement safely".into();
+            return;
+        }
+        let [first] = self.selection_order.as_slice() else {
+            self.status = "Select one constrained point, line, or circle".into();
+            return;
+        };
+        let first = *first;
+        let (kind, second) = match self.doc.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
+            Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if !equation => (ValueEquationKind::PointValue, *host),
+            Some(Kind::Line(_, _)) if equation => (ValueEquationKind::LineEquation, 0),
+            Some(Kind::Circle(_, _)) if equation => (ValueEquationKind::CircleEquation, 0),
+            _ => {
+                self.status = if equation { "Select one line or circle for Equation" } else { "Select one point constrained to a segment or circle" }.into();
+                return;
+            }
+        };
+        let second = if equation {
+            match self.doc.active_coordinate_system() {
+                Some(frame) => frame,
+                None => match self.doc.add_default_coordinate_system(self.center) {
+                    Ok(frame) => frame,
+                    Err(error) => { self.status = error; return; }
+                },
+            }
+        } else { second };
+        let id = self.doc.add(Kind::ValueEquation { kind, first, second });
+        if self.doc.value_equation_value(id).is_none() {
+            self.doc.undo();
+            self.status = "The selected geometry has no supported value or equation".into();
+            return;
+        }
+        self.select_only(id);
+        self.status = format!("Measured {kind:?} of object {first}");
     }
     fn measure_distance(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
@@ -1542,6 +1580,14 @@ impl Editor {
                         self.measure_slope();
                         ui.close();
                     }
+                    if ui.button("Value of Point").clicked() {
+                        self.measure_value_equation(false);
+                        ui.close();
+                    }
+                    if ui.button("Equation").clicked() {
+                        self.measure_value_equation(true);
+                        ui.close();
+                    }
                     if ui.button("Circumference").clicked() {
                         self.measure_circle(CircleMeasure::Circumference);
                         ui.close();
@@ -2271,6 +2317,16 @@ impl Editor {
                         row += 1;
                     }
                     if let Some(value) = self.doc.coordinate_measure_text(object.id) {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            value,
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
+                    if let Some(value) = self.doc.value_equation_text(object.id) {
                         ui.painter().text(
                             r.min + egui::vec2(12., 12. + row as f32 * 20.),
                             egui::Align2::LEFT_TOP,
