@@ -81,8 +81,31 @@ in a document with a crop, because the derived image's rewrite rules are not
 established. It refuses the multi-resource Paste Picture file entirely.
 Point-attached images, more than one picture, opacity, pixel
 replacement inside a cropped construction, and external clipboard import
-remain unimplemented. `src/image_records.rs` is standalone for now; the
-shared document/UI modules were owned by another agent during this probe.
+remain unimplemented.
+
+## Native integration and generated import
+
+The shared document model now decodes one independent picture alongside
+ordinary geometry, imports a PNG into a single-page sketch, moves it with
+undo/redo, and writes the `0x0514` resource and code-0 picture group. The
+native File menu has **Import PNG Picture…**. The same affine viewport is used
+for hit testing, dragging, screen placement, and SVG export, which embeds the
+PNG as a data URI. `gsp_probe replay tests/replay_image.txt` creates
+`image_port_imported.gsp`, moves the image, and creates
+`image_port_imported_moved.gsp`.
+
+Sketchpad 5 under Wine opened the first generated file, showed the 16×16
+yellow/blue PNG beside a point, and saved it byte-identically (2,320 bytes).
+It then opened the moved file, dragged the picture from raw `(160,155)` to
+`(184,170)`, and saved `image_port_imported_dragged_wine.gsp`. The port parsed
+that result as an editable picture and preserved the original PNG and affine
+translation on another save. Wine recompressed the PNG, reducing the saved
+file from 2,320 to 2,112 bytes.
+
+Documents with a crop or multiple picture resources open for inspection and
+round-trip byte-identically if untouched. Any edited save is refused with a
+read-only picture error. PNG input is decoded before the native menu or CLI
+mutates the document; malformed input leaves the sketch unchanged.
 
 Standalone tests:
 

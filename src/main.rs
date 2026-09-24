@@ -190,13 +190,21 @@ impl Editor {
                 });
             }
             if let Kind::Image { png, transform } = &object.kind
-                && let Some(corners) = sketchpad_rs::render::picture_screen_quad(&Viewport {
-                    rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO),
-                    scale: 1., center: Point { x: 0., y: 0. },
-                }, png, *transform)
+                && let Some(corners) = sketchpad_rs::render::picture_screen_quad(
+                    &Viewport {
+                        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO),
+                        scale: 1.,
+                        center: Point { x: 0., y: 0. },
+                    },
+                    png,
+                    *transform,
+                )
             {
                 // The zero-sized viewport places world positions at the origin.
-                pts.extend(corners.map(|corner| Point { x: corner.x as f64, y: corner.y as f64 }));
+                pts.extend(corners.map(|corner| Point {
+                    x: corner.x as f64,
+                    y: corner.y as f64,
+                }));
             }
         }
         if pts.is_empty() {
@@ -232,15 +240,22 @@ impl Editor {
         }
     }
     fn import_picture(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter("PNG picture", &["png"]).pick_file() else { return; };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG picture", &["png"])
+            .pick_file()
+        else {
+            return;
+        };
         let result = (|| -> Result<usize, String> {
             let png = std::fs::read(&path).map_err(|error| error.to_string())?;
-            image::load_from_memory_with_format(&png, image::ImageFormat::Png)
-                .map_err(|error| format!("PNG pixels cannot be decoded: {error}"))?;
             self.doc.import_png(&png, self.center)
         })();
         match result {
-            Ok(id) => { self.select_only(id); self.status = format!("Imported {}", path.display()); }
+            Ok(id) => {
+                self.image_textures.clear();
+                self.select_only(id);
+                self.status = format!("Imported {}", path.display());
+            }
             Err(error) => self.status = format!("Picture import refused: {error}"),
         }
     }
@@ -361,7 +376,9 @@ impl Editor {
     }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page && object.visible && !object.deleted
+            object.page == self.doc.active_page
+                && object.visible
+                && !object.deleted
                 && matches!(&object.kind, Kind::Image { png, transform }
                     if sketchpad_rs::render::picture_hit(v, png, *transform, p))
         }) {
@@ -1342,6 +1359,7 @@ impl Editor {
                         .clicked()
                     {
                         self.doc.undo();
+                        self.image_textures.clear();
                         ui.close();
                     }
                     if ui
@@ -1349,6 +1367,7 @@ impl Editor {
                         .clicked()
                     {
                         self.doc.redo();
+                        self.image_textures.clear();
                         ui.close();
                     }
                     if ui.button("Cut").clicked() {
@@ -1706,12 +1725,18 @@ impl Editor {
                                     | Kind::PointOnArc(_, _)
                             ) {
                                 self.drag_offset = match &self.doc.objects[id - 1].kind {
-                                    Kind::PlainText { rect, .. } => p - vp.screen(Point {
-                                        x: rect.left.into(), y: rect.top.into(),
-                                    }),
-                                    Kind::Image { transform, .. } => p - vp.screen(Point {
-                                        x: transform[2], y: transform[5],
-                                    }),
+                                    Kind::PlainText { rect, .. } => {
+                                        p - vp.screen(Point {
+                                            x: rect.left.into(),
+                                            y: rect.top.into(),
+                                        })
+                                    }
+                                    Kind::Image { transform, .. } => {
+                                        p - vp.screen(Point {
+                                            x: transform[2],
+                                            y: transform[5],
+                                        })
+                                    }
                                     _ => egui::Vec2::ZERO,
                                 };
                                 self.doc.checkpoint();
@@ -1723,7 +1748,9 @@ impl Editor {
                 if response.dragged() {
                     if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
                         if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
-                            if let Err(error) = self.doc.drag_image(id, vp.world(p - self.drag_offset)) {
+                            if let Err(error) =
+                                self.doc.drag_image(id, vp.world(p - self.drag_offset))
+                            {
                                 self.status = error;
                             }
                         } else if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
@@ -1751,25 +1778,37 @@ impl Editor {
                 }) {
                     if let Kind::Image { png, transform } = &object.kind {
                         if !self.image_textures.contains_key(&object.id) {
-                            if let Ok(decoded) = image::load_from_memory_with_format(png, image::ImageFormat::Png) {
+                            if let Ok(decoded) =
+                                image::load_from_memory_with_format(png, image::ImageFormat::Png)
+                            {
                                 let rgba = decoded.to_rgba8();
                                 let color = egui::ColorImage::from_rgba_unmultiplied(
-                                    [rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+                                    [rgba.width() as usize, rgba.height() as usize],
+                                    rgba.as_raw(),
+                                );
                                 let texture = ui.ctx().load_texture(
-                                    format!("picture-{}", object.id), color, egui::TextureOptions::LINEAR);
+                                    format!("picture-{}", object.id),
+                                    color,
+                                    egui::TextureOptions::LINEAR,
+                                );
                                 self.image_textures.insert(object.id, texture);
                             }
                         }
                         if let Some(texture) = self.image_textures.get(&object.id)
-                            && let Some(corners) = sketchpad_rs::render::picture_screen_quad(&vp, png, *transform)
+                            && let Some(corners) =
+                                sketchpad_rs::render::picture_screen_quad(&vp, png, *transform)
                         {
                             let mut mesh = egui::Mesh::with_texture(texture.id());
                             for (position, uv) in corners.into_iter().zip([
-                                egui::pos2(0., 0.), egui::pos2(1., 0.),
-                                egui::pos2(1., 1.), egui::pos2(0., 1.),
+                                egui::pos2(0., 0.),
+                                egui::pos2(1., 0.),
+                                egui::pos2(1., 1.),
+                                egui::pos2(0., 1.),
                             ]) {
                                 mesh.vertices.push(egui::epaint::Vertex {
-                                    pos: position, uv, color: egui::Color32::WHITE,
+                                    pos: position,
+                                    uv,
+                                    color: egui::Color32::WHITE,
                                 });
                             }
                             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);

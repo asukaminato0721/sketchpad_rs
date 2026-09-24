@@ -32,10 +32,7 @@ fn is_point_header(payload: &[u8]) -> bool {
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     matches!(
         (code, subtype),
-        (0 | 21 | 27 | 30 | 34, 4)
-            | (1, 11)
-            | (15, 10)
-            | (9 | 11 | 12 | 13 | 14, 45)
+        (0 | 21 | 27 | 30 | 34, 4) | (1, 11) | (15, 10) | (9 | 11 | 12 | 13 | 14, 45)
     )
 }
 
@@ -250,9 +247,17 @@ pub fn set_straight_or_arc_color(payload: &mut [u8], color: RgbColor) -> Result<
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VisualStyle {
-    Point { shape: PointStyle, color: RgbColor },
-    Stroke { line: SegmentLineStyle, color: RgbColor },
-    Polygon { color: RgbColor },
+    Point {
+        shape: PointStyle,
+        color: RgbColor,
+    },
+    Stroke {
+        line: SegmentLineStyle,
+        color: RgbColor,
+    },
+    Polygon {
+        color: RgbColor,
+    },
 }
 
 pub fn visual_style(payload: &[u8]) -> Option<VisualStyle> {
@@ -398,22 +403,58 @@ mod tests {
         let cases: &[(&[u8], u16)] = &[
             (include_bytes!("../tests/fixtures/middle_point.gsp"), 1),
             (include_bytes!("../tests/fixtures/point_on_segment.gsp"), 15),
-            (include_bytes!("../tests/fixtures/point_translation.gsp"), 21),
+            (
+                include_bytes!("../tests/fixtures/point_translation.gsp"),
+                21,
+            ),
             (include_bytes!("../tests/fixtures/rotation.gsp"), 27),
-            (include_bytes!("../tests/fixtures/wine_moved_dilation.gsp"), 30),
+            (
+                include_bytes!("../tests/fixtures/wine_moved_dilation.gsp"),
+                30,
+            ),
             (include_bytes!("../tests/fixtures/reflection.gsp"), 34),
             (include_bytes!("../tests/fixtures/line_intersection.gsp"), 9),
-            (include_bytes!("../tests/fixtures/line_circle_intersection.gsp"), 12),
-            (include_bytes!("../tests/fixtures/circle_circle_intersection.gsp"), 14),
+            (
+                include_bytes!("../tests/fixtures/line_circle_intersection.gsp"),
+                12,
+            ),
+            (
+                include_bytes!("../tests/fixtures/circle_circle_intersection.gsp"),
+                14,
+            ),
         ];
         for (bytes, code) in cases {
             let header = records_headers(bytes)
                 .into_iter()
-                .find(|header| u16::from_le_bytes([header[0], header[1]]) == *code && is_point_header(header))
+                .find(|header| {
+                    u16::from_le_bytes([header[0], header[1]]) == *code && is_point_header(header)
+                })
                 .unwrap();
             assert_eq!(point_style(&header), Some(PointStyle::Medium));
-            assert_eq!(point_color(&header), Some(RgbColor { red: 255, green: 0, blue: 0 }));
+            assert_eq!(
+                point_color(&header),
+                Some(RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0
+                })
+            );
         }
+        let saved = records_headers(include_bytes!(
+            "../tests/fixtures/style_generated_large_blue_midpoint.gsp"
+        ))
+        .into_iter()
+        .find(|header| u16::from_le_bytes([header[0], header[1]]) == 1)
+        .unwrap();
+        assert_eq!(point_style(&saved), Some(PointStyle::Large));
+        assert_eq!(
+            point_color(&saved),
+            Some(RgbColor {
+                red: 0,
+                green: 0,
+                blue: 255
+            })
+        );
     }
 
     #[test]
@@ -553,14 +594,38 @@ mod tests {
 
     #[test]
     fn polygon_interior_header_has_orange_rgb() {
-        let header = records_headers(include_bytes!("../tests/fixtures/wine_polygon_perimeter.gsp"))
-            .into_iter()
-            .find(|header| is_polygon_header(header))
-            .unwrap();
-        assert_eq!(polygon_color(&header), Some(RgbColor { red: 255, green: 128, blue: 0 }));
+        let header = records_headers(include_bytes!(
+            "../tests/fixtures/wine_polygon_perimeter.gsp"
+        ))
+        .into_iter()
+        .find(|header| is_polygon_header(header))
+        .unwrap();
+        assert_eq!(
+            polygon_color(&header),
+            Some(RgbColor {
+                red: 255,
+                green: 128,
+                blue: 0
+            })
+        );
         let mut edited = header.clone();
-        set_polygon_color(&mut edited, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
-        assert_eq!(polygon_color(&edited), Some(RgbColor { red: 0, green: 0, blue: 255 }));
+        set_polygon_color(
+            &mut edited,
+            RgbColor {
+                red: 0,
+                green: 0,
+                blue: 255,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            polygon_color(&edited),
+            Some(RgbColor {
+                red: 0,
+                green: 0,
+                blue: 255
+            })
+        );
         edited[12..15].copy_from_slice(&header[12..15]);
         assert_eq!(edited, header);
     }
@@ -585,7 +650,19 @@ mod tests {
             }
         }
         let mut point = first_point_header(include_bytes!("../tests/fixtures/point.gsp")).to_vec();
-        assert!(set_visual_style(&mut point, VisualStyle::Polygon { color: RgbColor { red: 1, green: 2, blue: 3 } }).is_err());
+        assert!(
+            set_visual_style(
+                &mut point,
+                VisualStyle::Polygon {
+                    color: RgbColor {
+                        red: 1,
+                        green: 2,
+                        blue: 3
+                    }
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -678,16 +755,62 @@ mod tests {
     #[test]
     fn line_ray_and_arc_headers_carry_rgb_bytes() {
         let fixtures: &[(&[u8], RgbColor)] = &[
-            (include_bytes!("../tests/fixtures/line.gsp"), RgbColor { red: 0, green: 0, blue: 128 }),
-            (include_bytes!("../tests/fixtures/ray.gsp"), RgbColor { red: 0, green: 0, blue: 128 }),
-            (include_bytes!("../tests/fixtures/three_point_arc.gsp"), RgbColor { red: 0, green: 128, blue: 0 }),
-            (include_bytes!("../tests/fixtures/arc_on_circle.gsp"), RgbColor { red: 0, green: 128, blue: 0 }),
+            (
+                include_bytes!("../tests/fixtures/line.gsp"),
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/ray.gsp"),
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/three_point_arc.gsp"),
+                RgbColor {
+                    red: 0,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/arc_on_circle.gsp"),
+                RgbColor {
+                    red: 0,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
         ];
         for (bytes, expected) in fixtures {
-            let mut header = records_headers(bytes).into_iter().find(|header| is_straight_or_arc_header(header)).unwrap();
+            let mut header = records_headers(bytes)
+                .into_iter()
+                .find(|header| is_straight_or_arc_header(header))
+                .unwrap();
             assert_eq!(straight_or_arc_color(&header), Some(*expected));
-            set_straight_or_arc_color(&mut header, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
-            assert_eq!(straight_or_arc_color(&header), Some(RgbColor { red: 0, green: 0, blue: 255 }));
+            set_straight_or_arc_color(
+                &mut header,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                straight_or_arc_color(&header),
+                Some(RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255
+                })
+            );
         }
     }
 

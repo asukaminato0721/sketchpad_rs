@@ -1,0 +1,13 @@
+# Create, edit, move, and reopen literal text and a point label.
+new
+point 210 200
+label 1 A
+label 1 Cat
+label_show 1 off
+label_show 1 on
+text 120 120 Draft
+text_edit 2 Hello\n猫
+text_move 2 165 150
+save /tmp/sketchpad_text_core_generated.gsp
+open /tmp/sketchpad_text_core_generated.gsp
+save /tmp/sketchpad_text_core_reopened.gsp

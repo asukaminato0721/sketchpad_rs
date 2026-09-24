@@ -75,9 +75,9 @@ xvfb-run -a bash -c '
   sleep 1
   import -window root "${4}_result.png"
   if [[ "${SKETCHPAD_TABLE_POST_DRAG:-}" == "1" ]]; then
-    xdotool mousemove 90 122 mousedown 1
+    xdotool mousemove "${SKETCHPAD_TABLE_DRAG_FROM_X:-90}" "${SKETCHPAD_TABLE_DRAG_FROM_Y:-122}" mousedown 1
     sleep 0.3
-    xdotool mousemove 180 200
+    xdotool mousemove "${SKETCHPAD_TABLE_DRAG_TO_X:-180}" "${SKETCHPAD_TABLE_DRAG_TO_Y:-200}"
     sleep 0.3
     xdotool mouseup 1
     sleep 0.5

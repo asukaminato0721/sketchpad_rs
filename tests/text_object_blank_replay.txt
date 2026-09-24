@@ -1,0 +1,1 @@
+save /tmp/sketchpad_text_object_blank.gsp

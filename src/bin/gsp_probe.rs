@@ -238,19 +238,29 @@ fn replay(path: &str) -> Result<(), String> {
                 "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,
                 "import_png" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
-                    let [path, x, y] = parts.as_slice() else { return Err("expected PNG path x y".into()); };
+                    let [path, x, y] = parts.as_slice() else {
+                        return Err("expected PNG path x y".into());
+                    };
                     let png = read(path)?;
-                    image::load_from_memory_with_format(&png, image::ImageFormat::Png)
-                        .map_err(|error| format!("PNG pixels cannot be decoded: {error}"))?;
-                    let at = Point { x: x.parse().map_err(|_| "invalid picture x")?, y: y.parse().map_err(|_| "invalid picture y")? };
+                    let at = Point {
+                        x: x.parse().map_err(|_| "invalid picture x")?,
+                        y: y.parse().map_err(|_| "invalid picture y")?,
+                    };
                     let id = document.import_png(&png, at)?;
                     println!("line {}: import_png -> object {id}", index + 1);
                 }
                 "move_image" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
-                    let [id, x, y] = parts.as_slice() else { return Err("expected picture ID x y".into()); };
-                    document.move_image(id.parse().map_err(|_| "invalid picture ID")?,
-                        Point { x: x.parse().map_err(|_| "invalid picture x")?, y: y.parse().map_err(|_| "invalid picture y")? })?;
+                    let [id, x, y] = parts.as_slice() else {
+                        return Err("expected picture ID x y".into());
+                    };
+                    document.move_image(
+                        id.parse().map_err(|_| "invalid picture ID")?,
+                        Point {
+                            x: x.parse().map_err(|_| "invalid picture x")?,
+                            y: y.parse().map_err(|_| "invalid picture y")?,
+                        },
+                    )?;
                 }
                 "length" => {
                     let segment: usize = rest.parse().map_err(|_| "invalid segment ID")?;

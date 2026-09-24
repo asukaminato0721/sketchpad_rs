@@ -4,6 +4,8 @@ The development tools follow the same pattern as the headless probes in `../sigl
 
 The current `gsp_probe verify` pass covers all 105 `.gsp` files in `../gsp-rs/tests/fixtures` without parse or byte-preservation failures; 68 have `partial_view=true` because their sketch objects are not yet supported. The bundled `GSP5/GSP5.app/Contents/Resources/Example Tools.gsp` also verifies byte-exactly (523 objects, partial view). These checks establish safe retention, not command parity for unsupported objects.
 
+For native visual checks on this KDE host, `dev/native_desktop_smoke.sh` starts the winit/wgpu window and uses Spectacle to capture the actual Wayland desktop. A one-point fixture displayed its blue point, object label, menus, toolbar, and status strip without a runtime error. A polygon/perimeter fixture displayed its filled triangle, source points and labels, and the dynamic `9.53 cm` result. The isolated `dev/native_smoke.sh` Xvfb path currently fails during wgpu adapter selection because its X server lacks DRI3 presentation support; this is a test-display limitation. These captures do not yet cover interaction.
+
 ## Headless probe
 
 ```sh

@@ -121,7 +121,10 @@ impl Kind {
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
-            Kind::Image { ref png, transform } => Kind::Image { png: png.clone(), transform },
+            Kind::Image { ref png, transform } => Kind::Image {
+                png: png.clone(),
+                transform,
+            },
             Kind::PlainText { ref text, rect } => Kind::PlainText {
                 text: text.clone(),
                 rect,
@@ -190,7 +193,10 @@ pub enum Kind {
         anchor: (i16, i16),
     },
     Free(Point),
-    Image { png: Vec<u8>, transform: [f64; 6] },
+    Image {
+        png: Vec<u8>,
+        transform: [f64; 6],
+    },
     PlainText {
         text: String,
         rect: TextRect,
@@ -662,8 +668,13 @@ impl Document {
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
         let rs = records(b)?;
         let has_picture_resource = rs.iter().any(|record| record.kind == 0x0514);
-        let image_file = has_picture_resource.then(|| ImageFile::parse(b)).transpose().ok().flatten();
-        let image_read_only = has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
+        let image_file = has_picture_resource
+            .then(|| ImageFile::parse(b))
+            .transpose()
+            .ok()
+            .flatten();
+        let image_read_only =
+            has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../assets/point_template.gsp"))?;
         let safe_outside: BTreeSet<u32> = baseline_records
             .iter()
@@ -701,7 +712,9 @@ impl Document {
             }
             let header_offset = rs[i].data.start;
             let group_start = rs[i].start;
-            let is_image = image_file.as_ref().is_some_and(|picture| picture.picture_group_offset() == group_start);
+            let is_image = image_file
+                .as_ref()
+                .is_some_and(|picture| picture.picture_group_offset() == group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let mut point = None;
@@ -1262,14 +1275,23 @@ impl Document {
         }))
     }
     pub fn import_png(&mut self, png: &[u8], at: Point) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || self.image_read_only
-            || self.objects.iter().any(|object| matches!(object.kind, Kind::Image { .. }))
+        if self.partial_view
+            || self.page_count != 1
+            || self.image_read_only
+            || self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Image { .. }))
         {
-            return Err("Only one independent picture can be edited in a single-page sketch".into());
+            return Err(
+                "Only one independent picture can be edited in a single-page sketch".into(),
+            );
         }
         if !at.x.is_finite() || !at.y.is_finite() {
             return Err("Picture position must be finite".into());
         }
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .map_err(|error| format!("PNG pixels cannot be decoded: {error}"))?;
         ImageFile::independent_from_png(png, [1., 0., at.x, 0., 1., at.y])?;
         Ok(self.add(Kind::Image {
             png: png.to_vec(),
@@ -1286,12 +1308,16 @@ impl Document {
         if self.image_read_only || !at.x.is_finite() || !at.y.is_finite() {
             return Err("Picture cannot be moved safely".into());
         }
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid picture ID")?)
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid picture ID")?)
             .ok_or("Invalid picture ID")?;
         let Kind::Image { png, mut transform } = object.kind.clone() else {
             return Err("Object is not a picture".into());
         };
-        if checkpoint { self.checkpoint(); }
+        if checkpoint {
+            self.checkpoint();
+        }
         transform[2] = at.x;
         transform[5] = at.y;
         self.objects[id - 1].kind = Kind::Image { png, transform };
@@ -1628,6 +1654,12 @@ impl Document {
         }
         if !self.safe_structure || self.page_count != 1 {
             return Err("Deleting objects in this document cannot be saved safely".into());
+        }
+        if removed
+            .iter()
+            .any(|id| matches!(self.objects[id - 1].kind, Kind::Image { .. }))
+        {
+            return Err("Removing a picture resource is not yet supported".into());
         }
         loop {
             let before = removed.len();
@@ -2418,10 +2450,20 @@ impl Document {
         {
             return Err("Deleting objects in a function document cannot be saved safely".into());
         }
-        if self.objects.iter().any(|o| o.deleted && matches!(o.kind, Kind::Image { .. })) {
+        if self
+            .objects
+            .iter()
+            .any(|o| o.deleted && matches!(o.kind, Kind::Image { .. }))
+        {
             return Err("Removing a picture resource is not yet supported".into());
         }
-        if self.objects.iter().filter(|o| matches!(o.kind, Kind::Image { .. })).count() > 1 {
+        if self
+            .objects
+            .iter()
+            .filter(|o| matches!(o.kind, Kind::Image { .. }))
+            .count()
+            > 1
+        {
             return Err("Only one independent picture can be written".into());
         }
         for (i, o) in self.objects.iter().enumerate() {
@@ -2913,8 +2955,14 @@ impl Document {
                 out[start..end].copy_from_slice(&encoded);
             }
         }
-        if let Some(Kind::Image { transform, .. }) = self.objects.iter().take(self.source_count)
-            .find_map(|object| matches!(object.kind, Kind::Image { .. }).then_some(&object.kind))
+        if !self.image_read_only
+            && let Some(Kind::Image { transform, .. }) = self
+                .objects
+                .iter()
+                .take(self.source_count)
+                .find_map(|object| {
+                    matches!(object.kind, Kind::Image { .. }).then_some(&object.kind)
+                })
         {
             let mut picture = ImageFile::parse(&out)?;
             picture.set_transform(*transform)?;
@@ -2968,7 +3016,9 @@ impl Document {
             if let Kind::Image { png, transform } = &o.kind {
                 let picture = ImageFile::independent_from_png(png, *transform)?;
                 let mut group = picture.picture_group().to_vec();
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 picture_resource = Some(picture.resource_record().to_vec());
                 continue;
@@ -3291,8 +3341,11 @@ impl Document {
         }
         records(&out)?;
         if let Some(resource) = picture_resource {
-            let resource_at = records(&out)?.iter().find(|record| record.kind == 0x03ef)
-                .ok_or("Missing picture resource section")?.start;
+            let resource_at = records(&out)?
+                .iter()
+                .find(|record| record.kind == 0x03ef)
+                .ok_or("Missing picture resource section")?
+                .start;
             out.splice(resource_at..resource_at, resource);
         }
         self.patch_text_and_labels(self.compact_deleted(out)?)
@@ -3441,6 +3494,76 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imported_picture_moves_undoes_and_survives_save() {
+        let png = include_bytes!("../tests/fixtures/image_tiny.png");
+        let mut document = Document::new();
+        document.add(Kind::Free(Point { x: 80., y: 90. }));
+        let image = document
+            .import_png(png, Point { x: 120., y: 130. })
+            .unwrap();
+        assert_eq!(image, 2);
+        document
+            .move_image(image, Point { x: 160., y: 155. })
+            .unwrap();
+        assert!(
+            matches!(&document.objects[1].kind, Kind::Image { transform, .. } if transform[2] == 160.)
+        );
+        document.undo();
+        assert!(
+            matches!(&document.objects[1].kind, Kind::Image { transform, .. } if transform[2] == 120.)
+        );
+        document.redo();
+        let path = std::env::temp_dir().join(format!("sketchpad-image-{}.gsp", std::process::id()));
+        document.save_to(&path).unwrap();
+        let reopened = Document::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 2);
+        assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+    }
+
+    #[test]
+    fn picture_import_rejects_bad_png_and_read_only_sources() {
+        let mut document = Document::new();
+        assert!(
+            document
+                .import_png(b"broken", Point { x: 0., y: 0. })
+                .is_err()
+        );
+        assert!(document.objects.is_empty());
+        let png = include_bytes!("../tests/fixtures/image_tiny.png");
+        document.import_png(png, Point { x: 0., y: 0. }).unwrap();
+        assert!(document.import_png(png, Point { x: 20., y: 20. }).is_err());
+        assert_eq!(document.objects.len(), 1);
+        for source in [
+            include_bytes!("../tests/fixtures/image_original_cropped.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/image_original_pasted.gsp").as_slice(),
+        ] {
+            let mut read_only = Document::from_bytes(source, None).unwrap();
+            assert_eq!(read_only.encode().unwrap(), source);
+            read_only.checkpoint();
+            assert!(read_only.can_save().unwrap_err().contains("read-only"));
+        }
+    }
+
+    #[test]
+    fn original_drag_of_port_picture_reopens_and_remains_editable() {
+        let source = include_bytes!("../tests/fixtures/image_port_imported_dragged_wine.gsp");
+        let mut document = Document::from_bytes(source, None).unwrap();
+        assert!(!document.partial_view);
+        assert!(
+            matches!(&document.objects[1].kind, Kind::Image { transform, .. }
+            if transform[2] == 184. && transform[5] == 170.)
+        );
+        document.move_image(2, Point { x: 204., y: 180. }).unwrap();
+        let written = document.encode().unwrap();
+        let reopened = Document::from_bytes(&written, None).unwrap();
+        assert!(
+            matches!(&reopened.objects[1].kind, Kind::Image { transform, .. }
+            if transform[2] == 204. && transform[5] == 180.)
+        );
+    }
     #[test]
     fn plain_text_edit_move_and_label_survive_save() {
         let mut doc = Document::from_bytes(
