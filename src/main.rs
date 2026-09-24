@@ -1,4 +1,5 @@
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
+use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use std::{
     io::Write,
@@ -120,6 +121,8 @@ struct Editor {
     dilation_factor: f64,
     rotate_dialog: bool,
     rotation_angle: f64,
+    function_dialog: Option<bool>,
+    function_draft: String,
     exit_requested: bool,
 }
 impl Editor {
@@ -147,6 +150,8 @@ impl Editor {
             dilation_factor: 0.5,
             rotate_dialog: false,
             rotation_angle: 60.,
+            function_dialog: None,
+            function_draft: "x".into(),
             exit_requested: false,
         };
         e.fit();
@@ -165,10 +170,21 @@ impl Editor {
             })
             .filter_map(|o| self.doc.position(o.id))
             .collect();
-        for object in self.doc.objects.iter().filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted) {
+        for object in self
+            .doc
+            .objects
+            .iter()
+            .filter(|o| o.page == self.doc.active_page && o.visible && !o.deleted)
+        {
             if let Kind::PlainText { rect, .. } = &object.kind {
-                pts.push(Point { x: rect.left.into(), y: rect.top.into() });
-                pts.push(Point { x: rect.right.into(), y: rect.bottom.into() });
+                pts.push(Point {
+                    x: rect.left.into(),
+                    y: rect.top.into(),
+                });
+                pts.push(Point {
+                    x: rect.right.into(),
+                    y: rect.bottom.into(),
+                });
             }
         }
         if pts.is_empty() {
@@ -320,13 +336,17 @@ impl Editor {
     }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            object.page == self.doc.active_page && object.visible && !object.deleted
+            object.page == self.doc.active_page
+                && object.visible
+                && !object.deleted
                 && matches!(&object.kind, Kind::PlainText { rect, .. }
                     if egui::Rect::from_two_pos(
                         v.screen(Point { x: rect.left.into(), y: rect.top.into() }),
                         v.screen(Point { x: rect.right.into(), y: rect.bottom.into() })
                     ).contains(p))
-        }) { return Some(object.id); }
+        }) {
+            return Some(object.id);
+        }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             object.page == self.doc.active_page
                 && object.visible
@@ -412,6 +432,14 @@ impl Editor {
                                     })
                                     .min_by(f32::total_cmp)?
                             }
+                        }
+                        Kind::FunctionPlot(_,_,_,_,_) => {
+                            let points = self.doc.function_plot_points(o.id, 256)?;
+                            points.windows(2).map(|pair| {
+                                let a=v.screen(pair[0]); let b=v.screen(pair[1]); let ab=b-a;
+                                let t=if ab.length_sq()<1e-6 {0.} else {((p-a).dot(ab)/ab.length_sq()).clamp(0.,1.)};
+                                (p-(a+ab*t)).length()
+                            }).min_by(f32::total_cmp)?
                         }
                         _ => return None,
                     }
@@ -790,12 +818,10 @@ impl Editor {
                 let id = self.point_at(v, p);
                 self.select_only(id);
             }
-            Tool::Text => {
-                match self.doc.add_text(&self.text_draft, v.world(p)) {
-                    Ok(id) => self.select_only(id),
-                    Err(error) => self.status = error,
-                }
-            }
+            Tool::Text => match self.doc.add_text(&self.text_draft, v.world(p)) {
+                Ok(id) => self.select_only(id),
+                Err(error) => self.status = error,
+            },
             Tool::Segment | Tool::Circle => {
                 let id = self.point_at(v, p);
                 if let Some(a) = self.pending.take() {
@@ -1420,7 +1446,17 @@ impl Editor {
                         ui.close();
                     }
                 });
+                ui.menu_button("Number", |ui| {
+                    if ui.button("New Function…").clicked() {
+                        self.function_dialog = Some(false);
+                        ui.close();
+                    }
+                });
                 ui.menu_button("Graph", |ui| {
+                    if ui.button("Plot New Function…").clicked() {
+                        self.function_dialog = Some(true);
+                        ui.close();
+                    }
                     if ui.button("Define Coordinate System").clicked() {
                         self.define_coordinate_system();
                         ui.close();
@@ -1533,9 +1569,12 @@ impl Editor {
                     self.inspected = Some(id);
                     self.edit_buffer = match &self.doc.objects[id - 1].kind {
                         Kind::PlainText { text, .. } => text.clone(),
-                        _ => self.doc.objects[id - 1].label.as_ref()
+                        _ => self.doc.objects[id - 1]
+                            .label
+                            .as_ref()
                             .and_then(|label| label.name_utf8().ok())
-                            .map(str::to_owned).unwrap_or_else(|| format!("P{id}")),
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| format!("P{id}")),
                     };
                 }
                 if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
@@ -1543,21 +1582,38 @@ impl Editor {
                     ui.label("Edit selected text");
                     ui.text_edit_multiline(&mut self.edit_buffer);
                     if ui.button("Apply text").clicked() {
-                        if let Err(error) = self.doc.edit_text(id, &self.edit_buffer) { self.status = error; }
+                        if let Err(error) = self.doc.edit_text(id, &self.edit_buffer) {
+                            self.status = error;
+                        }
                     }
                 } else if self.doc.position(id).is_some() {
                     ui.separator();
                     ui.label("Point label");
                     ui.text_edit_singleline(&mut self.edit_buffer);
-                    let visible = self.doc.objects[id - 1].label.as_ref().is_some_and(|label| label.visible());
-                    if ui.button(if visible { "Hide label" } else { "Show label" }).clicked() {
-                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, !visible) { self.status = error; }
+                    let visible = self.doc.objects[id - 1]
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.visible());
+                    if ui
+                        .button(if visible { "Hide label" } else { "Show label" })
+                        .clicked()
+                    {
+                        if let Err(error) =
+                            self.doc.set_point_label(id, &self.edit_buffer, !visible)
+                        {
+                            self.status = error;
+                        }
                     }
                     if ui.button("Rename label").clicked() {
-                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, visible) { self.status = error; }
+                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, visible)
+                        {
+                            self.status = error;
+                        }
                     }
                 }
-            } else { self.inspected = None; }
+            } else {
+                self.inspected = None;
+            }
             ui.separator();
             ui.label(format!("{} objects", self.doc.objects.len()));
             if self.doc.partial_view {
@@ -1603,9 +1659,16 @@ impl Editor {
                                     | Kind::PointOnCircle(_, _, _)
                                     | Kind::PointOnArc(_, _)
                             ) {
-                                self.drag_offset = if let Kind::PlainText { rect, .. } = &self.doc.objects[id - 1].kind {
-                                    p - vp.screen(Point { x: rect.left.into(), y: rect.top.into() })
-                                } else { egui::Vec2::ZERO };
+                                self.drag_offset = if let Kind::PlainText { rect, .. } =
+                                    &self.doc.objects[id - 1].kind
+                                {
+                                    p - vp.screen(Point {
+                                        x: rect.left.into(),
+                                        y: rect.top.into(),
+                                    })
+                                } else {
+                                    egui::Vec2::ZERO
+                                };
                                 self.doc.checkpoint();
                                 self.dragging = Some(id);
                             }
@@ -1615,8 +1678,14 @@ impl Editor {
                 if response.dragged() {
                     if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
                         if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
-                            if let Err(error) = self.doc.drag_text(id, vp.world(p - self.drag_offset)) { self.status = error; }
-                        } else { self.doc.move_point(id, vp.world(p)); }
+                            if let Err(error) =
+                                self.doc.drag_text(id, vp.world(p - self.drag_offset))
+                            {
+                                self.status = error;
+                            }
+                        } else {
+                            self.doc.move_point(id, vp.world(p));
+                        }
                     }
                 }
                 if response.drag_stopped() {
@@ -1632,7 +1701,10 @@ impl Editor {
                     object.page == self.doc.active_page && object.visible && !object.deleted
                 }) {
                     if let Kind::PlainText { text, rect } = &object.kind {
-                        let at = vp.screen(Point { x: rect.left.into(), y: rect.top.into() });
+                        let at = vp.screen(Point {
+                            x: rect.left.into(),
+                            y: rect.top.into(),
+                        });
                         for (line, content) in text.split('\n').enumerate() {
                             ui.painter().text(
                                 at + egui::vec2(0., line as f32 * 19.),
@@ -1643,9 +1715,11 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some(label) = &object.label && label.visible()
+                    if let Some(label) = &object.label
+                        && label.visible()
                         && let Ok(name) = label.name_utf8()
-                        && let Some(point) = self.doc.position(object.id) {
+                        && let Some(point) = self.doc.position(object.id)
+                    {
                         let at = vp.screen(point);
                         let offset = label.offset();
                         ui.painter().text(
@@ -1685,7 +1759,9 @@ impl Editor {
                         && !o.deleted
                         && !matches!(o.kind, Kind::GraphVerticalUnit(_, _))
                 }) {
-                    if o.label.is_none() && let Some(p) = self.doc.position(o.id) {
+                    if o.label.is_none()
+                        && let Some(p) = self.doc.position(o.id)
+                    {
                         let at = vp.screen(p);
                         if r.contains(at) {
                             ui.painter().text(
@@ -1817,6 +1893,16 @@ impl Editor {
                         );
                         row += 1;
                     }
+                    if let Kind::FunctionDefinition(expression) = object.kind {
+                        ui.painter().text(
+                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
+                            egui::Align2::LEFT_TOP,
+                            expression.display(),
+                            egui::FontId::proportional(16.),
+                            egui::Color32::from_gray(35),
+                        );
+                        row += 1;
+                    }
                 }
             });
         if self.pending_action.is_some() {
@@ -1846,6 +1932,30 @@ impl Editor {
                 Some(Decision::Discard) => self.finish_pending_action(),
                 Some(Decision::Cancel) => self.pending_action = None,
                 _ => {}
+            }
+        }
+        if let Some(plot) = self.function_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("new_function")).show(root.ctx(), |ui| {
+                ui.heading(if plot { "Plot new function" } else { "New function" });
+                ui.label("f(x) =");
+                ui.text_edit_singleline(&mut self.function_draft);
+                ui.label("Supported: x, x^2");
+                ui.horizontal(|ui| {
+                    apply = ui.button(if plot { "Plot" } else { "Create" }).clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel { self.function_dialog = None; }
+            if apply {
+                match SimpleFunction::parse(&self.function_draft).and_then(|expr| {
+                    if plot { self.doc.plot_new_function(expr, self.center) }
+                    else { self.doc.add_function_definition(expr) }
+                }) {
+                    Ok(id) => { self.function_dialog = None; self.select_only(id); self.status = format!("Created function object {id}"); }
+                    Err(error) => self.status = error,
+                }
             }
         }
         if self.translate_dialog {

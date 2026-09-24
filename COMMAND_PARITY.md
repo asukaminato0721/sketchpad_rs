@@ -31,7 +31,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5 |
 | Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5 |
 | Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5 |
-| Action Buttons | Pending |
+| Action Buttons | Partial: Hide/Show button creation and interaction; other button kinds pending |
 | Select All | Partial |
 | Select Parents | Partial: direct dependencies of supported objects |
 | Select Children | Partial: direct dependents of supported objects |
@@ -51,8 +51,8 @@ The release gate is every sketch and document command verified after editing, sa
 | Text | Pending |
 | Hide Objects | Partial |
 | Show All Hidden | Partial |
-| Show Labels | Pending |
-| Label Objects | Pending |
+| Show Labels | Partial: point-label visibility through editor controls; other object labels pending |
+| Label Objects | Partial: point labels can be named and saved; other object labels pending |
 | Trace Objects | Pending |
 | Erase Traces | Pending |
 | Animate Objects | Pending |
@@ -156,7 +156,7 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Hide/Show | Pending |
+| Hide/Show | Partial: original and generated buttons cross-opened, click updates target visibility, save/reopen verified |
 | Animation | Pending |
 | Movement | Pending |
 | Presentation | Pending |
@@ -182,7 +182,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Point tool | Partial |
 | Segment tool | Partial |
 | Circle tool | Partial |
-| Text, image, table, iteration, plotting | Pending |
+| Text, image, table, iteration, plotting | Partial: literal free text and point labels can be created, edited, dragged, saved, and cross-opened; image, table, iteration, and plotting pending |
 | Import, export, print | Partial: SVG/PDF export and Linux printing for supported visible geometry; import pending |
 | Multi-page documents | Partial: page navigation and read-only complex objects |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

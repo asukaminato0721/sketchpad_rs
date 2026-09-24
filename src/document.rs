@@ -1,5 +1,6 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
+use crate::function_records::{self, SimpleFunction};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
 use std::{
@@ -45,7 +46,7 @@ impl Kind {
             return vertices.clone();
         }
         match *self {
-            Kind::Free(_) | Kind::PlainText { .. } | Kind::Unsupported(_) => vec![],
+            Kind::Free(_) | Kind::PlainText { .. } | Kind::FunctionDefinition(_) | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
@@ -76,7 +77,8 @@ impl Kind {
             | Kind::PointDistance(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
             | Kind::CoordinateSystem(a, b)
-            | Kind::SlopeMeasurement(a, b) => vec![a, b],
+            | Kind::SlopeMeasurement(a, b)
+            | Kind::FunctionPlot(a, b, _, _, _) => vec![a, b],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
             | Kind::RotatedPoint(source, center, _) => {
@@ -114,7 +116,10 @@ impl Kind {
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
-            Kind::PlainText { ref text, rect } => Kind::PlainText { text: text.clone(), rect },
+            Kind::PlainText { ref text, rect } => Kind::PlainText {
+                text: text.clone(),
+                rect,
+            },
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
@@ -123,6 +128,8 @@ impl Kind {
             Kind::GraphAxis(a, b, axis) => Kind::GraphAxis(m(a), m(b), axis),
             Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
             Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
+            Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
+            Kind::FunctionPlot(a,b,min,max,samples) => Kind::FunctionPlot(m(a),m(b),min,max,samples),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -175,7 +182,10 @@ pub enum Kind {
         anchor: (i16, i16),
     },
     Free(Point),
-    PlainText { text: String, rect: TextRect },
+    PlainText {
+        text: String,
+        rect: TextRect,
+    },
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
@@ -184,6 +194,8 @@ pub enum Kind {
     GraphAxis(usize, usize, u32),
     CoordinateSystem(usize, usize),
     SlopeMeasurement(usize, usize),
+    FunctionDefinition(SimpleFunction),
+    FunctionPlot(usize, usize, f64, f64, u32),
     SegmentLength(usize),
     PolygonPerimeter(usize),
     CircleCircumference(usize),
@@ -683,6 +695,8 @@ impl Document {
             let mut measurement_format = false;
             let mut measurement_style = false;
             let mut graph_records: Vec<(u32, Vec<u8>)> = Vec::new();
+            let mut function_expression: Option<Vec<u8>> = None;
+            let mut function_range: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
@@ -694,6 +708,8 @@ impl Document {
                 if matches!(code, 52 | 54 | 58 | 61 | 87) {
                     graph_records.push((r.kind, d.to_vec()));
                 }
+                if code == 0 && r.kind == 0x0907 { function_expression = Some(d.to_vec()); }
+                if code == 72 && r.kind == 0x0902 { function_range = Some(d.to_vec()); }
                 match r.kind {
                     0x07d5 if code == 0 => match LabelAux::parse(d) {
                         Ok(value) => label = Some(value),
@@ -790,6 +806,8 @@ impl Document {
                     && !(matches!(code, 52 | 54 | 58 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
+                    && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(code == 72 && r.kind == 0x0902)
                 {
                     safe = false;
                 }
@@ -867,6 +885,20 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
+                        match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
+                            Ok(expr) => Kind::FunctionDefinition(expr),
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (72, None, [definition, frame]) if function_range.is_some()
+                        && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_)))
+                        && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
+                        match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
+                            Ok((min,max,samples)) => Kind::FunctionPlot(*definition,*frame,min,max,samples),
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
                     (62, _, [target]) if action_group.as_ref().is_some_and(|group| {
                         group.target_ids() == vec![(*target - page_base) as u32]
                     }) => {
@@ -1097,6 +1129,7 @@ impl Document {
             if matches!(kind, Kind::Unsupported(_)) {
                 safe = false;
             }
+            if matches!(kind, Kind::FunctionDefinition(_)) { label = None; }
             if label.is_some() && !is_point_kind(&kind) {
                 safe = false;
                 label = None;
@@ -1195,15 +1228,29 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot add text to this sketch safely".into());
         }
-        Ok(self.add(Kind::PlainText { text: text.to_owned(), rect }))
+        Ok(self.add(Kind::PlainText {
+            text: text.to_owned(),
+            rect,
+        }))
     }
     pub fn edit_text(&mut self, id: usize, text: &str) -> Result<(), String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid text ID")?).ok_or("Invalid text ID")?;
-        let Kind::PlainText { rect, .. } = object.kind else { return Err("Object is not free text".into()); };
+        if self.partial_view {
+            return Err("Cannot edit text in a sketch with unsupported records safely".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid text ID")?)
+            .ok_or("Invalid text ID")?;
+        let Kind::PlainText { rect, .. } = object.kind else {
+            return Err("Object is not free text".into());
+        };
         let rect = TextRect::roomy_at(rect.left, rect.top, text)?;
         text_object::encode_plain_text_group(text, rect)?;
         self.checkpoint();
-        self.objects[id - 1].kind = Kind::PlainText { text: text.to_owned(), rect };
+        self.objects[id - 1].kind = Kind::PlainText {
+            text: text.to_owned(),
+            rect,
+        };
         Ok(())
     }
     pub fn move_text(&mut self, id: usize, at: Point) -> Result<(), String> {
@@ -1215,23 +1262,51 @@ impl Document {
     fn move_text_inner(&mut self, id: usize, at: Point, checkpoint: bool) -> Result<(), String> {
         let x = i16::try_from(at.x.round() as i64).map_err(|_| "Text x is out of range")?;
         let y = i16::try_from(at.y.round() as i64).map_err(|_| "Text y is out of range")?;
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid text ID")?).ok_or("Invalid text ID")?;
-        let Kind::PlainText { ref text, rect } = object.kind else { return Err("Object is not free text".into()); };
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid text ID")?)
+            .ok_or("Invalid text ID")?;
+        let Kind::PlainText { ref text, rect } = object.kind else {
+            return Err("Object is not free text".into());
+        };
         let dx = i32::from(x) - i32::from(rect.left);
         let dy = i32::from(y) - i32::from(rect.top);
-        let right = i16::try_from(i32::from(rect.right) + dx).map_err(|_| "Text x is out of range")?;
-        let bottom = i16::try_from(i32::from(rect.bottom) + dy).map_err(|_| "Text y is out of range")?;
+        let right =
+            i16::try_from(i32::from(rect.right) + dx).map_err(|_| "Text x is out of range")?;
+        let bottom =
+            i16::try_from(i32::from(rect.bottom) + dy).map_err(|_| "Text y is out of range")?;
         let text = text.clone();
-        if checkpoint { self.checkpoint(); }
-        self.objects[id - 1].kind = Kind::PlainText { text, rect: TextRect { left: x, top: y, right, bottom } };
+        if checkpoint {
+            self.checkpoint();
+        }
+        self.objects[id - 1].kind = Kind::PlainText {
+            text,
+            rect: TextRect {
+                left: x,
+                top: y,
+                right,
+                bottom,
+            },
+        };
         self.dirty = true;
         Ok(())
     }
     pub fn set_point_label(&mut self, id: usize, name: &str, visible: bool) -> Result<(), String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid point ID")?).ok_or("Invalid point ID")?;
-        if !is_point_kind(&object.kind) || object.deleted { return Err("Object is not a point".into()); }
-        let mut label = if let Some(existing) = &object.label { existing.clone() }
-            else { LabelAux::new_point(name, visible, (8, 5))? };
+        if self.partial_view {
+            return Err("Cannot edit labels in a sketch with unsupported records safely".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid point ID")?)
+            .ok_or("Invalid point ID")?;
+        if !is_point_kind(&object.kind) || object.deleted {
+            return Err("Object is not a point".into());
+        }
+        let mut label = if let Some(existing) = &object.label {
+            existing.clone()
+        } else {
+            LabelAux::new_point(name, visible, (8, 5))?
+        };
         label.set_name(name)?;
         label.set_visible(visible);
         self.checkpoint();
@@ -1293,6 +1368,32 @@ impl Document {
         let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
         self.grid_visible[self.active_page] = true;
         Ok(frame)
+    }
+    pub fn add_function_definition(&mut self, expression: SimpleFunction) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 { return Err("Cannot add a function to this sketch".into()); }
+        self.checkpoint();
+        Ok(self.append_object(Kind::FunctionDefinition(expression)))
+    }
+    pub fn plot_new_function(&mut self, expression: SimpleFunction, origin: Point) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 { return Err("Cannot plot a function in this sketch".into()); }
+        let frame = match self.active_coordinate_system() {
+            Some(id) => id,
+            None => self.add_default_coordinate_system(origin)?,
+        };
+        self.checkpoint();
+        let definition = self.append_object(Kind::FunctionDefinition(expression));
+        Ok(self.append_object(Kind::FunctionPlot(definition,frame,-5.265208333333335,5.265208333333335,750)))
+    }
+    pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
+        let Kind::FunctionPlot(definition,frame,min,max,_) = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let Kind::FunctionDefinition(expression) = self.objects.get(definition.checked_sub(1)?)?.kind else { return None; };
+        let frame = self.graph_frame(frame)?;
+        let count = count.clamp(2,4096);
+        (0..count).map(|i| {
+            let x = min + (max-min) * (i as f64 / (count-1) as f64);
+            let p = frame.world(x, expression.evaluate(x))?;
+            Some(Point { x:p.x, y:p.y })
+        }).collect()
     }
     pub fn set_grid_visible(&mut self, visible: bool) {
         if self.active_coordinate_system().is_some()
@@ -2215,6 +2316,9 @@ impl Document {
         {
             return Err("Deleting objects in this document cannot be saved safely".into());
         }
+        if self.objects.iter().any(|o| o.deleted) && self.objects.iter().any(|o| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::FunctionPlot(_,_,_,_,_))) {
+            return Err("Deleting objects in a function document cannot be saved safely".into());
+        }
         for (i, o) in self.objects.iter().enumerate() {
             if o.id != i + 1 {
                 return Err("Invalid object ID".into());
@@ -2314,6 +2418,16 @@ impl Document {
             }
             if matches!(o.kind, Kind::CoordinateSystem(_, _)) && self.graph_frame(o.id).is_none() {
                 return Err(format!("Invalid coordinate system {}", o.id));
+            }
+            if let Kind::FunctionPlot(definition,frame,min,max,samples) = o.kind {
+                if !matches!(self.objects.get(definition.saturating_sub(1)).map(|o| &o.kind), Some(Kind::FunctionDefinition(_)))
+                    || self.graph_frame(frame).is_none()
+                    || !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+                    return Err(format!("Invalid function plot {}", o.id));
+                }
+                if o.id > self.source_count && (min != -5.265208333333335 || max != 5.265208333333335 || samples != 750) {
+                    return Err(format!("Cannot encode modified function range in object {}", o.id));
+                }
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind {
                 if !matches!(
@@ -2700,7 +2814,7 @@ impl Document {
             .unwrap_or(0);
         let insert_at = rs
             .iter()
-            .find(|r| r.kind == 0x2328 && r.start >= last_group_end && r.start < trailer)
+            .find(|r| matches!(r.kind, 0x2328 | 0x232d) && r.start >= last_group_end && r.start < trailer)
             .map(|r| r.start)
             .unwrap_or(trailer);
         let mut added = Vec::new();
@@ -2713,7 +2827,9 @@ impl Document {
         for o in self.objects.iter().skip(self.source_count) {
             if let Kind::PlainText { text, rect } = &o.kind {
                 let mut group = text_object::encode_plain_text_group(text, *rect)?;
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -2732,6 +2848,19 @@ impl Document {
                 continue;
             }
             if let Some(group) = self.graph_template_group(o)? {
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::FunctionDefinition(expression) = o.kind {
+                let mut group = function_records::encode_definition_group(expression)?;
+                if !o.visible { group[10] |= 1; }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::FunctionPlot(definition, frame, _, _, _) = o.kind {
+                let Kind::FunctionDefinition(expression) = self.objects[definition-1].kind else { return Err("Invalid function definition".into()); };
+                let mut group = function_records::encode_plot_group(expression, definition, frame)?;
+                if !o.visible { group[10] |= 1; }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -2967,11 +3096,25 @@ impl Document {
             .map(|object| object.id);
         let added_len = added.len();
         out.splice(insert_at..insert_at, added);
+        let last_function = self.objects.iter().rev().skip_while(|o| o.deleted).find(|o| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::FunctionPlot(_,_,_,_,_))).map(|o| o.id);
+        let mut footer_added = 0;
+        if let Some(id) = last_function {
+            if let Some(marker) = rs.iter().find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer) {
+                if marker.data.len() != 4 { return Err("Invalid function marker".into()); }
+                let offset = marker.data.start + added_len;
+                out[offset..offset+4].copy_from_slice(&(id as u32).to_le_bytes());
+            } else {
+                let mut marker = Vec::new();
+                put_record(&mut marker, 0x2328, &(id as u32).to_le_bytes());
+                footer_added = marker.len();
+                out.splice(insert_at+added_len..insert_at+added_len, marker);
+            }
+        }
         if let Some(frame) = new_frame {
             let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
             let mut page_link = Vec::new();
             put_record(&mut page_link, 0x232d, &frame.to_le_bytes());
-            out.splice(trailer + added_len..trailer + added_len, page_link);
+            out.splice(trailer + added_len + footer_added..trailer + added_len + footer_added, page_link);
         }
         records(&out)?;
         self.patch_text_and_labels(self.compact_deleted(out)?)
@@ -2987,19 +3130,37 @@ impl Document {
                 ordinal += 1;
                 current_group = Some(index);
             }
-            if record.kind != 0x07d7 { continue; }
-            let start_index = current_group.take().ok_or("Object terminator without header")?;
-            let object = survivors.get(ordinal - 1).ok_or("Object group count mismatch")?;
-            if object.id > self.source_count { continue; }
+            if record.kind != 0x07d7 {
+                continue;
+            }
+            let start_index = current_group
+                .take()
+                .ok_or("Object terminator without header")?;
+            let object = survivors
+                .get(ordinal - 1)
+                .ok_or("Object group count mismatch")?;
+            if object.id > self.source_count {
+                continue;
+            }
             let group = &rs[start_index..=index];
             if let Kind::PlainText { text, rect } = &object.kind {
-                let rich = group.iter().find(|r| r.kind == 0x08fc).ok_or("Missing free-text payload")?;
-                let bbox = group.iter().find(|r| r.kind == 0x0898).ok_or("Missing free-text box")?;
+                let rich = group
+                    .iter()
+                    .find(|r| r.kind == 0x08fc)
+                    .ok_or("Missing free-text payload")?;
+                let bbox = group
+                    .iter()
+                    .find(|r| r.kind == 0x0898)
+                    .ok_or("Missing free-text box")?;
                 let (old_text, old_rect) = text_object::decode_plain_text(
-                    &bytes[rich.data.clone()], &bytes[bbox.data.clone()])?;
+                    &bytes[rich.data.clone()],
+                    &bytes[bbox.data.clone()],
+                )?;
                 if old_text != *text || old_rect != *rect {
                     let mut replacement = text_object::encode_plain_text_group(text, *rect)?;
-                    if !object.visible { replacement[10] |= 1; }
+                    if !object.visible {
+                        replacement[10] |= 1;
+                    }
                     edits.push((group[0].start, record.data.end, replacement));
                 }
             }
@@ -3012,11 +3173,17 @@ impl Document {
                     }
                 } else {
                     let insertion = group[0].data.end + group[0].data.len() % 2;
-                    edits.push((insertion, insertion, crate::text_records::encode_point_label_records(label)));
+                    edits.push((
+                        insertion,
+                        insertion,
+                        crate::text_records::encode_point_label_records(label),
+                    ));
                 }
             }
         }
-        if ordinal != survivors.len() { return Err("Object group count mismatch".into()); }
+        if ordinal != survivors.len() {
+            return Err("Object group count mismatch".into());
+        }
         edits.sort_by(|a, b| b.0.cmp(&a.0));
         for (start, end, replacement) in edits {
             bytes.splice(start..end, replacement);
@@ -3097,9 +3264,16 @@ mod tests {
     use super::*;
     #[test]
     fn plain_text_edit_move_and_label_survive_save() {
-        let mut doc = Document::from_bytes(include_bytes!("../tests/fixtures/text_object_original_Hello.gsp"), None).unwrap();
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_object_original_Hello.gsp"),
+            None,
+        )
+        .unwrap();
         assert!(!doc.partial_view);
-        assert_eq!(doc.encode().unwrap(), include_bytes!("../tests/fixtures/text_object_original_Hello.gsp"));
+        assert_eq!(
+            doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/text_object_original_Hello.gsp")
+        );
         doc.edit_text(1, "猫\nA<B>").unwrap();
         doc.move_text(1, Point { x: 180., y: 130. }).unwrap();
         let encoded = doc.encode().unwrap();
@@ -3112,7 +3286,15 @@ mod tests {
         label_doc.set_point_label(point, "P", true).unwrap();
         let bytes = label_doc.encode().unwrap();
         let reopened = Document::from_bytes(&bytes, None).unwrap();
-        assert_eq!(reopened.objects[0].label.as_ref().unwrap().name_utf8().unwrap(), "P");
+        assert_eq!(
+            reopened.objects[0]
+                .label
+                .as_ref()
+                .unwrap()
+                .name_utf8()
+                .unwrap(),
+            "P"
+        );
         assert!(!reopened.partial_view);
     }
     #[test]
@@ -3127,6 +3309,18 @@ mod tests {
         assert_eq!(label.name_utf8().unwrap(), "Cat");
         assert!(!label.visible());
         assert!(!reopened.partial_view);
+    }
+    #[test]
+    fn wine_dragged_text_preserves_opaque_padding_until_edited() {
+        let original = include_bytes!("../tests/fixtures/text_object_generated_Hello_dragged.gsp");
+        let mut doc = Document::from_bytes(original, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), original);
+        doc.edit_text(1, "Hello again").unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(
+            matches!(&reopened.objects[0].kind, Kind::PlainText { text, .. } if text == "Hello again")
+        );
     }
     #[test]
     fn fixtures_preserve_bytes() {

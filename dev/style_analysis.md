@@ -36,3 +36,13 @@ A code-3 circle also uses payload bytes 12–14: the generated default circle wa
 I selected a circle boundary in the original application and used Display > Line Style. Choosing Thick changed its code-3 `0x07d0` payload byte 10 from `0x22` to `0x23`; choosing Dashed changed it from `0x22` to `0x12`. Original saves are `tests/fixtures/style_thick_circle.gsp` and `style_dashed_circle.gsp`. This agrees with the segment width and pattern nibbles. `circle_line_style` and `set_circle_line_style` decode and edit this field only for code-3 headers. Native editing and rendering remain to be integrated.
 
 `dev/style_record_probe.rs circle-line` generated a Thick, Solid circle from the green-circle fixture. Sketchpad 5 opened it, displayed a thick green circle, saved it, and `gsp_probe verify` reopened the save with three supported objects and `partial=false`.
+
+## Lines, rays, and arcs
+
+The original line, ray, three-point arc, and circle-based arc fixtures all start with `0x22` at the same object-header byte 10. `straight_or_arc_line_style` handles codes 63, 64, 79, and 81, leaving other object codes untouched. Rust-patched Thick, Dashed files for a line and a three-point arc opened and displayed as thick dashed strokes in Sketchpad 5; the original application saved both, and `gsp_probe verify` reopened them as supported files. The ray and circle-based arc share the header pattern, but their styled variants have not yet been cross-opened.
+
+The same four headers contain RGB bytes 12–14. The source line and ray are navy `(0, 0, 128)`, while both source arcs are green `(0, 128, 0)`. `straight_or_arc_color` reads and writes the bytes only for those four codes. A Rust-patched blue three-point arc opened, displayed blue, and saved in Sketchpad 5; `gsp_probe verify` reopened its original-app save with `partial=false`.
+
+## Polygon interior color
+
+The code-8 polygon interior header has RGB `(255, 128, 0)` in payload bytes 12–14. `polygon_color` edits only those three bytes for code-8 headers. A Rust-patched blue polygon opened as a blue filled triangle in Sketchpad 5, saved, and reopened in the port with five supported objects and `partial=false`. The source polygon's label and perimeter measurement remained intact.

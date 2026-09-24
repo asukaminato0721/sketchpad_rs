@@ -29,6 +29,16 @@ pub struct ImageFile {
     header: Record,
     size: Record,
     transform: Record,
+    crops: Vec<CroppedPicture>,
+    editable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CroppedPicture {
+    pub source: u32,
+    pub polygon: u32,
+    pub dimensions: (u32, u32),
+    pub visible: bool,
 }
 
 fn u32_at(data: &[u8], start: usize) -> u32 {
@@ -49,7 +59,9 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
         let kind = u32_at(bytes, at + 4);
         let start = at.checked_add(8).ok_or("GSP record offset overflow")?;
         let payload_end = start.checked_add(len).ok_or("GSP record length overflow")?;
-        let end = payload_end.checked_add(len % 2).ok_or("GSP padding overflow")?;
+        let end = payload_end
+            .checked_add(len % 2)
+            .ok_or("GSP padding overflow")?;
         if end > bytes.len() {
             return Err("Truncated GSP record payload".into());
         }
@@ -76,7 +88,9 @@ fn png_dimensions(png: &[u8]) -> Result<(u32, u32), String> {
             return Err("Truncated PNG chunk".into());
         }
         let len = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
-        let end = at.checked_add(12).and_then(|base| base.checked_add(len))
+        let end = at
+            .checked_add(12)
+            .and_then(|base| base.checked_add(len))
             .ok_or("PNG chunk length overflow")?;
         if end > png.len() {
             return Err("Truncated PNG chunk data".into());
@@ -127,7 +141,13 @@ impl ImageFile {
         let mut groups = Vec::new();
         for window in records.windows(5) {
             if window.iter().map(|r| r.kind).collect::<Vec<_>>()
-                == [OBJECT_HEADER, IMAGE_SIZE, IMAGE_TRANSFORM, IMAGE_RESOURCE, OBJECT_END]
+                == [
+                    OBJECT_HEADER,
+                    IMAGE_SIZE,
+                    IMAGE_TRANSFORM,
+                    IMAGE_RESOURCE,
+                    OBJECT_END,
+                ]
                 && bytes[window[0].payload.clone()].len() == 28
                 && u32_at(bytes, window[0].payload.start) as u16 == 0
             {
@@ -140,8 +160,10 @@ impl ImageFile {
         let [header, size, transform, resource_ref, terminator] = *group else {
             unreachable!()
         };
-        if size.payload.len() != 16 || transform.payload.len() != 48
-            || resource_ref.payload.len() != 2 || terminator.payload.len() != 0
+        if size.payload.len() != 16
+            || transform.payload.len() != 48
+            || resource_ref.payload.len() != 2
+            || terminator.payload.len() != 0
             || bytes[resource_ref.payload.clone()] != [0, 0]
         {
             return Err("Unsupported picture group fields".into());
@@ -152,7 +174,8 @@ impl ImageFile {
         }
         let dimensions = png_dimensions(&payload[8..])?;
         let image_size = &bytes[size.payload.clone()];
-        if u32_at(payload, 0) != dimensions.0 || u32_at(payload, 4) != dimensions.1
+        if u32_at(payload, 0) != dimensions.0
+            || u32_at(payload, 4) != dimensions.1
             || u32_at(image_size, 0) != dimensions.0
             || u32_at(image_size, 4) != dimensions.1
             || u32_at(image_size, 8) != dimensions.0
@@ -166,12 +189,46 @@ impl ImageFile {
         {
             return Err("Picture transform contains a non-finite value".into());
         }
+        let crops = records
+            .windows(4)
+            .filter_map(|window| {
+                let [header, refs, size, end] = window else {
+                    return None;
+                };
+                if [header.kind, refs.kind, size.kind, end.kind]
+                    != [OBJECT_HEADER, 0x07d2, IMAGE_SIZE, OBJECT_END]
+                    || header.payload.len() != 28
+                    || u32_at(bytes, header.payload.start) as u16 != 108
+                    || refs.payload.len() != 12
+                    || u32_at(bytes, refs.payload.start) != 2
+                    || size.payload.len() != 16
+                    || !end.payload.is_empty()
+                {
+                    return None;
+                }
+                Some(CroppedPicture {
+                    source: u32_at(bytes, refs.payload.start + 4),
+                    polygon: u32_at(bytes, refs.payload.start + 8),
+                    dimensions: (
+                        u32_at(bytes, size.payload.start),
+                        u32_at(bytes, size.payload.start + 4),
+                    ),
+                    visible: u32_at(bytes, header.payload.start) & 0x1_0000 == 0,
+                })
+            })
+            .collect();
+        let editable = records.iter().filter(|r| r.kind == IMAGE_SIZE).count() == 1
+            && records.iter().filter(|r| r.kind == IMAGE_TRANSFORM).count() == 1
+            && records.iter().filter(|r| r.kind == IMAGE_RESOURCE).count() == 1
+            && records.iter().filter(|r| r.kind == OBJECT_HEADER).count() == 1;
         Ok(Self {
             bytes: bytes.to_vec(),
             resource: (*resource).clone(),
             header: header.clone(),
             size: size.clone(),
             transform: transform.clone(),
+            crops,
+            editable,
         })
     }
 
@@ -183,17 +240,36 @@ impl ImageFile {
         &self.bytes[self.resource.payload.start + 8..self.resource.payload.end]
     }
 
+    pub fn crops(&self) -> &[CroppedPicture] {
+        &self.crops
+    }
+
+    pub fn can_edit(&self) -> bool {
+        self.editable
+    }
+
     pub fn dimensions(&self) -> (u32, u32) {
-        (u32_at(&self.bytes, self.size.payload.start), u32_at(&self.bytes, self.size.payload.start + 4))
+        (
+            u32_at(&self.bytes, self.size.payload.start),
+            u32_at(&self.bytes, self.size.payload.start + 4),
+        )
     }
 
     pub fn transform(&self) -> [f64; 6] {
         std::array::from_fn(|i| {
-            f64::from_le_bytes(self.bytes[self.transform.payload.start + 8 * i..self.transform.payload.start + 8 * (i + 1)].try_into().unwrap())
+            f64::from_le_bytes(
+                self.bytes[self.transform.payload.start + 8 * i
+                    ..self.transform.payload.start + 8 * (i + 1)]
+                    .try_into()
+                    .unwrap(),
+            )
         })
     }
 
     pub fn set_transform(&mut self, transform: [f64; 6]) -> Result<(), String> {
+        if !self.editable {
+            return Err("Picture has derived images whose rewrite is not verified".into());
+        }
         if transform.iter().any(|value| !value.is_finite()) {
             return Err("Picture transform must be finite".into());
         }
@@ -208,14 +284,25 @@ impl ImageFile {
         u32_at(&self.bytes, self.header.payload.start) & 0x1_0000 == 0
     }
 
-    pub fn set_visible(&mut self, visible: bool) {
+    pub fn set_visible(&mut self, visible: bool) -> Result<(), String> {
+        if !self.editable {
+            return Err("Picture has derived images whose rewrite is not verified".into());
+        }
         let at = self.header.payload.start;
         let mut raw = u32_at(&self.bytes, at);
-        if visible { raw &= !0x1_0000 } else { raw |= 0x1_0000 };
+        if visible {
+            raw &= !0x1_0000
+        } else {
+            raw |= 0x1_0000
+        };
         self.bytes[at..at + 4].copy_from_slice(&raw.to_le_bytes());
+        Ok(())
     }
 
     pub fn replace_png(&mut self, png: &[u8]) -> Result<(), String> {
+        if !self.editable {
+            return Err("Picture has derived images whose rewrite is not verified".into());
+        }
         let (width, height) = png_dimensions(png)?;
         let mut changed = self.bytes.clone();
         for at in [0, 8] {
@@ -224,15 +311,20 @@ impl ImageFile {
             changed[self.size.payload.start + at + 4..self.size.payload.start + at + 8]
                 .copy_from_slice(&height.to_le_bytes());
         }
-        let payload_len = 8usize.checked_add(png.len()).ok_or("Picture resource length overflow")?;
-        let payload_len = u32::try_from(payload_len).map_err(|_| "Picture resource is too large")?;
+        let payload_len = 8usize
+            .checked_add(png.len())
+            .ok_or("Picture resource length overflow")?;
+        let payload_len =
+            u32::try_from(payload_len).map_err(|_| "Picture resource is too large")?;
         let mut record = Vec::with_capacity(8 + payload_len as usize + payload_len as usize % 2);
         record.extend_from_slice(&payload_len.to_le_bytes());
         record.extend_from_slice(&RESOURCE.to_le_bytes());
         record.extend_from_slice(&width.to_le_bytes());
         record.extend_from_slice(&height.to_le_bytes());
         record.extend_from_slice(png);
-        if payload_len % 2 != 0 { record.push(0); }
+        if payload_len % 2 != 0 {
+            record.push(0);
+        }
         changed.splice(self.resource.start..self.resource.end, record);
         *self = Self::parse(&changed)?;
         Ok(())
@@ -250,12 +342,13 @@ mod tests {
         assert_eq!(picture.encode(), source);
         assert_eq!(picture.dimensions(), (255, 158));
         assert_eq!(picture.transform(), [1., 0., 118., 0., 1., 112.]);
-        picture.set_visible(false);
+        let original_png = picture.png().to_vec();
+        picture.set_visible(false).unwrap();
         picture.set_transform([1., 0., 140., 0., 1., 112.]).unwrap();
         let reopened = ImageFile::parse(picture.encode()).unwrap();
         assert!(!reopened.visible());
         assert_eq!(reopened.transform()[2], 140.);
-        assert_eq!(reopened.png(), &source[ImageFile::parse(source).unwrap().resource.payload.start + 8..ImageFile::parse(source).unwrap().resource.payload.end]);
+        assert_eq!(reopened.png(), original_png);
     }
 
     #[test]
@@ -266,7 +359,10 @@ mod tests {
         picture.replace_png(tiny).unwrap();
         assert_eq!(picture.dimensions(), (16, 16));
         assert_eq!(picture.png(), tiny);
-        assert_eq!(ImageFile::parse(picture.encode()).unwrap().encode(), picture.encode());
+        assert_eq!(
+            ImageFile::parse(picture.encode()).unwrap().encode(),
+            picture.encode()
+        );
     }
 
     #[test]
@@ -277,7 +373,52 @@ mod tests {
         corrupt[50] ^= 1;
         assert!(picture.replace_png(&corrupt).is_err());
         assert_eq!(picture.encode(), source);
-        assert!(picture.set_transform([f64::NAN, 0., 0., 0., 1., 0.]).is_err());
+        assert!(
+            picture
+                .set_transform([f64::NAN, 0., 0., 0., 1., 0.])
+                .is_err()
+        );
         assert_eq!(picture.encode(), source);
+    }
+
+    #[test]
+    fn original_drag_reencodes_picture_and_updates_translation() {
+        let edited = include_bytes!("../tests/fixtures/image_port_dragged_wine.gsp");
+        let picture = ImageFile::parse(edited).unwrap();
+        assert_eq!(picture.dimensions(), (16, 16));
+        assert_eq!(picture.transform(), [4., 0., 150., 0., 4., 132.]);
+        assert_eq!(picture.encode(), edited);
+    }
+
+    #[test]
+    fn crop_is_decoded_but_blocks_unverified_picture_edits() {
+        let cropped = include_bytes!("../tests/fixtures/image_original_cropped.gsp");
+        let mut picture = ImageFile::parse(cropped).unwrap();
+        assert_eq!(picture.encode(), cropped);
+        assert!(!picture.can_edit());
+        assert_eq!(
+            picture.crops(),
+            &[CroppedPicture {
+                source: 1,
+                polygon: 5,
+                dimensions: (16, 16),
+                visible: true,
+            }]
+        );
+        assert!(!picture.visible());
+        assert!(picture.set_visible(true).is_err());
+        assert!(picture.set_transform([4., 0., 0., 0., 4., 0.]).is_err());
+        assert!(
+            picture
+                .replace_png(include_bytes!("../tests/fixtures/image_tiny.png"))
+                .is_err()
+        );
+        assert_eq!(picture.encode(), cropped);
+    }
+
+    #[test]
+    fn multi_resource_paste_is_outside_the_safe_writer() {
+        let pasted = include_bytes!("../tests/fixtures/image_original_pasted.gsp");
+        assert!(ImageFile::parse(pasted).is_err());
     }
 }

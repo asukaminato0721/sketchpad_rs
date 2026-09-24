@@ -10,6 +10,8 @@ I generated a one-point document with `gsp_probe replay`, inserted the module's 
 
 I changed the plain text fixture's four-byte `text` literal to `More` through `dev/text_plain_probe.rs`. Sketchpad 5 opened it and displayed `More`; the port reopened it byte-for-byte. A five-byte replacement (`Hello`) did not open in Sketchpad despite internally consistent `0x08fc` lengths. There is another length or layout dependency, so the helper now rejects replacements with a different byte count.
 
+Subsequent original Text-tool probes identified the missing inner size, markup length, and padding rules. `src/text_object.rs` now encodes variable-length literal UTF-8 text and multiline text; it is separate from the conservative `RichTextPayload::replace_simple_text` helper. The port-generated `Hello` and `Cat` point-label sketch opened, displayed, saved, and reopened in the supplied Sketchpad 5. The Wine screenshot is `/tmp/sketchpad_text_core_wine_before_save.png`.
+
 ## Observed layouts
 
 | Record | Payload fields | Notes |

@@ -20,7 +20,8 @@ pub struct TextRect {
 /// Decode only the literal runs produced by Sketchpad's free Text tool.
 /// Expression and formatting markup is intentionally rejected.
 pub fn decode_plain_text(rich: &[u8], bbox: &[u8]) -> Result<(String, TextRect), String> {
-    if rich.len() < 20 || u32::from_le_bytes(rich[..4].try_into().unwrap()) != 0x08fc
+    if rich.len() < 20
+        || u32::from_le_bytes(rich[..4].try_into().unwrap()) != 0x08fc
         || u32::from_le_bytes(rich[8..12].try_into().unwrap()) != 4
         || bbox.len() != 8
     {
@@ -28,8 +29,10 @@ pub fn decode_plain_text(rich: &[u8], bbox: &[u8]) -> Result<(String, TextRect),
     }
     let inner = u32::from_le_bytes(rich[4..8].try_into().unwrap()) as usize;
     let count = u16::from_le_bytes(rich[16..18].try_into().unwrap()) as usize;
-    if inner < 18 + count + 1 || inner > rich.len() || rich[inner..].iter().any(|b| *b != 0)
-        || rich[18 + count..inner].iter().any(|b| *b != 0)
+    if inner < 18 + count + 1
+        || inner > rich.len()
+        || rich[inner..].iter().any(|b| *b != 0)
+        || rich[18 + count] != 0
     {
         return Err("Unsupported free-text padding".into());
     }
@@ -45,7 +48,9 @@ pub fn decode_plain_text(rich: &[u8], bbox: &[u8]) -> Result<(String, TextRect),
         }
         pos += 2;
         let start = pos;
-        while pos < markup.len() && markup[pos].is_ascii_hexdigit() { pos += 1; }
+        while pos < markup.len() && markup[pos].is_ascii_hexdigit() {
+            pos += 1;
+        }
         if pos == start || markup.get(pos) != Some(&b'x') {
             return Err("Invalid rich-text run length".into());
         }
@@ -57,7 +62,9 @@ pub fn decode_plain_text(rich: &[u8], bbox: &[u8]) -> Result<(String, TextRect),
             return Err("Invalid rich-text run boundary".into());
         }
         let line = std::str::from_utf8(&markup[pos..end]).map_err(|e| e.to_string())?;
-        if line.as_bytes().contains(&0) { return Err("Text contains a NUL byte".into()); }
+        if line.as_bytes().contains(&0) {
+            return Err("Text contains a NUL byte".into());
+        }
         lines.push(line);
         pos = end + 1;
     }
@@ -65,10 +72,16 @@ pub fn decode_plain_text(rich: &[u8], bbox: &[u8]) -> Result<(String, TextRect),
         return Err("Unsupported rich-text markup".into());
     }
     let word = |at| i16::from_le_bytes(bbox[at..at + 2].try_into().unwrap());
-    let rect = TextRect { left: word(0), top: word(2), right: word(4), bottom: word(6) };
+    let rect = TextRect {
+        left: word(0),
+        top: word(2),
+        right: word(4),
+        bottom: word(6),
+    };
     rect.validate()?;
     if i16::from_le_bytes(rich[12..14].try_into().unwrap()) != rect.left
-        || i16::from_le_bytes(rich[14..16].try_into().unwrap()) != rect.top {
+        || i16::from_le_bytes(rich[14..16].try_into().unwrap()) != rect.top
+    {
         return Err("Text anchor and box disagree".into());
     }
     Ok((lines.join("\n"), rect))

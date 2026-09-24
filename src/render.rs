@@ -208,6 +208,13 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             )
             .unwrap();
         }
+        if let Some(points) = doc.function_plot_points(o.id, 384) {
+            for pair in points.windows(2) {
+                if let Some((a,b)) = clipped_line(vp.screen(pair[0]), vp.screen(pair[1]), LineMode::Segment, r) {
+                    writeln!(svg,"<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",a.x,a.y,b.x,b.y).unwrap();
+                }
+            }
+        }
         if let Some((center, radius)) = doc.circle_points(o.id) {
             let at = vp.screen(center);
             writeln!(
@@ -263,19 +270,42 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
-    for object in doc.objects.iter().filter(|o| o.page == doc.active_page && o.visible && !o.deleted) {
+    for object in doc
+        .objects
+        .iter()
+        .filter(|o| o.page == doc.active_page && o.visible && !o.deleted)
+    {
         if let Kind::PlainText { text, rect } = &object.kind {
-            let at = vp.screen(Point { x: rect.left.into(), y: rect.top.into() });
+            let at = vp.screen(Point {
+                x: rect.left.into(),
+                y: rect.top.into(),
+            });
             for (line, content) in text.split('\n').enumerate() {
-                writeln!(svg, "<text x=\"{}\" y=\"{}\">{}</text>", at.x, at.y + 16. + line as f32 * 19., xml_text(content)).unwrap();
+                writeln!(
+                    svg,
+                    "<text x=\"{}\" y=\"{}\">{}</text>",
+                    at.x,
+                    at.y + 16. + line as f32 * 19.,
+                    xml_text(content)
+                )
+                .unwrap();
             }
         }
-        if let Some(label) = &object.label && label.visible()
+        if let Some(label) = &object.label
+            && label.visible()
             && let Ok(name) = label.name_utf8()
-            && let Some(point) = doc.position(object.id) {
+            && let Some(point) = doc.position(object.id)
+        {
             let at = vp.screen(point);
             let offset = label.offset();
-            writeln!(svg, "<text x=\"{}\" y=\"{}\">{}</text>", at.x + offset.0 as f32, at.y + offset.1 as f32 + 13., xml_text(name)).unwrap();
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">{}</text>",
+                at.x + offset.0 as f32,
+                at.y + offset.1 as f32 + 13.,
+                xml_text(name)
+            )
+            .unwrap();
         }
     }
     let mut row = 0;
@@ -407,6 +437,10 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 value
             )
             .unwrap();
+            row += 1;
+        }
+        if let Kind::FunctionDefinition(expression) = object.kind {
+            writeln!(svg,"<text x=\"{}\" y=\"{}\">{}</text>",r.min.x+12.,r.min.y+28.+row as f32*20.,expression.display()).unwrap();
             row += 1;
         }
     }
@@ -608,6 +642,13 @@ impl GeometryRenderer {
             if let Some((a, b, mode)) = doc.line_points(o.id) {
                 if let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect) {
                     mesh.line(a, b, 2., col);
+                }
+            }
+            if let Some(points) = doc.function_plot_points(o.id, 384) {
+                for pair in points.windows(2) {
+                    if let Some((a,b)) = clipped_line(vp.screen(pair[0]),vp.screen(pair[1]),LineMode::Segment,vp.rect) {
+                        mesh.line(a,b,2.,if doc.selected.contains(&o.id) { selected } else { [0.70,0.23,0.60,1.] });
+                    }
                 }
             }
             match o.kind {

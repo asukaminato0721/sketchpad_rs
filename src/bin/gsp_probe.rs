@@ -278,6 +278,16 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::SlopeMeasurement(line, frame));
                     println!("line {}: slope -> object {id}", index + 1);
                 }
+                "function" => {
+                    let expression = sketchpad_rs::function_records::SimpleFunction::parse(rest)?;
+                    let id = document.add_function_definition(expression)?;
+                    println!("line {}: function -> object {id}", index + 1);
+                }
+                "plot_function" => {
+                    let expression = sketchpad_rs::function_records::SimpleFunction::parse(rest)?;
+                    let id = document.plot_new_function(expression, Point { x: 199., y: 125. })?;
+                    println!("line {}: plot_function -> object {id}", index + 1);
+                }
                 "ratio" => {
                     let ids = rest
                         .split_whitespace()
@@ -369,36 +379,63 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "text" => {
                     let mut parts = rest.splitn(3, char::is_whitespace);
-                    let x: f64 = parts.next().ok_or("expected text x")?.parse().map_err(|_| "invalid text x")?;
-                    let y: f64 = parts.next().ok_or("expected text y")?.parse().map_err(|_| "invalid text y")?;
-                    let content = parts.next().ok_or("expected text content")?.replace("\\n", "\n");
+                    let x: f64 = parts
+                        .next()
+                        .ok_or("expected text x")?
+                        .parse()
+                        .map_err(|_| "invalid text x")?;
+                    let y: f64 = parts
+                        .next()
+                        .ok_or("expected text y")?
+                        .parse()
+                        .map_err(|_| "invalid text y")?;
+                    let content = parts
+                        .next()
+                        .ok_or("expected text content")?
+                        .replace("\\n", "\n");
                     let id = document.add_text(&content, Point { x, y })?;
                     println!("line {}: text -> object {id}", index + 1);
                 }
                 "text_edit" => {
-                    let (id, content) = rest.split_once(char::is_whitespace).ok_or("expected text ID and content")?;
+                    let (id, content) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected text ID and content")?;
                     let id: usize = id.parse().map_err(|_| "invalid text ID")?;
                     document.edit_text(id, &content.replace("\\n", "\n"))?;
                 }
                 "text_move" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
-                    if parts.len() != 3 { return Err("expected text ID x y".into()); }
+                    if parts.len() != 3 {
+                        return Err("expected text ID x y".into());
+                    }
                     let id = parts[0].parse().map_err(|_| "invalid text ID")?;
                     let x = parts[1].parse().map_err(|_| "invalid text x")?;
                     let y = parts[2].parse().map_err(|_| "invalid text y")?;
                     document.move_text(id, Point { x, y })?;
                 }
                 "label" => {
-                    let (id, name) = rest.split_once(char::is_whitespace).ok_or("expected point ID and label")?;
+                    let (id, name) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected point ID and label")?;
                     let id: usize = id.parse().map_err(|_| "invalid point ID")?;
                     document.set_point_label(id, name, true)?;
                 }
                 "label_show" => {
-                    let (id, state) = rest.split_once(char::is_whitespace).ok_or("expected point ID and on/off")?;
+                    let (id, state) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected point ID and on/off")?;
                     let id: usize = id.parse().map_err(|_| "invalid point ID")?;
-                    let visible = match state { "on" => true, "off" => false, _ => return Err("expected on or off".into()) };
-                    let name = document.objects.get(id.saturating_sub(1)).and_then(|o| o.label.as_ref())
-                        .and_then(|label| label.name_utf8().ok()).map(str::to_owned)
+                    let visible = match state {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("expected on or off".into()),
+                    };
+                    let name = document
+                        .objects
+                        .get(id.saturating_sub(1))
+                        .and_then(|o| o.label.as_ref())
+                        .and_then(|label| label.name_utf8().ok())
+                        .map(str::to_owned)
                         .unwrap_or_else(|| format!("P{id}"));
                     document.set_point_label(id, &name, visible)?;
                 }

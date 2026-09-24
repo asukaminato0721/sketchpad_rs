@@ -8,6 +8,16 @@ pub enum SimpleFunction {
 }
 
 impl SimpleFunction {
+    pub fn parse(input: &str) -> Result<Self, String> {
+        match input.trim().replace(' ', "").as_str() {
+            "x" => Ok(Self::Identity),
+            "x^2" | "x²" => Ok(Self::Square),
+            _ => Err("Supported functions are x and x^2".into()),
+        }
+    }
+    pub fn display(self) -> &'static str {
+        match self { Self::Identity => "f(x) = x", Self::Square => "f(x) = x²" }
+    }
     pub fn evaluate(self, x: f64) -> f64 {
         match self {
             Self::Identity => x,
@@ -77,8 +87,8 @@ pub fn decode_simple_expression(data: &[u8]) -> Result<SimpleFunction, String> {
     // The 0x0907 payload has a 92-byte wrapper followed by little-endian
     // postfix words. Bytes 48..92 contain session-dependent presentation data.
     if data.len() < 94
-        || &data[..18] != &include_bytes!("../tests/fixtures/function_plot_identity.gsp")
-            [0x96c..0x97e]
+        || &data[..18]
+            != &include_bytes!("../tests/fixtures/function_plot_identity.gsp")[0x96c..0x97e]
         || &data[18..22] != b"<0>\0"
         || u32_at(data, 32) != 0x0907
     {
@@ -99,7 +109,10 @@ fn group_ranges(bytes: &[u8], records: &[Record]) -> Result<Vec<(usize, usize, u
             if open.is_some() || payload(bytes, *record).len() < 2 {
                 return Err("Malformed object group".into());
             }
-            open = Some((index, u16::from_le_bytes(payload(bytes, *record)[..2].try_into().unwrap())));
+            open = Some((
+                index,
+                u16::from_le_bytes(payload(bytes, *record)[..2].try_into().unwrap()),
+            ));
         } else if record.kind == 0x07d7 {
             if let Some((start, code)) = open.take() {
                 groups.push((start, index, code));
@@ -164,7 +177,11 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
         let x_min = f64::from_le_bytes(descriptor[0..8].try_into().unwrap());
         let x_max = f64::from_le_bytes(descriptor[8..16].try_into().unwrap());
         let samples = u32_at(descriptor, 16);
-        if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max || !(2..=4096).contains(&samples) {
+        if !x_min.is_finite()
+            || !x_max.is_finite()
+            || x_min >= x_max
+            || !(2..=4096).contains(&samples)
+        {
             return Err("Invalid function plot range".into());
         }
         found = Some(FunctionPlot {
@@ -184,6 +201,34 @@ fn original_template(expression: SimpleFunction) -> &'static [u8] {
         SimpleFunction::Identity => include_bytes!("../tests/fixtures/function_plot_identity.gsp"),
         SimpleFunction::Square => include_bytes!("../tests/fixtures/function_plot_square.gsp"),
     }
+}
+
+pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32), String> {
+    if data.len() != 40 || u32_at(data, 20) & 0xffff != 0 {
+        return Err("Unsupported function plot mode".into());
+    }
+    let x_min = f64::from_le_bytes(data[0..8].try_into().unwrap());
+    let x_max = f64::from_le_bytes(data[8..16].try_into().unwrap());
+    let samples = u32_at(data, 16);
+    if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max || !(2..=4096).contains(&samples) {
+        return Err("Invalid function plot range".into());
+    }
+    Ok((x_min, x_max, samples))
+}
+
+pub fn encode_definition_group(expression: SimpleFunction) -> Result<Vec<u8>, String> {
+    let source = original_template(expression);
+    let rs = records(source)?;
+    let groups = group_ranges(source, &rs)?;
+    let (first, last, code) = groups[6];
+    if code != 0 { return Err("Invalid function definition template".into()); }
+    Ok(source[rs[first].start..rs[last].end].to_vec())
+}
+
+pub fn encode_plot_group(expression: SimpleFunction, definition_id: usize, frame_id: usize) -> Result<Vec<u8>, String> {
+    let both = encode_plot_groups(expression, definition_id, frame_id)?;
+    let definition_length = encode_definition_group(expression)?.len();
+    Ok(both[definition_length..].to_vec())
 }
 
 /// Encode the two observed object groups, changing only the plot's references.
@@ -244,7 +289,10 @@ pub fn encode_minimal_plot_document(expression: SimpleFunction) -> Result<Vec<u8
     appended.extend_from_slice(&8u32.to_le_bytes());
     bytes.splice(link.start..link.start, appended);
     let decoded = decode_minimal_plot(&bytes)?;
-    if decoded.expression != expression || decoded.definition_id != 7 || decoded.coordinate_system_id != 6 {
+    if decoded.expression != expression
+        || decoded.definition_id != 7
+        || decoded.coordinate_system_id != 6
+    {
         return Err("Encoded function plot failed to reparse".into());
     }
     Ok(bytes)
@@ -257,12 +305,21 @@ mod tests {
     #[test]
     fn original_identity_and_square_decode() {
         for (expression, source) in [
-            (SimpleFunction::Identity, include_bytes!("../tests/fixtures/function_plot_identity.gsp").as_slice()),
-            (SimpleFunction::Square, include_bytes!("../tests/fixtures/function_plot_square.gsp").as_slice()),
+            (
+                SimpleFunction::Identity,
+                include_bytes!("../tests/fixtures/function_plot_identity.gsp").as_slice(),
+            ),
+            (
+                SimpleFunction::Square,
+                include_bytes!("../tests/fixtures/function_plot_square.gsp").as_slice(),
+            ),
         ] {
             let plot = decode_minimal_plot(source).unwrap();
             assert_eq!(plot.expression, expression);
-            assert_eq!((plot.definition_id, plot.coordinate_system_id, plot.samples), (7, 6, 750));
+            assert_eq!(
+                (plot.definition_id, plot.coordinate_system_id, plot.samples),
+                (7, 6, 750)
+            );
             assert!((plot.x_min + plot.x_max).abs() < 1e-12);
         }
     }
@@ -273,9 +330,23 @@ mod tests {
         let records = records(source).unwrap();
         let expression = records.iter().find(|record| record.kind == 0x0907).unwrap();
         let mut data = payload(source, *expression).to_vec();
-        assert_eq!(decode_simple_expression(&data), Ok(SimpleFunction::Identity));
+        assert_eq!(
+            decode_simple_expression(&data),
+            Ok(SimpleFunction::Identity)
+        );
         data[92] = 14;
         assert!(decode_simple_expression(&data).is_err());
+    }
+
+    #[test]
+    fn number_new_function_uses_the_same_identity_expression() {
+        let source = include_bytes!("../tests/fixtures/function_definition_identity.gsp");
+        let records = records(source).unwrap();
+        let expression = records.iter().find(|record| record.kind == 0x0907).unwrap();
+        assert_eq!(
+            decode_simple_expression(payload(source, *expression)),
+            Ok(SimpleFunction::Identity)
+        );
     }
 
     #[test]
@@ -284,7 +355,21 @@ mod tests {
             let bytes = encode_minimal_plot_document(expression).unwrap();
             let plot = decode_minimal_plot(&bytes).unwrap();
             assert_eq!(plot.expression, expression);
-            assert_eq!(expression.evaluate(2.0), match expression { SimpleFunction::Identity => 2.0, SimpleFunction::Square => 4.0 });
+            assert_eq!(
+                expression.evaluate(2.0),
+                match expression {
+                    SimpleFunction::Identity => 2.0,
+                    SimpleFunction::Square => 4.0,
+                }
+            );
         }
+    }
+
+    #[test]
+    fn moved_original_plot_keeps_expression_and_dependencies() {
+        let moved = include_bytes!("../tests/fixtures/function_port_square_moved_wine.gsp");
+        let plot = decode_minimal_plot(moved).unwrap();
+        assert_eq!(plot.expression, SimpleFunction::Square);
+        assert_eq!((plot.definition_id, plot.coordinate_system_id), (7, 6));
     }
 }

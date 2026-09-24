@@ -5,14 +5,18 @@
 //!   style_record_probe circle-rgb INPUT.gsp OUTPUT.gsp R G B
 //!   style_record_probe segment-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
 //!   style_record_probe circle-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
+//!   style_record_probe straight-or-arc-line INPUT.gsp OUTPUT.gsp WIDTH PATTERN
+//!   style_record_probe straight-or-arc-rgb INPUT.gsp OUTPUT.gsp R G B
+//!   style_record_probe polygon-rgb INPUT.gsp OUTPUT.gsp R G B
 
 #[path = "../src/style_records.rs"]
 mod style_records;
 
 use style_records::{
     LinePattern, LineWidth, RgbColor, SegmentLineStyle, circle_color, circle_line_style,
-    point_color, segment_line_style, set_circle_color, set_circle_line_style,
-    set_point_color, set_segment_line_style,
+    point_color, polygon_color, segment_line_style, set_circle_color, set_circle_line_style,
+    set_point_color, set_polygon_color, set_segment_line_style, set_straight_or_arc_color,
+    set_straight_or_arc_line_style, straight_or_arc_color, straight_or_arc_line_style,
 };
 
 fn main() -> Result<(), String> {
@@ -55,10 +59,29 @@ fn main() -> Result<(), String> {
                     })?;
                     changed = true;
                 }
-                "segment-line" | "circle-line"
+                "straight-or-arc-rgb" if straight_or_arc_color(payload).is_some() && args.len() == 7 => {
+                    let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
+                    set_straight_or_arc_color(payload, RgbColor {
+                        red: channel(4)?,
+                        green: channel(5)?,
+                        blue: channel(6)?,
+                    })?;
+                    changed = true;
+                }
+                "polygon-rgb" if polygon_color(payload).is_some() && args.len() == 7 => {
+                    let channel = |index: usize| args[index].parse::<u8>().map_err(|e| e.to_string());
+                    set_polygon_color(payload, RgbColor {
+                        red: channel(4)?,
+                        green: channel(5)?,
+                        blue: channel(6)?,
+                    })?;
+                    changed = true;
+                }
+                "segment-line" | "circle-line" | "straight-or-arc-line"
                     if args.len() == 6
                         && ((args[1] == "segment-line" && segment_line_style(payload).is_some())
-                            || (args[1] == "circle-line" && circle_line_style(payload).is_some())) => {
+                            || (args[1] == "circle-line" && circle_line_style(payload).is_some())
+                            || (args[1] == "straight-or-arc-line" && straight_or_arc_line_style(payload).is_some())) => {
                     let width = match args[4].as_str() {
                         "hairline" => LineWidth::Hairline,
                         "thin" => LineWidth::Thin,
@@ -76,6 +99,8 @@ fn main() -> Result<(), String> {
                         set_segment_line_style(payload, SegmentLineStyle { width, pattern })?;
                     } else if args[1] == "circle-line" && circle_line_style(payload).is_some() {
                         set_circle_line_style(payload, SegmentLineStyle { width, pattern })?;
+                    } else if args[1] == "straight-or-arc-line" && straight_or_arc_line_style(payload).is_some() {
+                        set_straight_or_arc_line_style(payload, SegmentLineStyle { width, pattern })?;
                     }
                     changed = true;
                 }
