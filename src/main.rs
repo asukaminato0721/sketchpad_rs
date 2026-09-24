@@ -138,6 +138,10 @@ struct Editor {
     rotation_angle: f64,
     function_dialog: Option<bool>,
     function_draft: String,
+    parameter_value_dialog: Option<usize>,
+    parameter_value_draft: String,
+    plot_axis_dialog: Option<Option<usize>>,
+    plot_axis_draft: String,
     exit_requested: bool,
 }
 impl Editor {
@@ -171,6 +175,10 @@ impl Editor {
             rotation_angle: 60.,
             function_dialog: None,
             function_draft: "x".into(),
+            parameter_value_dialog: None,
+            parameter_value_draft: "1".into(),
+            plot_axis_dialog: None,
+            plot_axis_draft: "1".into(),
             exit_requested: false,
         };
         e.fit();
@@ -1763,10 +1771,32 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Number", |ui| {
-                    if ui.button("New Parameter (t₁ = 1.00)").clicked() {
-                        match self.doc.add_default_parameter((10, 5)) {
+                    if ui.button("New Parameter (1.00)").clicked() {
+                        let anchor = if self.doc.objects.len() == 1 {
+                            (10, 38)
+                        } else {
+                            (10, 5)
+                        };
+                        match self.doc.add_default_parameter(anchor) {
                             Ok(id) => self.status = format!("Created parameter {id}"),
                             Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Edit Selected Parameter…").clicked() {
+                        let selected = self.doc.selected.iter().copied().find(|&id| {
+                            self.doc
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
+                        });
+                        if let Some(id) = selected {
+                            if let Kind::Parameter(group) = &self.doc.objects[id - 1].kind {
+                                self.parameter_value_draft = group.value().to_string();
+                                self.parameter_value_dialog = Some(id);
+                            }
+                        } else {
+                            self.status = "Select a parameter".into();
                         }
                         ui.close();
                     }
@@ -1778,8 +1808,14 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Tabulate Selected Parameter").clicked() {
-                        let source = self.doc.selected.iter().next().copied().unwrap_or(0);
-                        match self.doc.tabulate_default_parameter(source, (10, 38)) {
+                        let result =
+                            if self.doc.selected.contains(&1) && self.doc.selected.contains(&2) {
+                                self.doc.tabulate_default_pair((10, 71))
+                            } else {
+                                let source = self.doc.selected.iter().next().copied().unwrap_or(0);
+                                self.doc.tabulate_default_parameter(source, (10, 38))
+                            };
+                        match result {
                             Ok(id) => self.status = format!("Created table {id}"),
                             Err(error) => self.status = error,
                         }
@@ -1805,25 +1841,56 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Graph", |ui| {
-                    if ui.button("Plot Value on Axis").clicked() {
+                    let path = self.doc.selected.iter().copied().find(|&id| {
+                        self.doc.objects.get(id - 1).is_some_and(|o| {
+                            matches!(
+                                o.kind,
+                                Kind::Segment(_, _)
+                                    | Kind::Ray(_, _)
+                                    | Kind::Line(_, _)
+                                    | Kind::Circle(_, _)
+                                    | Kind::CircleBySegment(_, _)
+                                    | Kind::ReflectedCircle(_, _)
+                                    | Kind::ScaledCircle(_, _, _)
+                                    | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+                            )
+                        })
+                    });
+                    if ui
+                        .button(if path.is_some() {
+                            "Plot Value on Path"
+                        } else {
+                            "Plot Value on Axis"
+                        })
+                        .clicked()
+                    {
                         let source = self.doc.selected.iter().copied().find(|&id| {
                             self.doc
                                 .objects
                                 .get(id - 1)
                                 .is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
                         });
-                        let axis = self.doc.selected.iter().copied().find(|&id| {
-                            self.doc
-                                .objects
-                                .get(id - 1)
-                                .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, _)))
-                        });
                         self.status = match source {
-                            Some(source) => match self.doc.plot_parameter_on_axis(source, axis) {
-                                Ok(id) => format!("Plotted axis value {id}"),
+                            Some(source) => match self.doc.plot_parameter_on_path(source, path) {
+                                Ok(id) => format!("Plotted path value {id}"),
                                 Err(error) => error,
                             },
-                            None => "Select a parameter to plot".into(),
+                            None => {
+                                self.plot_axis_dialog = Some(path);
+                                self.plot_axis_draft =
+                                    match path.map(|id| &self.doc.objects[id - 1].kind) {
+                                        Some(Kind::Segment(_, _)) => "0.5",
+                                        Some(
+                                            Kind::Circle(_, _)
+                                            | Kind::CircleBySegment(_, _)
+                                            | Kind::ReflectedCircle(_, _)
+                                            | Kind::ScaledCircle(_, _, _),
+                                        ) => "0.25",
+                                        _ => "1",
+                                    }
+                                    .into();
+                                String::new()
+                            }
                         };
                         ui.close();
                     }
@@ -1837,6 +1904,16 @@ impl Editor {
                     if ui.button("Plot Points as (r, θ)").clicked() {
                         match self.doc.plot_default_parameter(PlotPointsMode::Polar) {
                             Ok(id) => self.status = format!("Plotted point {id}"),
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Plot Table Data").clicked() {
+                        let table = self.doc.selected.iter().next().copied().unwrap_or(0);
+                        match self.doc.plot_default_pair_table(table) {
+                            Ok(ids) => {
+                                self.status = format!("Plotted {} table data point(s)", ids.len())
+                            }
                             Err(error) => self.status = error,
                         }
                         ui.close();
@@ -2266,6 +2343,7 @@ impl Editor {
                                     | Kind::Parameter(_)
                                     | Kind::Calculation(_)
                                     | Kind::ValueTable(_, _)
+                                    | Kind::ValueTablePair(_, _, _)
                                     | Kind::PointOnSegment(_, _)
                                     | Kind::PointOnCircle(_, _, _)
                                     | Kind::PointOnArc(_, _)
@@ -2279,7 +2357,8 @@ impl Editor {
                                     }
                                     Kind::Parameter(_)
                                     | Kind::Calculation(_)
-                                    | Kind::ValueTable(_, _) => {
+                                    | Kind::ValueTable(_, _)
+                                    | Kind::ValueTablePair(_, _, _) => {
                                         let anchor = sketchpad_rs::render::number_lines(
                                             &self.doc.objects[id - 1].kind,
                                         )
@@ -2319,7 +2398,10 @@ impl Editor {
                             }
                         } else if matches!(
                             self.doc.objects[id - 1].kind,
-                            Kind::Parameter(_) | Kind::Calculation(_) | Kind::ValueTable(_, _)
+                            Kind::Parameter(_)
+                                | Kind::Calculation(_)
+                                | Kind::ValueTable(_, _)
+                                | Kind::ValueTablePair(_, _, _)
                         ) {
                             let at = p - self.drag_offset - vp.rect.min;
                             let anchor = (at.x.round() as i16, at.y.round() as i16);
@@ -2691,6 +2773,40 @@ impl Editor {
                 _ => {}
             }
         }
+        if let Some(id) = self.parameter_value_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("parameter_value")).show(root.ctx(), |ui| {
+                ui.heading(format!("Edit parameter {id}"));
+                ui.horizontal(|ui| {
+                    ui.label("Value");
+                    ui.text_edit_singleline(&mut self.parameter_value_draft);
+                });
+                ui.label("-99.99 to 99.99, up to two decimal places");
+                ui.horizontal(|ui| {
+                    apply = ui.button("Apply").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.parameter_value_dialog = None;
+            }
+            if apply {
+                let result = self
+                    .parameter_value_draft
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric value".to_string())
+                    .and_then(|value| self.doc.set_parameter_value(id, value));
+                match result {
+                    Ok(()) => {
+                        self.parameter_value_dialog = None;
+                        self.status = format!("Updated parameter {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
         if let Some(plot) = self.function_dialog {
             let mut apply = false;
             let mut cancel = false;
@@ -2723,6 +2839,72 @@ impl Editor {
                         self.function_dialog = None;
                         self.select_only(id);
                         self.status = format!("Created function object {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some(path) = self.plot_axis_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("plot_axis_value")).show(root.ctx(), |ui| {
+                ui.heading("Plot Value on Path");
+                ui.horizontal(|ui| {
+                    ui.label("Value");
+                    ui.text_edit_singleline(&mut self.plot_axis_draft);
+                });
+                ui.label(match path {
+                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Segment(_, _)) => {
+                        format!("Segment object {id} (0 to 1)")
+                    }
+                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Ray(_, _)) => {
+                        format!("Ray object {id} (0 or greater)")
+                    }
+                    Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Line(_, _)) => {
+                        format!("Line object {id}")
+                    }
+                    Some(id)
+                        if matches!(
+                            self.doc.objects[id - 1].kind,
+                            Kind::Circle(_, _)
+                                | Kind::CircleBySegment(_, _)
+                                | Kind::ReflectedCircle(_, _)
+                                | Kind::ScaledCircle(_, _, _)
+                        ) =>
+                    {
+                        format!("Circle object {id} (counterclockwise turns)")
+                    }
+                    Some(id) => format!("Axis object {id}"),
+                    None => "Active X axis".into(),
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Plot").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.plot_axis_dialog = None;
+            }
+            if apply {
+                let result = self
+                    .plot_axis_draft
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| "Enter a numeric value".to_string())
+                    .and_then(|value| {
+                        if !value.is_finite() {
+                            return Err("Enter a finite value".into());
+                        }
+                        if path.is_none() && self.doc.active_coordinate_system().is_none() {
+                            self.doc.add_default_coordinate_system(self.center)?;
+                        }
+                        self.doc.plot_literal_on_path(value, path)
+                    });
+                match result {
+                    Ok(id) => {
+                        self.plot_axis_dialog = None;
+                        self.select_only(id);
+                        self.status = format!("Plotted path value {id}");
                     }
                     Err(error) => self.status = error,
                 }

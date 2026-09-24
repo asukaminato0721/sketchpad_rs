@@ -75,6 +75,9 @@ impl Kind {
         if let Kind::ValueEquation { first, second, .. } = self {
             return vec![*first, *second];
         }
+        if let Kind::ValueTablePair(first, second, _) = self {
+            return vec![*first, *second];
+        }
         match *self {
             Kind::Free(_)
             | Kind::Image { .. }
@@ -88,6 +91,7 @@ impl Kind {
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
+            | Kind::PathLiteralPoint(host, _)
             | Kind::SegmentLength(host)
             | Kind::PolygonPerimeter(host)
             | Kind::CircleCircumference(host)
@@ -116,7 +120,7 @@ impl Kind {
             | Kind::CoordinateSystem(a, b)
             | Kind::SlopeMeasurement(a, b)
             | Kind::FunctionPlot(a, b, _, _, _)
-            | Kind::AxisValuePoint(a, b)
+            | Kind::PathValuePoint(a, b)
             | Kind::PlottedPoint(a, b, _, _) => vec![a, b],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
@@ -134,6 +138,7 @@ impl Kind {
             Kind::HideShowButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
+            Kind::ValueTablePair(_, _, _) => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
@@ -194,6 +199,9 @@ impl Kind {
             Kind::Parameter(ref group) => Kind::Parameter(group.clone()),
             Kind::Calculation(ref group) => Kind::Calculation(group.clone()),
             Kind::ValueTable(source, ref group) => Kind::ValueTable(m(source), group.clone()),
+            Kind::ValueTablePair(first, second, ref group) => {
+                Kind::ValueTablePair(m(first), m(second), group.clone())
+            }
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
@@ -206,7 +214,8 @@ impl Kind {
             Kind::FunctionPlot(a, b, min, max, samples) => {
                 Kind::FunctionPlot(m(a), m(b), min, max, samples)
             }
-            Kind::AxisValuePoint(a, b) => Kind::AxisValuePoint(m(a), m(b)),
+            Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
+            Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
             Kind::PlottedPoint(a, b, mode, stored) => Kind::PlottedPoint(m(a), m(b), mode, stored),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
@@ -273,6 +282,7 @@ pub enum Kind {
     Parameter(ParameterGroup),
     Calculation(CalculationGroup),
     ValueTable(usize, TableGroup),
+    ValueTablePair(usize, usize, TableGroup),
     PointOnSegment(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
@@ -294,7 +304,8 @@ pub enum Kind {
     },
     FunctionDefinition(SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
-    AxisValuePoint(usize, usize),
+    PathLiteralPoint(usize, f64),
+    PathValuePoint(usize, usize),
     PlottedPoint(usize, usize, PlotPointsMode, [f64; 2]),
     SegmentLength(usize),
     PolygonPerimeter(usize),
@@ -513,7 +524,8 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PointOnArc(_, _)
             | Kind::GraphHorizontalUnit(_, _)
             | Kind::GraphVerticalUnit(_, _)
-            | Kind::AxisValuePoint(_, _)
+            | Kind::PathLiteralPoint(_, _)
+            | Kind::PathValuePoint(_, _)
             | Kind::PlottedPoint(_, _, _, _)
             | Kind::PolarTranslatedPoint(_, _, _, _)
             | Kind::ReflectedPoint(_, _)
@@ -534,6 +546,26 @@ fn is_circle_kind(kind: &Kind) -> bool {
             | Kind::ReflectedCircle(_, _)
             | Kind::ScaledCircle(_, _, _)
     )
+}
+
+fn is_plot_path_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(_, _)
+            | Kind::Ray(_, _)
+            | Kind::Line(_, _)
+            | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+    ) || is_circle_kind(kind)
+}
+
+fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
+    value.is_finite()
+        && is_plot_path_kind(kind)
+        && match kind {
+            Kind::Segment(_, _) => (0.0..=1.0).contains(&value),
+            Kind::Ray(_, _) => value >= 0.0,
+            _ => true,
+        }
 }
 
 fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
@@ -561,7 +593,8 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnSegment(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
-        | Kind::AxisValuePoint(_, _)
+        | Kind::PathLiteralPoint(_, _)
+        | Kind::PathValuePoint(_, _)
         | Kind::PolarTranslatedPoint(_, _, _, _)
         | Kind::ReflectedPoint(_, _)
         | Kind::ScaledPoint(_, _, _)
@@ -1056,6 +1089,13 @@ impl Document {
                 safe = false;
             }
             let axis_value_refs = axis_value_refs.ok().flatten();
+            let literal_axis_value = (code == 123)
+                .then(|| plot_axis_records::decode_literal_group(&b[group_start..rs[i].data.end]))
+                .transpose();
+            if literal_axis_value.is_err() {
+                safe = false;
+            }
+            let literal_axis_value = literal_axis_value.ok().flatten();
             let graph_borrowed = graph_records
                 .iter()
                 .map(|(kind, payload)| (*kind, payload.as_slice()))
@@ -1124,11 +1164,17 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
-                    (95, _, [source, axis])
-                        if axis_value_refs == Some([(*source - page_base) as u32, (*axis - page_base) as u32])
+                    (123, _, [path])
+                        if literal_axis_value
+                            .is_some_and(|(local_path, _)| local_path as usize + page_base == *path)
+                            && objects.get(path - 1).is_some_and(|o| is_plot_path_kind(&o.kind)) => {
+                        Kind::PathLiteralPoint(*path, literal_axis_value.unwrap().1)
+                    }
+                    (95, _, [source, path])
+                        if axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
                             && objects.get(source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
-                            && objects.get(axis - 1).is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001))) => {
-                        Kind::AxisValuePoint(*source, *axis)
+                            && objects.get(path - 1).is_some_and(|o| is_plot_path_kind(&o.kind)) => {
+                        Kind::PathValuePoint(*source, *path)
                     }
                     (67 | 68, _, [source, frame])
                         if plotted_point.as_ref().is_some_and(|plot| {
@@ -1186,6 +1232,13 @@ impl Document {
                         && objects.get(*source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
                         match TableGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(table) if table.source_id() as usize == *source - page_base => Kind::ValueTable(*source, table),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
+                    (91, None, [first, second]) if *first == page_base + 2 && *second == page_base + 1
+                        && [first, second].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))) => {
+                        match TableGroup::parse_pair(&b[group_start..rs[i].data.end]) {
+                            Ok(table) if table.pair_source_ids() == Some([2, 1]) => Kind::ValueTablePair(*first, *second, table),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1714,13 +1767,67 @@ impl Document {
         id
     }
     pub fn add_default_parameter(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || !self.objects.is_empty() {
-            return Err("The verified parameter can only be added to a blank sketch".into());
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot add a parameter in this sketch".into());
         }
-        let mut group = ParameterGroup::default_value();
+        let mut group = match self.objects.as_slice() {
+            [] => ParameterGroup::default_value(),
+            [first] if matches!(&first.kind, Kind::Parameter(group) if group.name() == "t[1]" && group.value() == 1.0) => {
+                ParameterGroup::second_default_value()
+            }
+            _ => return Err("The verified parameter sequence is t[1], then t[2]".into()),
+        };
         group.set_anchor(anchor)?;
         self.checkpoint();
         Ok(self.append_object(Kind::Parameter(group)))
+    }
+    pub fn set_second_parameter_value(&mut self, id: usize, value: u16) -> Result<(), String> {
+        if id != 2 {
+            return Err("Select t[2]".into());
+        }
+        self.set_parameter_value(id, value as f64)
+    }
+    pub fn set_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 || !matches!(id, 1 | 2) {
+            return Err("Only verified parameters can be edited".into());
+        }
+        let Some(Kind::Parameter(group)) = self.objects.get(id - 1).map(|o| &o.kind) else {
+            return Err("Select a parameter".into());
+        };
+        if id == 1
+            && self.objects.iter().any(|object| {
+                matches!(
+                    object.kind,
+                    Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _)
+                )
+            })
+        {
+            return Err("Editing a tabulated t[1] value is not yet supported".into());
+        }
+        let mut group = group.clone();
+        group.set_value(value)?;
+        let table = (id == 2)
+            .then(|| self.objects.get(2))
+            .flatten()
+            .and_then(|object| {
+                if let Kind::ValueTablePair(_, _, table) = &object.kind {
+                    Some(table.clone())
+                } else {
+                    None
+                }
+            });
+        let table = table
+            .map(|mut table| {
+                table.set_last_pair_value(value)?;
+                Ok::<_, String>(table)
+            })
+            .transpose()?;
+        self.checkpoint();
+        self.objects[id - 1].kind = Kind::Parameter(group);
+        if let Some(table) = table {
+            self.objects[2].kind = Kind::ValueTablePair(2, 1, table);
+        }
+        Ok(())
     }
     pub fn add_literal_calculation(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 || !self.objects.is_empty() {
@@ -1751,6 +1858,20 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::ValueTable(source, group)))
     }
+    pub fn tabulate_default_pair(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
+        if self.partial_view
+            || self.page_count != 1
+            || self.objects.len() != 2
+            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]")
+            || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]")
+        {
+            return Err("Only the verified t[1], t[2] pair can be tabulated".into());
+        }
+        let mut group = TableGroup::pair_snapshot();
+        group.set_anchor(anchor);
+        self.checkpoint();
+        Ok(self.append_object(Kind::ValueTablePair(2, 1, group)))
+    }
     pub fn move_number(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
         let object = self
             .objects
@@ -1760,7 +1881,9 @@ impl Document {
         match &mut kind {
             Kind::Parameter(group) => group.set_anchor(anchor)?,
             Kind::Calculation(group) => group.set_anchor(anchor)?,
-            Kind::ValueTable(_, group) => group.set_anchor(anchor),
+            Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
+                group.set_anchor(anchor)
+            }
             _ => return Err("Object is not a number or table".into()),
         }
         self.checkpoint();
@@ -1772,16 +1895,38 @@ impl Document {
             .objects
             .get(id.checked_sub(1).ok_or("Invalid table ID")?)
             .ok_or("Invalid table ID")?;
-        let Kind::ValueTable(_, mut group) = object.kind.clone() else {
-            return Err("Object is not a table".into());
+        let kind = match &object.kind {
+            Kind::ValueTable(_, group) => {
+                let mut group = group.clone();
+                if add {
+                    group.add_default_snapshot()?;
+                } else {
+                    group.remove_last_snapshot()?;
+                }
+                Kind::ValueTable(1, group)
+            }
+            Kind::ValueTablePair(_, _, group) => {
+                let values = group.pair_values().ok_or("Invalid pair table")?;
+                let rows = if add {
+                    group.rows() + 1
+                } else {
+                    group.rows().checked_sub(1).ok_or("Table has no rows")?
+                };
+                let mut changed = TableGroup::pair_snapshot_rows(rows, group.anchor())?;
+                if add {
+                    for (row, value) in values.iter().enumerate() {
+                        changed.set_pair_row_value(row, value[0])?;
+                    }
+                    changed.set_last_pair_value(values.last().unwrap()[0])?;
+                } else {
+                    changed.set_last_pair_value(values.last().unwrap()[0])?;
+                }
+                Kind::ValueTablePair(2, 1, changed)
+            }
+            _ => return Err("Object is not a table".into()),
         };
-        if add {
-            group.add_default_snapshot()?;
-        } else {
-            group.remove_last_snapshot()?;
-        }
         self.checkpoint();
-        self.objects[id - 1].kind = Kind::ValueTable(1, group);
+        self.objects[id - 1].kind = kind;
         Ok(())
     }
     pub fn active_coordinate_system(&self) -> Option<usize> {
@@ -1907,45 +2052,153 @@ impl Document {
         self.objects[id - 1].visual_style = style;
         Ok(id)
     }
+    pub fn plot_default_pair_table(&mut self, table: usize) -> Result<Vec<usize>, String> {
+        if self.partial_view
+            || self.page_count != 1
+            || table != 3
+            || self.objects.len() != 9
+            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]" && group.value() == 1.0)
+            || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]" && (0.0..10.0).contains(&group.value()))
+            || !matches!(self.objects.get(2).map(|o| &o.kind), Some(Kind::ValueTablePair(2, 1, group)) if (1..=2).contains(&group.rows()))
+            || self.active_coordinate_system() != Some(9)
+        {
+            return Err(
+                "Plot Table Data requires the verified t[2], t[1] table and coordinate system"
+                    .into(),
+            );
+        }
+        let Some(Kind::ValueTablePair(_, _, table_group)) = self.objects.get(2).map(|o| &o.kind)
+        else {
+            return Err("Select the verified pair table".into());
+        };
+        let rows = table_group
+            .pair_values()
+            .ok_or("Invalid pair table values")?;
+        let mut unique = Vec::new();
+        for value in rows {
+            if !unique.contains(&value) {
+                unique.push(value);
+            }
+        }
+        self.checkpoint();
+        let mut ids = Vec::new();
+        for stored in unique {
+            let group =
+                plot_points_records::encode_group(PlotPointsMode::Cartesian, [1, 9], stored)?;
+            let style = style_records::visual_style(&group[8..36]);
+            let id =
+                self.append_object(Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, stored));
+            self.objects[id - 1].visual_style = style;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+    fn plotted_path_position(&self, path: usize, value: f64) -> Result<Point, String> {
+        let object = self
+            .objects
+            .get(path.checked_sub(1).ok_or("Invalid path")?)
+            .ok_or("Invalid path")?;
+        if object.page != self.active_page || object.deleted {
+            return Err("Select a path on this page".into());
+        }
+        if !plot_path_accepts(&object.kind, value) {
+            return Err(match object.kind {
+                Kind::Segment(_, _) => "Segment values must be between 0 and 1",
+                Kind::Ray(_, _) => "Ray values must be zero or greater",
+                _ => "Select a supported path and finite value",
+            }
+            .into());
+        }
+        if is_circle_kind(&object.kind) {
+            let (center, radius) = self.circle_points(path).ok_or("Invalid circle")?;
+            let angle = value * std::f64::consts::TAU;
+            let point = Point {
+                x: center.x + radius * angle.cos(),
+                y: center.y - radius * angle.sin(),
+            };
+            return (point.x.is_finite() && point.y.is_finite())
+                .then_some(point)
+                .ok_or("Plotted value is outside the supported range".into());
+        }
+        let (start, end) = match object.kind {
+            Kind::GraphAxis(start, end, 0 | 1 | 0x1_0001)
+            | Kind::Segment(start, end)
+            | Kind::Line(start, end)
+            | Kind::Ray(start, end) => (start, end),
+            _ => return Err("Select a supported path".into()),
+        };
+        let start = self.position(start).ok_or("Invalid path start")?;
+        let end = self.position(end).ok_or("Invalid path end")?;
+        let point = Point {
+            x: start.x + (end.x - start.x) * value,
+            y: start.y + (end.y - start.y) * value,
+        };
+        if !point.x.is_finite() || !point.y.is_finite() {
+            return Err("Plotted value is outside the supported range".into());
+        }
+        Ok(point)
+    }
+    pub fn plot_parameter_on_path(
+        &mut self,
+        source: usize,
+        path: Option<usize>,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot plot a value in this sketch".into());
+        }
+        let path = path
+            .or_else(|| self.active_x_axis(self.active_page))
+            .ok_or("No coordinate axis or selected path")?;
+        let parameter = self
+            .objects
+            .get(source.checked_sub(1).ok_or("Invalid value")?)
+            .ok_or("Invalid value")?;
+        if parameter.page != self.active_page || parameter.deleted {
+            return Err("Select a supported parameter".into());
+        }
+        let Kind::Parameter(ref group) = parameter.kind else {
+            return Err("Select a supported parameter".into());
+        };
+        self.plotted_path_position(path, group.value())?;
+        let group = plot_axis_records::encode_group([source as u32, path as u32])?;
+        let style = style_records::visual_style(&group[8..36]);
+        self.checkpoint();
+        let id = self.append_object(Kind::PathValuePoint(source, path));
+        self.objects[id - 1].visual_style = style;
+        Ok(id)
+    }
     pub fn plot_parameter_on_axis(
         &mut self,
         source: usize,
         axis: Option<usize>,
     ) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 {
-            return Err("Cannot plot a value in this sketch".into());
+        self.plot_parameter_on_path(source, axis)
+    }
+    pub fn plot_literal_on_path(
+        &mut self,
+        value: f64,
+        path: Option<usize>,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !value.is_finite() {
+            return Err("Cannot plot that value in this sketch".into());
         }
-        let axis = axis
+        let path = path
             .or_else(|| self.active_x_axis(self.active_page))
-            .ok_or("No coordinate axis")?;
-        if !self
-            .objects
-            .get(source.checked_sub(1).ok_or("Invalid value")?)
-            .is_some_and(|object| {
-                object.page == self.active_page
-                    && !object.deleted
-                    && matches!(object.kind, Kind::Parameter(_))
-            })
-        {
-            return Err("Select a supported parameter".into());
-        }
-        if !self
-            .objects
-            .get(axis.checked_sub(1).ok_or("Invalid axis")?)
-            .is_some_and(|object| {
-                object.page == self.active_page
-                    && !object.deleted
-                    && matches!(object.kind, Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001))
-            })
-        {
-            return Err("Select a coordinate axis".into());
-        }
-        let group = plot_axis_records::encode_group([source as u32, axis as u32])?;
+            .ok_or("No coordinate axis or selected path")?;
+        self.plotted_path_position(path, value)?;
+        let group = plot_axis_records::encode_literal_group(path as u32, value)?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
-        let id = self.append_object(Kind::AxisValuePoint(source, axis));
+        let id = self.append_object(Kind::PathLiteralPoint(path, value));
         self.objects[id - 1].visual_style = style;
         Ok(id)
+    }
+    pub fn plot_literal_on_axis(
+        &mut self,
+        value: f64,
+        axis: Option<usize>,
+    ) -> Result<usize, String> {
+        self.plot_literal_on_path(value, axis)
     }
     pub fn set_grid_visible(&mut self, visible: bool) {
         if let Some(id) = self.active_coordinate_system()
@@ -2686,6 +2939,40 @@ impl Document {
     }
     pub fn position(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
+            fn on_path(
+                d: &Document,
+                path: usize,
+                t: f64,
+                seen: &mut BTreeSet<usize>,
+            ) -> Option<Point> {
+                let kind = &d.objects.get(path.checked_sub(1)?)?.kind;
+                if !plot_path_accepts(kind, t) {
+                    return None;
+                }
+                if is_circle_kind(kind) {
+                    let (center, radius) = d.circle_points(path)?;
+                    let angle = t * std::f64::consts::TAU;
+                    let point = Point {
+                        x: center.x + radius * angle.cos(),
+                        y: center.y - radius * angle.sin(),
+                    };
+                    return (point.x.is_finite() && point.y.is_finite()).then_some(point);
+                }
+                let (start, end) = match kind {
+                    Kind::GraphAxis(a, b, 0 | 1 | 0x1_0001)
+                    | Kind::Segment(a, b)
+                    | Kind::Line(a, b)
+                    | Kind::Ray(a, b) => (*a, *b),
+                    _ => return None,
+                };
+                let start = go(d, start, seen)?;
+                let end = go(d, end, seen)?;
+                let point = Point {
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t,
+                };
+                (point.x.is_finite() && point.y.is_finite()).then_some(point)
+            }
             if !seen.insert(id) {
                 return None;
             }
@@ -2714,24 +3001,13 @@ impl Document {
                         y: origin.y - step,
                     })
                 }
-                Kind::AxisValuePoint(source, axis) => {
+                Kind::PathLiteralPoint(path, t) => on_path(d, *path, *t, seen),
+                Kind::PathValuePoint(source, path) => {
                     let Kind::Parameter(ref value) = d.objects.get(source.checked_sub(1)?)?.kind
                     else {
                         return None;
                     };
-                    let Kind::GraphAxis(origin, unit, 0 | 1 | 0x1_0001) =
-                        d.objects.get(axis.checked_sub(1)?)?.kind
-                    else {
-                        return None;
-                    };
-                    let origin = go(d, origin, seen)?;
-                    let unit = go(d, unit, seen)?;
-                    let t = value.value();
-                    let point = Point {
-                        x: origin.x + (unit.x - origin.x) * t,
-                        y: origin.y + (unit.y - origin.y) * t,
-                    };
-                    (point.x.is_finite() && point.y.is_finite()).then_some(point)
+                    on_path(d, *path, value.value(), seen)
                 }
                 Kind::PlottedPoint(_, frame, mode, stored) => {
                     let frame = d.graph_frame(*frame)?;
@@ -3391,7 +3667,8 @@ impl Document {
                     o.kind,
                     Kind::FunctionDefinition(_)
                         | Kind::FunctionPlot(_, _, _, _, _)
-                        | Kind::AxisValuePoint(_, _)
+                        | Kind::PathLiteralPoint(_, _)
+                        | Kind::PathValuePoint(_, _)
                         | Kind::PlottedPoint(_, _, _, _)
                 )
             })
@@ -3448,6 +3725,16 @@ impl Document {
                         )
                     {
                         return Err("Unsupported table source".into());
+                    }
+                }
+                Kind::ValueTablePair(first, second, group) => {
+                    TableGroup::parse_pair(group.as_bytes())?;
+                    if (*first, *second) != (2, 1)
+                        || group.pair_source_ids() != Some([2, 1])
+                        || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[1]")
+                        || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]")
+                    {
+                        return Err("Unsupported two-column table source".into());
                     }
                 }
                 _ => {}
@@ -3581,8 +3868,11 @@ impl Document {
                     return Err(format!("Invalid plotted point {}", o.id));
                 }
                 if o.id > self.source_count {
-                    let group =
-                        plot_points_records::encode_t1_group(mode, [source as u32, frame as u32])?;
+                    let group = plot_points_records::encode_group(
+                        mode,
+                        [source as u32, frame as u32],
+                        stored,
+                    )?;
                     if plot_points_records::decode_group(&group)?.stored != stored {
                         return Err(
                             "Only the observed t[1] Plot Points values can be written".into()
@@ -3590,16 +3880,32 @@ impl Document {
                     }
                 }
             }
-            if let Kind::AxisValuePoint(source, axis) = o.kind {
+            if let Kind::PathValuePoint(source, path) = o.kind {
                 if !matches!(
                     self.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
                     Some(Kind::Parameter(_))
-                ) || !matches!(
-                    self.objects.get(axis.saturating_sub(1)).map(|o| &o.kind),
-                    Some(Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001))
-                ) || self.position(o.id).is_none()
+                ) || !self
+                    .objects
+                    .get(path.saturating_sub(1))
+                    .is_some_and(|host| {
+                        let Kind::Parameter(ref group) = self.objects[source - 1].kind else {
+                            return false;
+                        };
+                        plot_path_accepts(&host.kind, group.value())
+                    })
+                    || self.position(o.id).is_none()
                 {
-                    return Err(format!("Invalid axis value point {}", o.id));
+                    return Err(format!("Invalid path value point {}", o.id));
+                }
+            }
+            if let Kind::PathLiteralPoint(path, value) = o.kind {
+                if !self
+                    .objects
+                    .get(path.saturating_sub(1))
+                    .is_some_and(|host| plot_path_accepts(&host.kind, value))
+                    || self.position(o.id).is_none()
+                {
+                    return Err(format!("Invalid literal path point {}", o.id));
                 }
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind {
@@ -4145,6 +4451,29 @@ impl Document {
             out[format.data.start + 2] =
                 u8::from(matches!(object.kind, Kind::GraphAxis(_, _, 0x1_0001)));
         }
+        for object in self.objects.iter().take(self.source_count) {
+            let Kind::PathLiteralPoint(_, value) = object.kind else {
+                continue;
+            };
+            let header = object
+                .header_offset
+                .ok_or("Missing literal axis point header")?;
+            let start = rs
+                .iter()
+                .position(|record| record.kind == 0x7d0 && record.data.start == header)
+                .ok_or("Missing literal axis point group")?;
+            let constraint = rs[start + 1..]
+                .iter()
+                .take_while(|record| record.kind != 0x7d7)
+                .find(|record| {
+                    record.kind == 0x07d3
+                        && record.data.len() == 12
+                        && u32_at(&out, record.data.start) == 123
+                })
+                .ok_or("Missing literal axis point value")?;
+            out[constraint.data.start + 4..constraint.data.start + 12]
+                .copy_from_slice(&value.to_le_bytes());
+        }
         if self.objects.len() == self.source_count {
             return self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
@@ -4217,7 +4546,7 @@ impl Document {
                 added.extend_from_slice(&bytes);
                 continue;
             }
-            if let Kind::ValueTable(_, group) = &o.kind {
+            if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
                 if !o.visible {
                     bytes[10] |= 1;
@@ -4262,17 +4591,25 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::PlottedPoint(source, frame, mode, _) = o.kind {
+            if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
                 let mut group =
-                    plot_points_records::encode_t1_group(mode, [source as u32, frame as u32])?;
+                    plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
                 if !o.visible {
                     group[10] |= 1;
                 }
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::AxisValuePoint(source, axis) = o.kind {
+            if let Kind::PathValuePoint(source, axis) = o.kind {
                 let mut group = plot_axis_records::encode_group([source as u32, axis as u32])?;
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::PathLiteralPoint(axis, value) = o.kind {
+                let mut group = plot_axis_records::encode_literal_group(axis as u32, value)?;
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -4679,7 +5016,9 @@ impl Document {
             if let Some(replacement) = match &object.kind {
                 Kind::Parameter(value) => Some(value.as_bytes()),
                 Kind::Calculation(value) => Some(value.as_bytes()),
-                Kind::ValueTable(_, value) => Some(value.as_bytes()),
+                Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
+                    Some(value.as_bytes())
+                }
                 _ => None,
             } {
                 if bytes[group[0].start..record.data.end] != *replacement {
@@ -6981,7 +7320,7 @@ mod tests {
         let original_bytes = include_bytes!("../tests/fixtures/graph_plot_value_axis_original.gsp");
         let mut original = Document::from_bytes(original_bytes, None).unwrap();
         assert!(!original.partial_view);
-        assert_eq!(original.objects[8].kind, Kind::AxisValuePoint(1, 5));
+        assert_eq!(original.objects[8].kind, Kind::PathValuePoint(1, 5));
         assert_eq!(
             original.objects[8].visual_style,
             Some(VisualStyle::Point {
@@ -7015,33 +7354,539 @@ mod tests {
         generated
             .add_default_coordinate_system(Point { x: 199., y: 125. })
             .unwrap();
-        assert_eq!(generated.plot_parameter_on_axis(1, None).unwrap(), 9);
+        assert_eq!(generated.plot_parameter_on_path(1, None).unwrap(), 9);
         assert_eq!(
             generated.encode().unwrap(),
             include_bytes!("../tests/fixtures/graph_plot_value_axis_generated.gsp")
         );
         let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
         assert!(!reopened.partial_view);
-        assert_eq!(reopened.objects[8].kind, Kind::AxisValuePoint(1, 5));
+        assert_eq!(reopened.objects[8].kind, Kind::PathValuePoint(1, 5));
 
         let mut no_table = Document::new();
         no_table.add_default_parameter((10, 5)).unwrap();
         no_table
             .add_default_coordinate_system(Point { x: 199., y: 125. })
             .unwrap();
-        assert_eq!(no_table.plot_parameter_on_axis(1, None).unwrap(), 8);
+        assert_eq!(no_table.plot_parameter_on_path(1, None).unwrap(), 8);
         assert_eq!(
             no_table.encode().unwrap(),
             include_bytes!("../tests/fixtures/graph_plot_value_axis_no_table_generated.gsp")
         );
         no_table.undo();
         assert_eq!(no_table.objects.len(), 7);
-        assert_eq!(no_table.plot_parameter_on_axis(1, Some(6)).unwrap(), 8);
+        assert_eq!(no_table.plot_parameter_on_path(1, Some(6)).unwrap(), 8);
         assert_eq!(no_table.position(8).unwrap().x, 199.);
         assert!((no_table.position(8).unwrap().y - 87.20472440944882).abs() < 1e-9);
         assert_eq!(
             no_table.encode().unwrap(),
             include_bytes!("../tests/fixtures/graph_plot_value_y_generated.gsp")
+        );
+    }
+
+    #[test]
+    fn literal_axis_value_roundtrips_and_follows_axis_movement() {
+        let original_bytes =
+            include_bytes!("../tests/fixtures/graph_plot_value_literal_original.gsp");
+        let mut original = Document::from_bytes(original_bytes, None).unwrap();
+        assert!(!original.partial_view);
+        assert_eq!(original.objects[6].kind, Kind::PathLiteralPoint(3, 2.5));
+        assert_eq!(original.encode().unwrap(), original_bytes);
+        assert_eq!(
+            original.objects[6].visual_style,
+            Some(VisualStyle::Point {
+                shape: PointStyle::Medium,
+                color: RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0,
+                },
+            })
+        );
+        let before = original.position(7).unwrap();
+        assert!((before.x - (199. + 2.5 * 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(before.y, 125.);
+        original.checkpoint();
+        assert!(original.move_point(1, Point { x: 228., y: 140. }));
+        let after = original.position(7).unwrap();
+        assert!((after.x - before.x - 29.).abs() < 1e-9);
+        assert!((after.y - before.y - 15.).abs() < 1e-9);
+        original.undo();
+        assert_eq!(original.position(7), Some(before));
+        original.redo();
+        let edited = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        assert_eq!(edited.position(7), Some(after));
+        original.checkpoint();
+        original.objects[6].kind = Kind::PathLiteralPoint(3, 3.);
+        let changed_value = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        assert_eq!(changed_value.objects[6].kind, Kind::PathLiteralPoint(3, 3.));
+
+        let mut x = Document::new();
+        x.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(x.plot_literal_on_path(2.5, None).unwrap(), 7);
+        assert_eq!(
+            x.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_value_literal_generated.gsp")
+        );
+        let mut y = Document::new();
+        y.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(y.plot_literal_on_path(-1.25, Some(5)).unwrap(), 7);
+        assert_eq!(y.position(7).unwrap().x, 199.);
+        assert!((y.position(7).unwrap().y - 172.24409448818898).abs() < 1e-9);
+        assert_eq!(
+            y.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_value_literal_y_generated.gsp")
+        );
+        assert!(y.plot_literal_on_path(f64::NAN, None).is_err());
+    }
+
+    #[test]
+    fn plotted_values_on_segments_track_their_endpoints() {
+        let literal_bytes =
+            include_bytes!("../tests/fixtures/graph_plot_segment_literal_original.gsp");
+        let mut literal = Document::from_bytes(literal_bytes, None).unwrap();
+        assert!(!literal.partial_view);
+        assert_eq!(literal.objects[9].kind, Kind::PathLiteralPoint(3, 0.4));
+        assert_eq!(literal.position(10), Some(Point { x: 190., y: 140. }));
+        assert_eq!(literal.encode().unwrap(), literal_bytes);
+        literal.checkpoint();
+        assert!(literal.move_point(2, Point { x: 300., y: 200. }));
+        assert_eq!(literal.position(10), Some(Point { x: 210., y: 152. }));
+        literal.undo();
+        assert_eq!(literal.position(10), Some(Point { x: 190., y: 140. }));
+        literal.redo();
+        let reopened = Document::from_bytes(&literal.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(10), Some(Point { x: 210., y: 152. }));
+
+        let parameter_bytes =
+            include_bytes!("../tests/fixtures/graph_plot_segment_parameter_original.gsp");
+        let mut parameter = Document::from_bytes(parameter_bytes, None).unwrap();
+        assert!(!parameter.partial_view);
+        assert_eq!(parameter.objects[4].kind, Kind::PathValuePoint(1, 4));
+        assert_eq!(parameter.position(5), Some(Point { x: 250., y: 170. }));
+        assert_eq!(parameter.encode().unwrap(), parameter_bytes);
+        parameter.checkpoint();
+        assert!(parameter.move_point(3, Point { x: 300., y: 200. }));
+        let reopened = Document::from_bytes(&parameter.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(5), Some(Point { x: 300., y: 200. }));
+
+        let mut generated_literal = Document::new();
+        generated_literal.add(Kind::Free(Point { x: 150., y: 120. }));
+        generated_literal.add(Kind::Free(Point { x: 250., y: 170. }));
+        generated_literal.add(Kind::Segment(1, 2));
+        assert_eq!(
+            generated_literal
+                .plot_literal_on_path(0.4, Some(3))
+                .unwrap(),
+            4
+        );
+        assert!(
+            generated_literal
+                .plot_literal_on_path(1.2, Some(3))
+                .is_err()
+        );
+        assert_eq!(
+            generated_literal.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_segment_literal_generated.gsp")
+        );
+        let mut generated_parameter = Document::new();
+        generated_parameter.add_default_parameter((10, 5)).unwrap();
+        generated_parameter.add(Kind::Free(Point { x: 150., y: 120. }));
+        generated_parameter.add(Kind::Free(Point { x: 250., y: 170. }));
+        generated_parameter.add(Kind::Segment(2, 3));
+        assert_eq!(
+            generated_parameter
+                .plot_parameter_on_path(1, Some(4))
+                .unwrap(),
+            5
+        );
+        assert_eq!(
+            generated_parameter.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_segment_parameter_generated.gsp")
+        );
+    }
+
+    #[test]
+    fn plotted_values_on_circles_lines_and_rays_roundtrip_and_follow_paths() {
+        for (bytes, value, expected) in [
+            (
+                include_bytes!("../tests/fixtures/graph_plot_circle_literal_original.gsp")
+                    .as_slice(),
+                0.25,
+                Point {
+                    x: 323.,
+                    y: 217. - (27_f64.powi(2) + 115_f64.powi(2)).sqrt(),
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/graph_plot_line_literal_original.gsp").as_slice(),
+                -0.5,
+                Point { x: 100., y: 95. },
+            ),
+            (
+                include_bytes!("../tests/fixtures/graph_plot_ray_literal_original.gsp").as_slice(),
+                2.,
+                Point { x: 350., y: 220. },
+            ),
+        ] {
+            let mut document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert_eq!(document.objects[3].kind, Kind::PathLiteralPoint(3, value));
+            assert_eq!(document.encode().unwrap(), bytes);
+            let position = document.position(4).unwrap();
+            assert!((position.x - expected.x).abs() < 1e-9);
+            assert!((position.y - expected.y).abs() < 1e-9);
+            let start = document.position(1).unwrap();
+            document.checkpoint();
+            assert!(document.move_point(
+                1,
+                Point {
+                    x: start.x + 10.,
+                    y: start.y + 20.
+                }
+            ));
+            let moved = document.position(4).unwrap();
+            assert!(moved.x.is_finite() && moved.y.is_finite());
+            let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.position(4), Some(moved));
+            document.undo();
+            assert_eq!(document.position(4), Some(position));
+        }
+
+        let mut circle = Document::new();
+        circle.add(Kind::Free(Point { x: 199., y: 125. }));
+        circle.add(Kind::Free(Point { x: 236., y: 125. }));
+        circle.add(Kind::Circle(1, 2));
+        assert_eq!(circle.plot_literal_on_path(0.25, Some(3)).unwrap(), 4);
+        assert_eq!(circle.position(4), Some(Point { x: 199., y: 88. }));
+        assert_eq!(
+            circle.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_circle_literal_generated.gsp")
+        );
+
+        for (kind, value, expected, file) in [
+            (
+                Kind::Line(1, 2),
+                -0.5,
+                Point { x: 100., y: 95. },
+                include_bytes!("../tests/fixtures/graph_plot_line_literal_generated.gsp")
+                    .as_slice(),
+            ),
+            (
+                Kind::Ray(1, 2),
+                2.,
+                Point { x: 350., y: 220. },
+                include_bytes!("../tests/fixtures/graph_plot_ray_literal_generated.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::new();
+            document.add(Kind::Free(Point { x: 150., y: 120. }));
+            document.add(Kind::Free(Point { x: 250., y: 170. }));
+            document.add(kind);
+            document.plot_literal_on_path(value, Some(3)).unwrap();
+            assert_eq!(document.position(4), Some(expected));
+            assert_eq!(document.encode().unwrap(), file);
+        }
+        let mut ray = Document::new();
+        ray.add(Kind::Free(Point { x: 150., y: 120. }));
+        ray.add(Kind::Free(Point { x: 250., y: 170. }));
+        ray.add(Kind::Ray(1, 2));
+        assert!(ray.plot_literal_on_path(-0.5, Some(3)).is_err());
+
+        let mut live_circle = Document::new();
+        live_circle.add_default_parameter((10, 5)).unwrap();
+        live_circle.add(Kind::Free(Point { x: 199., y: 125. }));
+        live_circle.add(Kind::Free(Point { x: 236., y: 125. }));
+        live_circle.add(Kind::Circle(2, 3));
+        assert_eq!(live_circle.plot_parameter_on_path(1, Some(4)).unwrap(), 5);
+        assert!((live_circle.position(5).unwrap().x - 236.).abs() < 1e-9);
+        assert_eq!(
+            live_circle.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_circle_parameter_generated.gsp")
+        );
+        live_circle.checkpoint();
+        assert!(live_circle.move_point(3, Point { x: 249., y: 125. }));
+        assert!((live_circle.position(5).unwrap().x - 249.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_parameter_table_data_roundtrips_and_tracks_frame() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/table_two_parameters_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/table_two_columns_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_data_base_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_data_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/table_two_columns_two_rows_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_data_two_rows_base_original.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_data_two_rows_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/table_t2_value2_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/table_two_columns_distinct_rows_original.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_distinct_base_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_distinct_original.gsp").as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert_eq!(document.encode().unwrap(), bytes);
+            assert!(
+                matches!(&document.objects[0].kind, Kind::Parameter(group) if group.name() == "t[1]")
+            );
+            assert!(
+                matches!(&document.objects[1].kind, Kind::Parameter(group) if group.name() == "t[2]")
+            );
+        }
+        let mut original = Document::from_bytes(
+            include_bytes!("../tests/fixtures/plot_table_data_original.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(
+            matches!(&original.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.rows() == 1)
+        );
+        assert_eq!(
+            original.objects[9].kind,
+            Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [1., 1.])
+        );
+        let before = original.position(10).unwrap();
+        assert!((before.x - 236.79527559055118).abs() < 1e-9);
+        assert!((before.y - 87.20472440944882).abs() < 1e-9);
+        original.move_number(3, (25, 80)).unwrap();
+        assert!(
+            matches!(&original.objects[2].kind, Kind::ValueTablePair(_, _, group) if group.anchor() == (25, 80))
+        );
+        let moved = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        assert!(!moved.partial_view);
+        assert_eq!(moved.position(10), Some(before));
+        original.checkpoint();
+        assert!(original.move_point(4, Point { x: 219., y: 135. }));
+        let shifted = original.position(10).unwrap();
+        assert!((shifted.x - before.x - 20.).abs() < 1e-9);
+        assert!((shifted.y - before.y - 10.).abs() < 1e-9);
+        original.undo();
+        assert_eq!(original.position(10), Some(before));
+
+        let mut generated = Document::new();
+        generated.add_default_parameter((10, 5)).unwrap();
+        generated.add_default_parameter((10, 38)).unwrap();
+        generated.tabulate_default_pair((10, 71)).unwrap();
+        generated
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(generated.plot_default_pair_table(3).unwrap(), vec![10]);
+        assert_eq!(
+            generated.encode().unwrap(),
+            include_bytes!("../tests/fixtures/plot_table_data_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(10), Some(before));
+
+        let mut two_rows = Document::new();
+        two_rows.add_default_parameter((10, 5)).unwrap();
+        two_rows.add_default_parameter((10, 38)).unwrap();
+        two_rows.tabulate_default_pair((10, 71)).unwrap();
+        two_rows.change_table_rows(3, true).unwrap();
+        assert!(
+            matches!(&two_rows.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.rows() == 2)
+        );
+        two_rows
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(two_rows.plot_default_pair_table(3).unwrap(), vec![10]);
+        assert_eq!(
+            two_rows.encode().unwrap(),
+            include_bytes!("../tests/fixtures/plot_table_data_two_rows_generated.gsp")
+        );
+        assert_eq!(two_rows.position(10), Some(before));
+        let restored = Document::from_bytes(&two_rows.encode().unwrap(), None).unwrap();
+        assert!(!restored.partial_view);
+        assert!(
+            matches!(&restored.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.rows() == 2)
+        );
+
+        let distinct_original = Document::from_bytes(
+            include_bytes!("../tests/fixtures/plot_table_distinct_original.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(distinct_original.objects.len(), 11);
+        assert!(
+            matches!(&distinct_original.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[1., 1.], [2., 1.]]))
+        );
+        assert_eq!(
+            distinct_original.objects[9].kind,
+            Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [1., 1.])
+        );
+        assert_eq!(
+            distinct_original.objects[10].kind,
+            Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [2., 1.])
+        );
+        assert!(
+            (distinct_original.position(11).unwrap().x - (199. + 2. * 37.79527559055118)).abs()
+                < 1e-9
+        );
+
+        let mut distinct = Document::new();
+        distinct.add_default_parameter((10, 5)).unwrap();
+        distinct.add_default_parameter((10, 38)).unwrap();
+        distinct.tabulate_default_pair((10, 71)).unwrap();
+        distinct.change_table_rows(3, true).unwrap();
+        distinct.set_second_parameter_value(2, 2).unwrap();
+        assert!(matches!(&distinct.objects[1].kind, Kind::Parameter(group) if group.value() == 2.));
+        assert!(
+            matches!(&distinct.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[1., 1.], [2., 1.]]))
+        );
+        distinct
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(distinct.plot_default_pair_table(3).unwrap(), vec![10, 11]);
+        assert_eq!(
+            distinct.encode().unwrap(),
+            include_bytes!("../tests/fixtures/plot_table_distinct_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&distinct.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(11), distinct.position(11));
+    }
+
+    #[test]
+    fn decimal_parameters_roundtrip_and_drive_path_points() {
+        for (bytes, id, value) in [
+            (
+                include_bytes!("../tests/fixtures/table_t1_fraction_original.gsp").as_slice(),
+                1,
+                3.25,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_t2_fraction_original.gsp").as_slice(),
+                2,
+                2.5,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_t2_negative_original.gsp").as_slice(),
+                2,
+                -1.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_t2_negative_fraction_original.gsp")
+                    .as_slice(),
+                2,
+                -2.5,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_t2_multidigit_original.gsp").as_slice(),
+                2,
+                12.34,
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::Parameter(group) = &document.objects[id - 1].kind else {
+                panic!("expected parameter")
+            };
+            assert!((group.value() - value).abs() < 1e-9);
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut first = Document::new();
+        first.add_default_parameter((10, 5)).unwrap();
+        first.set_parameter_value(1, 3.25).unwrap();
+        assert_eq!(
+            first.encode().unwrap(),
+            include_bytes!("../tests/fixtures/table_t1_fraction_generated.gsp")
+        );
+        let mut second = Document::new();
+        second.add_default_parameter((10, 5)).unwrap();
+        second.add_default_parameter((10, 38)).unwrap();
+        second.set_parameter_value(2, -2.5).unwrap();
+        assert_eq!(
+            second.encode().unwrap(),
+            include_bytes!("../tests/fixtures/table_t2_negative_fraction_generated.gsp")
+        );
+        second.set_parameter_value(2, 12.34).unwrap();
+        assert_eq!(
+            second.encode().unwrap(),
+            include_bytes!("../tests/fixtures/table_t2_multidigit_generated.gsp")
+        );
+        assert!(second.set_parameter_value(2, 100.).is_err());
+        assert!(second.set_parameter_value(2, 2.555).is_err());
+        assert!(second.set_parameter_value(2, f64::NAN).is_err());
+
+        let mut line = Document::new();
+        line.add_default_parameter((10, 5)).unwrap();
+        line.set_parameter_value(1, 3.25).unwrap();
+        line.add(Kind::Free(Point { x: 150., y: 120. }));
+        line.add(Kind::Free(Point { x: 180., y: 130. }));
+        line.add(Kind::Line(2, 3));
+        assert_eq!(line.plot_parameter_on_path(1, Some(4)).unwrap(), 5);
+        assert_eq!(line.position(5), Some(Point { x: 247.5, y: 152.5 }));
+        assert_eq!(
+            line.encode().unwrap(),
+            include_bytes!("../tests/fixtures/graph_plot_line_fraction_parameter_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&line.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(5), line.position(5));
+
+        for bytes in [
+            include_bytes!("../tests/fixtures/table_pair_fraction_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_fraction_base_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/plot_table_fraction_original.gsp").as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert_eq!(document.encode().unwrap(), bytes);
+            assert!(
+                matches!(&document.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[2.5, 1.]]))
+            );
+        }
+        let mut table = Document::new();
+        table.add_default_parameter((10, 5)).unwrap();
+        table.add_default_parameter((10, 38)).unwrap();
+        table.tabulate_default_pair((10, 71)).unwrap();
+        table.set_parameter_value(2, 2.5).unwrap();
+        table
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(table.plot_default_pair_table(3).unwrap(), vec![10]);
+        assert_eq!(
+            table.objects[9].kind,
+            Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [2.5, 1.])
+        );
+        assert!((table.position(10).unwrap().x - (199. + 2.5 * 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(
+            table.encode().unwrap(),
+            include_bytes!("../tests/fixtures/plot_table_fraction_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&table.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(10), table.position(10));
+        let plotted = table.position(10);
+        table.set_parameter_value(2, 3.25).unwrap();
+        assert_eq!(table.position(10), plotted);
+        assert!(
+            matches!(&table.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[3.25, 1.]]))
+        );
+        assert_eq!(
+            table.encode().unwrap(),
+            include_bytes!("../tests/fixtures/plot_table_fraction_changed_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&table.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(10), plotted);
+        let original_changed =
+            include_bytes!("../tests/fixtures/plot_table_fraction_after_value_change_original.gsp");
+        let original = Document::from_bytes(original_changed, None).unwrap();
+        assert!(!original.partial_view);
+        assert_eq!(original.encode().unwrap(), original_changed);
+        assert_eq!(original.position(10), plotted);
+        assert!(
+            matches!(&original.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_values() == Some(vec![[3.25, 1.]]))
         );
     }
 

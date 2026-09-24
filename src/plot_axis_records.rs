@@ -1,6 +1,7 @@
-//! Graph > Plot Value on Axis records observed for a parameter and an axis.
+//! Graph > Plot Value on Axis/Path records for numeric values on axes and segments.
 
 const TEMPLATE: &[u8; 64] = include_bytes!("../assets/graph_plot_value_axis_group.bin");
+const LITERAL_TEMPLATE: &[u8; 80] = include_bytes!("../assets/graph_plot_value_literal_group.bin");
 
 fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
@@ -35,6 +36,39 @@ pub fn encode_group(references: [u32; 2]) -> Result<Vec<u8>, String> {
     Ok(group)
 }
 
+/// A fixed numeric coordinate stored directly on a plotted point (code 123).
+pub fn decode_literal_group(group: &[u8]) -> Result<(u32, f64), String> {
+    if group.len() != 80
+        || word(group, 0) != 28
+        || word(group, 4) != 0x07d0
+        || word(group, 8) != 123
+        || word(group, 36) != 8
+        || word(group, 40) != 0x07d2
+        || word(group, 44) != 1
+        || word(group, 52) != 12
+        || word(group, 56) != 0x07d3
+        || word(group, 60) != 123
+        || word(group, 72) != 0
+        || word(group, 76) != 0x07d7
+    {
+        return Err("Unsupported literal Plot Value on Axis group".into());
+    }
+    let axis = word(group, 48);
+    let value = f64::from_le_bytes(group[64..72].try_into().unwrap());
+    if axis == 0 || !value.is_finite() {
+        return Err("Invalid literal Plot Value on Axis data".into());
+    }
+    Ok((axis, value))
+}
+
+pub fn encode_literal_group(axis: u32, value: f64) -> Result<Vec<u8>, String> {
+    let mut group = LITERAL_TEMPLATE.to_vec();
+    group[48..52].copy_from_slice(&axis.to_le_bytes());
+    group[64..72].copy_from_slice(&value.to_le_bytes());
+    decode_literal_group(&group)?;
+    Ok(group)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +80,19 @@ mod tests {
         assert_eq!(
             decode_group(&encode_group([2, 7]).unwrap()).unwrap(),
             [2, 7]
+        );
+    }
+
+    #[test]
+    fn original_literal_group_stores_its_axis_and_number() {
+        assert_eq!(decode_literal_group(LITERAL_TEMPLATE).unwrap(), (3, 2.5));
+        assert_eq!(
+            encode_literal_group(3, 2.5).unwrap(),
+            LITERAL_TEMPLATE.as_slice()
+        );
+        assert_eq!(
+            decode_literal_group(&encode_literal_group(5, -1.25).unwrap()).unwrap(),
+            (5, -1.25)
         );
     }
 }

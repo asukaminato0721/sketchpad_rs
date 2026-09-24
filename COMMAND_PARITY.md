@@ -53,8 +53,8 @@ The release gate is every sketch and document command verified after editing, sa
 | Show All Hidden | Partial |
 | Show Labels | Partial: point-label visibility through editor controls; other object labels pending |
 | Label Objects | Partial: point labels can be named and saved; other object labels pending |
-| Trace Objects | Pending |
-| Erase Traces | Pending |
+| Trace Objects | Partial: point and segment header flags, save/reopen, undo/redo, and bounded native drag trails; generated point and segment files opened and saved byte-identically in Sketchpad 5, with point trail visually confirmed |
+| Erase Traces | Partial: clears native in-memory trails; original application's trail clearing verified for a port-generated traced point |
 | Animate Objects | Pending |
 | Increase Speed | Pending |
 | Decrease Speed | Pending |
@@ -87,8 +87,8 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Mark Center | Pending |
-| Mark Mirror | Pending |
+| Mark Center | Partial: marked point can be used for later rotate and dilate commands; original marked-only file is byte-identical to its unmarked source |
+| Mark Mirror | Partial: marked straight object can be used for later reflection; original marked-only file is byte-identical to its unmarked source |
 | Mark Angle | Pending |
 | Mark Ratio | Pending |
 | Mark Vector | Pending |
@@ -127,10 +127,10 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Number Menu &gt; New Parameter | Partial: default t₁ value, move and save/reopen; original file cross-opened |
+| Number Menu &gt; New Parameter | Partial: default t₁/t₂ parameters with editable −99.99 to 99.99 values at two-decimal precision; original fractional, negative, and two-digit files decode and generated files cross-open; arbitrary names and wider values pending |
 | Number Menu &gt; Calculate | Partial: literal 2+3 expression, move and save/reopen; original file cross-opened |
-| Number Menu &gt; Tabulate | Partial: one-column table for default t₁, save/reopen and original cross-open; other sources pending |
-| Number Menu &gt; Add Table Data | Partial: add default t₁ snapshot row, save/reopen; other table kinds pending |
+| Number Menu &gt; Tabulate | Partial: one-column default t₁ table and two-column t₂/t₁ table with one or two rows, including fractional t₂ values; other sources and layouts pending |
+| Number Menu &gt; Add Table Data | Partial: add default t₁ snapshot row or a second t₂/t₁ row, save/reopen; other table kinds pending |
 | Number Menu &gt; Remove Table Data | Partial: remove last t₁ snapshot row, save/reopen; other table kinds pending |
 | Number Menu &gt; New Function | Partial: Cartesian `x` and `x²` definitions save and cross-open; other expressions pending |
 | Number Menu &gt; Define Derivative Function | Pending |
@@ -142,13 +142,13 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Graph Menu &gt; Define Coordinate System | Partial: default Cartesian frame, generated file opened and saved in Sketchpad 5 |
 | Graph Menu &gt; Mark Coordinate System | Pending |
-| Graph Menu &gt; Grid Form | Pending |
-| Graph Menu &gt; Show Grid | Partial: page flag and coordinate-system link preserved; visual persistence in Wine remains unverified |
-| Graph Menu &gt; Dotted Grid | Pending |
-| Graph Menu &gt; Snap Points | Pending |
-| Graph Menu &gt; Plot Value on Axis | Pending |
-| Graph Menu &gt; Plot Points/Plot as (x, y)/Plot as (r, θ) | Pending |
-| Graph Menu &gt; Plot Table Data | Pending |
+| Graph Menu &gt; Grid Form | Partial: Square, Polar, Rectangular, and trigonometric X-axis formats decode and save; polar rings/rays, independent rectangular spacing, and π labels render in native/SVG; original and generated files opened in Sketchpad 5, including an edited rectangular unit; broader axis formatting pending |
+| Graph Menu &gt; Show Grid | Partial: coordinate-system visibility decoded and saved; hidden frame components omitted from native/SVG rendering; original and generated hidden frames reopened in Sketchpad 5 |
+| Graph Menu &gt; Dotted Grid | Partial: original grid flag decoded, native and SVG dots rendered, undo/redo and save/reopen tested; generated Cartesian and Polar dotted frames opened and saved byte-identically in Sketchpad 5 |
+| Graph Menu &gt; Snap Points | Partial: page flag decoded and saved; free-point creation and drag snap to the nearest Cartesian or Polar grid intersection; original drag results matched numerically, and port-generated file opened, snapped again, and saved in Sketchpad 5; other point kinds pending |
+| Graph Menu &gt; Plot Value on Axis/Path | Partial: selected t₁ parameter plots as a live code 95 point, while the value dialog plots a fixed numeric code 123 point; X/Y axes, segments, rays, lines, and circles decode, render, and save; original and generated cases opened and saved in Sketchpad 5; expressions, other numeric sources, and further paths pending |
+| Graph Menu &gt; Plot Points/Plot as (x, y)/Plot as (r, θ) | Partial: original and generated one-column t₁ table points, including two-row tables, decode, render, follow frame drags, and save/reopen in Rust; integrated Cartesian and polar files opened and saved byte-identically in Sketchpad 5; arbitrary numeric sources and multiple plotted points pending |
+| Graph Menu &gt; Plot Table Data | Partial: one- or two-row Cartesian plot from the verified t₂/t₁ table; duplicate rows combine, distinct rows produce separate points, and changing t₂ later updates the live table row while plotted points stay fixed; fractional original and generated files cross-open; other columns, further rows, and polar mode pending |
 | Graph Menu &gt; Plot Function/Plot New Function | Partial: Cartesian `x` and `x²` plots update after origin drag and cross-open; other expressions and ranges pending |
 | Graph Menu &gt; Plot Parametric Curve | Pending |
 

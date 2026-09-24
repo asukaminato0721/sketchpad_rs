@@ -86,11 +86,32 @@ pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rec
 }
 pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
     match kind {
-        Kind::Parameter(group) => Some((group.anchor(), vec!["t₁ = 1.00".into()])),
+        Kind::Parameter(group) => Some((
+            group.anchor(),
+            vec![format!(
+                "{} = {:.2}",
+                if group.name() == "t[2]" {
+                    "t₂"
+                } else {
+                    "t₁"
+                },
+                group.value()
+            )],
+        )),
         Kind::Calculation(group) => Some((group.anchor(), vec!["2 + 3 = 5.00".into()])),
         Kind::ValueTable(_, group) => {
             let mut lines = vec!["t₁".into()];
             lines.extend((0..group.rows()).map(|_| "1.00".into()));
+            Some((group.anchor(), lines))
+        }
+        Kind::ValueTablePair(_, _, group) => {
+            let mut lines = vec!["t₂       t₁".into()];
+            lines.extend(
+                group
+                    .pair_values()?
+                    .into_iter()
+                    .map(|[x, y]| format!("{x:.2}    {y:.2}")),
+            );
             Some((group.anchor(), lines))
         }
         _ => None,

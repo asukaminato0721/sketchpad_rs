@@ -3,6 +3,10 @@
 
 const TEMPLATE_DOCUMENT: &[u8] = include_bytes!("../tests/fixtures/table_parameter_tabulated.gsp");
 const DEFAULT_PARAMETER: &[u8] = include_bytes!("../tests/fixtures/table_parameter_default.gsp");
+const TWO_PARAMETERS: &[u8] = include_bytes!("../tests/fixtures/table_two_parameters_original.gsp");
+const TWO_COLUMN_TABLE: &[u8] = include_bytes!("../tests/fixtures/table_two_columns_original.gsp");
+const TWO_ROW_PAIR_TABLE: &[u8] =
+    include_bytes!("../tests/fixtures/table_two_columns_two_rows_original.gsp");
 const CALCULATION: &[u8] = include_bytes!("../tests/fixtures/table_calculate_2_plus_3.gsp");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,10 +77,83 @@ pub struct ParameterGroup {
     bytes: Vec<u8>,
 }
 
+fn decimal_words(value: f64) -> Result<Vec<u16>, String> {
+    if !value.is_finite() || value.abs() > 99.99 {
+        return Err("Parameter value must be within -99.99 to 99.99".into());
+    }
+    let cents = (value.abs() * 100.).round();
+    if (value.abs() * 100. - cents).abs() > 1e-7 {
+        return Err("Parameter value has more than two decimal places".into());
+    }
+    let cents = cents as u16;
+    let whole = cents / 100;
+    let fraction = cents % 100;
+    let mut words = Vec::new();
+    if value.is_sign_negative() && cents != 0 {
+        words.push(4097);
+    }
+    if whole >= 10 {
+        words.push(whole / 10);
+    }
+    words.push(whole % 10);
+    if fraction != 0 {
+        words.push(10);
+        words.push(fraction / 10);
+        if fraction % 10 != 0 {
+            words.push(fraction % 10);
+        }
+    }
+    Ok(words)
+}
+
+fn value_from_words(words: &[u16]) -> Result<f64, String> {
+    if words.is_empty() || words.len() > 6 {
+        return Err("Unsupported parameter digits".into());
+    }
+    let (negative, digits) = if words[0] == 4097 {
+        (true, &words[1..])
+    } else {
+        (false, words)
+    };
+    let decimal = digits.iter().position(|word| *word == 10);
+    let (whole, fraction) = match decimal {
+        Some(index) => (&digits[..index], &digits[index + 1..]),
+        None => (digits, &[][..]),
+    };
+    if !(1..=2).contains(&whole.len())
+        || fraction.len() > 2
+        || decimal.is_some() && fraction.is_empty()
+        || whole.iter().chain(fraction).any(|digit| *digit > 9)
+    {
+        return Err("Unsupported parameter digits".into());
+    }
+    let whole_value = whole.iter().fold(0_u16, |value, digit| value * 10 + *digit);
+    let fraction_value = fraction
+        .iter()
+        .fold(0_u16, |value, digit| value * 10 + *digit);
+    let fraction_cents = if fraction.len() == 1 {
+        fraction_value * 10
+    } else {
+        fraction_value
+    };
+    let value = (whole_value * 100 + fraction_cents) as f64 / 100.;
+    let value = if negative { -value } else { value };
+    if decimal_words(value)? != words {
+        return Err("Noncanonical parameter digits".into());
+    }
+    Ok(value)
+}
+
 impl ParameterGroup {
     pub fn default_value() -> Self {
         Self {
             bytes: object_group(DEFAULT_PARAMETER, 1),
+        }
+    }
+
+    pub fn second_default_value() -> Self {
+        Self {
+            bytes: object_group(TWO_PARAMETERS, 2),
         }
     }
 
@@ -87,43 +164,114 @@ impl ParameterGroup {
         {
             return Err("Unsupported parameter record sequence".into());
         }
-        let template = object_group(DEFAULT_PARAMETER, 1);
-        let base = records(&template, 0)?;
-        if bytes.len() != template.len() {
-            return Err("Unsupported parameter byte length".into());
+        let payload_len = rs[1].end - rs[1].payload;
+        if !(94..=104).contains(&payload_len) || payload_len % 2 != 0 {
+            return Err("Unsupported parameter value length".into());
         }
-        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
-            let mutable = i == 10
-                || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
-                || (rs[1].payload + 22..rs[1].payload + 24).contains(&i)
-                || (rs[1].payload + 30..rs[1].payload + 32).contains(&i)
-                || (rs[4].payload..rs[4].end).contains(&i);
-            if !mutable && actual != expected {
-                return Err("Unsupported parameter variant".into());
-            }
+        let word_count = (payload_len - 92) / 2;
+        let payload = &bytes[rs[1].payload..rs[1].end];
+        if u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize != payload_len - 32
+            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize != word_count
+        {
+            return Err("Invalid parameter value header".into());
         }
-        if base.len() != rs.len() {
-            return Err("Invalid parameter template".into());
+        let words = (0..word_count)
+            .map(|i| u16::from_le_bytes(payload[92 + i * 2..94 + i * 2].try_into().unwrap()))
+            .collect::<Vec<_>>();
+        value_from_words(&words)?;
+        let templates = [
+            object_group(DEFAULT_PARAMETER, 1),
+            object_group(TWO_PARAMETERS, 2),
+        ];
+        let supported = templates.iter().any(|template| {
+            let base = records(template, 0).unwrap();
+            rs.iter().enumerate().all(|(record_index, actual)| {
+                let expected = base[record_index];
+                if record_index == 1 {
+                    let actual_payload = &bytes[actual.payload..actual.end];
+                    let expected_payload = &template[expected.payload..expected.end];
+                    (0..92).all(|i| {
+                        let mutable = (12..16).contains(&i)
+                            || (22..24).contains(&i)
+                            || (30..32).contains(&i)
+                            || (36..40).contains(&i)
+                            || (44..46).contains(&i);
+                        mutable || actual_payload[i] == expected_payload[i]
+                    })
+                } else {
+                    let actual_record = &bytes[actual.start..actual.end];
+                    let expected_record = &template[expected.start..expected.end];
+                    actual_record.len() == expected_record.len()
+                        && actual_record.iter().zip(expected_record).enumerate().all(
+                            |(i, (a, e))| {
+                                record_index == 0 && i == 10
+                                    || record_index == 4 && i >= 8
+                                    || a == e
+                            },
+                        )
+                }
+            })
+        });
+        if !supported {
+            return Err("Unsupported parameter variant".into());
         }
         let group = Self {
             bytes: bytes.to_vec(),
         };
         let at = group.anchor();
         let bbox = group.bbox();
-        if bbox.0 != at
-            || i32::from(bbox.1.0) - i32::from(bbox.0.0) != 94
-            || i32::from(bbox.1.1) - i32::from(bbox.0.1) != 32
-        {
+        let width = i32::from(bbox.1.0) - i32::from(bbox.0.0);
+        let height = i32::from(bbox.1.1) - i32::from(bbox.0.1);
+        if bbox.0 != at || !(1..=2048).contains(&width) || !(1..=2048).contains(&height) {
             return Err("Parameter anchor and box disagree".into());
         }
         Ok(group)
     }
 
     pub fn name(&self) -> &str {
-        "t[1]"
+        let rs = records(&self.bytes, 0).unwrap();
+        if self.bytes[rs[2].payload + 26] == b'2' {
+            "t[2]"
+        } else {
+            "t[1]"
+        }
     }
     pub fn value(&self) -> f64 {
-        1.0
+        let rs = records(&self.bytes, 0).unwrap();
+        let payload = &self.bytes[rs[1].payload..rs[1].end];
+        let words = payload[92..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        value_from_words(&words).unwrap()
+    }
+
+    pub fn set_value(&mut self, value: f64) -> Result<(), String> {
+        let words = decimal_words(value)?;
+        let old_value = self.value();
+        let extra = |value: f64| i32::from(value.abs() >= 10.) + i32::from(value < 0.);
+        let width_delta = 4 * (extra(value) - extra(old_value));
+        let rs = records(&self.bytes, 0)?;
+        let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
+        payload.truncate(92);
+        for word in &words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        let inner_length = (payload.len() - 32) as u32;
+        payload[36..40].copy_from_slice(&inner_length.to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        let mut updated = self.bytes[..rs[1].start].to_vec();
+        put_record(&mut updated, 0x0907, &payload);
+        updated.extend_from_slice(&self.bytes[rs[1].end..]);
+        let changed = records(&updated, 0)?;
+        let right = changed[4].payload + 4;
+        let old_right = i16::from_le_bytes(updated[right..right + 2].try_into().unwrap());
+        let new_right = i16::try_from(i32::from(old_right) + width_delta)
+            .map_err(|_| "Parameter box coordinate overflow")?;
+        updated[right..right + 2].copy_from_slice(&new_right.to_le_bytes());
+        Self::parse(&updated)?;
+        self.bytes = updated;
+        Ok(())
     }
 
     pub fn anchor(&self) -> (i16, i16) {
@@ -367,6 +515,128 @@ impl TableGroup {
         Self {
             bytes: table_template(),
         }
+    }
+
+    pub fn pair_snapshot() -> Self {
+        Self {
+            bytes: object_group(TWO_COLUMN_TABLE, 3),
+        }
+    }
+
+    pub fn pair_snapshot_rows(rows: usize, anchor: (i16, i16)) -> Result<Self, String> {
+        let mut group = match rows {
+            1 => Self::pair_snapshot(),
+            2 => Self {
+                bytes: object_group(TWO_ROW_PAIR_TABLE, 3),
+            },
+            _ => {
+                return Err(
+                    "Only one or two rows of the default parameter pair are supported".into(),
+                );
+            }
+        };
+        group.set_anchor(anchor);
+        Ok(group)
+    }
+
+    pub fn parse_pair(bytes: &[u8]) -> Result<Self, String> {
+        let template = match bytes.len() {
+            182 => Self::pair_snapshot(),
+            206 => Self {
+                bytes: object_group(TWO_ROW_PAIR_TABLE, 3),
+            },
+            _ => return Err("Unsupported two-column table length".into()),
+        };
+        let rs = records(bytes, 0)?;
+        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
+            || bytes.len() != template.bytes.len()
+            || rs[1].end - rs[1].payload != 12
+            || rs[2].end - rs[2].payload != if bytes.len() == 182 { 100 } else { 124 }
+        {
+            return Err("Unsupported two-column table layout".into());
+        }
+        for (i, (actual, expected)) in bytes.iter().zip(&template.bytes).enumerate() {
+            let mutable = i == 10
+                || (rs[2].payload + 12..rs[2].payload + 16).contains(&i)
+                || (rs[2].end - 3..rs[2].end).contains(&i);
+            let row_value =
+                (143..147).contains(&i) || bytes.len() == 206 && (168..172).contains(&i);
+            if !mutable && !row_value && actual != expected {
+                return Err("Unsupported two-column table variant".into());
+            }
+        }
+        for at in if bytes.len() == 206 {
+            &[143, 168][..]
+        } else {
+            &[143][..]
+        } {
+            let value = &bytes[*at..*at + 4];
+            if !value[0].is_ascii_digit()
+                || value[1] != b'.'
+                || !value[2].is_ascii_digit()
+                || !value[3].is_ascii_digit()
+            {
+                return Err("Unsupported pair table row value".into());
+            }
+        }
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    pub fn pair_source_ids(&self) -> Option<[u32; 2]> {
+        let rs = records(&self.bytes, 0).ok()?;
+        (rs[1].end - rs[1].payload == 12).then(|| {
+            [
+                u32::from_le_bytes(
+                    self.bytes[rs[1].payload + 4..rs[1].payload + 8]
+                        .try_into()
+                        .unwrap(),
+                ),
+                u32::from_le_bytes(
+                    self.bytes[rs[1].payload + 8..rs[1].payload + 12]
+                        .try_into()
+                        .unwrap(),
+                ),
+            ]
+        })
+    }
+
+    pub fn pair_values(&self) -> Option<Vec<[f64; 2]>> {
+        self.pair_source_ids()?;
+        let positions: &[usize] = if self.bytes.len() == 206 {
+            &[143, 168]
+        } else {
+            &[143]
+        };
+        positions
+            .iter()
+            .map(|&i| {
+                let text = std::str::from_utf8(&self.bytes[i..i + 4]).ok()?;
+                Some([text.parse::<f64>().ok()?, 1.])
+            })
+            .collect()
+    }
+
+    pub fn set_pair_row_value(&mut self, row: usize, value: f64) -> Result<(), String> {
+        if !(0.0..10.0).contains(&value)
+            || decimal_words(value).is_err()
+            || self.pair_source_ids() != Some([2, 1])
+        {
+            return Err("Unsupported pair table value".into());
+        }
+        let offset = match (self.bytes.len(), row) {
+            (182, 0) | (206, 0) => 143,
+            (206, 1) => 168,
+            _ => return Err("Invalid pair table row".into()),
+        };
+        self.bytes[offset..offset + 4].copy_from_slice(format!("{value:.2}").as_bytes());
+        Self::parse_pair(&self.bytes)?;
+        Ok(())
+    }
+
+    pub fn set_last_pair_value(&mut self, value: f64) -> Result<(), String> {
+        self.set_pair_row_value(self.rows() - 1, value)
     }
 
     pub fn for_source(source: u32, anchor: (i16, i16)) -> Result<Self, String> {

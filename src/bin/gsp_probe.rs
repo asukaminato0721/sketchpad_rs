@@ -254,6 +254,19 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_default_parameter(number_anchor(rest)?)?;
                     println!("line {}: parameter -> object {id}", index + 1);
                 }
+                "parameter2_value" => {
+                    let value: u16 = rest.parse().map_err(|_| "invalid second parameter value")?;
+                    document.set_second_parameter_value(2, value)?;
+                }
+                "parameter_value" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, value] = parts.as_slice() else {
+                        return Err("expected parameter_value ID VALUE".into());
+                    };
+                    let id: usize = id.parse().map_err(|_| "invalid parameter ID")?;
+                    let value: f64 = value.parse().map_err(|_| "invalid parameter value")?;
+                    document.set_parameter_value(id, value)?;
+                }
                 "calculate_2_plus_3" => {
                     let id = document.add_literal_calculation(number_anchor(rest)?)?;
                     println!("line {}: calculate_2_plus_3 -> object {id}", index + 1);
@@ -262,6 +275,10 @@ fn replay(path: &str) -> Result<(), String> {
                     let source: usize = rest.parse().map_err(|_| "invalid parameter ID")?;
                     let id = document.tabulate_default_parameter(source, (10, 38))?;
                     println!("line {}: tabulate -> object {id}", index + 1);
+                }
+                "tabulate_pair" if rest.is_empty() => {
+                    let id = document.tabulate_default_pair((10, 71))?;
+                    println!("line {}: tabulate_pair -> object {id}", index + 1);
                 }
                 "table_add" | "table_remove" => {
                     let id: usize = rest.parse().map_err(|_| "invalid table ID")?;
@@ -398,7 +415,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.plot_default_parameter(mode)?;
                     println!("line {}: plot_points -> object {id}", index + 1);
                 }
-                "plot_axis" => {
+                "plot_table_data" => {
+                    let table: usize = rest.parse().map_err(|_| "invalid table ID")?;
+                    let ids = document.plot_default_pair_table(table)?;
+                    println!("line {}: plot_table_data -> objects {ids:?}", index + 1);
+                }
+                "plot_axis" | "plot_path" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let source: usize = parts
                         .first()
@@ -412,8 +434,24 @@ fn replay(path: &str) -> Result<(), String> {
                     if parts.len() > 2 {
                         return Err("expected plot_axis SOURCE [AXIS]".into());
                     }
-                    let id = document.plot_parameter_on_axis(source, axis)?;
-                    println!("line {}: plot_axis -> object {id}", index + 1);
+                    let id = document.plot_parameter_on_path(source, axis)?;
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "plot_axis_value" | "plot_path_value" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.is_empty() || parts.len() > 2 {
+                        return Err("expected plot_axis_value VALUE [AXIS]".into());
+                    }
+                    let value: f64 = parts[0].parse().map_err(|_| "invalid numeric value")?;
+                    let axis = parts
+                        .get(1)
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid axis ID"))
+                        .transpose()?;
+                    if axis.is_none() && document.active_coordinate_system().is_none() {
+                        document.add_default_coordinate_system(Point { x: 199., y: 125. })?;
+                    }
+                    let id = document.plot_literal_on_path(value, axis)?;
+                    println!("line {}: {command} -> object {id}", index + 1);
                 }
                 "slope" => {
                     let line: usize = rest.parse().map_err(|_| "invalid line ID")?;

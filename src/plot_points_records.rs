@@ -1,5 +1,5 @@
-//! Bounded Graph > Plot Points records for the original one-column t[1] table.
-//! Only the observed Cartesian and polar (t[1], t[1]) cases are writable.
+//! Bounded Graph plotting records observed with Plot Points and Plot Table Data.
+//! Cartesian (1,1) and (2,1), plus the original t[1] polar point, are cross-opened.
 
 use std::ops::Range;
 
@@ -194,8 +194,20 @@ pub fn decode_group(group: &[u8]) -> Result<PlotPoint, String> {
 /// Remap dependencies of an original group. The point remains t[1]=1.00 on
 /// both coordinates, with the original's exact Cartesian/polar cache bytes.
 pub fn encode_t1_group(mode: PlotPointsMode, references: [u32; 2]) -> Result<Vec<u8>, String> {
+    let stored = decode_group(&mode.template()[last_group(mode.template())?])?.stored;
+    encode_group(mode, references, stored)
+}
+
+pub fn encode_group(
+    mode: PlotPointsMode,
+    references: [u32; 2],
+    stored: [f64; 2],
+) -> Result<Vec<u8>, String> {
     if references[0] == 0 || references[1] == 0 || references[0] == references[1] {
         return Err("Invalid Plot Points dependencies".into());
+    }
+    if stored.iter().any(|value| !value.is_finite()) {
+        return Err("Non-finite Plot Points coordinates".into());
     }
     let template = mode.template();
     let mut group = template[last_group(template)?].to_vec();
@@ -204,6 +216,10 @@ pub fn encode_t1_group(mode: PlotPointsMode, references: [u32; 2]) -> Result<Vec
         .copy_from_slice(&references[0].to_le_bytes());
     group[rs[1].payload.start + 4..rs[1].payload.start + 8]
         .copy_from_slice(&references[1].to_le_bytes());
+    group[rs[2].payload.start + 4..rs[2].payload.start + 12]
+        .copy_from_slice(&stored[0].to_le_bytes());
+    group[rs[2].payload.start + 12..rs[2].payload.start + 20]
+        .copy_from_slice(&stored[1].to_le_bytes());
     decode_group(&group)?;
     Ok(group)
 }
