@@ -1,6 +1,7 @@
 use crate::action_records::{HideShowButtonGroup, VisibilityAction};
-use crate::coordinate_measure_records::{self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint};
-use crate::value_equation_records::{self, CartesianFrame, EquationValue, ValueEquationKind};
+use crate::coordinate_measure_records::{
+    self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
+};
 use crate::function_records::{self, SimpleFunction};
 use crate::graph::{self, CoordinateFrame, GraphObject, GraphPoint};
 use crate::image_records::ImageFile;
@@ -10,6 +11,7 @@ use crate::style_records::{
 use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
+use crate::value_equation_records::{self, CartesianFrame, EquationValue, ValueEquationKind};
 use std::{
     collections::BTreeSet,
     fs,
@@ -54,9 +56,17 @@ impl Kind {
         if let Kind::Polygon(vertices) = self {
             return vertices.clone();
         }
-        if let Kind::CoordinateMeasurement { first, second, frame, .. } = self {
+        if let Kind::CoordinateMeasurement {
+            first,
+            second,
+            frame,
+            ..
+        } = self
+        {
             let mut ids = vec![*first];
-            if let Some(second) = second { ids.push(*second); }
+            if let Some(second) = second {
+                ids.push(*second);
+            }
             ids.push(*frame);
             return ids;
         }
@@ -141,11 +151,31 @@ impl Kind {
         if let Kind::Polygon(vertices) = self {
             return Kind::Polygon(vertices.iter().map(|&id| m(id)).collect());
         }
-        if let Kind::CoordinateMeasurement { kind, first, second, frame } = self {
-            return Kind::CoordinateMeasurement { kind: *kind, first: m(*first), second: second.map(m), frame: m(*frame) };
+        if let Kind::CoordinateMeasurement {
+            kind,
+            first,
+            second,
+            frame,
+        } = self
+        {
+            return Kind::CoordinateMeasurement {
+                kind: *kind,
+                first: m(*first),
+                second: second.map(m),
+                frame: m(*frame),
+            };
         }
-        if let Kind::ValueEquation { kind, first, second } = self {
-            return Kind::ValueEquation { kind: *kind, first: m(*first), second: m(*second) };
+        if let Kind::ValueEquation {
+            kind,
+            first,
+            second,
+        } = self
+        {
+            return Kind::ValueEquation {
+                kind: *kind,
+                first: m(*first),
+                second: m(*second),
+            };
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
@@ -245,8 +275,17 @@ pub enum Kind {
     GraphAxis(usize, usize, u32),
     CoordinateSystem(usize, usize),
     SlopeMeasurement(usize, usize),
-    CoordinateMeasurement { kind: CoordinateMeasureKind, first: usize, second: Option<usize>, frame: usize },
-    ValueEquation { kind: ValueEquationKind, first: usize, second: usize },
+    CoordinateMeasurement {
+        kind: CoordinateMeasureKind,
+        first: usize,
+        second: Option<usize>,
+        frame: usize,
+    },
+    ValueEquation {
+        kind: ValueEquationKind,
+        first: usize,
+        second: usize,
+    },
     FunctionDefinition(SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
     SegmentLength(usize),
@@ -938,8 +977,7 @@ impl Document {
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 49 | 65 | 66 | 86)
                         && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
-                    && !(matches!(code, 50 | 51 | 94)
-                        && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
+                    && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
@@ -963,12 +1001,16 @@ impl Document {
             let coordinate_group = matches!(code, 49 | 65 | 66 | 86)
                 .then(|| coordinate_measure_records::decode_group(&b[group_start..rs[i].data.end]))
                 .transpose();
-            if coordinate_group.is_err() { safe = false; }
+            if coordinate_group.is_err() {
+                safe = false;
+            }
             let coordinate_group = coordinate_group.ok().flatten();
             let value_equation_group = matches!(code, 50 | 51 | 94)
                 .then(|| value_equation_records::decode_group(&b[group_start..rs[i].data.end]))
                 .transpose();
-            if value_equation_group.is_err() { safe = false; }
+            if value_equation_group.is_err() {
+                safe = false;
+            }
             let value_equation_group = value_equation_group.ok().flatten();
             let graph_borrowed = graph_records
                 .iter()
@@ -1776,31 +1818,78 @@ impl Document {
             .slope(GraphPoint { x: a.x, y: a.y }, GraphPoint { x: b.x, y: b.y })
     }
     pub fn coordinate_measure_value(&self, id: usize) -> Option<CoordinateMeasureValue> {
-        let Kind::CoordinateMeasurement { kind, first, second, frame } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
-        let graph_frame = self.graph_frame(frame)?;
-        let to_screen = |point: Point| ScreenPoint { x: point.x, y: point.y };
-        let basis = CoordinateBasis {
-            origin: to_screen(Point { x: graph_frame.origin.x, y: graph_frame.origin.y }),
-            x_unit: to_screen(Point { x: graph_frame.x_unit.x, y: graph_frame.x_unit.y }),
-            y_unit: to_screen(Point { x: graph_frame.y_unit.x, y: graph_frame.y_unit.y }),
+        let Kind::CoordinateMeasurement {
+            kind,
+            first,
+            second,
+            frame,
+        } = self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
         };
-        coordinate_measure_records::evaluate(kind, basis, to_screen(self.position(first)?), second.and_then(|id| self.position(id)).map(to_screen))
+        let graph_frame = self.graph_frame(frame)?;
+        let to_screen = |point: Point| ScreenPoint {
+            x: point.x,
+            y: point.y,
+        };
+        let basis = CoordinateBasis {
+            origin: to_screen(Point {
+                x: graph_frame.origin.x,
+                y: graph_frame.origin.y,
+            }),
+            x_unit: to_screen(Point {
+                x: graph_frame.x_unit.x,
+                y: graph_frame.x_unit.y,
+            }),
+            y_unit: to_screen(Point {
+                x: graph_frame.y_unit.x,
+                y: graph_frame.y_unit.y,
+            }),
+        };
+        coordinate_measure_records::evaluate(
+            kind,
+            basis,
+            to_screen(self.position(first)?),
+            second.and_then(|id| self.position(id)).map(to_screen),
+        )
     }
     pub fn coordinate_measure_text(&self, id: usize) -> Option<String> {
-        let Kind::CoordinateMeasurement { kind, first, .. } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+        let Kind::CoordinateMeasurement { kind, first, .. } =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
         let name = self.coordinate_point_name(first)?;
         let value = self.coordinate_measure_value(id)?;
         match (kind, value) {
-            (CoordinateMeasureKind::Coordinates, CoordinateMeasureValue::Pair(p)) => Some(format!("{name}: ({:.2}, {:.2})", p.x, p.y)),
-            (CoordinateMeasureKind::Abscissa, CoordinateMeasureValue::Scalar(x)) => Some(format!("x_{name} = {x:.2}")),
-            (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(y)) => Some(format!("y_{name} = {y:.2}")),
-            (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(d)) => Some(format!("Coordinate Distance = {d:.2}")),
+            (CoordinateMeasureKind::Coordinates, CoordinateMeasureValue::Pair(p)) => {
+                Some(format!("{name}: ({:.2}, {:.2})", p.x, p.y))
+            }
+            (CoordinateMeasureKind::Abscissa, CoordinateMeasureValue::Scalar(x)) => {
+                Some(format!("x_{name} = {x:.2}"))
+            }
+            (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(y)) => {
+                Some(format!("y_{name} = {y:.2}"))
+            }
+            (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(d)) => {
+                Some(format!("Coordinate Distance = {d:.2}"))
+            }
             _ => None,
         }
     }
     pub fn value_equation_value(&self, id: usize) -> Option<EquationValue> {
-        let Kind::ValueEquation { kind, first, second } = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
-        let screen = |point: Point| value_equation_records::ScreenPoint { x: point.x, y: point.y };
+        let Kind::ValueEquation {
+            kind,
+            first,
+            second,
+        } = self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let screen = |point: Point| value_equation_records::ScreenPoint {
+            x: point.x,
+            y: point.y,
+        };
         match kind {
             ValueEquationKind::PointValue => {
                 let point = screen(self.position(first)?);
@@ -1810,8 +1899,13 @@ impl Document {
                         value_equation_records::segment_point_value(point, screen(a), screen(b))
                     }
                     Kind::Circle(_, _) => {
-                        let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind else { return None; };
-                        (host == second).then(|| value_equation_records::circle_point_value(x, y)).flatten()
+                        let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind
+                        else {
+                            return None;
+                        };
+                        (host == second)
+                            .then(|| value_equation_records::circle_point_value(x, y))
+                            .flatten()
                     }
                     _ => None,
                 }
@@ -1819,9 +1913,18 @@ impl Document {
             ValueEquationKind::LineEquation | ValueEquationKind::CircleEquation => {
                 let graph = self.graph_frame(second)?;
                 let frame = CartesianFrame {
-                    origin: value_equation_records::ScreenPoint { x: graph.origin.x, y: graph.origin.y },
-                    x_unit: value_equation_records::ScreenPoint { x: graph.x_unit.x, y: graph.x_unit.y },
-                    y_unit: value_equation_records::ScreenPoint { x: graph.y_unit.x, y: graph.y_unit.y },
+                    origin: value_equation_records::ScreenPoint {
+                        x: graph.origin.x,
+                        y: graph.origin.y,
+                    },
+                    x_unit: value_equation_records::ScreenPoint {
+                        x: graph.x_unit.x,
+                        y: graph.x_unit.y,
+                    },
+                    y_unit: value_equation_records::ScreenPoint {
+                        x: graph.y_unit.x,
+                        y: graph.y_unit.y,
+                    },
                 };
                 match kind {
                     ValueEquationKind::LineEquation => {
@@ -1830,7 +1933,14 @@ impl Document {
                     }
                     ValueEquationKind::CircleEquation => {
                         let (center, radius) = self.circle_points(first)?;
-                        value_equation_records::circle_equation(frame, screen(center), screen(Point { x: center.x + radius, y: center.y }))
+                        value_equation_records::circle_equation(
+                            frame,
+                            screen(center),
+                            screen(Point {
+                                x: center.x + radius,
+                                y: center.y,
+                            }),
+                        )
                     }
                     ValueEquationKind::PointValue => unreachable!(),
                 }
@@ -1839,8 +1949,20 @@ impl Document {
     }
     pub fn value_equation_text(&self, id: usize) -> Option<String> {
         let value = self.value_equation_value(id)?;
-        let signed = |number: f64| if number < 0. { format!("−{:.2}", -number) } else { format!("{number:.2}") };
-        let shifted = |number: f64| if number < 0. { format!("+ {:.2}", -number) } else { format!("− {number:.2}") };
+        let signed = |number: f64| {
+            if number < 0. {
+                format!("−{:.2}", -number)
+            } else {
+                format!("{number:.2}")
+            }
+        };
+        let shifted = |number: f64| {
+            if number < 0. {
+                format!("+ {:.2}", -number)
+            } else {
+                format!("− {number:.2}")
+            }
+        };
         Some(match value {
             EquationValue::PointValue(t) => format!("Value of Point = {t:.2}"),
             EquationValue::Line { slope, intercept } => {
@@ -1848,14 +1970,35 @@ impl Document {
                 format!("y = {}x {sign} {:.2}", signed(slope), intercept.abs())
             }
             EquationValue::VerticalLine { x } => format!("x = {}", signed(x)),
-            EquationValue::Circle { center, radius } => format!("(x {})² + (y {})² = {radius:.2}²", shifted(center.x), shifted(center.y)),
+            EquationValue::Circle { center, radius } => format!(
+                "(x {})² + (y {})² = {radius:.2}²",
+                shifted(center.x),
+                shifted(center.y)
+            ),
         })
     }
     fn coordinate_point_name(&self, first: usize) -> Option<String> {
-        Some(self.objects.get(first - 1)?.label.as_ref().and_then(|label| label.name_utf8().ok()).map(str::to_owned).unwrap_or_else(|| {
-            let ordinal = self.objects.iter().take(first).filter(|object| is_point_kind(&object.kind)).count();
-            if (1..=26).contains(&ordinal) { ((b'A' + ordinal as u8 - 1) as char).to_string() } else { format!("Point {first}") }
-        }))
+        Some(
+            self.objects
+                .get(first - 1)?
+                .label
+                .as_ref()
+                .and_then(|label| label.name_utf8().ok())
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    let ordinal = self
+                        .objects
+                        .iter()
+                        .take(first)
+                        .filter(|object| is_point_kind(&object.kind))
+                        .count();
+                    if (1..=26).contains(&ordinal) {
+                        ((b'A' + ordinal as u8 - 1) as char).to_string()
+                    } else {
+                        format!("Point {first}")
+                    }
+                }),
+        )
     }
     pub fn dependencies_of(&self, id: usize) -> Option<Vec<usize>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
@@ -3011,23 +3154,70 @@ impl Document {
                     return Err(format!("Invalid slope measurement {}", o.id));
                 }
             }
-            if let Kind::CoordinateMeasurement { kind, first, second, frame } = o.kind {
-                let point_ok = |id: usize| self.objects.get(id.saturating_sub(1)).is_some_and(|object| !object.deleted && object.page == o.page && is_point_kind(&object.kind));
-                if !point_ok(first) || second.is_some_and(|id| !point_ok(id))
+            if let Kind::CoordinateMeasurement {
+                kind,
+                first,
+                second,
+                frame,
+            } = o.kind
+            {
+                let point_ok = |id: usize| {
+                    self.objects
+                        .get(id.saturating_sub(1))
+                        .is_some_and(|object| {
+                            !object.deleted && object.page == o.page && is_point_kind(&object.kind)
+                        })
+                };
+                if !point_ok(first)
+                    || second.is_some_and(|id| !point_ok(id))
                     || (kind == CoordinateMeasureKind::CoordinateDistance) != second.is_some()
-                    || !matches!(self.objects.get(frame.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _)))
+                    || !matches!(
+                        self.objects
+                            .get(frame.saturating_sub(1))
+                            .map(|object| &object.kind),
+                        Some(Kind::CoordinateSystem(_, _))
+                    )
                     || self.coordinate_measure_value(o.id).is_none()
                 {
                     return Err(format!("Invalid coordinate measurement {}", o.id));
                 }
             }
-            if let Kind::ValueEquation { kind, first, second } = o.kind {
+            if let Kind::ValueEquation {
+                kind,
+                first,
+                second,
+            } = o.kind
+            {
                 let hosts_match = match kind {
-                    ValueEquationKind::PointValue => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second),
-                    ValueEquationKind::LineEquation => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Line(_, _)))
-                        && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _))),
-                    ValueEquationKind::CircleEquation => matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _)))
-                        && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CoordinateSystem(_, _))),
+                    ValueEquationKind::PointValue => {
+                        matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second)
+                    }
+                    ValueEquationKind::LineEquation => {
+                        matches!(
+                            self.objects
+                                .get(first.saturating_sub(1))
+                                .map(|object| &object.kind),
+                            Some(Kind::Line(_, _))
+                        ) && matches!(
+                            self.objects
+                                .get(second.saturating_sub(1))
+                                .map(|object| &object.kind),
+                            Some(Kind::CoordinateSystem(_, _))
+                        )
+                    }
+                    ValueEquationKind::CircleEquation => {
+                        matches!(
+                            self.objects
+                                .get(first.saturating_sub(1))
+                                .map(|object| &object.kind),
+                            Some(Kind::Circle(_, _))
+                        ) && matches!(
+                            self.objects
+                                .get(second.saturating_sub(1))
+                                .map(|object| &object.kind),
+                            Some(Kind::CoordinateSystem(_, _))
+                        )
+                    }
                 };
                 if !hosts_match || self.value_equation_value(o.id).is_none() {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
@@ -3527,28 +3717,50 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::CoordinateMeasurement { kind, first, second, frame } = o.kind {
+            if let Kind::CoordinateMeasurement {
+                kind,
+                first,
+                second,
+                frame,
+            } = o.kind
+            {
                 let mut refs = vec![u32::try_from(first).map_err(|_| "Too many objects")?];
-                if let Some(second) = second { refs.push(u32::try_from(second).map_err(|_| "Too many objects")?); }
+                if let Some(second) = second {
+                    refs.push(u32::try_from(second).map_err(|_| "Too many objects")?);
+                }
                 refs.push(u32::try_from(frame).map_err(|_| "Too many objects")?);
                 let mut group = coordinate_measure_records::encode_group(kind, &refs)?;
                 if kind == CoordinateMeasureKind::Coordinates {
-                    let name = self.coordinate_point_name(first).ok_or("Missing coordinate point")?;
+                    let name = self
+                        .coordinate_point_name(first)
+                        .ok_or("Missing coordinate point")?;
                     coordinate_measure_records::set_coordinates_name(&mut group, &name)?;
                 }
                 let format_offset = if second.is_some() { 68 } else { 64 };
                 Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::ValueEquation { kind, first, second } = o.kind {
-                let references = [u32::try_from(first).map_err(|_| "Too many objects")?, u32::try_from(second).map_err(|_| "Too many objects")?];
+            if let Kind::ValueEquation {
+                kind,
+                first,
+                second,
+            } = o.kind
+            {
+                let references = [
+                    u32::try_from(first).map_err(|_| "Too many objects")?,
+                    u32::try_from(second).map_err(|_| "Too many objects")?,
+                ];
                 let mut group = value_equation_records::encode_group(kind, references)?;
                 if kind == ValueEquationKind::PointValue {
                     Self::place_measurement(&mut group, 64, &mut measurement_row)?;
                 }
-                if !o.visible { group[10] |= 1; }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -3783,7 +3995,9 @@ impl Document {
             .find(|o| {
                 matches!(
                     o.kind,
-                    Kind::FunctionDefinition(_) | Kind::FunctionPlot(_, _, _, _, _) | Kind::CoordinateMeasurement { .. }
+                    Kind::FunctionDefinition(_)
+                        | Kind::FunctionPlot(_, _, _, _, _)
+                        | Kind::CoordinateMeasurement { .. }
                 )
             })
             .map(|o| o.id);
@@ -5816,18 +6030,45 @@ mod tests {
     #[test]
     fn coordinate_measurements_decode_track_drag_and_reopen() {
         for (source, kind, expected) in [
-            (include_bytes!("../tests/fixtures/coordinate_measure_menu257.gsp").as_slice(), CoordinateMeasureKind::Coordinates, -1.296458333333333),
-            (include_bytes!("../tests/fixtures/coordinate_measure_menu274.gsp").as_slice(), CoordinateMeasureKind::Abscissa, -1.296458333333333),
-            (include_bytes!("../tests/fixtures/coordinate_measure_menu291.gsp").as_slice(), CoordinateMeasureKind::Ordinate, 0.132291666666667),
-            (include_bytes!("../tests/fixtures/coordinate_measure_menu308.gsp").as_slice(), CoordinateMeasureKind::CoordinateDistance, 1.3032),
+            (
+                include_bytes!("../tests/fixtures/coordinate_measure_menu257.gsp").as_slice(),
+                CoordinateMeasureKind::Coordinates,
+                -1.296458333333333,
+            ),
+            (
+                include_bytes!("../tests/fixtures/coordinate_measure_menu274.gsp").as_slice(),
+                CoordinateMeasureKind::Abscissa,
+                -1.296458333333333,
+            ),
+            (
+                include_bytes!("../tests/fixtures/coordinate_measure_menu291.gsp").as_slice(),
+                CoordinateMeasureKind::Ordinate,
+                0.132291666666667,
+            ),
+            (
+                include_bytes!("../tests/fixtures/coordinate_measure_menu308.gsp").as_slice(),
+                CoordinateMeasureKind::CoordinateDistance,
+                1.3032,
+            ),
         ] {
             let mut doc = Document::from_bytes(source, None).unwrap();
             assert!(!doc.partial_view);
             assert_eq!(doc.encode().unwrap(), source);
-            let Kind::CoordinateMeasurement { kind: actual, first: 1, frame: 9, .. } = doc.objects[9].kind else { panic!("measurement not decoded") };
+            let Kind::CoordinateMeasurement {
+                kind: actual,
+                first: 1,
+                frame: 9,
+                ..
+            } = doc.objects[9].kind
+            else {
+                panic!("measurement not decoded")
+            };
             assert_eq!(actual, kind);
             let before = doc.coordinate_measure_value(10).unwrap();
-            let scalar = match before { CoordinateMeasureValue::Pair(p) => p.x, CoordinateMeasureValue::Scalar(v) => v };
+            let scalar = match before {
+                CoordinateMeasureValue::Pair(p) => p.x,
+                CoordinateMeasureValue::Scalar(v) => v,
+            };
             assert!((scalar - expected).abs() < 0.01);
             doc.checkpoint();
             assert!(doc.move_point(1, Point { x: 170., y: 100. }));
@@ -5837,13 +6078,20 @@ mod tests {
             doc.redo();
             let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
             assert!(!reopened.partial_view);
-            assert_eq!(reopened.coordinate_measure_value(10), doc.coordinate_measure_value(10));
+            assert_eq!(
+                reopened.coordinate_measure_value(10),
+                doc.coordinate_measure_value(10)
+            );
         }
     }
 
     #[test]
     fn new_coordinate_measurements_serialize_with_valid_marker_and_references() {
-        let mut doc = Document::from_bytes(include_bytes!("../tests/fixtures/coordinate_measure_base.gsp"), None).unwrap();
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/coordinate_measure_base.gsp"),
+            None,
+        )
+        .unwrap();
         let frame = doc.active_coordinate_system().unwrap();
         for (kind, first, second) in [
             (CoordinateMeasureKind::Coordinates, 1, None),
@@ -5851,15 +6099,29 @@ mod tests {
             (CoordinateMeasureKind::Ordinate, 2, None),
             (CoordinateMeasureKind::CoordinateDistance, 1, Some(4)),
         ] {
-            doc.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+            doc.add(Kind::CoordinateMeasurement {
+                kind,
+                first,
+                second,
+                frame,
+            });
         }
         let bytes = doc.encode().unwrap();
-        let marker = records(&bytes).unwrap().into_iter().find(|r| r.kind == 0x2328).unwrap();
+        let marker = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.kind == 0x2328)
+            .unwrap();
         assert_eq!(u32_at(&bytes, marker.data.start), 13);
         let reopened = Document::from_bytes(&bytes, None).unwrap();
         assert!(!reopened.partial_view);
         assert_eq!(reopened.objects.len(), 13);
-        assert_eq!(reopened.coordinate_measure_text(11).as_deref(), Some("x_B = 1.35"));
-        assert!(matches!(reopened.coordinate_measure_value(13), Some(CoordinateMeasureValue::Scalar(v)) if (v-1.30).abs()<0.01));
+        assert_eq!(
+            reopened.coordinate_measure_text(11).as_deref(),
+            Some("x_B = 1.35")
+        );
+        assert!(
+            matches!(reopened.coordinate_measure_value(13), Some(CoordinateMeasureValue::Scalar(v)) if (v-1.30).abs()<0.01)
+        );
     }
 }

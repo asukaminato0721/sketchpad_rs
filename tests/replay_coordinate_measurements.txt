@@ -1,0 +1,9 @@
+# Original nine-object Cartesian frame, then all four point measurements.
+open tests/fixtures/coordinate_measure_base.gsp
+coordinates 1
+abscissa 2
+ordinate 2
+coordinate_distance 1 4
+save tests/fixtures/coordinate_measure_port_generated.gsp
+move 1 170 100
+save tests/fixtures/coordinate_measure_port_moved.gsp

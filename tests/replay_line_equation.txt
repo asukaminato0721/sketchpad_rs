@@ -1,0 +1,5 @@
+open tests/fixtures/value_equation_generated_line_base.gsp
+equation 4
+save tests/fixtures/value_equation_port_line.gsp
+move 3 270 150
+save tests/fixtures/value_equation_port_line_moved.gsp

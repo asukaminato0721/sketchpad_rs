@@ -115,13 +115,13 @@ The release gate is every sketch and document command verified after editing, sa
 | Arc Length | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Ratio | Partial: signed point ratio, dynamic projection after drag, SVG, generated positive and negative files opened in Sketchpad 5 |
-| Value of Point | Pending |
+| Value of Point | Partial: segment/circle constrained points, live values, save/reopen, and generated files cross-opened |
 | Coordinates | Partial: Cartesian point pair updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; complex names/formats pending |
 | Abscissa (x) | Partial: Cartesian x value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
 | Ordinate (y) | Partial: Cartesian y value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
 | Coordinate Distance | Partial: Cartesian two-point value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5 |
 | Slope | Partial: Cartesian frame and segment slope, live update, generated file edited in Sketchpad 5 |
-| Equation | Pending |
+| Equation | Partial: Cartesian line and circle equations, live values, save/reopen, and generated files cross-opened; other equation forms pending |
 
 ## Number
 

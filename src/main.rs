@@ -1,9 +1,9 @@
-use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::value_equation_records::ValueEquationKind;
+use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
+use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{
     collections::HashMap,
     io::Write,
@@ -666,12 +666,24 @@ impl Editor {
             return;
         };
         let first = *first;
-        let (kind, second) = match self.doc.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
-            Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if !equation => (ValueEquationKind::PointValue, *host),
+        let (kind, second) = match self
+            .doc
+            .objects
+            .get(first.saturating_sub(1))
+            .map(|object| &object.kind)
+        {
+            Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if !equation => {
+                (ValueEquationKind::PointValue, *host)
+            }
             Some(Kind::Line(_, _)) if equation => (ValueEquationKind::LineEquation, 0),
             Some(Kind::Circle(_, _)) if equation => (ValueEquationKind::CircleEquation, 0),
             _ => {
-                self.status = if equation { "Select one line or circle for Equation" } else { "Select one point constrained to a segment or circle" }.into();
+                self.status = if equation {
+                    "Select one line or circle for Equation"
+                } else {
+                    "Select one point constrained to a segment or circle"
+                }
+                .into();
                 return;
             }
         };
@@ -680,11 +692,20 @@ impl Editor {
                 Some(frame) => frame,
                 None => match self.doc.add_default_coordinate_system(self.center) {
                     Ok(frame) => frame,
-                    Err(error) => { self.status = error; return; }
+                    Err(error) => {
+                        self.status = error;
+                        return;
+                    }
                 },
             }
-        } else { second };
-        let id = self.doc.add(Kind::ValueEquation { kind, first, second });
+        } else {
+            second
+        };
+        let id = self.doc.add(Kind::ValueEquation {
+            kind,
+            first,
+            second,
+        });
         if self.doc.value_equation_value(id).is_none() {
             self.doc.undo();
             self.status = "The selected geometry has no supported value or equation".into();
@@ -719,13 +740,25 @@ impl Editor {
         let selected = self.selection_order.as_slice();
         let (first, second) = match (kind, selected) {
             (CoordinateMeasureKind::CoordinateDistance, [a, b]) => (*a, Some(*b)),
-            (CoordinateMeasureKind::Coordinates | CoordinateMeasureKind::Abscissa | CoordinateMeasureKind::Ordinate, [a]) => (*a, None),
+            (
+                CoordinateMeasureKind::Coordinates
+                | CoordinateMeasureKind::Abscissa
+                | CoordinateMeasureKind::Ordinate,
+                [a],
+            ) => (*a, None),
             _ => {
-                self.status = if kind == CoordinateMeasureKind::CoordinateDistance { "Select two points to measure" } else { "Select one point to measure" }.into();
+                self.status = if kind == CoordinateMeasureKind::CoordinateDistance {
+                    "Select two points to measure"
+                } else {
+                    "Select one point to measure"
+                }
+                .into();
                 return;
             }
         };
-        if self.doc.position(first).is_none() || second.is_some_and(|id| self.doc.position(id).is_none()) {
+        if self.doc.position(first).is_none()
+            || second.is_some_and(|id| self.doc.position(id).is_none())
+        {
             self.status = "Select point objects to measure".into();
             return;
         }
@@ -733,10 +766,18 @@ impl Editor {
             Some(frame) => frame,
             None => match self.doc.add_default_coordinate_system(self.center) {
                 Ok(frame) => frame,
-                Err(error) => { self.status = error; return; }
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
             },
         };
-        let id = self.doc.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+        let id = self.doc.add(Kind::CoordinateMeasurement {
+            kind,
+            first,
+            second,
+            frame,
+        });
         self.select_only(id);
         self.status = format!("Measured {kind:?} for point {first}");
     }
@@ -1561,7 +1602,10 @@ impl Editor {
                         ("Coordinates", CoordinateMeasureKind::Coordinates),
                         ("Abscissa (x)", CoordinateMeasureKind::Abscissa),
                         ("Ordinate (y)", CoordinateMeasureKind::Ordinate),
-                        ("Coordinate Distance", CoordinateMeasureKind::CoordinateDistance),
+                        (
+                            "Coordinate Distance",
+                            CoordinateMeasureKind::CoordinateDistance,
+                        ),
                     ] {
                         if ui.button(label).clicked() {
                             self.measure_coordinate(kind);

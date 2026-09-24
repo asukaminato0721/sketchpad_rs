@@ -80,13 +80,21 @@ rustc --edition 2024 dev/value_equation_generate.rs -o /tmp/value_equation_gener
 /tmp/value_equation_generate line tests/fixtures/value_equation_generated_line_base.gsp 4 10 /tmp/line_equation.gsp
 ```
 
-## Integration boundary
+## Native integration and cross-open
 
-This module is independent while table work uses the shared document files.
-For integration, export it from `src/lib.rs`, map `Document::graph_frame` into
-`CartesianFrame`, recognize codes 94/50/51 in the parser, and evaluate from
-existing `Kind::PointOnSegment`, `Kind::PointOnCircle`, `Kind::Line`, and
-`Kind::Circle` dependencies. Format the result to two decimal places in the
-native overlay and SVG. Keep the source rich text and format records intact
-unless the measured object's label changes. Arc point values, custom equation
-labels, skewed frames, and conic equations remain unprobed.
+The document parser and writer now recognize codes 94, 50, and 51 for the
+verified hosts. The native Measure menu and `gsp_probe replay` create these
+objects; native and SVG readouts evaluate them from live geometry. Two
+integration tests cover parsing, writing, dragging, and save/reopen. The
+scripts `tests/replay_value_of_point.txt`, `tests/replay_line_equation.txt`,
+and `tests/replay_circle_equation.txt` generated six port files, including
+edited copies. All reopen with `partial_view=false`.
+
+The three unedited port files opened in the supplied Sketchpad 5 under Wine.
+It displayed `0.50`, `y = −0.50x − 0.52`, and
+`(x + 1.30)² + (y − 0.13)² = 1.85²`, then saved each file byte-for-byte
+unchanged. Captures are `/tmp/value_equation_port_{point,line,circle}_wine_before_save.png`.
+The original point-value source file contains an additional document-level
+font record and remains a partial view; its generated counterpart is a full
+view. Arc point values, custom equation labels, skewed frames, and
+conic equations remain unprobed.

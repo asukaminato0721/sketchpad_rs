@@ -276,8 +276,15 @@ pub fn set_coordinates_name(group: &mut [u8], name: &str) -> Result<(), String> 
         return Err("Coordinates readout requires a one-letter ASCII point name".into());
     }
     let marker = b"<T1xA>";
-    let positions = group.windows(marker.len()).enumerate().filter(|(_, window)| *window == marker).map(|(at, _)| at).collect::<Vec<_>>();
-    if positions.len() != 1 { return Err("Coordinates readout name template changed".into()); }
+    let positions = group
+        .windows(marker.len())
+        .enumerate()
+        .filter(|(_, window)| *window == marker)
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>();
+    if positions.len() != 1 {
+        return Err("Coordinates readout name template changed".into());
+    }
     group[positions[0] + 4] = *letter;
     decode_group(group)?;
     Ok(())

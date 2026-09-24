@@ -1,10 +1,10 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
-use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::value_equation_records::ValueEquationKind;
+use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
+use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{env, fs, path::Path};
 
 fn usage() -> String {
@@ -350,26 +350,52 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "point_value" => {
                     let first: usize = rest.parse().map_err(|_| "invalid constrained point ID")?;
-                    let second = match document.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
-                        Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) => *host,
-                        _ => return Err("point_value requires a point on a segment or circle".into()),
+                    let second = match document
+                        .objects
+                        .get(first.saturating_sub(1))
+                        .map(|object| &object.kind)
+                    {
+                        Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) => {
+                            *host
+                        }
+                        _ => {
+                            return Err(
+                                "point_value requires a point on a segment or circle".into()
+                            );
+                        }
                     };
-                    let id = document.add(Kind::ValueEquation { kind: ValueEquationKind::PointValue, first, second });
+                    let id = document.add(Kind::ValueEquation {
+                        kind: ValueEquationKind::PointValue,
+                        first,
+                        second,
+                    });
                     println!("line {}: point_value -> object {id}", index + 1);
                 }
                 "equation" => {
                     let first: usize = rest.parse().map_err(|_| "invalid line or circle ID")?;
-                    let kind = match document.objects.get(first.saturating_sub(1)).map(|object| &object.kind) {
+                    let kind = match document
+                        .objects
+                        .get(first.saturating_sub(1))
+                        .map(|object| &object.kind)
+                    {
                         Some(Kind::Line(_, _)) => ValueEquationKind::LineEquation,
                         Some(Kind::Circle(_, _)) => ValueEquationKind::CircleEquation,
                         _ => return Err("equation requires a line or circle".into()),
                     };
                     let second = match document.active_coordinate_system() {
                         Some(frame) => frame,
-                        None => document.add_default_coordinate_system(Point { x: 199., y: 125. })?,
+                        None => {
+                            document.add_default_coordinate_system(Point { x: 199., y: 125. })?
+                        }
                     };
-                    let id = document.add(Kind::ValueEquation { kind, first, second });
-                    if document.value_equation_value(id).is_none() { return Err("equation is undefined for this geometry".into()); }
+                    let id = document.add(Kind::ValueEquation {
+                        kind,
+                        first,
+                        second,
+                    });
+                    if document.value_equation_value(id).is_none() {
+                        return Err("equation is undefined for this geometry".into());
+                    }
                     println!("line {}: equation -> object {id}", index + 1);
                 }
                 "coordinates" | "abscissa" | "ordinate" | "coordinate_distance" => {
@@ -379,20 +405,40 @@ fn replay(path: &str) -> Result<(), String> {
                         "ordinate" => CoordinateMeasureKind::Ordinate,
                         _ => CoordinateMeasureKind::CoordinateDistance,
                     };
-                    let ids = rest.split_whitespace().map(|s| s.parse::<usize>().map_err(|_| "invalid point ID")).collect::<Result<Vec<_>, _>>()?;
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|s| s.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
                     let (first, second) = match ids.as_slice() {
-                        [first] if kind != CoordinateMeasureKind::CoordinateDistance => (*first, None),
-                        [first, second] if kind == CoordinateMeasureKind::CoordinateDistance => (*first, Some(*second)),
-                        _ => return Err("expected one point ID or two for coordinate_distance".into()),
+                        [first] if kind != CoordinateMeasureKind::CoordinateDistance => {
+                            (*first, None)
+                        }
+                        [first, second] if kind == CoordinateMeasureKind::CoordinateDistance => {
+                            (*first, Some(*second))
+                        }
+                        _ => {
+                            return Err(
+                                "expected one point ID or two for coordinate_distance".into()
+                            );
+                        }
                     };
-                    if document.position(first).is_none() || second.is_some_and(|id| document.position(id).is_none()) {
+                    if document.position(first).is_none()
+                        || second.is_some_and(|id| document.position(id).is_none())
+                    {
                         return Err("coordinate measurement requires point IDs".into());
                     }
                     let frame = match document.active_coordinate_system() {
                         Some(frame) => frame,
-                        None => document.add_default_coordinate_system(Point { x: 199., y: 125. })?,
+                        None => {
+                            document.add_default_coordinate_system(Point { x: 199., y: 125. })?
+                        }
                     };
-                    let id = document.add(Kind::CoordinateMeasurement { kind, first, second, frame });
+                    let id = document.add(Kind::CoordinateMeasurement {
+                        kind,
+                        first,
+                        second,
+                        frame,
+                    });
                     println!("line {}: {command} -> object {id}", index + 1);
                 }
                 "function" => {
@@ -687,7 +733,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
                     if !matches!(
                         document.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                        Some(Kind::Free(_) | Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _))
+                        Some(
+                            Kind::Free(_)
+                                | Kind::PointOnSegment(_, _)
+                                | Kind::PointOnCircle(_, _, _)
+                                | Kind::PointOnArc(_, _)
+                        )
                     ) {
                         return Err("move requires a movable point".into());
                     }

@@ -6,7 +6,10 @@ const SOURCE_WITH_UNEVALUATED_CONSTRAINT: &[u8] =
 #[test]
 fn unedited_original_with_undefined_geometry_round_trips_byte_exactly() {
     let document = Document::from_bytes(SOURCE_WITH_UNEVALUATED_CONSTRAINT, None).unwrap();
-    assert_eq!(document.encode().unwrap(), SOURCE_WITH_UNEVALUATED_CONSTRAINT);
+    assert_eq!(
+        document.encode().unwrap(),
+        SOURCE_WITH_UNEVALUATED_CONSTRAINT
+    );
 }
 
 #[test]

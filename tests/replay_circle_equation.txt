@@ -1,0 +1,5 @@
+open tests/fixtures/value_equation_generated_circle_base.gsp
+equation 4
+save tests/fixtures/value_equation_port_circle.gsp
+move 3 240 120
+save tests/fixtures/value_equation_port_circle_moved.gsp
