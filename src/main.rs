@@ -23,6 +23,7 @@ struct Editor {
     doc: Document,
     tool: Tool,
     pending: Option<usize>,
+    selection_order: Vec<usize>,
     dragging: Option<usize>,
     scale: f32,
     center: Point,
@@ -36,6 +37,7 @@ impl Editor {
             doc,
             tool: Tool::Select,
             pending: None,
+            selection_order: Vec::new(),
             dragging: None,
             scale: 1.,
             center: Point { x: 400., y: 300. },
@@ -163,6 +165,19 @@ impl Editor {
                             );
                             ((p - a).length() - (b - a).length()).abs()
                         }
+                        Kind::ThreePointArc(_, _, _) => {
+                            let points = self.doc.arc_points(o.id, 96)?;
+                            points
+                                .windows(2)
+                                .map(|pair| {
+                                    let a = v.screen(pair[0]);
+                                    let b = v.screen(pair[1]);
+                                    let ab = b - a;
+                                    let t = ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.);
+                                    (p - (a + ab * t)).length()
+                                })
+                                .min_by(f32::total_cmp)?
+                        }
                         _ => return None,
                     }
                 };
@@ -174,6 +189,12 @@ impl Editor {
     fn point_at(&mut self, v: &Viewport, p: egui::Pos2) -> usize {
         self.hit_point(v, p)
             .unwrap_or_else(|| self.doc.add(Kind::Free(v.world(p))))
+    }
+    fn select_only(&mut self, id: usize) {
+        self.doc.selected.clear();
+        self.doc.selected.insert(id);
+        self.selection_order.clear();
+        self.selection_order.push(id);
     }
     fn click(&mut self, v: &Viewport, p: egui::Pos2, multi: bool) {
         if self.doc.partial_view && self.tool != Tool::Select {
@@ -187,19 +208,21 @@ impl Editor {
                 let hit = self.hit(v, p);
                 if !multi {
                     self.doc.selected.clear();
+                    self.selection_order.clear();
                 }
                 if let Some(id) = hit {
                     if multi && !self.doc.selected.insert(id) {
                         self.doc.selected.remove(&id);
+                        self.selection_order.retain(|selected| *selected != id);
                     } else {
                         self.doc.selected.insert(id);
+                        self.selection_order.push(id);
                     }
                 }
             }
             Tool::Point => {
                 let id = self.point_at(v, p);
-                self.doc.selected.clear();
-                self.doc.selected.insert(id);
+                self.select_only(id);
             }
             Tool::Segment | Tool::Circle => {
                 let id = self.point_at(v, p);
@@ -211,8 +234,7 @@ impl Editor {
                             Kind::Circle(a, id)
                         };
                         let made = self.doc.add(k);
-                        self.doc.selected.clear();
-                        self.doc.selected.insert(made);
+                        self.select_only(made);
                     }
                 } else {
                     self.pending = Some(id);
@@ -226,8 +248,7 @@ impl Editor {
             return;
         }
         let ids: Vec<_> = self
-            .doc
-            .selected
+            .selection_order
             .iter()
             .copied()
             .filter(|id| self.doc.position(*id).is_some())
@@ -255,8 +276,7 @@ impl Editor {
             }
         };
         let id = self.doc.add(kind);
-        self.doc.selected.clear();
-        self.doc.selected.insert(id);
+        self.select_only(id);
     }
     fn derived_line(&mut self, perpendicular: bool) {
         if self.doc.partial_view {
@@ -264,15 +284,13 @@ impl Editor {
             return;
         }
         let points: Vec<_> = self
-            .doc
-            .selected
+            .selection_order
             .iter()
             .copied()
             .filter(|id| self.doc.position(*id).is_some())
             .collect();
         let lines: Vec<_> = self
-            .doc
-            .selected
+            .selection_order
             .iter()
             .copied()
             .filter(|id| self.doc.line_points(*id).is_some())
@@ -287,15 +305,14 @@ impl Editor {
             Kind::Parallel(points[0], lines[0])
         };
         let id = self.doc.add(kind);
-        self.doc.selected.clear();
-        self.doc.selected.insert(id);
+        self.select_only(id);
     }
     fn intersection(&mut self) {
         if self.doc.partial_view {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
-        let ids: Vec<_> = self.doc.selected.iter().copied().collect();
+        let ids: Vec<_> = self.selection_order.clone();
         if ids.len() != 2 {
             self.status = "Select two straight objects, a line and circle, or two circles".into();
             return;
@@ -325,10 +342,38 @@ impl Editor {
             return;
         };
         self.doc.selected.clear();
+        self.selection_order.clear();
         for kind in kinds {
             let id = self.doc.add(kind);
             self.doc.selected.insert(id);
+            self.selection_order.push(id);
         }
+    }
+    fn angle_bisector(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 || ids.iter().any(|id| self.doc.position(*id).is_none()) {
+            self.status = "Select three points in order, with the vertex second".into();
+            return;
+        }
+        let id = self.doc.add(Kind::Bisector(ids[0], ids[1], ids[2]));
+        self.select_only(id);
+    }
+    fn three_point_arc(&mut self) {
+        if self.doc.partial_view {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 || ids.iter().any(|id| self.doc.position(*id).is_none()) {
+            self.status = "Select the arc start, a point on the arc, then its end".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ThreePointArc(ids[0], ids[1], ids[2]));
+        self.select_only(id);
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         egui::Panel::top("menu").show(root, |ui| {
@@ -403,6 +448,7 @@ impl Editor {
                             .filter(|o| o.page == self.doc.active_page && o.visible)
                             .map(|o| o.id)
                             .collect();
+                        self.selection_order = self.doc.selected.iter().copied().collect();
                         ui.close();
                     }
                 });
@@ -431,6 +477,14 @@ impl Editor {
                         self.intersection();
                         ui.close();
                     }
+                    if ui.button("Angle Bisector").clicked() {
+                        self.angle_bisector();
+                        ui.close();
+                    }
+                    if ui.button("Arc through 3 Points").clicked() {
+                        self.three_point_arc();
+                        ui.close();
+                    }
                     if ui.button("Parallel Line").clicked() {
                         self.derived_line(false);
                         ui.close();
@@ -443,6 +497,8 @@ impl Editor {
                 ui.menu_button("Display", |ui| {
                     if ui.button("Hide Objects").clicked() {
                         self.doc.set_selected_visibility(false);
+                        self.selection_order
+                            .retain(|id| self.doc.selected.contains(id));
                         ui.close();
                     }
                     if ui.button("Show All Hidden").clicked() {
@@ -466,6 +522,7 @@ impl Editor {
                     {
                         self.doc.active_page -= 1;
                         self.doc.selected.clear();
+                        self.selection_order.clear();
                         self.fit();
                     }
                     ui.label(format!(
@@ -482,6 +539,7 @@ impl Editor {
                     {
                         self.doc.active_page += 1;
                         self.doc.selected.clear();
+                        self.selection_order.clear();
                         self.fit();
                     }
                 });

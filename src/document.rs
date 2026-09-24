@@ -26,6 +26,8 @@ pub enum Kind {
     Parallel(usize, usize),
     Perpendicular(usize, usize),
     Circle(usize, usize),
+    Bisector(usize, usize, usize),
+    ThreePointArc(usize, usize, usize),
     Intersection(usize, usize),
     LineCircleIntersection(usize, usize, usize),
     CircleCircleIntersection(usize, usize, usize),
@@ -120,6 +122,10 @@ fn header(kind: u16) -> [u8; 28] {
             6, 0, 0, 0, 0, 0, 2, 0, 46, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        7 => [
+            7, 0, 0, 0, 0, 0, 2, 0, 44, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         9 | 11..=14 => [
             kind as u8, 0, 0, 0, 0, 0, 1, 0, 0x2d, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39,
             0x20, 0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
@@ -132,6 +138,10 @@ fn header(kind: u16) -> [u8; 28] {
             64, 0, 0, 0, 0, 0, 2, 0, 13, 0, 0x22, 1, 0, 0, 0x80, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        81 => [
+            81, 0, 0, 0, 0, 0, 12, 0, 67, 0, 0x22, 1, 0, 0x80, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
+            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        ],
         _ => unreachable!(),
     }
 }
@@ -141,6 +151,7 @@ fn is_straight_kind(kind: &Kind) -> bool {
         Kind::Segment(_, _)
             | Kind::Line(_, _)
             | Kind::Ray(_, _)
+            | Kind::Bisector(_, _, _)
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
     )
@@ -273,6 +284,42 @@ fn circle_circle_intersection(
         .copied()
         .filter(|p| p.x.is_finite() && p.y.is_finite())
 }
+fn three_point_arc_geometry(
+    start: Point,
+    mid: Point,
+    end: Point,
+) -> Option<(Point, f64, f64, f64)> {
+    let determinant =
+        2. * (start.x * (mid.y - end.y) + mid.x * (end.y - start.y) + end.x * (start.y - mid.y));
+    if determinant.abs() <= 1e-9 {
+        return None;
+    }
+    let square = |point: Point| point.x * point.x + point.y * point.y;
+    let center = Point {
+        x: (square(start) * (mid.y - end.y)
+            + square(mid) * (end.y - start.y)
+            + square(end) * (start.y - mid.y))
+            / determinant,
+        y: (square(start) * (end.x - mid.x)
+            + square(mid) * (start.x - end.x)
+            + square(end) * (mid.x - start.x))
+            / determinant,
+    };
+    let radius = center.distance(start);
+    if !radius.is_finite() || radius <= 1e-9 {
+        return None;
+    }
+    let angle = |p: Point| (p.y - center.y).atan2(p.x - center.x);
+    let (first, middle, last) = (angle(start), angle(mid), angle(end));
+    let ccw = (last - first).rem_euclid(std::f64::consts::TAU);
+    let mid_ccw = (middle - first).rem_euclid(std::f64::consts::TAU);
+    let sweep = if mid_ccw <= ccw + 1e-9 {
+        ccw
+    } else {
+        -(first - last).rem_euclid(std::f64::consts::TAU)
+    };
+    Some((center, radius, first, sweep))
+}
 #[derive(Clone, Debug)]
 pub struct Document {
     pub objects: Vec<Object>,
@@ -397,6 +444,7 @@ impl Document {
                     (3, _, [a, b]) => Kind::Circle(*a, *b),
                     (5, _, [a, b]) => Kind::Perpendicular(*a, *b),
                     (6, _, [a, b]) => Kind::Parallel(*a, *b),
+                    (7, _, [a, b, c]) => Kind::Bisector(*a, *b, *c),
                     (9, _, [a, b]) => Kind::Intersection(*a, *b),
                     (11, _, [a, b])
                         if objects
@@ -422,6 +470,7 @@ impl Document {
                     (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
                     (63, _, [a, b]) => Kind::Line(*a, *b),
                     (64, _, [a, b]) => Kind::Ray(*a, *b),
+                    (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
                     _ => Kind::Unsupported(code),
                 }
             };
@@ -593,6 +642,40 @@ impl Document {
                         LineMode::Line,
                     ))
                 }
+                Kind::Bisector(start, vertex, end) => {
+                    let (a, b, c) = (d.position(start)?, d.position(vertex)?, d.position(end)?);
+                    let normalize = |p: Point| {
+                        let len = p.x.hypot(p.y);
+                        (len > 1e-9).then_some(Point {
+                            x: p.x / len,
+                            y: p.y / len,
+                        })
+                    };
+                    let first = normalize(Point {
+                        x: a.x - b.x,
+                        y: a.y - b.y,
+                    })?;
+                    let second = normalize(Point {
+                        x: c.x - b.x,
+                        y: c.y - b.y,
+                    })?;
+                    let sum = Point {
+                        x: first.x + second.x,
+                        y: first.y + second.y,
+                    };
+                    let direction = normalize(sum).unwrap_or(Point {
+                        x: -first.y,
+                        y: first.x,
+                    });
+                    Some((
+                        b,
+                        Point {
+                            x: b.x + direction.x,
+                            y: b.y + direction.y,
+                        },
+                        LineMode::Ray,
+                    ))
+                }
                 _ => None,
             };
             seen.remove(&id);
@@ -607,6 +690,25 @@ impl Document {
         let center = self.position(center_id)?;
         let radius = center.distance(self.position(radius_id)?);
         (radius.is_finite() && radius > 0.).then_some((center, radius))
+    }
+    pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
+        let Kind::ThreePointArc(a, b, c) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let (center, radius, start, sweep) =
+            three_point_arc_geometry(self.position(a)?, self.position(b)?, self.position(c)?)?;
+        let count = subdivisions.max(2);
+        Some(
+            (0..=count)
+                .map(|step| {
+                    let angle = start + sweep * step as f64 / count as f64;
+                    Point {
+                        x: center.x + radius * angle.cos(),
+                        y: center.y + radius * angle.sin(),
+                    }
+                })
+                .collect(),
+        )
     }
     pub fn move_point(&mut self, id: usize, p: Point) -> bool {
         if !p.x.is_finite() || !p.y.is_finite() {
@@ -648,6 +750,7 @@ impl Document {
                 | Kind::Intersection(a, b)
                 | Kind::LineCircleIntersection(a, b, _)
                 | Kind::CircleCircleIntersection(a, b, _) => vec![a, b],
+                Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) => vec![a, b, c],
                 _ => vec![],
             };
             if refs.iter().any(|&r| r == 0 || r >= o.id) {
@@ -673,6 +776,18 @@ impl Document {
                 && matches!(o.kind,Kind::Intersection(a,b) if self.line_points(a).is_none() || self.line_points(b).is_none())
             {
                 return Err(format!("Invalid straight objects in intersection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::Bisector(a,b,c)
+                    if self.position(a).is_none() || self.position(b).is_none() || self.position(c).is_none())
+            {
+                return Err(format!("Invalid points in angle bisector {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::ThreePointArc(a,b,c)
+                    if self.position(a).is_none() || self.position(b).is_none() || self.position(c).is_none())
+            {
+                return Err(format!("Invalid points in three-point arc {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::LineCircleIntersection(a,b,variant)
@@ -755,6 +870,7 @@ impl Document {
                 Kind::Circle(a, b) => (3, vec![a, b]),
                 Kind::Perpendicular(a, b) => (5, vec![a, b]),
                 Kind::Parallel(a, b) => (6, vec![a, b]),
+                Kind::Bisector(a, b, c) => (7, vec![a, b, c]),
                 Kind::Intersection(a, b) => (9, vec![a, b]),
                 Kind::LineCircleIntersection(a, b, variant) => {
                     (if variant == 0 { 12 } else { 11 }, vec![a, b])
@@ -764,6 +880,7 @@ impl Document {
                 }
                 Kind::Line(a, b) => (63, vec![a, b]),
                 Kind::Ray(a, b) => (64, vec![a, b]),
+                Kind::ThreePointArc(a, b, c) => (81, vec![a, b, c]),
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
@@ -864,6 +981,8 @@ mod tests {
             "line_intersection",
             "line_circle_intersection",
             "circle_circle_intersection",
+            "bisector",
+            "three_point_arc",
             "ray",
             "parallel",
             "perp",
@@ -1171,5 +1290,67 @@ mod tests {
         );
         document.objects[intersection - 1].kind = Kind::LineCircleIntersection(circle, segment, 0);
         assert!(document.encode().is_err());
+    }
+    #[test]
+    fn angle_bisector_matches_original_record_and_updates() {
+        let original = Document::open(Path::new("tests/fixtures/bisector.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::Bisector(1, 2, 3));
+        assert!(!original.partial_view);
+        assert_eq!(original.line_points(4).unwrap().2, LineMode::Ray);
+        let bytes = fs::read("tests/fixtures/bisector.gsp").unwrap();
+        let object_headers: Vec<_> = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x7d0)
+            .collect();
+        assert_eq!(&bytes[object_headers[3].data.clone()], &header(7));
+
+        let mut document = Document::new();
+        let a = document.add(Kind::Free(Point { x: -1., y: 1. }));
+        let vertex = document.add(Kind::Free(Point { x: 0., y: 0. }));
+        let c = document.add(Kind::Free(Point { x: 1., y: 1. }));
+        let id = document.add(Kind::Bisector(a, vertex, c));
+        assert_eq!(
+            document.line_points(id),
+            Some((
+                Point { x: 0., y: 0. },
+                Point { x: 0., y: 1. },
+                LineMode::Ray
+            ))
+        );
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.line_points(id), document.line_points(id));
+        document.move_point(vertex, Point { x: 0., y: 2. });
+        assert_ne!(document.line_points(id), reopened.line_points(id));
+    }
+    #[test]
+    fn three_point_arc_matches_original_record_and_updates() {
+        let original = Document::open(Path::new("tests/fixtures/three_point_arc.gsp")).unwrap();
+        assert_eq!(original.objects[3].kind, Kind::ThreePointArc(1, 2, 3));
+        assert!(!original.partial_view);
+        assert!(original.arc_points(4, 32).is_some());
+        let bytes = fs::read("tests/fixtures/three_point_arc.gsp").unwrap();
+        let object_headers: Vec<_> = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x7d0)
+            .collect();
+        assert_eq!(&bytes[object_headers[3].data.clone()], &header(81));
+
+        let mut document = Document::new();
+        let a = document.add(Kind::Free(Point { x: -1., y: 0. }));
+        let mid = document.add(Kind::Free(Point { x: 0., y: -1. }));
+        let end = document.add(Kind::Free(Point { x: 1., y: 0. }));
+        let id = document.add(Kind::ThreePointArc(a, mid, end));
+        let points = document.arc_points(id, 32).unwrap();
+        assert!(points.first().unwrap().distance(Point { x: -1., y: 0. }) < 1e-9);
+        assert!(points[16].distance(Point { x: 0., y: -1. }) < 1e-9);
+        assert!(points.last().unwrap().distance(Point { x: 1., y: 0. }) < 1e-9);
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.arc_points(id, 32), document.arc_points(id, 32));
+        document.move_point(mid, Point { x: 0., y: -2. });
+        assert_ne!(reopened.arc_points(id, 32), document.arc_points(id, 32));
+        document.move_point(mid, Point { x: 0., y: 0. });
+        assert!(document.arc_points(id, 32).is_none());
     }
 }

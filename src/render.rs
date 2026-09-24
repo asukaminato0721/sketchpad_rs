@@ -205,6 +205,13 @@ impl GeometryRenderer {
                         }
                     }
                 }
+                Kind::ThreePointArc(_, _, _) => {
+                    if let Some(points) = doc.arc_points(o.id, 128) {
+                        for pair in points.windows(2) {
+                            mesh.line(vp.screen(pair[0]), vp.screen(pair[1]), 2., col);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
