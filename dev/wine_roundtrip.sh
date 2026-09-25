@@ -35,7 +35,7 @@ xvfb-run -a bash -c '
   echo "Selected window: $(xdotool getwindowname "$window_id")"
   xdotool windowfocus "$window_id"
   xdotool key --clearmodifiers ctrl+o
-  sleep 1
+  sleep 2
   wine_path="$(winepath -w "$2" | tr -d "\r")"
   echo "Opening $wine_path"
   xdotool type --clearmodifiers --delay 1 "$wine_path"
@@ -43,10 +43,16 @@ xvfb-run -a bash -c '
   sleep 3
   opened_name="$(xdotool getwindowname "$window_id")"
   if [[ "$opened_name" != *"$(basename "$2")"* ]]; then
+    "$4" -window root "${capture_prefix}_open_failed.png"
     echo "Sketchpad did not open $2: $opened_name" >&2
     exit 1
   fi
   "$4" -window root "${capture_prefix}_before_save.png"
+  if [[ -n "${SKETCHPAD_WINE_SETUP_SCRIPT:-}" ]]; then
+    bash "$SKETCHPAD_WINE_SETUP_SCRIPT"
+    sleep 0.5
+    "$4" -window root "${capture_prefix}_after_setup.png"
+  fi
   if [[ -n "${SKETCHPAD_WINE_TOOL_Y:-}" ]]; then
     xdotool mousemove "${SKETCHPAD_WINE_TOOL_X:-29}" "$SKETCHPAD_WINE_TOOL_Y" click 1
     sleep 0.3

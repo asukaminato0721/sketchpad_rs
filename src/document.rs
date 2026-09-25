@@ -7329,6 +7329,14 @@ impl Document {
         if !self.dirty {
             return Ok(());
         }
+        if self.page_count > 1 {
+            if self.has_pending_multi_page_links() {
+                self.encode_multi_page_links()?;
+            } else {
+                self.encode_multi_page_state()?;
+            }
+            return Ok(());
+        }
         if self.image_read_only && self.dirty {
             return Err("Cropped or multi-resource picture content is read-only".into());
         }
@@ -8829,7 +8837,6 @@ impl Document {
         if self.page_count < 2
             || original.page_count != self.page_count
             || self.source_count > self.objects.len()
-            || original.objects != self.objects[..self.source_count]
             || original.snap_points != self.snap_points
             || original.grid_dotted != self.grid_dotted
             || original.grid_form != self.grid_form
@@ -8848,7 +8855,7 @@ impl Document {
             return Err("Multi-page edit contains changes beyond Links".into());
         }
         let rs = records(&self.original)?;
-        let mut out = self.original.clone();
+        let mut out = self.encode_multi_page_source_state()?;
         let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x3e8).collect();
         if preambles.len() != self.page_count {
             return Err("Page preamble count mismatch".into());
@@ -8981,12 +8988,179 @@ impl Document {
         records(&out)?;
         Ok(out)
     }
+    fn encode_multi_page_state(&self) -> Result<Vec<u8>, String> {
+        if self.source_count != self.objects.len() {
+            return Err("Multi-page state edit cannot add objects".into());
+        }
+        self.encode_multi_page_source_state()
+    }
+    fn encode_multi_page_source_state(&self) -> Result<Vec<u8>, String> {
+        let original = Self::from_bytes(&self.original, None)?;
+        if self.page_count < 2
+            || self.image_read_only
+            || self.source_count > self.objects.len()
+            || original.objects.len() != self.source_count
+            || original.page_count != self.page_count
+            || original.snap_points != self.snap_points
+            || original.grid_dotted != self.grid_dotted
+            || original.grid_form != self.grid_form
+            || original.angle_unit_radians != self.angle_unit_radians
+            || original.marked_coordinate_system != self.marked_coordinate_system
+            || original.frame_styles != self.frame_styles
+        {
+            return Err("Multi-page state edit changes the document structure".into());
+        }
+        let rs = records(&self.original)?;
+        let mut out = self.original.clone();
+        for (saved, current) in original
+            .objects
+            .iter()
+            .zip(&self.objects[..self.source_count])
+        {
+            let mut expected = saved.clone();
+            expected.visible = current.visible;
+            if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
+                if !point.x.is_finite() || !point.y.is_finite() {
+                    return Err("Multi-page point coordinates must be finite".into());
+                }
+                expected.kind = current.kind.clone();
+            }
+            match (&saved.kind, &current.kind) {
+                (Kind::PointOnSegment(old_host, _), Kind::PointOnSegment(host, t))
+                    if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnArc(old_host, _), Kind::PointOnArc(host, t))
+                    if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnCircle(old_host, _, _), Kind::PointOnCircle(host, x, y))
+                    if old_host == host
+                        && x.is_finite()
+                        && y.is_finite()
+                        && (x * x + y * y - 1.0).abs() <= 1e-6 =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                _ => {}
+            }
+            if let (
+                Kind::HideShowButton {
+                    targets: old_targets,
+                    anchor: old_anchor,
+                    ..
+                },
+                Kind::HideShowButton {
+                    targets, anchor, ..
+                },
+            ) = (&saved.kind, &current.kind)
+                && old_targets == targets
+                && old_anchor == anchor
+            {
+                expected.kind = current.kind.clone();
+            }
+            if expected != *current
+                || matches!(current.kind, Kind::Unsupported(_)) && saved.visible != current.visible
+            {
+                return Err("Multi-page state edit changes unsupported object data".into());
+            }
+            let header = current.header_offset.ok_or("Missing object header")?;
+            if let (Kind::Free(before), Kind::Free(point)) = (&saved.kind, &current.kind)
+                && before != point
+            {
+                let at = current
+                    .point_offset
+                    .ok_or("Missing free-point coordinates")?;
+                out[at..at + 8].copy_from_slice(&point.x.to_le_bytes());
+                out[at + 8..at + 16].copy_from_slice(&point.y.to_le_bytes());
+            }
+            if saved.kind != current.kind
+                && matches!(
+                    current.kind,
+                    Kind::PointOnSegment(_, _)
+                        | Kind::PointOnArc(_, _)
+                        | Kind::PointOnCircle(_, _, _)
+                )
+            {
+                let at = current
+                    .constraint_offset
+                    .ok_or("Missing point constraint")?;
+                match &current.kind {
+                    Kind::PointOnSegment(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 14, 0]) {
+                            return Err("Invalid segment-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short segment-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnArc(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 67, 0]) {
+                            return Err("Invalid arc-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short arc-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnCircle(_, x, y) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 28, 0]) {
+                            return Err("Invalid circle-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short circle-point constraint")?
+                            .copy_from_slice(&x.to_le_bytes());
+                        out.get_mut(at + 12..at + 20)
+                            .ok_or("Short circle-point constraint")?
+                            .copy_from_slice(&y.to_le_bytes());
+                    }
+                    _ => {}
+                }
+            }
+            if let Kind::HideShowButton { action, label, .. } = &current.kind {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing saved Hide/Show button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x07d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Hide/Show button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = HideShowButtonGroup::parse(&out[start..end])?;
+                group.set_action(*action);
+                group.set_label(label)?;
+                group.set_hidden(!current.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err("Editing a saved button label cannot change its byte length".into());
+                }
+                out[start..end].copy_from_slice(&encoded);
+            } else if saved.visible != current.visible {
+                let mut class = u32_at(&out, header);
+                if current.visible {
+                    class &= !0x1_0000;
+                } else {
+                    class |= 0x1_0000;
+                }
+                out[header..header + 4].copy_from_slice(&class.to_le_bytes());
+            }
+        }
+        records(&out)?;
+        Ok(out)
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         if !self.dirty {
             return Ok(self.original.clone());
         }
         if self.has_pending_multi_page_links() {
             return self.encode_multi_page_links();
+        }
+        if self.page_count > 1 {
+            return self.encode_multi_page_state();
         }
         self.can_save()?;
         let rs = records(&self.original)?;
@@ -10722,7 +10896,7 @@ impl Document {
         &self,
         reparsed: &Self,
         survivors: Vec<&Object>,
-        reordered_links: bool,
+        ignore_active_page_frame: bool,
     ) -> Result<(), String> {
         let mut ids = vec![0; self.objects.len() + 1];
         for (index, object) in survivors.iter().enumerate() {
@@ -10753,7 +10927,7 @@ impl Document {
                         (remapped != 0).then_some((remapped, *style))
                     })
                     .collect()
-            || !reordered_links
+            || !ignore_active_page_frame
                 && reparsed.active_coordinate_system()
                     != self.active_coordinate_system().map(|id| ids[id])
             || reparsed.objects.len() != survivors.len()
@@ -10791,6 +10965,13 @@ impl Document {
                 .filter(|object| !object.deleted)
                 .collect();
             survivors.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+            self.validate_reparsed_in_order(&reparsed, survivors, true)?;
+        } else if self.page_count > 1 {
+            let survivors = self
+                .objects
+                .iter()
+                .filter(|object| !object.deleted)
+                .collect();
             self.validate_reparsed_in_order(&reparsed, survivors, true)?;
         } else {
             self.validate_reparsed(&reparsed)?;
@@ -12062,6 +12243,135 @@ mod tests {
             }
         ));
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn multi_page_hide_show_state_saves_without_changing_other_pages() {
+        for (index, base) in [
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
+            )
+            .as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 0;
+            document.activate_hide_show_button(2).unwrap();
+            assert!(document.can_save().is_ok());
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_hide_show_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            let saved = std::fs::read(&path).unwrap();
+            assert!(!document.objects[0].visible);
+            assert!(matches!(
+                document.objects[1].kind,
+                Kind::HideShowButton {
+                    action: VisibilityAction::Show,
+                    ..
+                }
+            ));
+            let original_records = records(base).unwrap();
+            let saved_records = records(&saved).unwrap();
+            let original_page_2 = original_records
+                .iter()
+                .filter(|record| record.kind == 0x3e8)
+                .nth(1)
+                .unwrap()
+                .start;
+            let saved_page_2 = saved_records
+                .iter()
+                .filter(|record| record.kind == 0x3e8)
+                .nth(1)
+                .unwrap()
+                .start;
+            assert_eq!(&saved[saved_page_2..], &base[original_page_2..]);
+
+            document.activate_hide_show_button(2).unwrap();
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), base);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    #[test]
+    fn multi_page_link_and_destination_state_save_together() {
+        let base = include_bytes!("../tests/fixtures/two_page_hide_show_first_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        document
+            .add_link_page_button_with_target(0, Some(1))
+            .unwrap();
+        document.active_page = 0;
+        document.activate_hide_show_button(2).unwrap();
+        assert!(document.can_save().is_ok());
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_link_with_state_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_port_clicked.gsp"
+            )
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn free_points_move_and_save_on_both_pages() {
+        let base = include_bytes!("../tests/fixtures/two_page_two_points_native.gsp");
+        for (index, page, id, position, expected) in [
+            (
+                0,
+                1,
+                2,
+                Point { x: 261., y: 171. },
+                include_bytes!("../tests/fixtures/two_page_point_moved_port.gsp").as_slice(),
+            ),
+            (
+                1,
+                0,
+                1,
+                Point { x: 363., y: 247. },
+                include_bytes!("../tests/fixtures/two_page_point_moved_link_port.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = page;
+            assert!(document.move_point(id, position));
+            if index == 1 {
+                document.add_link_page_button(1).unwrap();
+            }
+            assert!(document.can_save().is_ok());
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_move_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert_eq!(document.position(id), Some(position));
+            assert_eq!(document.objects[id - 1].page, page);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    #[test]
+    fn multi_page_state_writer_refuses_geometry_changes() {
+        let base = include_bytes!(
+            "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
+        );
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.checkpoint();
+        document.objects[0].kind = Kind::Segment(1, 2);
+        assert!(document.can_save().is_err());
+        assert!(document.encode().is_err());
     }
     #[test]
     fn animation_button_variants_import_and_preserve_settings() {

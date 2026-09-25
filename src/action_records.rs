@@ -1428,6 +1428,7 @@ mod tests {
         let group = LinkPageButtonGroup::parse(&link_page_group(native)).unwrap();
         assert_eq!(group.target_page(), 0);
         assert_eq!(group.target_button_ordinal(), Some(1));
+        assert_eq!(u16_at(&group.records[3].payload, 0), 1);
         let mut generated =
             LinkPageButtonGroup::from_original_template(0, "Go to Page 1", (10, 5)).unwrap();
         generated.set_target_button_ordinal(Some(1)).unwrap();

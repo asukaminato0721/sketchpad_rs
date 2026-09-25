@@ -6549,7 +6549,7 @@ mod tests {
 
     #[test]
     fn page_link_activates_destination_hide_show_button() {
-        for bytes in [
+        for (index, bytes) in [
             include_bytes!(
                 "../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
             )
@@ -6558,8 +6558,17 @@ mod tests {
                 "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
             )
             .as_slice(),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_link_click_save_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            editor.doc.path = Some(path.clone());
             editor.doc.active_page = 1;
             editor.fit();
             let viewport = Viewport {
@@ -6583,6 +6592,17 @@ mod tests {
                     ..
                 }
             ));
+            assert!(editor.save(false), "{}", editor.status);
+            let reopened = Document::open(&path).unwrap();
+            assert!(!reopened.objects[0].visible);
+            assert!(matches!(
+                reopened.objects[1].kind,
+                Kind::HideShowButton {
+                    action: sketchpad_rs::action_records::VisibilityAction::Show,
+                    ..
+                }
+            ));
+            std::fs::remove_file(path).unwrap();
         }
     }
 
