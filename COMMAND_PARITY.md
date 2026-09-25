@@ -92,11 +92,11 @@ The release gate is every sketch and document command verified after editing, sa
 | Mark Angle | Partial: three selected points define a dynamic angle for rotation; a marked-only native save is byte-identical to its unmarked source |
 | Mark Ratio | Partial: three collinear points define a signed dynamic ratio for point and circle dilation; a marked-only native save is byte-identical to its unmarked source |
 | Mark Vector | Partial: the last two selected points define a dynamic vector for later translation; a marked-only native file is byte-identical to its unmarked source |
-| Mark Distance | Partial: a selected distance measurement can supply the dynamic distance for later polar point translations; a marked-only native save is byte-identical to its unmarked source |
-| Translate | Partial: points by fixed polar angle and distance, marked dynamic distance with fixed angle, or marked dynamic vector; generated vector and marked-distance translations opened and saved byte-identically in Sketchpad 5 after moving their dependencies |
-| Rotate | Partial: point around selected center by fixed or three-point marked angle; generated fixed and marked-angle files opened and saved byte-identically in Sketchpad 5, including after moving an angle point |
-| Dilate | Partial: point and circle by fixed or three-point marked ratio around a center point; generated dynamic point and circle files opened and saved byte-identically in Sketchpad 5, including after moving a ratio point |
-| Reflect | Partial: point and circle across selected segment or line; generated file opened, edited, and saved in Sketchpad 5 |
+| Mark Distance | Partial: one selected distance measurement supplies a dynamic polar distance; two selected measurements supply horizontal and vertical distances in selection order; marked-only native saves are byte-identical to their unmarked sources |
+| Translate | Partial: points by fixed polar angle and distance, fixed signed rectangular distances, marked dynamic polar distance, marked rectangular distances, either mixed fixed/marked rectangular mode, or marked dynamic vector; segments and circles by fixed polar, fixed rectangular, marked polar distance, or marked vector. Generated files for these modes opened and saved byte-identically in Sketchpad 5 after moving their dependencies; other shapes and modes pending |
+| Rotate | Partial: points, segments, and circles around a selected or marked center by a fixed or three-point marked angle; generated shape files opened and saved byte-identically in Sketchpad 5 after moving a center or angle point; other shapes and angle sources pending |
+| Dilate | Partial: points, segments, and circles by fixed or three-point marked ratio around a center point; generated segment files opened and saved byte-identically in Sketchpad 5 after moving a center or ratio point; other shapes and ratio sources pending |
+| Reflect | Partial: points, segments, circles, and polygon interiors across a selected segment or line. A generated polygon file with a moved source vertex displayed both interiors in Sketchpad 5 and saved byte-identically; the native reflected polygon fixtures import without partial view. Other shapes pending |
 | Iterate | Pending |
 | Define Custom Transform | Pending |
 | Edit Custom Transforms | Pending |

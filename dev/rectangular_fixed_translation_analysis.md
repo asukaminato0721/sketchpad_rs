@@ -1,0 +1,7 @@
+# Fixed rectangular translation
+
+The native probe uses `dev/rectangular_fixed_wine_probe.sh` and the five-point, two-measurement base sketch from `tests/transform_rectangular_distances_replay.txt`. In the native Translate dialog, rectangular mode offers independent fixed horizontal and vertical distances. The default is 1.0 cm for each. A second probe entered horizontal 2 cm and vertical −0.5 cm; its saved file is `tests/fixtures/rectangular_fixed_translation_original.gsp`.
+
+The translated point is object code 17. Its point header has the transformed-point marker bytes `51 5c`, and `0x07d2` references the source point alone. The 52-byte `0x07d3` payload starts with code 17. At offsets 4 and 24 it stores horizontal and vertical signed pixel offsets, at 12 and 32 it stores the corresponding centimeter values, and 32-bit values at 20 and 40 are `1` in both probes. The trailing eight bytes varied between native saves, so the importer retains them in the source file and the writer uses the captured native default payload for a newly created point. The importer verifies the signed pixel offsets against 37.79527559055118 pixels per centimeter.
+
+The port evaluates the new point as `(source.x + horizontal_px, source.y - vertical_px)`. Thus a negative vertical distance moves the point down in the document's screen coordinates. `tests/transform_rectangular_fixed_replay.txt` creates a 2 cm, −0.5 cm translation, moves its source point, and saves it. Sketchpad 5 opened and saved that generated file byte-identically after the move.

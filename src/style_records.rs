@@ -32,8 +32,10 @@ fn is_point_header(payload: &[u8]) -> bool {
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     matches!(
         (code, subtype),
-        (0 | 16 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 4)
-            | (0, 41)
+        (
+            0 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 30 | 32 | 34,
+            4
+        ) | (0, 41)
             | (1, 11)
             | (15, 10)
             | (9 | 11 | 12 | 13 | 14, 45)
@@ -98,7 +100,10 @@ fn is_circle_header(payload: &[u8]) -> bool {
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
-    matches!((code, subtype), (3 | 4 | 30 | 32 | 34, 28))
+    matches!(
+        (code, subtype),
+        (3 | 4 | 16 | 17 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 28)
+    )
 }
 
 pub fn circle_color(payload: &[u8]) -> Option<RgbColor> {
@@ -118,8 +123,12 @@ pub fn set_circle_color(payload: &mut [u8], color: RgbColor) -> Result<(), Strin
 }
 
 fn is_polygon_header(payload: &[u8]) -> bool {
-    (payload.len() == 16 || payload.len() == 28)
-        && u16::from_le_bytes([payload[0], payload[1]]) == 8
+    if payload.len() != 16 && payload.len() != 28 {
+        return false;
+    }
+    let code = u16::from_le_bytes([payload[0], payload[1]]);
+    let subtype = u16::from_le_bytes([payload[8], payload[9]]);
+    code == 8 || (code == 34 && subtype >= 52 && payload[6..8] == [4, 0])
 }
 
 pub fn polygon_color(payload: &[u8]) -> Option<RgbColor> {
@@ -165,7 +174,13 @@ pub type CircleLineStyle = SegmentLineStyle;
 
 fn is_segment_header(payload: &[u8]) -> bool {
     (payload.len() == 16 || payload.len() == 28)
-        && u16::from_le_bytes([payload[0], payload[1]]) == 2
+        && matches!(
+            (
+                u16::from_le_bytes([payload[0], payload[1]]),
+                u16::from_le_bytes([payload[8], payload[9]])
+            ),
+            (2 | 16 | 17 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 14)
+        )
 }
 
 pub fn segment_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {

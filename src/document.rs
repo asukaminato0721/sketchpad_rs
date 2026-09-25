@@ -92,6 +92,11 @@ impl Kind {
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
+            | Kind::PolarTranslatedSegment(host, _, _, _)
+            | Kind::PolarTranslatedCircle(host, _, _, _)
+            | Kind::FixedRectangularTranslatedPoint(host, _, _, _, _)
+            | Kind::FixedRectangularTranslatedSegment(host, _, _, _, _)
+            | Kind::FixedRectangularTranslatedCircle(host, _, _, _, _)
             | Kind::PathLiteralPoint(host, _)
             | Kind::SegmentLength(host)
             | Kind::PolygonPerimeter(host)
@@ -118,6 +123,8 @@ impl Kind {
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::ReflectedPoint(a, b)
             | Kind::ReflectedCircle(a, b)
+            | Kind::ReflectedSegment(a, b)
+            | Kind::ReflectedPolygon(a, b)
             | Kind::PointDistance(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
             | Kind::DistanceAxis(a, b, _)
@@ -130,7 +137,12 @@ impl Kind {
             Kind::DerivativeFunction(source, _) => vec![source],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
-            | Kind::RotatedPoint(source, center, _) => {
+            | Kind::ScaledSegment(source, center, _)
+            | Kind::ScaledPolygon(source, center, _)
+            | Kind::RotatedPoint(source, center, _)
+            | Kind::RotatedSegment(source, center, _)
+            | Kind::RotatedCircle(source, center, _)
+            | Kind::RotatedPolygon(source, center, _) => {
                 vec![source, center]
             }
             Kind::Bisector(a, b, c)
@@ -141,12 +153,25 @@ impl Kind {
             }
             Kind::PointRatio(a, b, c) => vec![a, b, c],
             Kind::MarkedDistanceTranslatedPoint(source, distance, _) => vec![source, distance],
+            Kind::MarkedDistanceTranslatedSegment(source, distance, _)
+            | Kind::MarkedDistanceTranslatedCircle(source, distance, _) => vec![source, distance],
+            Kind::MixedRectangularTranslatedPoint(source, distance, _, _) => vec![source, distance],
+            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+                vec![source, horizontal, vertical]
+            }
             Kind::VectorTranslatedPoint(source, start, end) => vec![source, start, end],
-            Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
+            Kind::VectorTranslatedSegment(source, start, end)
+            | Kind::VectorTranslatedCircle(source, start, end) => vec![source, start, end],
+            Kind::AngleRotatedPoint(source, center, first, vertex, last)
+            | Kind::AngleRotatedSegment(source, center, first, vertex, last)
+            | Kind::AngleRotatedCircle(source, center, first, vertex, last)
+            | Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
                 vec![source, center, first, vertex, last]
             }
             Kind::RatioScaledPoint(source, center, origin, base, target)
-            | Kind::RatioScaledCircle(source, center, origin, base, target) => {
+            | Kind::RatioScaledCircle(source, center, origin, base, target)
+            | Kind::RatioScaledSegment(source, center, origin, base, target)
+            | Kind::RatioScaledPolygon(source, center, origin, base, target) => {
                 vec![source, center, origin, base, target]
             }
             Kind::Polygon(_) => unreachable!(),
@@ -256,14 +281,91 @@ impl Kind {
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
             }
+            Kind::PolarTranslatedSegment(a, angle, units, distance) => {
+                Kind::PolarTranslatedSegment(m(a), angle, units, distance)
+            }
+            Kind::PolarTranslatedCircle(a, angle, units, distance) => {
+                Kind::PolarTranslatedCircle(m(a), angle, units, distance)
+            }
+            Kind::FixedRectangularTranslatedPoint(
+                source,
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ) => Kind::FixedRectangularTranslatedPoint(
+                m(source),
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ),
+            Kind::FixedRectangularTranslatedSegment(
+                source,
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ) => Kind::FixedRectangularTranslatedSegment(
+                m(source),
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ),
+            Kind::FixedRectangularTranslatedCircle(
+                source,
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ) => Kind::FixedRectangularTranslatedCircle(
+                m(source),
+                x_units,
+                x_distance,
+                y_units,
+                y_distance,
+            ),
             Kind::MarkedDistanceTranslatedPoint(source, distance, angle) => {
                 Kind::MarkedDistanceTranslatedPoint(m(source), m(distance), angle)
+            }
+            Kind::MarkedDistanceTranslatedSegment(source, distance, angle) => {
+                Kind::MarkedDistanceTranslatedSegment(m(source), m(distance), angle)
+            }
+            Kind::MarkedDistanceTranslatedCircle(source, distance, angle) => {
+                Kind::MarkedDistanceTranslatedCircle(m(source), m(distance), angle)
+            }
+            Kind::MixedRectangularTranslatedPoint(source, distance, fixed_cm, fixed_horizontal) => {
+                Kind::MixedRectangularTranslatedPoint(
+                    m(source),
+                    m(distance),
+                    fixed_cm,
+                    fixed_horizontal,
+                )
+            }
+            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+                Kind::RectangularMarkedTranslatedPoint(m(source), m(horizontal), m(vertical))
             }
             Kind::VectorTranslatedPoint(source, start, end) => {
                 Kind::VectorTranslatedPoint(m(source), m(start), m(end))
             }
+            Kind::VectorTranslatedSegment(source, start, end) => {
+                Kind::VectorTranslatedSegment(m(source), m(start), m(end))
+            }
+            Kind::VectorTranslatedCircle(source, start, end) => {
+                Kind::VectorTranslatedCircle(m(source), m(start), m(end))
+            }
             Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
                 Kind::AngleRotatedPoint(m(source), m(center), m(first), m(vertex), m(last))
+            }
+            Kind::AngleRotatedSegment(source, center, first, vertex, last) => {
+                Kind::AngleRotatedSegment(m(source), m(center), m(first), m(vertex), m(last))
+            }
+            Kind::AngleRotatedCircle(source, center, first, vertex, last) => {
+                Kind::AngleRotatedCircle(m(source), m(center), m(first), m(vertex), m(last))
+            }
+            Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
+                Kind::AngleRotatedPolygon(m(source), m(center), m(first), m(vertex), m(last))
             }
             Kind::RatioScaledPoint(source, center, origin, base, target) => {
                 Kind::RatioScaledPoint(m(source), m(center), m(origin), m(base), m(target))
@@ -271,11 +373,24 @@ impl Kind {
             Kind::RatioScaledCircle(source, center, origin, base, target) => {
                 Kind::RatioScaledCircle(m(source), m(center), m(origin), m(base), m(target))
             }
+            Kind::RatioScaledSegment(source, center, origin, base, target) => {
+                Kind::RatioScaledSegment(m(source), m(center), m(origin), m(base), m(target))
+            }
+            Kind::RatioScaledPolygon(source, center, origin, base, target) => {
+                Kind::RatioScaledPolygon(m(source), m(center), m(origin), m(base), m(target))
+            }
             Kind::ReflectedPoint(a, b) => Kind::ReflectedPoint(m(a), m(b)),
             Kind::ReflectedCircle(a, b) => Kind::ReflectedCircle(m(a), m(b)),
+            Kind::ReflectedSegment(a, b) => Kind::ReflectedSegment(m(a), m(b)),
+            Kind::ReflectedPolygon(a, b) => Kind::ReflectedPolygon(m(a), m(b)),
             Kind::ScaledPoint(a, b, factor) => Kind::ScaledPoint(m(a), m(b), factor),
             Kind::ScaledCircle(a, b, factor) => Kind::ScaledCircle(m(a), m(b), factor),
+            Kind::ScaledSegment(a, b, factor) => Kind::ScaledSegment(m(a), m(b), factor),
+            Kind::ScaledPolygon(a, b, factor) => Kind::ScaledPolygon(m(a), m(b), factor),
             Kind::RotatedPoint(a, b, angle) => Kind::RotatedPoint(m(a), m(b), angle),
+            Kind::RotatedSegment(a, b, angle) => Kind::RotatedSegment(m(a), m(b), angle),
+            Kind::RotatedCircle(a, b, angle) => Kind::RotatedCircle(m(a), m(b), angle),
+            Kind::RotatedPolygon(a, b, angle) => Kind::RotatedPolygon(m(a), m(b), angle),
             Kind::Midpoint(a, b) => Kind::Midpoint(m(a), m(b)),
             Kind::Segment(a, b) => Kind::Segment(m(a), m(b)),
             Kind::Line(a, b) => Kind::Line(m(a), m(b)),
@@ -375,16 +490,39 @@ pub enum Kind {
     PointDistance(usize, usize),
     PointRatio(usize, usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
+    PolarTranslatedSegment(usize, f64, f64, f64),
+    PolarTranslatedCircle(usize, f64, f64, f64),
+    FixedRectangularTranslatedPoint(usize, f64, f64, f64, f64),
+    FixedRectangularTranslatedSegment(usize, f64, f64, f64, f64),
+    FixedRectangularTranslatedCircle(usize, f64, f64, f64, f64),
     MarkedDistanceTranslatedPoint(usize, usize, f64),
+    MarkedDistanceTranslatedSegment(usize, usize, f64),
+    MarkedDistanceTranslatedCircle(usize, usize, f64),
+    MixedRectangularTranslatedPoint(usize, usize, f64, bool),
+    RectangularMarkedTranslatedPoint(usize, usize, usize),
     VectorTranslatedPoint(usize, usize, usize),
+    VectorTranslatedSegment(usize, usize, usize),
+    VectorTranslatedCircle(usize, usize, usize),
     AngleRotatedPoint(usize, usize, usize, usize, usize),
+    AngleRotatedSegment(usize, usize, usize, usize, usize),
+    AngleRotatedCircle(usize, usize, usize, usize, usize),
+    AngleRotatedPolygon(usize, usize, usize, usize, usize),
     RatioScaledPoint(usize, usize, usize, usize, usize),
     RatioScaledCircle(usize, usize, usize, usize, usize),
+    RatioScaledSegment(usize, usize, usize, usize, usize),
+    RatioScaledPolygon(usize, usize, usize, usize, usize),
     ReflectedPoint(usize, usize),
     ReflectedCircle(usize, usize),
+    ReflectedSegment(usize, usize),
+    ReflectedPolygon(usize, usize),
     ScaledPoint(usize, usize, f64),
     ScaledCircle(usize, usize, f64),
+    ScaledSegment(usize, usize, f64),
+    ScaledPolygon(usize, usize, f64),
     RotatedPoint(usize, usize, f64),
+    RotatedSegment(usize, usize, f64),
+    RotatedCircle(usize, usize, f64),
+    RotatedPolygon(usize, usize, f64),
     Midpoint(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -509,6 +647,9 @@ fn put_record(out: &mut Vec<u8>, kind: u32, data: &[u8]) {
         out.push(0);
     }
 }
+fn polygon_subtype(vertex_count: usize) -> Option<u16> {
+    49u16.checked_add(u16::try_from(vertex_count).ok()?)
+}
 fn header(kind: u16) -> [u8; 28] {
     // These bytes come from the supplied original Sketchpad fixtures.
     match kind {
@@ -560,9 +701,9 @@ fn header(kind: u16) -> [u8; 28] {
             21, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x39, 0x20, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
-        24 => [
-            24, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
-            0xbd, 0xf0, 0xff, 0, 0, 0, 0,
+        17 | 18 | 19 | 20 | 24 => [
+            kind as u8, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c,
+            0xc1, 0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
         30 => [
             30, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
@@ -611,6 +752,15 @@ fn is_straight_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::Segment(_, _)
+            | Kind::PolarTranslatedSegment(_, _, _, _)
+            | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+            | Kind::VectorTranslatedSegment(_, _, _)
+            | Kind::MarkedDistanceTranslatedSegment(_, _, _)
+            | Kind::AngleRotatedSegment(_, _, _, _, _)
+            | Kind::RotatedSegment(_, _, _)
+            | Kind::ScaledSegment(_, _, _)
+            | Kind::RatioScaledSegment(_, _, _, _, _)
+            | Kind::ReflectedSegment(_, _)
             | Kind::Line(_, _)
             | Kind::Ray(_, _)
             | Kind::Bisector(_, _, _)
@@ -636,7 +786,10 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PathValuePoint(_, _)
             | Kind::PlottedPoint(_, _, _, _)
             | Kind::PolarTranslatedPoint(_, _, _, _)
+            | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
             | Kind::MarkedDistanceTranslatedPoint(_, _, _)
+            | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
+            | Kind::RectangularMarkedTranslatedPoint(_, _, _)
             | Kind::VectorTranslatedPoint(_, _, _)
             | Kind::ReflectedPoint(_, _)
             | Kind::ScaledPoint(_, _, _)
@@ -667,6 +820,12 @@ fn is_circle_kind(kind: &Kind) -> bool {
         kind,
         Kind::Circle(_, _)
             | Kind::CircleBySegment(_, _)
+            | Kind::PolarTranslatedCircle(_, _, _, _)
+            | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+            | Kind::VectorTranslatedCircle(_, _, _)
+            | Kind::MarkedDistanceTranslatedCircle(_, _, _)
+            | Kind::AngleRotatedCircle(_, _, _, _, _)
+            | Kind::RotatedCircle(_, _, _)
             | Kind::ReflectedCircle(_, _)
             | Kind::ScaledCircle(_, _, _)
             | Kind::RatioScaledCircle(_, _, _, _, _)
@@ -730,7 +889,10 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
         | Kind::PolarTranslatedPoint(_, _, _, _)
+        | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
         | Kind::MarkedDistanceTranslatedPoint(_, _, _)
+        | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
+        | Kind::RectangularMarkedTranslatedPoint(_, _, _)
         | Kind::VectorTranslatedPoint(_, _, _)
         | Kind::ReflectedPoint(_, _)
         | Kind::ScaledPoint(_, _, _)
@@ -745,6 +907,15 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             color: red,
         }),
         Kind::Segment(_, _)
+        | Kind::PolarTranslatedSegment(_, _, _, _)
+        | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+        | Kind::VectorTranslatedSegment(_, _, _)
+        | Kind::MarkedDistanceTranslatedSegment(_, _, _)
+        | Kind::AngleRotatedSegment(_, _, _, _, _)
+        | Kind::RotatedSegment(_, _, _)
+        | Kind::ScaledSegment(_, _, _)
+        | Kind::RatioScaledSegment(_, _, _, _, _)
+        | Kind::ReflectedSegment(_, _)
         | Kind::Line(_, _)
         | Kind::Ray(_, _)
         | Kind::Parallel(_, _)
@@ -752,12 +923,18 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),
         Kind::Circle(_, _)
         | Kind::CircleBySegment(_, _)
+        | Kind::PolarTranslatedCircle(_, _, _, _)
+        | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+        | Kind::VectorTranslatedCircle(_, _, _)
+        | Kind::MarkedDistanceTranslatedCircle(_, _, _)
+        | Kind::AngleRotatedCircle(_, _, _, _, _)
+        | Kind::RotatedCircle(_, _, _)
         | Kind::ReflectedCircle(_, _)
         | Kind::ScaledCircle(_, _, _)
         | Kind::RatioScaledCircle(_, _, _, _, _)
         | Kind::ThreePointArc(_, _, _)
         | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
-        Kind::Polygon(_) => Some(VisualStyle::Polygon {
+        Kind::Polygon(_) | Kind::ReflectedPolygon(_, _) => Some(VisualStyle::Polygon {
             color: RgbColor {
                 red: 255,
                 green: 128,
@@ -785,6 +962,25 @@ fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
         y: 2. * projected.y - point.y,
     };
     (reflected.x.is_finite() && reflected.y.is_finite()).then_some(reflected)
+}
+
+fn marked_rotation_theta(first: Point, vertex: Point, last: Point) -> Option<f64> {
+    let (ax, ay) = (first.x - vertex.x, first.y - vertex.y);
+    let (cx, cy) = (last.x - vertex.x, last.y - vertex.y);
+    if ax.hypot(ay) == 0. || cx.hypot(cy) == 0. {
+        return None;
+    }
+    Some((-cy).atan2(cx) - (-ay).atan2(ax))
+}
+
+fn rotate_point_about(source: Point, center: Point, theta: f64) -> Option<Point> {
+    let dx = source.x - center.x;
+    let dy = source.y - center.y;
+    let rotated = Point {
+        x: center.x + dx * theta.cos() + dy * theta.sin(),
+        y: center.y - dx * theta.sin() + dy * theta.cos(),
+    };
+    (rotated.x.is_finite() && rotated.y.is_finite()).then_some(rotated)
 }
 
 fn intersect_straight(
@@ -968,6 +1164,7 @@ pub struct Document {
     original: Vec<u8>,
     run_font_families: Vec<String>,
     source_count: usize,
+    last_moved_object: Option<usize>,
     safe_structure: bool,
     image_read_only: bool,
     pub undo: Vec<(
@@ -979,6 +1176,7 @@ pub struct Document {
         Vec<Option<usize>>,
         BTreeMap<usize, (GridForm, bool)>,
         Vec<String>,
+        Option<usize>,
     )>,
     pub redo: Vec<(
         Vec<Object>,
@@ -989,6 +1187,7 @@ pub struct Document {
         Vec<Option<usize>>,
         BTreeMap<usize, (GridForm, bool)>,
         Vec<String>,
+        Option<usize>,
     )>,
 }
 impl Document {
@@ -1144,7 +1343,7 @@ impl Document {
                                 .enumerate()
                                 .all(|(i, (actual, expected))| {
                                     // Label x/y and presentation bytes vary after edits.
-                                    matches!(i, 12..=15 | 22 | 30 | 31) || actual == expected
+                                    matches!(i, 12..=15 | 22 | 23 | 30 | 31) || actual == expected
                                 });
                     }
                     0x07d8 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
@@ -1175,7 +1374,12 @@ impl Document {
                         };
                         measurement_style = d == sample;
                     }
-                    0x7d3 if matches!(code, 15 | 21 | 24 | 27 | 30 | 54 | 55 | 56 | 57) => {
+                    0x7d3
+                        if matches!(
+                            code,
+                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 54 | 55 | 56 | 57
+                        ) =>
+                    {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 if matches!(code, 67 | 68) && d.len() == 8 => {
@@ -1619,19 +1823,65 @@ impl Document {
                                 && f64_at(payload, 20).is_finite()
                                 && f64_at(payload, 32).is_finite()
                                 && f64_at(payload, 40).is_finite()
-                                && objects.get(origin - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
+                                && *origin > 0
+                                && objects.get(origin - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
                         {
-                            Kind::PolarTranslatedPoint(
-                                *origin,
-                                f64_at(payload, 20),
-                                f64_at(payload, 32),
-                                f64_at(payload, 40),
-                            )
+                            if h[8..10] == [14, 0] && matches!(objects[origin - 1].kind, Kind::Segment(_, _)) {
+                                Kind::PolarTranslatedSegment(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
+                            } else if h[8..10] == [28, 0] && matches!(objects[origin - 1].kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) {
+                                Kind::PolarTranslatedCircle(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
+                            } else if h[8..10] == [4, 0] && is_point_kind(&objects[origin - 1].kind) {
+                                Kind::PolarTranslatedPoint(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
+                            } else {
+                                Kind::Unsupported(code)
+                            }
+                        }
+                        _ => Kind::Unsupported(code),
+                    },
+                    (17, _, [source]) => match &constraint_payload {
+                        Some((payload, _))
+                            if payload.len() == 52
+                                && payload[..4] == [17, 0, 0, 0]
+                                && u32_at(payload, 20) == 1
+                                && u32_at(payload, 40) == 1
+                                && [4, 12, 24, 32].iter().all(|&offset| f64_at(payload, offset).is_finite())
+                                && (f64_at(payload, 4) - f64_at(payload, 12) * 37.79527559055118).abs() < 1e-5
+                                && (f64_at(payload, 24) - f64_at(payload, 32) * 37.79527559055118).abs() < 1e-5
+                                && *source > 0
+                                && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                        {
+                            if h[8..10] == [14, 0] && matches!(objects[source - 1].kind, Kind::Segment(_, _)) {
+                                Kind::FixedRectangularTranslatedSegment(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                            } else if h[8..10] == [28, 0] && matches!(objects[source - 1].kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) {
+                                Kind::FixedRectangularTranslatedCircle(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                            } else if h[8..10] == [4, 0] && is_point_kind(&objects[source - 1].kind) {
+                                Kind::FixedRectangularTranslatedPoint(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                            } else {
+                                Kind::Unsupported(code)
+                            }
+                        }
+                        _ => Kind::Unsupported(code),
+                    },
+                    (18 | 19, _, [source, distance]) => match &constraint_payload {
+                        Some((payload, _))
+                            if payload.len() == 28
+                                && payload[..4] == [code as u8, 0, 0, 0]
+                                && u32_at(payload, 20) == 1
+                                && payload[24..28] == [0, 0, 0, 0]
+                                && f64_at(payload, 4).is_finite()
+                                && f64_at(payload, 12).is_finite()
+                                && (f64_at(payload, 4) - f64_at(payload, 12) * 37.79527559055118).abs() < 1e-5
+                                && *source > 0 && *distance > 0
+                                && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
+                                && objects.get(distance - 1).is_some_and(|o| is_distance_value_kind(&o.kind)) =>
+                        {
+                            Kind::MixedRectangularTranslatedPoint(*source, *distance, f64_at(payload, 12), code == 18)
                         }
                         _ => Kind::Unsupported(code),
                     },
                     (24, _, [source, distance])
-                        if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
+                        if *source > 0 && *distance > 0
+                            && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
                             && objects.get(distance - 1).is_some_and(|o| is_distance_value_kind(&o.kind)) =>
                     {
                         match &constraint_payload {
@@ -1647,23 +1897,43 @@ impl Document {
                                     && (f64_at(payload, 12)
                                         - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 =>
                             {
-                                Kind::MarkedDistanceTranslatedPoint(
-                                    *source,
-                                    *distance,
-                                    f64_at(payload, 20),
-                                )
+                                match (&objects[source - 1].kind, &h[8..10]) {
+                                    (kind, [4, 0]) if is_point_kind(kind) => Kind::MarkedDistanceTranslatedPoint(*source, *distance, f64_at(payload, 20)),
+                                    (Kind::Segment(_, _), [14, 0]) => Kind::MarkedDistanceTranslatedSegment(*source, *distance, f64_at(payload, 20)),
+                                    (Kind::Circle(_, _) | Kind::CircleBySegment(_, _), [28, 0]) => Kind::MarkedDistanceTranslatedCircle(*source, *distance, f64_at(payload, 20)),
+                                    _ => Kind::Unsupported(code),
+                                }
                             }
                             _ => Kind::Unsupported(code),
                         }
                     }
+                    (20, None, [source, horizontal, vertical])
+                        if *source > 0 && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
+                            && [horizontal, vertical].iter().all(|&&id| {
+                                id > 0 && objects.get(id - 1).is_some_and(|o| is_distance_value_kind(&o.kind))
+                            }) =>
+                    {
+                        Kind::RectangularMarkedTranslatedPoint(*source, *horizontal, *vertical)
+                    }
                     (16, _, [source, start, end])
-                        if [source, start, end].iter().all(|&&id| {
-                            objects.get(id - 1).is_some_and(|object| is_point_kind(&object.kind))
-                        }) => Kind::VectorTranslatedPoint(*source, *start, *end),
+                        if [source, start, end].iter().all(|&&id| id > 0 && objects.get(id - 1).is_some())
+                            && [start, end].iter().all(|&&id| is_point_kind(&objects[id - 1].kind)) => {
+                        match (&objects[source - 1].kind, &h[8..10]) {
+                            (kind, [4, 0]) if is_point_kind(kind) => Kind::VectorTranslatedPoint(*source, *start, *end),
+                            (Kind::Segment(_, _), [14, 0]) => Kind::VectorTranslatedSegment(*source, *start, *end),
+                            (Kind::Circle(_, _) | Kind::CircleBySegment(_, _), [28, 0]) => Kind::VectorTranslatedCircle(*source, *start, *end),
+                            _ => Kind::Unsupported(code),
+                        }
+                    },
                     (28, _, [source, center, first, vertex, last])
-                        if [source, center, first, vertex, last].iter().all(|&&id| {
+                        if [center, first, vertex, last].iter().all(|&&id| {
                             objects.get(id - 1).is_some_and(|object| is_point_kind(&object.kind))
-                        }) => Kind::AngleRotatedPoint(*source, *center, *first, *vertex, *last),
+                        }) => match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
+                            (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::AngleRotatedPoint(*source, *center, *first, *vertex, *last),
+                            (Some(Kind::Segment(_, _)), [14, 0]) => Kind::AngleRotatedSegment(*source, *center, *first, *vertex, *last),
+                            (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::AngleRotatedCircle(*source, *center, *first, *vertex, *last),
+                            _ => Kind::Unsupported(code),
+                        },
                     (32, _, [source, center, origin, base, target])
                         if [source, center, origin, base, target].iter().all(|&&id| {
                             objects.get(id - 1).is_some_and(|object| is_point_kind(&object.kind))
@@ -1673,6 +1943,11 @@ impl Document {
                             && [center, origin, base, target].iter().all(|&&id| {
                                 objects.get(id - 1).is_some_and(|object| is_point_kind(&object.kind))
                             }) => Kind::RatioScaledCircle(*source, *center, *origin, *base, *target),
+                    (32, _, [source, center, origin, base, target])
+                        if objects.get(source.saturating_sub(1)).is_some_and(|object| matches!(object.kind, Kind::Segment(_, _)))
+                            && [center, origin, base, target].iter().all(|&&id| {
+                                objects.get(id.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                            }) && h[8..10] == [14, 0] => Kind::RatioScaledSegment(*source, *center, *origin, *base, *target),
                     (34, _, [source, mirror])
                         if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
                             && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
@@ -1685,6 +1960,14 @@ impl Document {
                     {
                         Kind::ReflectedCircle(*source, *mirror)
                     }
+                    (34, _, [source, mirror])
+                        if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _)))
+                            && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
+                            && h[8..10] == [14, 0] => Kind::ReflectedSegment(*source, *mirror),
+                    (34, _, [source, mirror])
+                        if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
+                            && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
+                            && h[20..24] == [1, 0, 0, 0] => Kind::ReflectedPolygon(*source, *mirror),
                     (30, _, [source, center])
                         if objects.get(center - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
@@ -1694,6 +1977,7 @@ impl Document {
                                 match objects.get(source - 1).map(|o| &o.kind) {
                                     Some(kind) if is_point_kind(kind) => Kind::ScaledPoint(*source, *center, factor),
                                     Some(kind) if is_circle_kind(kind) => Kind::ScaledCircle(*source, *center, factor),
+                                    Some(Kind::Segment(_, _)) if h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1701,15 +1985,19 @@ impl Document {
                         }
                     }
                     (27, _, [source, center])
-                        if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
-                            && objects.get(center - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
+                        if objects.get(center.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
                         match &constraint_payload {
                             Some((payload, _)) if payload.len() == 36 && payload[..4] == [27, 0, 0, 0] && f64_at(payload, 20).is_finite()
                                 && f64_at(payload, 4).is_finite() && f64_at(payload, 12).is_finite()
                                 && (f64_at(payload, 4) + f64_at(payload, 20).to_radians().sin()).abs() < 1e-6
                                 && (f64_at(payload, 12) - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 => {
-                                Kind::RotatedPoint(*source, *center, f64_at(payload, 20))
+                                match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
+                                    (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, f64_at(payload, 20)),
+                                    (Some(Kind::Segment(_, _)), [14, 0]) => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
+                                    (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
+                                    _ => Kind::Unsupported(code),
+                                }
                             }
                             _ => Kind::Unsupported(code),
                         }
@@ -1895,6 +2183,7 @@ impl Document {
             original: b.to_vec(),
             run_font_families: Vec::new(),
             source_count,
+            last_moved_object: None,
             safe_structure: safe,
             image_read_only,
             undo: Vec::new(),
@@ -1911,6 +2200,7 @@ impl Document {
             self.marked_coordinate_system.clone(),
             self.frame_styles.clone(),
             self.run_font_families.clone(),
+            self.last_moved_object,
         ));
         self.redo.clear();
         self.dirty = true;
@@ -1925,6 +2215,7 @@ impl Document {
             marked,
             styles,
             families,
+            last_moved_object,
         )) = self.undo.pop()
         {
             self.redo.push((
@@ -1936,6 +2227,7 @@ impl Document {
                 std::mem::replace(&mut self.marked_coordinate_system, marked),
                 std::mem::replace(&mut self.frame_styles, styles),
                 std::mem::replace(&mut self.run_font_families, families),
+                std::mem::replace(&mut self.last_moved_object, last_moved_object),
             ));
             self.dirty = true;
         }
@@ -1950,6 +2242,7 @@ impl Document {
             marked,
             styles,
             families,
+            last_moved_object,
         )) = self.redo.pop()
         {
             self.undo.push((
@@ -1961,6 +2254,7 @@ impl Document {
                 std::mem::replace(&mut self.marked_coordinate_system, marked),
                 std::mem::replace(&mut self.frame_styles, styles),
                 std::mem::replace(&mut self.run_font_families, families),
+                std::mem::replace(&mut self.last_moved_object, last_moved_object),
             ));
             self.dirty = true;
         }
@@ -2444,7 +2738,16 @@ impl Document {
         Ok(())
     }
     fn append_object(&mut self, kind: Kind) -> usize {
+        self.last_moved_object = None;
         let id = self.objects.len() + 1;
+        let visual_style = if let Kind::ReflectedPolygon(source, _) = kind {
+            self.objects
+                .get(source.saturating_sub(1))
+                .and_then(|object| object.visual_style)
+                .or_else(|| default_visual_style(&kind))
+        } else {
+            default_visual_style(&kind)
+        };
         let midpoint_host = if let Kind::Midpoint(a, b) = kind {
             self.objects
                 .iter()
@@ -2459,7 +2762,7 @@ impl Document {
         self.objects.push(Object {
             id,
             page: self.active_page,
-            visual_style: default_visual_style(&kind),
+            visual_style,
             kind,
             visible: true,
             tracing: false,
@@ -4754,6 +5057,19 @@ impl Document {
                         y: source.y - step * radians.sin(),
                     })
                 }
+                Kind::FixedRectangularTranslatedPoint(
+                    source,
+                    x_units,
+                    x_distance,
+                    y_units,
+                    y_distance,
+                ) => {
+                    let source = go(d, *source, seen)?;
+                    Some(Point {
+                        x: source.x + x_units * x_distance,
+                        y: source.y - y_units * y_distance,
+                    })
+                }
                 Kind::MarkedDistanceTranslatedPoint(source, distance, angle) => {
                     let source = go(d, *source, seen)?;
                     let step = d.distance_value_pixels(*distance)?;
@@ -4761,6 +5077,37 @@ impl Document {
                     Some(Point {
                         x: source.x + step * radians.cos(),
                         y: source.y - step * radians.sin(),
+                    })
+                }
+                Kind::MixedRectangularTranslatedPoint(
+                    source,
+                    distance,
+                    fixed_cm,
+                    fixed_horizontal,
+                ) => {
+                    let source = go(d, *source, seen)?;
+                    let fixed_pixels = fixed_cm * 37.79527559055118;
+                    let marked_pixels = d.distance_value_pixels(*distance)?;
+                    Some(Point {
+                        x: source.x
+                            + if *fixed_horizontal {
+                                fixed_pixels
+                            } else {
+                                marked_pixels
+                            },
+                        y: source.y
+                            - if *fixed_horizontal {
+                                marked_pixels
+                            } else {
+                                fixed_pixels
+                            },
+                    })
+                }
+                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+                    let source = go(d, *source, seen)?;
+                    Some(Point {
+                        x: source.x + d.distance_value_pixels(*horizontal)?,
+                        y: source.y - d.distance_value_pixels(*vertical)?,
                     })
                 }
                 Kind::VectorTranslatedPoint(source, start, end) => {
@@ -4811,17 +5158,7 @@ impl Document {
                     let first = go(d, *first, seen)?;
                     let vertex = go(d, *vertex, seen)?;
                     let last = go(d, *last, seen)?;
-                    let (ax, ay) = (first.x - vertex.x, first.y - vertex.y);
-                    let (cx, cy) = (last.x - vertex.x, last.y - vertex.y);
-                    if ax.hypot(ay) == 0. || cx.hypot(cy) == 0. {
-                        return None;
-                    }
-                    let theta = (-cy).atan2(cx) - (-ay).atan2(ax);
-                    let (dx, dy) = (source.x - center.x, source.y - center.y);
-                    Some(Point {
-                        x: center.x + dx * theta.cos() + dy * theta.sin(),
-                        y: center.y - dx * theta.sin() + dy * theta.cos(),
-                    })
+                    rotate_point_about(source, center, marked_rotation_theta(first, vertex, last)?)
                 }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
@@ -4911,13 +5248,21 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let Kind::Polygon(vertices) = &object.kind else {
-            return None;
-        };
-        vertices
-            .iter()
-            .map(|&vertex| self.position(vertex))
-            .collect()
+        match &object.kind {
+            Kind::Polygon(vertices) => vertices
+                .iter()
+                .map(|&vertex| self.position(vertex))
+                .collect(),
+            Kind::ReflectedPolygon(source, mirror) => {
+                let points = self.polygon_points(*source)?;
+                let (a, b, _) = self.line_points(*mirror)?;
+                points
+                    .into_iter()
+                    .map(|point| reflect_point(point, a, b))
+                    .collect()
+            }
+            _ => None,
+        }
     }
     pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
         let points = self.polygon_points(id)?;
@@ -5042,6 +5387,138 @@ impl Document {
             }
             let result = match object.kind {
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
+                Kind::PolarTranslatedSegment(source, angle, units, distance) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let step = units * distance;
+                    let radians = angle.to_radians();
+                    let dx = step * radians.cos();
+                    let dy = -step * radians.sin();
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
+                Kind::FixedRectangularTranslatedSegment(
+                    source,
+                    x_units,
+                    x_distance,
+                    y_units,
+                    y_distance,
+                ) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let dx = x_units * x_distance;
+                    let dy = -y_units * y_distance;
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
+                Kind::VectorTranslatedSegment(source, start, end) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let start = d.position(start)?;
+                    let end = d.position(end)?;
+                    let dx = end.x - start.x;
+                    let dy = end.y - start.y;
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
+                Kind::MarkedDistanceTranslatedSegment(source, distance, angle) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let step = d.distance_value_pixels(distance)?;
+                    let radians = angle.to_radians();
+                    let dx = step * radians.cos();
+                    let dy = -step * radians.sin();
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
+                Kind::AngleRotatedSegment(source, center, first, vertex, last) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let theta = marked_rotation_theta(
+                        d.position(first)?,
+                        d.position(vertex)?,
+                        d.position(last)?,
+                    )?;
+                    Some((
+                        rotate_point_about(a, center, theta)?,
+                        rotate_point_about(b, center, theta)?,
+                        mode,
+                    ))
+                }
+                Kind::RotatedSegment(source, center, angle) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let theta = angle.to_radians();
+                    Some((
+                        rotate_point_about(a, center, theta)?,
+                        rotate_point_about(b, center, theta)?,
+                        mode,
+                    ))
+                }
+                Kind::ScaledSegment(source, center, factor) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let scale = |point: Point| Point {
+                        x: center.x + factor * (point.x - center.x),
+                        y: center.y + factor * (point.y - center.y),
+                    };
+                    let (a, b) = (scale(a), scale(b));
+                    (a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite())
+                        .then_some((a, b, mode))
+                }
+                Kind::RatioScaledSegment(source, center, origin, base, target) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let factor = d.ratio_for_points(origin, base, target)?;
+                    let scale = |point: Point| Point {
+                        x: center.x + factor * (point.x - center.x),
+                        y: center.y + factor * (point.y - center.y),
+                    };
+                    let (a, b) = (scale(a), scale(b));
+                    (a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite())
+                        .then_some((a, b, mode))
+                }
+                Kind::ReflectedSegment(source, mirror) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let (mirror_a, mirror_b, _) = go(d, mirror, seen)?;
+                    Some((
+                        reflect_point(a, mirror_a, mirror_b)?,
+                        reflect_point(b, mirror_a, mirror_b)?,
+                        mode,
+                    ))
+                }
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::CircleAxis(circle, axis @ (0 | 1)) => {
                     let (center, radius) = d.circle_points(circle)?;
@@ -5142,6 +5619,79 @@ impl Document {
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
         if self.objects.get(id.checked_sub(1)?)?.deleted {
             return None;
+        }
+        if let Kind::PolarTranslatedCircle(source, angle, units, distance) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let step = units * distance;
+            let radians = angle.to_radians();
+            let moved = Point {
+                x: center.x + step * radians.cos(),
+                y: center.y - step * radians.sin(),
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::FixedRectangularTranslatedCircle(
+            source,
+            x_units,
+            x_distance,
+            y_units,
+            y_distance,
+        ) = self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let moved = Point {
+                x: center.x + x_units * x_distance,
+                y: center.y - y_units * y_distance,
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::VectorTranslatedCircle(source, start, end) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let start = self.position(start)?;
+            let end = self.position(end)?;
+            let moved = Point {
+                x: center.x + end.x - start.x,
+                y: center.y + end.y - start.y,
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::MarkedDistanceTranslatedCircle(source, distance, angle) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let step = self.distance_value_pixels(distance)?;
+            let radians = angle.to_radians();
+            let moved = Point {
+                x: center.x + step * radians.cos(),
+                y: center.y - step * radians.sin(),
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::AngleRotatedCircle(source, center, first, vertex, last) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (source_center, radius) = self.circle_points(source)?;
+            let center = self.position(center)?;
+            let theta = marked_rotation_theta(
+                self.position(first)?,
+                self.position(vertex)?,
+                self.position(last)?,
+            )?;
+            return Some((rotate_point_about(source_center, center, theta)?, radius));
+        }
+        if let Kind::RotatedCircle(source, center, angle) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (source_center, radius) = self.circle_points(source)?;
+            let center = self.position(center)?;
+            return Some((
+                rotate_point_about(source_center, center, angle.to_radians())?,
+                radius,
+            ));
         }
         if let Kind::ReflectedCircle(source, mirror) = self.objects.get(id.checked_sub(1)?)?.kind {
             let (center, radius) = self.circle_points(source)?;
@@ -5362,6 +5912,7 @@ impl Document {
             _ => return false,
         };
         self.objects[id - 1].kind = kind;
+        self.last_moved_object = Some(id);
         self.dirty = true;
         true
     }
@@ -5611,9 +6162,25 @@ impl Document {
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
                 || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
+                || matches!(o.kind, Kind::PolarTranslatedSegment(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
+                || matches!(o.kind, Kind::PolarTranslatedCircle(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
+                || matches!(o.kind, Kind::FixedRectangularTranslatedPoint(_, xu, xd, yu, yd)
+                    if !xu.is_finite() || !xd.is_finite() || !yu.is_finite() || !yd.is_finite()
+                    || (xu - 37.79527559055118).abs() > 1e-9
+                    || (yu - 37.79527559055118).abs() > 1e-9)
+                || matches!(o.kind, Kind::FixedRectangularTranslatedSegment(_, xu, xd, yu, yd)
+                    if !xu.is_finite() || !xd.is_finite() || !yu.is_finite() || !yd.is_finite()
+                    || (xu - 37.79527559055118).abs() > 1e-9
+                    || (yu - 37.79527559055118).abs() > 1e-9)
+                || matches!(o.kind, Kind::FixedRectangularTranslatedCircle(_, xu, xd, yu, yd)
+                    if !xu.is_finite() || !xd.is_finite() || !yu.is_finite() || !yd.is_finite()
+                    || (xu - 37.79527559055118).abs() > 1e-9
+                    || (yu - 37.79527559055118).abs() > 1e-9)
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedPoint(_, _, angle) if !angle.is_finite())
-                || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) if !factor.is_finite() || factor == 0.)
-                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) if !angle.is_finite())
+                || matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(_, _, angle) | Kind::MarkedDistanceTranslatedCircle(_, _, angle) if !angle.is_finite())
+                || matches!(o.kind, Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, _) if !fixed_cm.is_finite())
+                || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) | Kind::ScaledSegment(_, _, factor) if !factor.is_finite() || factor == 0.)
+                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedCircle(_, _, angle) if !angle.is_finite())
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -5939,6 +6506,50 @@ impl Document {
                 return Err(format!("Invalid source point in translation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::PolarTranslatedSegment(source, _, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!("Invalid source segment in translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PolarTranslatedCircle(source, _, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || self.circle_points(o.id).is_none())
+            {
+                return Err(format!("Invalid source circle in translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::FixedRectangularTranslatedPoint(source, _, _, _, _)
+                    if self.position(source).is_none()
+                    || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind)))
+            {
+                return Err(format!(
+                    "Invalid source point in rectangular translation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::FixedRectangularTranslatedSegment(source, _, _, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid source segment in rectangular translation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::FixedRectangularTranslatedCircle(source, _, _, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || self.circle_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid source circle in rectangular translation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
                 && matches!(o.kind, Kind::MarkedDistanceTranslatedPoint(source, distance, _)
                     if self.position(source).is_none()
                     || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
@@ -5946,6 +6557,50 @@ impl Document {
                     || self.distance_value_pixels(distance).is_none())
             {
                 return Err(format!("Invalid marked distance translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(source, distance, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| is_distance_value_kind(&object.kind))
+                    || self.distance_value_pixels(distance).is_none()
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid marked-distance segment translation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::MarkedDistanceTranslatedCircle(source, distance, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| is_distance_value_kind(&object.kind))
+                    || self.distance_value_pixels(distance).is_none()
+                    || self.circle_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid marked-distance circle translation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::MixedRectangularTranslatedPoint(source, distance, _, _)
+                    if self.position(source).is_none()
+                    || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| is_distance_value_kind(&object.kind))
+                    || self.distance_value_pixels(distance).is_none())
+            {
+                return Err(format!("Invalid mixed rectangular translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+                if self.position(source).is_none()
+                || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                || [horizontal, vertical].iter().any(|&id| {
+                    !self.objects.get(id.saturating_sub(1)).is_some_and(|object| is_distance_value_kind(&object.kind))
+                    || self.distance_value_pixels(id).is_none()
+                }))
+            {
+                return Err(format!("Invalid rectangular marked translation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::VectorTranslatedPoint(source, start, end)
@@ -5956,6 +6611,22 @@ impl Document {
                 }))
             {
                 return Err(format!("Invalid point in vector translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::VectorTranslatedSegment(source, start, end)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || [start, end].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()))
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!("Invalid segment in vector translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::VectorTranslatedCircle(source, start, end)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || [start, end].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()))
+                    || self.circle_points(o.id).is_none())
+            {
+                return Err(format!("Invalid circle in vector translation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::ReflectedPoint(source, mirror)
@@ -5970,6 +6641,20 @@ impl Document {
                     || self.circle_points(o.id).is_none())
             {
                 return Err(format!("Invalid circle or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::ReflectedSegment(source, mirror)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _)))
+                    || self.line_points(mirror).is_none() || self.line_points(o.id).is_none())
+            {
+                return Err(format!("Invalid segment or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::ReflectedPolygon(source, mirror)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
+                    || self.line_points(mirror).is_none() || self.polygon_points(o.id).is_none())
+            {
+                return Err(format!("Invalid interior or mirror in reflection {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::ScaledPoint(source, center, _)
@@ -5988,6 +6673,22 @@ impl Document {
                 return Err(format!("Invalid point or center in rotation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::RotatedSegment(source, center, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || self.line_points(o.id).is_none()
+                    || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none()))
+            {
+                return Err(format!("Invalid segment or center in rotation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RotatedCircle(source, center, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || self.circle_points(o.id).is_none()
+                    || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none()))
+            {
+                return Err(format!("Invalid circle or center in rotation {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(o.kind, Kind::AngleRotatedPoint(source, center, first, vertex, last)
                     if [source, center, first, vertex, last].iter().any(|&id| {
                         self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
@@ -5996,6 +6697,30 @@ impl Document {
                 }))
             {
                 return Err(format!("Invalid point in marked-angle rotation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::AngleRotatedSegment(source, center, first, vertex, last)
+                if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                || self.line_points(o.id).is_none()
+                || [center, first, vertex, last].iter().any(|&id| {
+                    self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
+                        object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()
+                    })
+                }))
+            {
+                return Err(format!("Invalid segment in marked-angle rotation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::AngleRotatedCircle(source, center, first, vertex, last)
+                if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                || self.circle_points(o.id).is_none()
+                || [center, first, vertex, last].iter().any(|&id| {
+                    self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
+                        object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()
+                    })
+                }))
+            {
+                return Err(format!("Invalid circle in marked-angle rotation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::RatioScaledPoint(source, center, origin, base, target)
@@ -6014,6 +6739,14 @@ impl Document {
                 return Err(format!("Invalid circle or center in dilation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::ScaledSegment(source, center, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _)))
+                    || self.objects.get(center.saturating_sub(1)).is_none_or(|o| o.deleted || !is_point_kind(&o.kind) || self.position(center).is_none())
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!("Invalid segment or center in dilation {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(o.kind, Kind::RatioScaledCircle(source, center, origin, base, target)
                     if self.circle_points(source).is_none()
                     || self.position(center).is_none()
@@ -6028,10 +6761,25 @@ impl Document {
                 return Err(format!("Invalid circle in marked-ratio dilation {}", o.id));
             }
             if i >= self.source_count
+                && matches!(o.kind, Kind::RatioScaledSegment(source, center, origin, base, target)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _)))
+                    || [center, origin, base, target].iter().any(|&id| {
+                        self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
+                            object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()
+                        })
+                    }) || self.ratio_for_points(origin, base, target).is_none()
+                    || self.line_points(o.id).is_none())
+            {
+                return Err(format!("Invalid segment in marked-ratio dilation {}", o.id));
+            }
+            if i >= self.source_count
                 && matches!(
                     o.kind,
                     Kind::PolarTranslatedPoint(_, _, _, _)
+                        | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
                         | Kind::MarkedDistanceTranslatedPoint(_, _, _)
+                        | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
+                        | Kind::RectangularMarkedTranslatedPoint(_, _, _)
                         | Kind::VectorTranslatedPoint(_, _, _)
                         | Kind::ReflectedPoint(_, _)
                         | Kind::ScaledPoint(_, _, _)
@@ -6788,9 +7536,10 @@ impl Document {
         }
         if self.objects.len() == self.source_count {
             let out = self.patch_marked_coordinate_link(out)?;
-            return self.patch_text_font_overrides(self.patch_visual_styles(
+            let out = self.patch_text_font_overrides(self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
-            )?);
+            )?)?;
+            return self.patch_last_moved_marker(out);
         }
         let preamble = rs
             .iter()
@@ -7135,23 +7884,50 @@ impl Document {
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _) => (15, vec![host]),
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
+                Kind::PolarTranslatedSegment(source, _, _, _) => (21, vec![source]),
+                Kind::PolarTranslatedCircle(source, _, _, _) => (21, vec![source]),
+                Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) => (17, vec![source]),
+                Kind::FixedRectangularTranslatedSegment(source, _, _, _, _) => (17, vec![source]),
+                Kind::FixedRectangularTranslatedCircle(source, _, _, _, _) => (17, vec![source]),
                 Kind::MarkedDistanceTranslatedPoint(source, distance, _) => {
                     (24, vec![source, distance])
                 }
-                Kind::VectorTranslatedPoint(source, start, end) => (16, vec![source, start, end]),
-                Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
-                Kind::ReflectedCircle(source, mirror) => (34, vec![source, mirror]),
-                Kind::ScaledPoint(source, center, _) | Kind::ScaledCircle(source, center, _) => {
-                    (30, vec![source, center])
+                Kind::MarkedDistanceTranslatedSegment(source, distance, _)
+                | Kind::MarkedDistanceTranslatedCircle(source, distance, _) => {
+                    (24, vec![source, distance])
                 }
-                Kind::RotatedPoint(source, center, _) => (27, vec![source, center]),
-                Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
+                Kind::MixedRectangularTranslatedPoint(source, distance, _, fixed_horizontal) => (
+                    if fixed_horizontal { 18 } else { 19 },
+                    vec![source, distance],
+                ),
+                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+                    (20, vec![source, horizontal, vertical])
+                }
+                Kind::VectorTranslatedPoint(source, start, end) => (16, vec![source, start, end]),
+                Kind::VectorTranslatedSegment(source, start, end)
+                | Kind::VectorTranslatedCircle(source, start, end) => {
+                    (16, vec![source, start, end])
+                }
+                Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
+                Kind::ReflectedCircle(source, mirror)
+                | Kind::ReflectedSegment(source, mirror)
+                | Kind::ReflectedPolygon(source, mirror) => (34, vec![source, mirror]),
+                Kind::ScaledPoint(source, center, _)
+                | Kind::ScaledCircle(source, center, _)
+                | Kind::ScaledSegment(source, center, _) => (30, vec![source, center]),
+                Kind::RotatedPoint(source, center, _)
+                | Kind::RotatedSegment(source, center, _)
+                | Kind::RotatedCircle(source, center, _) => (27, vec![source, center]),
+                Kind::AngleRotatedPoint(source, center, first, vertex, last)
+                | Kind::AngleRotatedSegment(source, center, first, vertex, last)
+                | Kind::AngleRotatedCircle(source, center, first, vertex, last) => {
                     (28, vec![source, center, first, vertex, last])
                 }
                 Kind::RatioScaledPoint(source, center, origin, base, target) => {
                     (32, vec![source, center, origin, base, target])
                 }
-                Kind::RatioScaledCircle(source, center, origin, base, target) => {
+                Kind::RatioScaledCircle(source, center, origin, base, target)
+                | Kind::RatioScaledSegment(source, center, origin, base, target) => {
                     (32, vec![source, center, origin, base, target])
                 }
                 Kind::Midpoint(_, _) => (
@@ -7191,11 +7967,76 @@ impl Document {
                 h[18] = 0;
                 h[19] = 0;
             }
+            if matches!(
+                o.kind,
+                Kind::PolarTranslatedSegment(_, _, _, _)
+                    | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+                    | Kind::VectorTranslatedSegment(_, _, _)
+                    | Kind::MarkedDistanceTranslatedSegment(_, _, _)
+                    | Kind::AngleRotatedSegment(_, _, _, _, _)
+                    | Kind::RotatedSegment(_, _, _)
+                    | Kind::ScaledSegment(_, _, _)
+                    | Kind::RatioScaledSegment(_, _, _, _, _)
+                    | Kind::ReflectedSegment(_, _)
+            ) {
+                h = header(2);
+                h[0] = code as u8;
+                if matches!(
+                    o.kind,
+                    Kind::VectorTranslatedSegment(_, _, _)
+                        | Kind::MarkedDistanceTranslatedSegment(_, _, _)
+                        | Kind::AngleRotatedSegment(_, _, _, _, _)
+                        | Kind::RotatedSegment(_, _, _)
+                        | Kind::ScaledSegment(_, _, _)
+                        | Kind::RatioScaledSegment(_, _, _, _, _)
+                ) {
+                    h[18] = 0x51;
+                    h[19] = 0x5c;
+                }
+            }
+            if matches!(
+                o.kind,
+                Kind::PolarTranslatedCircle(_, _, _, _)
+                    | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+                    | Kind::VectorTranslatedCircle(_, _, _)
+                    | Kind::MarkedDistanceTranslatedCircle(_, _, _)
+                    | Kind::AngleRotatedCircle(_, _, _, _, _)
+                    | Kind::RotatedCircle(_, _, _)
+            ) {
+                h = header(3);
+                h[0] = code as u8;
+                if matches!(
+                    o.kind,
+                    Kind::VectorTranslatedCircle(_, _, _)
+                        | Kind::MarkedDistanceTranslatedCircle(_, _, _)
+                        | Kind::AngleRotatedCircle(_, _, _, _, _)
+                        | Kind::RotatedCircle(_, _, _)
+                ) {
+                    h[18] = 0x51;
+                    h[19] = 0x5c;
+                }
+            }
             if matches!(o.kind, Kind::RatioScaledCircle(_, _, _, _, _)) {
                 h = header(3);
                 h[0] = code as u8;
                 h[18] = 0x51;
                 h[19] = 0x5c;
+            }
+            if matches!(o.kind, Kind::ReflectedPolygon(_, _)) {
+                h = header(8);
+                h[0] = code as u8;
+                if let Kind::ReflectedPolygon(source, _) = o.kind {
+                    let vertex_count = match &self.objects[source - 1].kind {
+                        Kind::Polygon(vertices) => vertices.len(),
+                        _ => return Err("Reflected interior requires a polygon".into()),
+                    };
+                    h[8..10].copy_from_slice(
+                        &polygon_subtype(vertex_count)
+                            .ok_or("Polygon has too many vertices")?
+                            .to_le_bytes(),
+                    );
+                }
+                h[20..24].copy_from_slice(&1u32.to_le_bytes());
             }
             if !o.visible {
                 h[2] = 1;
@@ -7233,7 +8074,9 @@ impl Document {
                         payload.extend_from_slice(&y.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::PolarTranslatedPoint(_, angle, units, distance) => {
+                    Kind::PolarTranslatedPoint(_, angle, units, distance)
+                    | Kind::PolarTranslatedSegment(_, angle, units, distance)
+                    | Kind::PolarTranslatedCircle(_, angle, units, distance) => {
                         let mut payload =
                             *include_bytes!("../assets/polar_translation_payload.bin");
                         payload[20..28].copy_from_slice(&angle.to_le_bytes());
@@ -7241,7 +8084,38 @@ impl Document {
                         payload[40..48].copy_from_slice(&distance.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::MarkedDistanceTranslatedPoint(_, _, angle) => {
+                    Kind::FixedRectangularTranslatedPoint(
+                        _,
+                        x_units,
+                        x_distance,
+                        y_units,
+                        y_distance,
+                    )
+                    | Kind::FixedRectangularTranslatedSegment(
+                        _,
+                        x_units,
+                        x_distance,
+                        y_units,
+                        y_distance,
+                    )
+                    | Kind::FixedRectangularTranslatedCircle(
+                        _,
+                        x_units,
+                        x_distance,
+                        y_units,
+                        y_distance,
+                    ) => {
+                        let mut payload =
+                            *include_bytes!("../assets/rectangular_fixed_translation_payload.bin");
+                        payload[4..12].copy_from_slice(&(x_units * x_distance).to_le_bytes());
+                        payload[12..20].copy_from_slice(&x_distance.to_le_bytes());
+                        payload[24..32].copy_from_slice(&(y_units * y_distance).to_le_bytes());
+                        payload[32..40].copy_from_slice(&y_distance.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::MarkedDistanceTranslatedPoint(_, _, angle)
+                    | Kind::MarkedDistanceTranslatedSegment(_, _, angle)
+                    | Kind::MarkedDistanceTranslatedCircle(_, _, angle) => {
                         let mut payload =
                             *include_bytes!("../assets/marked_distance_translation_payload.bin");
                         if angle != 90. {
@@ -7253,12 +8127,25 @@ impl Document {
                         payload[20..28].copy_from_slice(&angle.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) => {
+                    Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, fixed_horizontal) => {
+                        let mut payload =
+                            *include_bytes!("../assets/mixed_rectangular_translation_payload.bin");
+                        payload[0] = if fixed_horizontal { 18 } else { 19 };
+                        payload[4..12]
+                            .copy_from_slice(&(fixed_cm * 37.79527559055118).to_le_bytes());
+                        payload[12..20].copy_from_slice(&fixed_cm.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::ScaledPoint(_, _, factor)
+                    | Kind::ScaledCircle(_, _, factor)
+                    | Kind::ScaledSegment(_, _, factor) => {
                         let mut payload = vec![30, 0, 0, 0];
                         payload.extend_from_slice(&factor.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::RotatedPoint(_, _, angle) => {
+                    Kind::RotatedPoint(_, _, angle)
+                    | Kind::RotatedSegment(_, _, angle)
+                    | Kind::RotatedCircle(_, _, angle) => {
                         let mut payload = *include_bytes!("../assets/rotation_payload.bin");
                         payload[4..12].copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
                         payload[12..20].copy_from_slice(&angle.to_radians().cos().to_le_bytes());
@@ -7272,7 +8159,7 @@ impl Document {
         }
         let added_len = added.len();
         out.splice(insert_at..insert_at, added);
-        let last_function = self
+        let last_marker_object = self
             .objects
             .iter()
             .rev()
@@ -7286,10 +8173,11 @@ impl Document {
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::PlottedPoint(_, _, _, _)
                         | Kind::CoordinateMeasurement { .. }
+                        | Kind::ReflectedPolygon(_, _)
                 )
             })
             .map(|o| o.id);
-        if let Some(id) = last_function {
+        if let Some(id) = last_marker_object {
             if let Some(marker) = rs
                 .iter()
                 .find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer)
@@ -7314,11 +8202,31 @@ impl Document {
                 .start;
             out.splice(resource_at..resource_at, resource);
         }
-        self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
+        let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
             self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
             )?,
-        )?)
+        )?)?;
+        self.patch_last_moved_marker(out)
+    }
+    fn patch_last_moved_marker(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let Some(id) = self.last_moved_object else {
+            return Ok(bytes);
+        };
+        if !self
+            .objects
+            .iter()
+            .any(|object| matches!(object.kind, Kind::ReflectedPolygon(_, _)))
+        {
+            return Ok(bytes);
+        }
+        if let Some(marker) = records(&bytes)?
+            .into_iter()
+            .find(|record| record.kind == 0x2328 && record.data.len() == 4)
+        {
+            bytes[marker.data].copy_from_slice(&(id as u32).to_le_bytes());
+        }
+        Ok(bytes)
     }
     fn patch_text_font_overrides(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let overrides = self
@@ -9695,6 +10603,351 @@ mod tests {
         );
     }
     #[test]
+    fn marked_distance_shape_translations_import_and_track_measurement() {
+        for (path, expected_kind) in [
+            (
+                "tests/fixtures/marked_distance_segment_translation_original.gsp",
+                Kind::MarkedDistanceTranslatedSegment(6, 5, 90.),
+            ),
+            (
+                "tests/fixtures/marked_distance_circle_translation_original.gsp",
+                Kind::MarkedDistanceTranslatedCircle(6, 5, 90.),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(native.objects[6].kind, expected_kind, "{path}");
+            assert_eq!(native.encode().unwrap(), bytes, "{path}");
+        }
+
+        let mut created = Document::new();
+        let measure_start = created.add(Kind::Free(Point { x: 150., y: 120. }));
+        let measure_end = created.add(Kind::Free(Point { x: 250., y: 120. }));
+        let source_start = created.add(Kind::Free(Point { x: 100., y: 220. }));
+        let source_end = created.add(Kind::Free(Point { x: 200., y: 220. }));
+        let distance = created.add(Kind::PointDistance(measure_start, measure_end));
+        let segment = created.add(Kind::Segment(source_start, source_end));
+        let circle = created.add(Kind::Circle(source_start, source_end));
+        let moved_segment = created.add(Kind::MarkedDistanceTranslatedSegment(
+            segment, distance, 90.,
+        ));
+        let moved_circle = created.add(Kind::MarkedDistanceTranslatedCircle(circle, distance, 90.));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(reopened.move_point(measure_end, Point { x: 300., y: 120. }));
+        let (a, b, mode) = reopened.line_points(moved_segment).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert!((a.x - 100.).abs() < 1e-9 && (a.y - 70.).abs() < 1e-9);
+        assert!((b.x - 200.).abs() < 1e-9 && (b.y - 70.).abs() < 1e-9);
+        let (center, radius) = reopened.circle_points(moved_circle).unwrap();
+        assert!((center.x - 100.).abs() < 1e-9 && (center.y - 70.).abs() < 1e-9);
+        assert_eq!(radius, 100.);
+    }
+    #[test]
+    fn rectangular_marked_translation_imports_and_tracks_both_measurements() {
+        let bytes = fs::read("tests/fixtures/rectangular_marked_translation_original.gsp").unwrap();
+        let native = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(
+            native.objects[7].kind,
+            Kind::RectangularMarkedTranslatedPoint(5, 6, 7)
+        );
+        assert_eq!(native.position(8), Some(Point { x: 200., y: 160. }));
+        assert_eq!(native.encode().unwrap(), bytes);
+
+        let mut created = Document::new();
+        let h_start = created.add(Kind::Free(Point { x: 150., y: 120. }));
+        let h_end = created.add(Kind::Free(Point { x: 250., y: 120. }));
+        let v_start = created.add(Kind::Free(Point { x: 150., y: 180. }));
+        let v_end = created.add(Kind::Free(Point { x: 150., y: 230. }));
+        let source = created.add(Kind::Free(Point { x: 100., y: 210. }));
+        let horizontal = created.add(Kind::PointDistance(h_start, h_end));
+        let vertical = created.add(Kind::PointDistance(v_start, v_end));
+        let image = created.add(Kind::RectangularMarkedTranslatedPoint(
+            source, horizontal, vertical,
+        ));
+        assert_eq!(created.position(image), Some(Point { x: 200., y: 160. }));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, created.objects[7].kind);
+        assert!(reopened.move_point(h_end, Point { x: 300., y: 120. }));
+        assert!(reopened.move_point(v_end, Point { x: 150., y: 250. }));
+        assert_eq!(reopened.position(image), Some(Point { x: 250., y: 140. }));
+    }
+    #[test]
+    fn fixed_rectangular_translation_imports_and_tracks_source() {
+        let bytes = fs::read("tests/fixtures/rectangular_fixed_translation_original.gsp").unwrap();
+        let native = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(
+            native.objects[7].kind,
+            Kind::FixedRectangularTranslatedPoint(
+                5,
+                37.79527559055118,
+                2.,
+                37.79527559055118,
+                -0.5
+            )
+        );
+        let expected = Point {
+            x: 100. + 2. * 37.79527559055118,
+            y: 210. + 0.5 * 37.79527559055118,
+        };
+        let position = native.position(8).unwrap();
+        assert!((position.x - expected.x).abs() < 1e-9);
+        assert!((position.y - expected.y).abs() < 1e-9);
+        assert_eq!(native.encode().unwrap(), bytes);
+
+        let mut created = Document::new();
+        let source = created.add(Kind::Free(Point { x: 100., y: 210. }));
+        let image = created.add(Kind::FixedRectangularTranslatedPoint(
+            source,
+            37.79527559055118,
+            2.,
+            37.79527559055118,
+            -0.5,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[1].kind, created.objects[1].kind);
+        assert!(reopened.move_point(source, Point { x: 120., y: 200. }));
+        let moved = reopened.position(image).unwrap();
+        assert!((moved.x - expected.x - 20.).abs() < 1e-9);
+        assert!((moved.y - expected.y + 10.).abs() < 1e-9);
+    }
+    #[test]
+    fn mixed_rectangular_translation_imports_and_tracks_marked_axis() {
+        for (path, expected_kind, expected_position) in [
+            (
+                "tests/fixtures/rectangular_mixed_horizontal_original.gsp",
+                Kind::MixedRectangularTranslatedPoint(5, 7, 2., true),
+                Point {
+                    x: 100. + 2. * 37.79527559055118,
+                    y: 160.,
+                },
+            ),
+            (
+                "tests/fixtures/rectangular_mixed_vertical_original.gsp",
+                Kind::MixedRectangularTranslatedPoint(5, 6, 2., false),
+                Point {
+                    x: 200.,
+                    y: 210. - 2. * 37.79527559055118,
+                },
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(native.objects[7].kind, expected_kind, "{path}");
+            let position = native.position(8).unwrap();
+            assert!((position.x - expected_position.x).abs() < 1e-9, "{path}");
+            assert!((position.y - expected_position.y).abs() < 1e-9, "{path}");
+            assert_eq!(native.encode().unwrap(), bytes, "{path}");
+        }
+
+        let mut created = Document::new();
+        let h_start = created.add(Kind::Free(Point { x: 150., y: 120. }));
+        let h_end = created.add(Kind::Free(Point { x: 250., y: 120. }));
+        let v_start = created.add(Kind::Free(Point { x: 150., y: 180. }));
+        let v_end = created.add(Kind::Free(Point { x: 150., y: 230. }));
+        let source = created.add(Kind::Free(Point { x: 100., y: 210. }));
+        let horizontal = created.add(Kind::PointDistance(h_start, h_end));
+        let vertical = created.add(Kind::PointDistance(v_start, v_end));
+        let fixed_x = created.add(Kind::MixedRectangularTranslatedPoint(
+            source, vertical, 2., true,
+        ));
+        let fixed_y = created.add(Kind::MixedRectangularTranslatedPoint(
+            source, horizontal, 2., false,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, created.objects[7].kind);
+        assert_eq!(reopened.objects[8].kind, created.objects[8].kind);
+        assert!(reopened.move_point(h_end, Point { x: 300., y: 120. }));
+        assert!(reopened.move_point(v_end, Point { x: 150., y: 250. }));
+        let x = reopened.position(fixed_x).unwrap();
+        let y = reopened.position(fixed_y).unwrap();
+        assert!((x.x - (100. + 2. * 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(x.y, 140.);
+        assert_eq!(y.x, 250.);
+        assert!((y.y - (210. - 2. * 37.79527559055118)).abs() < 1e-9);
+    }
+    #[test]
+    fn polar_segment_translation_imports_and_tracks_endpoints() {
+        let bytes = fs::read("tests/fixtures/polar_segment_translation_original.gsp").unwrap();
+        let native = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(
+            native.objects[3].kind,
+            Kind::PolarTranslatedSegment(3, 90., 37.79527559055118, 1.)
+        );
+        let (a, b, mode) = native.line_points(4).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert!((a.x - 100.).abs() < 1e-9 && (a.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert!((b.x - 200.).abs() < 1e-9 && (b.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(native.encode().unwrap(), bytes);
+
+        let mut created = Document::new();
+        let start = created.add(Kind::Free(Point { x: 100., y: 200. }));
+        let end = created.add(Kind::Free(Point { x: 200., y: 200. }));
+        let segment = created.add(Kind::Segment(start, end));
+        let translated = created.add(Kind::PolarTranslatedSegment(
+            segment,
+            90.,
+            37.79527559055118,
+            1.,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[3].kind, created.objects[3].kind);
+        assert!(reopened.move_point(end, Point { x: 230., y: 220. }));
+        let (a, b, mode) = reopened.line_points(translated).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert!((a.x - 100.).abs() < 1e-9 && (a.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert!((b.x - 230.).abs() < 1e-9 && (b.y - (220. - 37.79527559055118)).abs() < 1e-9);
+    }
+    #[test]
+    fn polar_circle_translation_imports_and_tracks_center_and_radius() {
+        let bytes = fs::read("tests/fixtures/polar_circle_translation_original.gsp").unwrap();
+        let native = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(
+            native.objects[3].kind,
+            Kind::PolarTranslatedCircle(3, 90., 37.79527559055118, 1.)
+        );
+        let (center, radius) = native.circle_points(4).unwrap();
+        assert!((center.x - 100.).abs() < 1e-9);
+        assert!((center.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(radius, 50.);
+        assert_eq!(native.encode().unwrap(), bytes);
+
+        let mut created = Document::new();
+        let center = created.add(Kind::Free(Point { x: 100., y: 200. }));
+        let radius_point = created.add(Kind::Free(Point { x: 150., y: 200. }));
+        let circle = created.add(Kind::Circle(center, radius_point));
+        let moved = created.add(Kind::PolarTranslatedCircle(
+            circle,
+            90.,
+            37.79527559055118,
+            1.,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[3].kind, created.objects[3].kind);
+        assert!(reopened.move_point(radius_point, Point { x: 160., y: 200. }));
+        assert!(reopened.move_point(center, Point { x: 120., y: 210. }));
+        let (new_center, new_radius) = reopened.circle_points(moved).unwrap();
+        assert!((new_center.x - 120.).abs() < 1e-9);
+        assert!((new_center.y - (210. - 37.79527559055118)).abs() < 1e-9);
+        assert!((new_radius - 40_f64.hypot(10.)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rectangular_segment_translation_imports_and_tracks_endpoints() {
+        let bytes =
+            fs::read("tests/fixtures/rectangular_segment_translation_original.gsp").unwrap();
+        let native = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(
+            native.objects[3].kind,
+            Kind::FixedRectangularTranslatedSegment(
+                3,
+                37.79527559055118,
+                1.,
+                37.79527559055118,
+                1.
+            )
+        );
+        let (a, b, mode) = native.line_points(4).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert!((a.x - (100. + 37.79527559055118)).abs() < 1e-9);
+        assert!((a.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert!((b.x - (200. + 37.79527559055118)).abs() < 1e-9);
+        assert!((b.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(native.encode().unwrap(), bytes);
+
+        let mut created = Document::new();
+        let start = created.add(Kind::Free(Point { x: 100., y: 200. }));
+        let end = created.add(Kind::Free(Point { x: 200., y: 200. }));
+        let segment = created.add(Kind::Segment(start, end));
+        let translated = created.add(Kind::FixedRectangularTranslatedSegment(
+            segment,
+            37.79527559055118,
+            1.,
+            37.79527559055118,
+            1.,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(reopened.move_point(end, Point { x: 230., y: 220. }));
+        let (_, end, mode) = reopened.line_points(translated).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert!((end.x - (230. + 37.79527559055118)).abs() < 1e-9);
+        assert!((end.y - (220. - 37.79527559055118)).abs() < 1e-9);
+    }
+    #[test]
+    fn rectangular_circle_and_vector_shapes_import_and_track_sources() {
+        for (path, expected_kind) in [
+            (
+                "tests/fixtures/rectangular_circle_translation_original.gsp",
+                Kind::FixedRectangularTranslatedCircle(
+                    3,
+                    37.79527559055118,
+                    1.,
+                    37.79527559055118,
+                    1.,
+                ),
+            ),
+            (
+                "tests/fixtures/vector_segment_translation_original.gsp",
+                Kind::VectorTranslatedSegment(3, 1, 2),
+            ),
+            (
+                "tests/fixtures/vector_circle_translation_original.gsp",
+                Kind::VectorTranslatedCircle(6, 1, 2),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(native.objects.last().unwrap().kind, expected_kind, "{path}");
+            assert_eq!(native.encode().unwrap(), bytes, "{path}");
+        }
+
+        let mut created = Document::new();
+        let start = created.add(Kind::Free(Point { x: 150., y: 120. }));
+        let end = created.add(Kind::Free(Point { x: 220., y: 130. }));
+        let segment = created.add(Kind::Segment(start, end));
+        let center = created.add(Kind::Free(Point { x: 100., y: 200. }));
+        let radius_point = created.add(Kind::Free(Point { x: 150., y: 200. }));
+        let circle = created.add(Kind::Circle(center, radius_point));
+        let vector_segment = created.add(Kind::VectorTranslatedSegment(segment, start, end));
+        let vector_circle = created.add(Kind::VectorTranslatedCircle(circle, start, end));
+        let rectangular_circle = created.add(Kind::FixedRectangularTranslatedCircle(
+            circle,
+            37.79527559055118,
+            1.,
+            37.79527559055118,
+            1.,
+        ));
+        let mut reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(reopened.move_point(end, Point { x: 250., y: 140. }));
+        assert!(reopened.move_point(radius_point, Point { x: 160., y: 200. }));
+        let (segment_a, segment_b, mode) = reopened.line_points(vector_segment).unwrap();
+        assert_eq!(mode, LineMode::Segment);
+        assert_eq!(segment_a, Point { x: 250., y: 140. });
+        assert_eq!(segment_b, Point { x: 350., y: 160. });
+        let (vector_center, vector_radius) = reopened.circle_points(vector_circle).unwrap();
+        assert_eq!(vector_center, Point { x: 200., y: 220. });
+        assert_eq!(vector_radius, 60.);
+        let (rect_center, rect_radius) = reopened.circle_points(rectangular_circle).unwrap();
+        assert!((rect_center.x - (100. + 37.79527559055118)).abs() < 1e-9);
+        assert!((rect_center.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(rect_radius, 60.);
+    }
+    #[test]
     fn straight_intersection_handles_parallel_and_rays() {
         let a = Point { x: 0., y: 0. };
         let b = Point { x: 1., y: 0. };
@@ -10244,6 +11497,193 @@ mod tests {
             !Document::from_bytes(&reopened.encode().unwrap(), None)
                 .unwrap()
                 .partial_view
+        );
+    }
+    #[test]
+    fn marked_angle_rotation_of_shapes_imports_and_tracks_angle_points() {
+        for (path, expected) in [
+            (
+                "tests/fixtures/angle_rotation_segment_original.gsp",
+                Kind::AngleRotatedSegment(7, 1, 2, 3, 4),
+            ),
+            (
+                "tests/fixtures/angle_rotation_circle_original.gsp",
+                Kind::AngleRotatedCircle(7, 1, 2, 3, 4),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let mut native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(native.objects[7].kind, expected);
+            assert_eq!(native.encode().unwrap(), bytes);
+            let before = if matches!(&expected, Kind::AngleRotatedSegment(..)) {
+                let (a, b, _) = native.line_points(8).unwrap();
+                assert!((a.x - 90.).abs() < 1e-8 && (a.y - 190.).abs() < 1e-8);
+                assert!((b.x - 90.).abs() < 1e-8 && (b.y - 230.).abs() < 1e-8);
+                a
+            } else {
+                let (center, radius) = native.circle_points(8).unwrap();
+                assert_eq!(radius, 40.);
+                assert!((center.x - 90.).abs() < 1e-8 && (center.y - 190.).abs() < 1e-8);
+                center
+            };
+            assert!(native.move_point(4, Point { x: 290., y: 190. }));
+            let after = if matches!(&expected, Kind::AngleRotatedSegment(..)) {
+                native.line_points(8).unwrap().0
+            } else {
+                native.circle_points(8).unwrap().0
+            };
+            assert_ne!(after, before);
+        }
+    }
+    #[test]
+    fn fixed_rotation_of_shapes_imports_and_tracks_center() {
+        for (path, expected) in [
+            (
+                "tests/fixtures/fixed_rotation_segment_original.gsp",
+                Kind::RotatedSegment(4, 1, 90.),
+            ),
+            (
+                "tests/fixtures/fixed_rotation_circle_original.gsp",
+                Kind::RotatedCircle(4, 1, 90.),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let mut native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(native.objects[4].kind, expected);
+            assert_eq!(native.encode().unwrap(), bytes);
+            let rotated_center = if matches!(&expected, Kind::RotatedSegment(..)) {
+                let (a, b, _) = native.line_points(5).unwrap();
+                assert!((a.x - 170.).abs() < 1e-8 && (a.y - 110.).abs() < 1e-8);
+                assert!((b.x - 170.).abs() < 1e-8 && (b.y - 70.).abs() < 1e-8);
+                a
+            } else {
+                let (center, radius) = native.circle_points(5).unwrap();
+                assert_eq!(radius, 40.);
+                assert!((center.x - 170.).abs() < 1e-8 && (center.y - 110.).abs() < 1e-8);
+                center
+            };
+            assert!(native.move_point(1, Point { x: 140., y: 150. }));
+            let after = if matches!(&expected, Kind::RotatedSegment(..)) {
+                native.line_points(5).unwrap().0
+            } else {
+                native.circle_points(5).unwrap().0
+            };
+            assert_ne!(rotated_center, after);
+        }
+    }
+    #[test]
+    fn segment_dilations_and_reflection_import_and_track_dependencies() {
+        for (path, expected) in [
+            (
+                "tests/fixtures/fixed_dilation_segment_original.gsp",
+                Kind::ScaledSegment(4, 1, 0.5),
+            ),
+            (
+                "tests/fixtures/ratio_dilation_segment_original.gsp",
+                Kind::RatioScaledSegment(7, 1, 2, 3, 4),
+            ),
+            (
+                "tests/fixtures/reflection_segment_original.gsp",
+                Kind::ReflectedSegment(6, 3),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let mut native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            let image = native.objects.len();
+            assert_eq!(native.objects[image - 1].kind, expected);
+            assert_eq!(native.encode().unwrap(), bytes);
+            let (a, b, mode) = native.line_points(image).unwrap();
+            assert_eq!(mode, LineMode::Segment);
+            if matches!(&expected, Kind::ReflectedSegment(..)) {
+                assert!((a.x - 40.).abs() < 1e-8 && (b.x - 0.).abs() < 1e-8);
+                assert!(native.move_point(2, Point { x: 120., y: 220. }));
+            } else {
+                assert_eq!(a, Point { x: 120., y: 120. });
+                assert_eq!(b, Point { x: 130., y: 120. });
+                let moved = if matches!(&expected, Kind::ScaledSegment(..)) {
+                    native.move_point(1, Point { x: 110., y: 120. })
+                } else {
+                    native.move_point(4, Point { x: 255., y: 100. })
+                };
+                assert!(moved);
+            }
+            assert_ne!(native.line_points(image).unwrap().0, a);
+        }
+    }
+    #[test]
+    fn reflected_polygon_imports_and_tracks_mirror() {
+        for (path, polygon, mirror, image) in [
+            ("tests/fixtures/reflection_polygon_original.gsp", 7, 3, 8),
+            ("tests/fixtures/reflection.gsp", 9, 4, 13),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let native = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!native.partial_view, "{path}");
+            assert_eq!(
+                native.objects[image - 1].kind,
+                Kind::ReflectedPolygon(polygon, mirror)
+            );
+            assert_eq!(native.encode().unwrap(), bytes);
+            assert_eq!(
+                native.objects[image - 1].visual_style,
+                native.objects[polygon - 1].visual_style
+            );
+        }
+
+        let mut native =
+            Document::open(Path::new("tests/fixtures/reflection_polygon_original.gsp")).unwrap();
+        let before = native.polygon_points(8).unwrap();
+        assert_eq!(
+            before,
+            vec![
+                Point { x: 100., y: 130. },
+                Point { x: 60., y: 180. },
+                Point { x: 100., y: 230. },
+            ]
+        );
+        assert!(native.move_point(2, Point { x: 170., y: 230. }));
+        assert_ne!(native.polygon_points(8).unwrap(), before);
+        assert_eq!(
+            native.encode().unwrap(),
+            fs::read("tests/fixtures/reflection_polygon_mirror_dragged_by_wine.gsp").unwrap()
+        );
+
+        let mut created = Document::new();
+        let mirror_a = created.add(Kind::Free(Point { x: 150., y: 100. }));
+        let mirror_b = created.add(Kind::Free(Point { x: 150., y: 230. }));
+        let mirror = created.add(Kind::Segment(mirror_a, mirror_b));
+        let a = created.add(Kind::Free(Point { x: 200., y: 130. }));
+        let b = created.add(Kind::Free(Point { x: 240., y: 180. }));
+        let c = created.add(Kind::Free(Point { x: 200., y: 230. }));
+        let polygon = created.add(Kind::Polygon(vec![a, b, c]));
+        let image = created.add(Kind::ReflectedPolygon(polygon, mirror));
+        assert_eq!(
+            created.objects[image - 1].visual_style,
+            created.objects[polygon - 1].visual_style
+        );
+        let encoded = created.encode().unwrap();
+        let marker = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x2328)
+            .unwrap();
+        assert_eq!(u32_at(&encoded, marker.data.start), image as u32);
+        assert!(created.move_point(mirror_b, Point { x: 170., y: 230. }));
+        let moved = created.encode().unwrap();
+        let marker = records(&moved)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x2328)
+            .unwrap();
+        assert_eq!(u32_at(&moved, marker.data.start), mirror_b as u32);
+        let reopened = Document::from_bytes(&moved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.polygon_points(image),
+            created.polygon_points(image)
         );
     }
     #[test]

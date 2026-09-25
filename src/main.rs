@@ -30,7 +30,11 @@ enum Tool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TranslationMode {
     FixedPolar,
+    FixedRectangular,
     MarkedDistance,
+    RectangularMarked,
+    RectangularHorizontalFixed,
+    RectangularVerticalFixed,
     MarkedVector,
 }
 enum PendingAction {
@@ -150,6 +154,7 @@ struct Editor {
     marked_mirror: Option<usize>,
     marked_vector: Option<(usize, usize)>,
     marked_distance: Option<usize>,
+    marked_rectangular_distances: Option<(usize, usize)>,
     marked_angle: Option<[usize; 3]>,
     marked_ratio: Option<[usize; 3]>,
     trace_marks: Vec<TraceMark>,
@@ -172,6 +177,8 @@ struct Editor {
     translate_dialog: bool,
     translation_angle: f64,
     translation_distance: f64,
+    translation_horizontal: f64,
+    translation_vertical: f64,
     translation_mode: TranslationMode,
     dilate_dialog: bool,
     dilation_factor: f64,
@@ -220,6 +227,7 @@ impl Editor {
             marked_mirror: None,
             marked_vector: None,
             marked_distance: None,
+            marked_rectangular_distances: None,
             marked_angle: None,
             marked_ratio: None,
             trace_marks: Vec::new(),
@@ -242,6 +250,8 @@ impl Editor {
             translate_dialog: false,
             translation_angle: 90.,
             translation_distance: 1.,
+            translation_horizontal: 1.,
+            translation_vertical: 1.,
             translation_mode: TranslationMode::FixedPolar,
             dilate_dialog: false,
             dilation_factor: 0.5,
@@ -762,16 +772,10 @@ impl Editor {
                         LineMode::Line => t,
                     };
                     (p - (a + ab * t)).length()
+                } else if let Some((center, radius)) = self.doc.circle_points(o.id) {
+                    ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                 } else {
                     match o.kind {
-                        Kind::Circle(_, _)
-                        | Kind::CircleBySegment(_, _)
-                        | Kind::ReflectedCircle(_, _)
-                        | Kind::ScaledCircle(_, _, _)
-                        | Kind::RatioScaledCircle(_, _, _, _, _) => {
-                            let (center, radius) = self.doc.circle_points(o.id)?;
-                            ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
-                        }
                         Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
                             let points = self.doc.arc_points(o.id, 96)?;
                             points
@@ -785,7 +789,7 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
-                        Kind::Polygon(_) => {
+                        Kind::Polygon(_) | Kind::ReflectedPolygon(_, _) => {
                             let points = self.doc.polygon_points(o.id)?;
                             let points: Vec<_> =
                                 points.into_iter().map(|point| v.screen(point)).collect();
@@ -1672,23 +1676,110 @@ impl Editor {
             self.status = "Translation on this document cannot be saved safely".into();
             return;
         }
-        if self.selection_order.len() != 1 || self.doc.position(self.selection_order[0]).is_none() {
-            self.status = "Select one point to translate".into();
+        if self.selection_order.len() != 1 {
+            self.status = "Select one point, segment, or circle to translate".into();
             return;
         }
         let source = self.selection_order[0];
+        let source_is_segment = matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|object| &object.kind),
+            Some(Kind::Segment(_, _))
+        );
+        let source_is_circle = matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|object| &object.kind),
+            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+        );
+        if self.doc.position(source).is_none() && !source_is_segment && !source_is_circle {
+            self.status = "Select one point, segment, or circle to translate".into();
+            return;
+        }
+        if (source_is_segment
+            && !matches!(
+                self.translation_mode,
+                TranslationMode::FixedPolar
+                    | TranslationMode::FixedRectangular
+                    | TranslationMode::MarkedVector
+                    | TranslationMode::MarkedDistance
+            ))
+            || (source_is_circle
+                && !matches!(
+                    self.translation_mode,
+                    TranslationMode::FixedPolar
+                        | TranslationMode::FixedRectangular
+                        | TranslationMode::MarkedVector
+                        | TranslationMode::MarkedDistance
+                ))
+        {
+            self.status = "This translation mode currently supports points only".into();
+            return;
+        }
         let kind = match self.translation_mode {
             TranslationMode::FixedPolar => {
                 if !self.translation_angle.is_finite() || !self.translation_distance.is_finite() {
                     self.status = "Translation values must be finite".into();
                     return;
                 }
-                Kind::PolarTranslatedPoint(
-                    source,
-                    self.translation_angle,
-                    37.79527559055118,
-                    self.translation_distance,
-                )
+                if source_is_segment {
+                    Kind::PolarTranslatedSegment(
+                        source,
+                        self.translation_angle,
+                        37.79527559055118,
+                        self.translation_distance,
+                    )
+                } else if source_is_circle {
+                    Kind::PolarTranslatedCircle(
+                        source,
+                        self.translation_angle,
+                        37.79527559055118,
+                        self.translation_distance,
+                    )
+                } else {
+                    Kind::PolarTranslatedPoint(
+                        source,
+                        self.translation_angle,
+                        37.79527559055118,
+                        self.translation_distance,
+                    )
+                }
+            }
+            TranslationMode::FixedRectangular => {
+                if !self.translation_horizontal.is_finite()
+                    || !self.translation_vertical.is_finite()
+                {
+                    self.status = "Translation values must be finite".into();
+                    return;
+                }
+                if source_is_segment {
+                    Kind::FixedRectangularTranslatedSegment(
+                        source,
+                        37.79527559055118,
+                        self.translation_horizontal,
+                        37.79527559055118,
+                        self.translation_vertical,
+                    )
+                } else if source_is_circle {
+                    Kind::FixedRectangularTranslatedCircle(
+                        source,
+                        37.79527559055118,
+                        self.translation_horizontal,
+                        37.79527559055118,
+                        self.translation_vertical,
+                    )
+                } else {
+                    Kind::FixedRectangularTranslatedPoint(
+                        source,
+                        37.79527559055118,
+                        self.translation_horizontal,
+                        37.79527559055118,
+                        self.translation_vertical,
+                    )
+                }
             }
             TranslationMode::MarkedDistance => {
                 let Some(distance) = self.marked_distance else {
@@ -1706,7 +1797,61 @@ impl Editor {
                     self.status = "Marked distance is unavailable".into();
                     return;
                 }
-                Kind::MarkedDistanceTranslatedPoint(source, distance, self.translation_angle)
+                if source_is_segment {
+                    Kind::MarkedDistanceTranslatedSegment(source, distance, self.translation_angle)
+                } else if source_is_circle {
+                    Kind::MarkedDistanceTranslatedCircle(source, distance, self.translation_angle)
+                } else {
+                    Kind::MarkedDistanceTranslatedPoint(source, distance, self.translation_angle)
+                }
+            }
+            TranslationMode::RectangularMarked => {
+                let Some((horizontal, vertical)) = self.marked_rectangular_distances else {
+                    self.status = "Mark two distance values first".into();
+                    return;
+                };
+                if [horizontal, vertical].iter().any(|&id| {
+                    self.doc
+                        .objects
+                        .get(id.saturating_sub(1))
+                        .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
+                        || self.doc.distance_value_pixels(id).is_none()
+                }) {
+                    self.status = "Marked distances are unavailable".into();
+                    return;
+                }
+                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+            }
+            TranslationMode::RectangularHorizontalFixed
+            | TranslationMode::RectangularVerticalFixed => {
+                let Some((horizontal, vertical)) = self.marked_rectangular_distances else {
+                    self.status = "Mark two distance values first".into();
+                    return;
+                };
+                let fixed_horizontal =
+                    self.translation_mode == TranslationMode::RectangularHorizontalFixed;
+                let distance = if fixed_horizontal {
+                    vertical
+                } else {
+                    horizontal
+                };
+                let fixed_cm = if fixed_horizontal {
+                    self.translation_horizontal
+                } else {
+                    self.translation_vertical
+                };
+                if !fixed_cm.is_finite()
+                    || self
+                        .doc
+                        .objects
+                        .get(distance.saturating_sub(1))
+                        .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
+                    || self.doc.distance_value_pixels(distance).is_none()
+                {
+                    self.status = "Mixed rectangular translation values are unavailable".into();
+                    return;
+                }
+                Kind::MixedRectangularTranslatedPoint(source, distance, fixed_cm, fixed_horizontal)
             }
             TranslationMode::MarkedVector => {
                 let Some((start, end)) = self.marked_vector else {
@@ -1723,7 +1868,13 @@ impl Editor {
                     self.status = "Marked vector is unavailable".into();
                     return;
                 }
-                Kind::VectorTranslatedPoint(source, start, end)
+                if source_is_segment {
+                    Kind::VectorTranslatedSegment(source, start, end)
+                } else if source_is_circle {
+                    Kind::VectorTranslatedCircle(source, start, end)
+                } else {
+                    Kind::VectorTranslatedPoint(source, start, end)
+                }
             }
         };
         let id = self.doc.add(kind);
@@ -1739,12 +1890,15 @@ impl Editor {
             [source] => match self.marked_mirror {
                 Some(mirror) => (*source, mirror),
                 None => {
-                    self.status = "Select a point or circle and mark a mirror line".into();
+                    self.status =
+                        "Select a point, segment, circle, or interior and mark a mirror line"
+                            .into();
                     return;
                 }
             },
             _ => {
-                self.status = "Select a point or circle, then a mirror line".into();
+                self.status =
+                    "Select a point, segment, circle, or interior, then a mirror line".into();
                 return;
             }
         };
@@ -1758,15 +1912,31 @@ impl Editor {
             return;
         }
         if self.doc.line_points(mirror).is_none() {
-            self.status = "Select a point or circle, then a mirror line".into();
+            self.status = "Select a point, segment, circle, or interior, then a mirror line".into();
             return;
         }
         let kind = if self.doc.position(source).is_some() {
             Kind::ReflectedPoint(source, mirror)
         } else if self.doc.circle_points(source).is_some() {
             Kind::ReflectedCircle(source, mirror)
+        } else if matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Segment(_, _))
+        ) {
+            Kind::ReflectedSegment(source, mirror)
+        } else if matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Polygon(_))
+        ) {
+            Kind::ReflectedPolygon(source, mirror)
         } else {
-            self.status = "Select a point or circle, then a mirror line".into();
+            self.status = "Select a point, segment, circle, or interior, then a mirror line".into();
             return;
         };
         let id = self.doc.add(kind);
@@ -1823,15 +1993,28 @@ impl Editor {
             .copied()
             .filter(|&id| self.doc.distance_value_pixels(id).is_some())
             .collect::<Vec<_>>();
-        let [id] = values.as_slice() else {
-            self.status = "Select one distance measurement for polar translation".into();
-            return;
-        };
-        self.marked_distance = Some(*id);
-        self.translation_mode = TranslationMode::MarkedDistance;
-        self.doc.selected.remove(id);
-        self.selection_order.retain(|selected| selected != id);
-        self.status = format!("Marked distance value {id}");
+        match values.as_slice() {
+            [id] => {
+                self.marked_distance = Some(*id);
+                self.translation_mode = TranslationMode::MarkedDistance;
+                self.doc.selected.remove(id);
+                self.selection_order.retain(|selected| selected != id);
+                self.status = format!("Marked distance value {id}");
+            }
+            [horizontal, vertical] => {
+                self.marked_rectangular_distances = Some((*horizontal, *vertical));
+                self.translation_mode = TranslationMode::RectangularMarked;
+                for id in [horizontal, vertical] {
+                    self.doc.selected.remove(id);
+                }
+                self.selection_order
+                    .retain(|id| id != horizontal && id != vertical);
+                self.status = format!(
+                    "Marked horizontal distance {horizontal} and vertical distance {vertical}"
+                );
+            }
+            _ => self.status = "Select one or two distance measurements".into(),
+        }
     }
     fn mark_angle_selected(&mut self) {
         let points = self
@@ -1915,7 +2098,7 @@ impl Editor {
             && (!self.dilation_factor.is_finite() || self.dilation_factor == 0.)
         {
             self.status =
-                "Select a point or circle, then a center point; use a nonzero ratio".into();
+                "Select a point, segment, or circle and a center point; use a nonzero ratio".into();
             return;
         }
         let (source, center) = match self.selection_order.as_slice() {
@@ -1928,7 +2111,7 @@ impl Editor {
                 }
             },
             _ => {
-                self.status = "Select a point or circle, then a center point".into();
+                self.status = "Select a point, segment, or circle, then a center point".into();
                 return;
             }
         };
@@ -1942,7 +2125,7 @@ impl Editor {
             return;
         }
         if self.doc.position(center).is_none() {
-            self.status = "Select a point or circle, then a center point".into();
+            self.status = "Select a point, segment, or circle, then a center point".into();
             return;
         }
         let kind = if self.dilation_use_marked {
@@ -1965,16 +2148,33 @@ impl Editor {
                 Kind::RatioScaledPoint(source, center, origin, base, target)
             } else if self.doc.circle_points(source).is_some() {
                 Kind::RatioScaledCircle(source, center, origin, base, target)
+            } else if matches!(
+                self.doc
+                    .objects
+                    .get(source.saturating_sub(1))
+                    .map(|o| &o.kind),
+                Some(Kind::Segment(_, _))
+            ) {
+                Kind::RatioScaledSegment(source, center, origin, base, target)
             } else {
-                self.status = "Select a point or circle to dilate by the marked ratio".into();
+                self.status =
+                    "Select a point, segment, or circle to dilate by the marked ratio".into();
                 return;
             }
         } else if self.doc.position(source).is_some() {
             Kind::ScaledPoint(source, center, self.dilation_factor)
         } else if self.doc.circle_points(source).is_some() {
             Kind::ScaledCircle(source, center, self.dilation_factor)
+        } else if matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Segment(_, _))
+        ) {
+            Kind::ScaledSegment(source, center, self.dilation_factor)
         } else {
-            self.status = "Select a point or circle, then a center point".into();
+            self.status = "Select a point, segment, or circle, then a center point".into();
             return;
         };
         let id = self.doc.add(kind);
@@ -1986,7 +2186,7 @@ impl Editor {
             return;
         }
         if !self.rotation_use_marked && !self.rotation_angle.is_finite() {
-            self.status = "Select a source point, then a center point; use a finite angle".into();
+            self.status = "Select a source and center point; use a finite angle".into();
             return;
         }
         let (source, center) = match self.selection_order.as_slice() {
@@ -1999,7 +2199,7 @@ impl Editor {
                 }
             },
             _ => {
-                self.status = "Select a source point, then a center point".into();
+                self.status = "Select a point, segment, or circle, then a center point".into();
                 return;
             }
         };
@@ -2012,8 +2212,21 @@ impl Editor {
             self.status = "Marked center point is unavailable".into();
             return;
         }
-        if self.doc.position(source).is_none() || self.doc.position(center).is_none() {
-            self.status = "Select a source point, then a center point".into();
+        let source_kind = self
+            .doc
+            .objects
+            .get(source.saturating_sub(1))
+            .map(|o| &o.kind);
+        let source_point = self.doc.position(source).is_some();
+        let source_segment = matches!(source_kind, Some(Kind::Segment(_, _)))
+            && self.doc.line_points(source).is_some();
+        let source_circle = matches!(
+            source_kind,
+            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+        ) && self.doc.circle_points(source).is_some();
+        if !(source_point || source_segment || source_circle) || self.doc.position(center).is_none()
+        {
+            self.status = "Select a point, segment, or circle and a center point".into();
             return;
         }
         let kind = if self.rotation_use_marked {
@@ -2032,9 +2245,21 @@ impl Editor {
                 self.status = "Marked angle is unavailable".into();
                 return;
             }
-            Kind::AngleRotatedPoint(source, center, first, vertex, last)
+            if source_point {
+                Kind::AngleRotatedPoint(source, center, first, vertex, last)
+            } else if source_segment {
+                Kind::AngleRotatedSegment(source, center, first, vertex, last)
+            } else {
+                Kind::AngleRotatedCircle(source, center, first, vertex, last)
+            }
         } else {
-            Kind::RotatedPoint(source, center, self.rotation_angle)
+            if source_point {
+                Kind::RotatedPoint(source, center, self.rotation_angle)
+            } else if source_segment {
+                Kind::RotatedSegment(source, center, self.rotation_angle)
+            } else {
+                Kind::RotatedCircle(source, center, self.rotation_angle)
+            }
         };
         let id = self.doc.add(kind);
         self.select_only(id);
@@ -2749,7 +2974,7 @@ impl Editor {
                         self.dilate_dialog = true;
                         ui.close();
                     }
-                    if ui.button("Rotate Point…").clicked() {
+                    if ui.button("Rotate…").clicked() {
                         self.rotate_dialog = true;
                         ui.close();
                     }
@@ -3004,6 +3229,7 @@ impl Editor {
                 || self.marked_mirror.is_some()
                 || self.marked_vector.is_some()
                 || self.marked_distance.is_some()
+                || self.marked_rectangular_distances.is_some()
                 || self.marked_angle.is_some()
                 || self.marked_ratio.is_some()
             {
@@ -3019,6 +3245,11 @@ impl Editor {
                 }
                 if let Some(id) = self.marked_distance {
                     ui.label(format!("Marked distance: {id}"));
+                }
+                if let Some((horizontal, vertical)) = self.marked_rectangular_distances {
+                    ui.label(format!(
+                        "Marked distances: horizontal {horizontal}, vertical {vertical}"
+                    ));
                 }
                 if let Some([first, vertex, last]) = self.marked_angle {
                     ui.label(format!("Marked angle: {first}–{vertex}–{last}"));
@@ -4248,6 +4479,8 @@ impl Editor {
         if self.translate_dialog {
             let mut angle = self.translation_angle;
             let mut distance = self.translation_distance;
+            let mut horizontal = self.translation_horizontal;
+            let mut vertical = self.translation_vertical;
             let mut mode = self.translation_mode;
             let mut apply = false;
             let mut cancel = false;
@@ -4258,11 +4491,33 @@ impl Editor {
                     TranslationMode::FixedPolar,
                     "Polar: fixed distance",
                 );
+                ui.radio_value(
+                    &mut mode,
+                    TranslationMode::FixedRectangular,
+                    "Rectangular: fixed distances",
+                );
                 ui.add_enabled_ui(self.marked_distance.is_some(), |ui| {
                     ui.radio_value(
                         &mut mode,
                         TranslationMode::MarkedDistance,
                         "Polar: marked distance",
+                    );
+                });
+                ui.add_enabled_ui(self.marked_rectangular_distances.is_some(), |ui| {
+                    ui.radio_value(
+                        &mut mode,
+                        TranslationMode::RectangularMarked,
+                        "Rectangular: marked distances",
+                    );
+                    ui.radio_value(
+                        &mut mode,
+                        TranslationMode::RectangularHorizontalFixed,
+                        "Rectangular: fixed horizontal, marked vertical",
+                    );
+                    ui.radio_value(
+                        &mut mode,
+                        TranslationMode::RectangularVerticalFixed,
+                        "Rectangular: marked horizontal, fixed vertical",
                     );
                 });
                 ui.add_enabled_ui(self.marked_vector.is_some(), |ui| {
@@ -4272,6 +4527,37 @@ impl Editor {
                     if let Some((start, end)) = self.marked_vector {
                         ui.label(format!("Point {start} → point {end}"));
                     }
+                } else if mode == TranslationMode::RectangularMarked {
+                    if let Some((horizontal, vertical)) = self.marked_rectangular_distances {
+                        ui.label(format!(
+                            "Horizontal distance {horizontal}; vertical distance {vertical}"
+                        ));
+                    }
+                } else if mode == TranslationMode::RectangularHorizontalFixed {
+                    if let Some((_, vertical_id)) = self.marked_rectangular_distances {
+                        ui.label(format!("Vertical distance value {vertical_id}"));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Horizontal (cm)");
+                        ui.add(egui::DragValue::new(&mut horizontal).speed(0.1));
+                    });
+                } else if mode == TranslationMode::RectangularVerticalFixed {
+                    if let Some((horizontal_id, _)) = self.marked_rectangular_distances {
+                        ui.label(format!("Horizontal distance value {horizontal_id}"));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Vertical (cm)");
+                        ui.add(egui::DragValue::new(&mut vertical).speed(0.1));
+                    });
+                } else if mode == TranslationMode::FixedRectangular {
+                    ui.horizontal(|ui| {
+                        ui.label("Horizontal (cm)");
+                        ui.add(egui::DragValue::new(&mut horizontal).speed(0.1));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Vertical (cm)");
+                        ui.add(egui::DragValue::new(&mut vertical).speed(0.1));
+                    });
                 } else {
                     ui.horizontal(|ui| {
                         ui.label("Angle (degrees)");
@@ -4295,6 +4581,8 @@ impl Editor {
             });
             self.translation_angle = angle;
             self.translation_distance = distance;
+            self.translation_horizontal = horizontal;
+            self.translation_vertical = vertical;
             self.translation_mode = mode;
             if apply {
                 self.translate_dialog = false;
@@ -4344,7 +4632,7 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_rotation")).show(root.ctx(), |ui| {
-                ui.heading("Rotate point");
+                ui.heading("Rotate");
                 ui.radio_value(&mut use_marked, false, "Fixed angle");
                 ui.add_enabled_ui(self.marked_angle.is_some(), |ui| {
                     ui.radio_value(&mut use_marked, true, "Marked angle");
@@ -4634,6 +4922,247 @@ mod tests {
         let moved = editor.doc.position(image).unwrap();
         assert!((moved.x - 100.).abs() < 1e-9 && (moved.y - 70.).abs() < 1e-9);
     }
+    #[test]
+    fn marked_distance_translates_selected_segment_and_circle() {
+        let mut editor = Editor::new(Document::new());
+        let measure_start = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let measure_end = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let source_start = editor.doc.add(Kind::Free(Point { x: 100., y: 220. }));
+        let source_end = editor.doc.add(Kind::Free(Point { x: 200., y: 220. }));
+        let distance = editor
+            .doc
+            .add(Kind::PointDistance(measure_start, measure_end));
+        let segment = editor.doc.add(Kind::Segment(source_start, source_end));
+        let circle = editor.doc.add(Kind::Circle(source_start, source_end));
+        editor.marked_distance = Some(distance);
+        editor.translation_mode = TranslationMode::MarkedDistance;
+
+        editor.select_only(segment);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::MarkedDistanceTranslatedSegment(segment, distance, 90.)
+        );
+        editor.select_only(circle);
+        editor.translate_selected();
+        let translated_circle = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::MarkedDistanceTranslatedCircle(circle, distance, 90.)
+        );
+        assert!(
+            editor
+                .doc
+                .move_point(measure_end, Point { x: 300., y: 120. })
+        );
+        let (center, _) = editor.doc.circle_points(translated_circle).unwrap();
+        assert!((center.y - 70.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_marked_distances_drive_rectangular_translation() {
+        let mut editor = Editor::new(Document::new());
+        let h_start = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let h_end = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let v_start = editor.doc.add(Kind::Free(Point { x: 150., y: 180. }));
+        let v_end = editor.doc.add(Kind::Free(Point { x: 150., y: 230. }));
+        let source = editor.doc.add(Kind::Free(Point { x: 100., y: 210. }));
+        let horizontal = editor.doc.add(Kind::PointDistance(h_start, h_end));
+        let vertical = editor.doc.add(Kind::PointDistance(v_start, v_end));
+        let before = editor.doc.encode().unwrap();
+
+        editor.select_only(horizontal);
+        editor.doc.selected.insert(vertical);
+        editor.selection_order.push(vertical);
+        editor.mark_distance_selected();
+        assert_eq!(
+            editor.marked_rectangular_distances,
+            Some((horizontal, vertical))
+        );
+        assert_eq!(editor.translation_mode, TranslationMode::RectangularMarked);
+        assert!(editor.selection_order.is_empty());
+        assert_eq!(editor.doc.encode().unwrap(), before);
+
+        editor.select_only(source);
+        editor.translate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[image - 1].kind,
+            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+        );
+        assert_eq!(editor.doc.position(image), Some(Point { x: 200., y: 160. }));
+    }
+
+    #[test]
+    fn fixed_rectangular_translation_uses_signed_offsets() {
+        let mut editor = Editor::new(Document::new());
+        let source = editor.doc.add(Kind::Free(Point { x: 100., y: 210. }));
+        editor.select_only(source);
+        editor.translation_mode = TranslationMode::FixedRectangular;
+        editor.translation_horizontal = 2.;
+        editor.translation_vertical = -0.5;
+        editor.translate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[image - 1].kind,
+            Kind::FixedRectangularTranslatedPoint(
+                source,
+                37.79527559055118,
+                2.,
+                37.79527559055118,
+                -0.5
+            )
+        );
+        let translated = editor.doc.position(image).unwrap();
+        assert!((translated.x - 175.59055118110236).abs() < 1e-9);
+        assert!((translated.y - 228.89763779527559).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mixed_rectangular_translation_uses_the_other_marked_axis() {
+        let mut editor = Editor::new(Document::new());
+        let h_start = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let h_end = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let v_start = editor.doc.add(Kind::Free(Point { x: 150., y: 180. }));
+        let v_end = editor.doc.add(Kind::Free(Point { x: 150., y: 230. }));
+        let source = editor.doc.add(Kind::Free(Point { x: 100., y: 210. }));
+        let horizontal = editor.doc.add(Kind::PointDistance(h_start, h_end));
+        let vertical = editor.doc.add(Kind::PointDistance(v_start, v_end));
+        editor.marked_rectangular_distances = Some((horizontal, vertical));
+        editor.translation_horizontal = 2.;
+        editor.translation_vertical = -0.5;
+
+        editor.select_only(source);
+        editor.translation_mode = TranslationMode::RectangularHorizontalFixed;
+        editor.translate_selected();
+        let fixed_x = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[fixed_x - 1].kind,
+            Kind::MixedRectangularTranslatedPoint(source, vertical, 2., true)
+        );
+
+        editor.select_only(source);
+        editor.translation_mode = TranslationMode::RectangularVerticalFixed;
+        editor.translate_selected();
+        let fixed_y = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[fixed_y - 1].kind,
+            Kind::MixedRectangularTranslatedPoint(source, horizontal, -0.5, false)
+        );
+        assert!(editor.doc.move_point(h_end, Point { x: 300., y: 120. }));
+        assert!(editor.doc.move_point(v_end, Point { x: 150., y: 250. }));
+        let fixed_x_position = editor.doc.position(fixed_x).unwrap();
+        let fixed_y_position = editor.doc.position(fixed_y).unwrap();
+        assert!((fixed_x_position.x - (100. + 2. * 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(fixed_x_position.y, 140.);
+        assert_eq!(fixed_y_position.x, 250.);
+        assert!((fixed_y_position.y - (210. + 0.5 * 37.79527559055118)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fixed_polar_translation_accepts_a_segment() {
+        let mut editor = Editor::new(Document::new());
+        let start = editor.doc.add(Kind::Free(Point { x: 100., y: 200. }));
+        let end = editor.doc.add(Kind::Free(Point { x: 200., y: 200. }));
+        let segment = editor.doc.add(Kind::Segment(start, end));
+        editor.select_only(segment);
+        editor.translation_mode = TranslationMode::FixedPolar;
+        editor.translation_angle = 90.;
+        editor.translation_distance = 1.;
+        editor.translate_selected();
+        let translated = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[translated - 1].kind,
+            Kind::PolarTranslatedSegment(segment, 90., 37.79527559055118, 1.)
+        );
+        let (a, b, mode) = editor.doc.line_points(translated).unwrap();
+        assert_eq!(mode, sketchpad_rs::document::LineMode::Segment);
+        assert!((a.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert!((b.y - (200. - 37.79527559055118)).abs() < 1e-9);
+    }
+    #[test]
+    fn fixed_polar_circle_and_rectangular_segment_translation() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 100., y: 200. }));
+        let radius_point = editor.doc.add(Kind::Free(Point { x: 150., y: 200. }));
+        let circle = editor.doc.add(Kind::Circle(center, radius_point));
+        let end = editor.doc.add(Kind::Free(Point { x: 200., y: 200. }));
+        let segment = editor.doc.add(Kind::Segment(center, end));
+
+        editor.select_only(circle);
+        editor.translation_mode = TranslationMode::FixedPolar;
+        editor.translate_selected();
+        let translated_circle = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[translated_circle - 1].kind,
+            Kind::PolarTranslatedCircle(circle, 90., 37.79527559055118, 1.)
+        );
+        let (translated_center, radius) = editor.doc.circle_points(translated_circle).unwrap();
+        assert!((translated_center.y - (200. - 37.79527559055118)).abs() < 1e-9);
+        assert_eq!(radius, 50.);
+
+        editor.select_only(segment);
+        editor.translation_mode = TranslationMode::FixedRectangular;
+        editor.translation_horizontal = 2.;
+        editor.translation_vertical = -0.5;
+        editor.translate_selected();
+        let translated_segment = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[translated_segment - 1].kind,
+            Kind::FixedRectangularTranslatedSegment(
+                segment,
+                37.79527559055118,
+                2.,
+                37.79527559055118,
+                -0.5
+            )
+        );
+        let (a, b, _) = editor.doc.line_points(translated_segment).unwrap();
+        assert!((a.x - (100. + 2. * 37.79527559055118)).abs() < 1e-9);
+        assert!((b.y - (200. + 0.5 * 37.79527559055118)).abs() < 1e-9);
+    }
+    #[test]
+    fn rectangular_circle_and_vector_shape_translation() {
+        let mut editor = Editor::new(Document::new());
+        let start = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let end = editor.doc.add(Kind::Free(Point { x: 220., y: 130. }));
+        let segment = editor.doc.add(Kind::Segment(start, end));
+        let center = editor.doc.add(Kind::Free(Point { x: 100., y: 200. }));
+        let radius_point = editor.doc.add(Kind::Free(Point { x: 150., y: 200. }));
+        let circle = editor.doc.add(Kind::Circle(center, radius_point));
+        editor.marked_vector = Some((start, end));
+
+        editor.select_only(segment);
+        editor.translation_mode = TranslationMode::MarkedVector;
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::VectorTranslatedSegment(segment, start, end)
+        );
+
+        editor.select_only(circle);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::VectorTranslatedCircle(circle, start, end)
+        );
+
+        editor.select_only(circle);
+        editor.translation_mode = TranslationMode::FixedRectangular;
+        editor.translate_selected();
+        let translated = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::FixedRectangularTranslatedCircle(
+                circle,
+                37.79527559055118,
+                1.,
+                37.79527559055118,
+                1.
+            )
+        );
+        assert!(editor.doc.circle_points(translated).is_some());
+    }
 
     #[test]
     fn marked_angle_drives_dynamic_rotation() {
@@ -4665,6 +5194,160 @@ mod tests {
         assert_eq!(editor.doc.position(image), Some(Point { x: 130., y: 190. }));
         assert!(editor.doc.move_point(last, Point { x: 290., y: 190. }));
         assert_ne!(editor.doc.position(image), Some(Point { x: 130., y: 190. }));
+    }
+
+    #[test]
+    fn marked_angle_rotates_selected_segment_and_circle() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 130., y: 150. }));
+        let first = editor.doc.add(Kind::Free(Point { x: 230., y: 160. }));
+        let vertex = editor.doc.add(Kind::Free(Point { x: 230., y: 220. }));
+        let last = editor.doc.add(Kind::Free(Point { x: 290., y: 220. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 210., y: 190. }));
+        let segment = editor.doc.add(Kind::Segment(a, b));
+        let circle = editor.doc.add(Kind::Circle(a, b));
+        editor.marked_center = Some(center);
+        editor.marked_angle = Some([first, vertex, last]);
+        editor.rotation_use_marked = true;
+        editor.select_only(segment);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::AngleRotatedSegment(segment, center, first, vertex, last)
+        );
+        editor.select_only(circle);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::AngleRotatedCircle(circle, center, first, vertex, last)
+        );
+        assert_eq!(
+            editor
+                .doc
+                .circle_points(editor.doc.objects.len())
+                .unwrap()
+                .1,
+            40.
+        );
+    }
+
+    #[test]
+    fn fixed_angle_rotates_selected_segment_and_circle() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 130., y: 150. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 210., y: 190. }));
+        let segment = editor.doc.add(Kind::Segment(a, b));
+        let circle = editor.doc.add(Kind::Circle(a, b));
+        editor.marked_center = Some(center);
+        editor.rotation_angle = 90.;
+        editor.rotation_use_marked = false;
+        editor.select_only(segment);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RotatedSegment(segment, center, 90.)
+        );
+        editor.select_only(circle);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RotatedCircle(circle, center, 90.)
+        );
+        assert_eq!(
+            editor
+                .doc
+                .circle_points(editor.doc.objects.len())
+                .unwrap()
+                .1,
+            40.
+        );
+    }
+
+    #[test]
+    fn segment_reflection_and_dilation_commands() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 100., y: 120. }));
+        let origin = editor.doc.add(Kind::Free(Point { x: 180., y: 100. }));
+        let base = editor.doc.add(Kind::Free(Point { x: 230., y: 100. }));
+        let target = editor.doc.add(Kind::Free(Point { x: 205., y: 100. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 140., y: 120. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 160., y: 120. }));
+        let segment = editor.doc.add(Kind::Segment(a, b));
+        let mirror_a = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let mirror_b = editor.doc.add(Kind::Free(Point { x: 100., y: 220. }));
+        let mirror = editor.doc.add(Kind::Segment(mirror_a, mirror_b));
+        editor.marked_center = Some(center);
+        editor.dilation_use_marked = false;
+        editor.dilation_factor = 0.5;
+        editor.select_only(segment);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::ScaledSegment(segment, center, 0.5)
+        );
+        editor.marked_ratio = Some([origin, base, target]);
+        editor.dilation_use_marked = true;
+        editor.select_only(segment);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RatioScaledSegment(segment, center, origin, base, target)
+        );
+        editor.marked_mirror = Some(mirror);
+        editor.select_only(segment);
+        editor.reflect_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::ReflectedSegment(segment, mirror)
+        );
+    }
+
+    #[test]
+    fn polygon_interior_reflection_command() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 150., y: 100. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 150., y: 230. }));
+        let mirror = editor.doc.add(Kind::Segment(a, b));
+        let p = editor.doc.add(Kind::Free(Point { x: 200., y: 130. }));
+        let q = editor.doc.add(Kind::Free(Point { x: 240., y: 180. }));
+        let r = editor.doc.add(Kind::Free(Point { x: 200., y: 230. }));
+        let polygon = editor.doc.add(Kind::Polygon(vec![p, q, r]));
+        editor.marked_mirror = Some(mirror);
+        editor.select_only(polygon);
+        editor.reflect_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::ReflectedPolygon(polygon, mirror)
+        );
+        assert_eq!(
+            editor
+                .doc
+                .polygon_points(editor.doc.objects.len())
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn transformed_circles_are_selectable_on_canvas() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let source_center = editor.doc.add(Kind::Free(Point { x: 180., y: 100. }));
+        let radius_point = editor.doc.add(Kind::Free(Point { x: 200., y: 100. }));
+        let circle = editor.doc.add(Kind::Circle(source_center, radius_point));
+        let rotated = editor.doc.add(Kind::RotatedCircle(circle, center, 90.));
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 150., y: 100. },
+        };
+        assert_eq!(
+            editor.hit(&viewport, viewport.screen(Point { x: 120., y: 20. })),
+            Some(rotated)
+        );
     }
 
     #[test]

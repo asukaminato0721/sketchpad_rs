@@ -1018,18 +1018,196 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::VectorTranslatedPoint(ids[0], ids[1], ids[2]));
                     println!("line {}: translate_vector -> object {id}", index + 1);
                 }
+                "translate_segment" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected segment ID, angle, and distance in centimeters".into()
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid segment ID")?;
+                    let angle = parts[1].parse().map_err(|_| "invalid angle")?;
+                    let distance = parts[2].parse().map_err(|_| "invalid distance")?;
+                    let id = document.add(Kind::PolarTranslatedSegment(
+                        source,
+                        angle,
+                        37.79527559055118,
+                        distance,
+                    ));
+                    println!("line {}: translate_segment -> object {id}", index + 1);
+                }
+                "translate_circle" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err("expected circle ID, angle, and distance in centimeters".into());
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid circle ID")?;
+                    let angle = parts[1].parse().map_err(|_| "invalid angle")?;
+                    let distance = parts[2].parse().map_err(|_| "invalid distance")?;
+                    let id = document.add(Kind::PolarTranslatedCircle(
+                        source,
+                        angle,
+                        37.79527559055118,
+                        distance,
+                    ));
+                    println!("line {}: translate_circle -> object {id}", index + 1);
+                }
+                "translate_circle_rectangular" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected circle ID, horizontal centimeters, and vertical centimeters"
+                                .into(),
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid circle ID")?;
+                    let horizontal = parts[1]
+                        .parse()
+                        .map_err(|_| "invalid horizontal distance")?;
+                    let vertical = parts[2].parse().map_err(|_| "invalid vertical distance")?;
+                    let id = document.add(Kind::FixedRectangularTranslatedCircle(
+                        source,
+                        37.79527559055118,
+                        horizontal,
+                        37.79527559055118,
+                        vertical,
+                    ));
+                    println!(
+                        "line {}: translate_circle_rectangular -> object {id}",
+                        index + 1
+                    );
+                }
+                "translate_segment_vector" | "translate_circle_vector" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err("expected source ID, vector start ID, and vector end ID".into());
+                    }
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let start = parts[1].parse().map_err(|_| "invalid vector start ID")?;
+                    let end = parts[2].parse().map_err(|_| "invalid vector end ID")?;
+                    let kind = if command == "translate_segment_vector" {
+                        Kind::VectorTranslatedSegment(source, start, end)
+                    } else {
+                        Kind::VectorTranslatedCircle(source, start, end)
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "translate_segment_rectangular" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected segment ID, horizontal centimeters, and vertical centimeters"
+                                .into(),
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid segment ID")?;
+                    let horizontal = parts[1]
+                        .parse()
+                        .map_err(|_| "invalid horizontal distance")?;
+                    let vertical = parts[2].parse().map_err(|_| "invalid vertical distance")?;
+                    let id = document.add(Kind::FixedRectangularTranslatedSegment(
+                        source,
+                        37.79527559055118,
+                        horizontal,
+                        37.79527559055118,
+                        vertical,
+                    ));
+                    println!(
+                        "line {}: translate_segment_rectangular -> object {id}",
+                        index + 1
+                    );
+                }
                 "translate_marked_distance" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     if parts.len() != 3 {
-                        return Err("expected source point ID, distance value ID, and angle".into());
+                        return Err("expected source ID, distance value ID, and angle".into());
+                    }
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let distance = parts[1].parse().map_err(|_| "invalid distance ID")?;
+                    let angle = parts[2].parse().map_err(|_| "invalid angle")?;
+                    let kind = match document
+                        .objects
+                        .get(source.saturating_sub(1))
+                        .map(|object| &object.kind)
+                    {
+                        Some(Kind::Segment(_, _)) => {
+                            Kind::MarkedDistanceTranslatedSegment(source, distance, angle)
+                        }
+                        Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
+                            Kind::MarkedDistanceTranslatedCircle(source, distance, angle)
+                        }
+                        _ => Kind::MarkedDistanceTranslatedPoint(source, distance, angle),
+                    };
+                    let id = document.add(kind);
+                    println!(
+                        "line {}: translate_marked_distance -> object {id}",
+                        index + 1
+                    );
+                }
+                "translate_rectangular_fixed" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err("expected source point ID, horizontal centimeters, and vertical centimeters".into());
+                    }
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let horizontal = parts[1]
+                        .parse()
+                        .map_err(|_| "invalid horizontal distance")?;
+                    let vertical = parts[2].parse().map_err(|_| "invalid vertical distance")?;
+                    let id = document.add(Kind::FixedRectangularTranslatedPoint(
+                        source,
+                        37.79527559055118,
+                        horizontal,
+                        37.79527559055118,
+                        vertical,
+                    ));
+                    println!(
+                        "line {}: translate_rectangular_fixed -> object {id}",
+                        index + 1
+                    );
+                }
+                "translate_rectangular_marked" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected source, horizontal distance, and vertical distance IDs"
+                                .into(),
+                        );
+                    }
+                    let ids = parts
+                        .iter()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid object ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let id = document.add(Kind::RectangularMarkedTranslatedPoint(
+                        ids[0], ids[1], ids[2],
+                    ));
+                    println!(
+                        "line {}: translate_rectangular_marked -> object {id}",
+                        index + 1
+                    );
+                }
+                "translate_rectangular_mixed" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 4 {
+                        return Err("expected source ID, marked distance ID, fixed centimeters, and horizontal_fixed|vertical_fixed".into());
                     }
                     let source = parts[0].parse().map_err(|_| "invalid source ID")?;
                     let distance = parts[1].parse().map_err(|_| "invalid distance ID")?;
-                    let angle = parts[2].parse().map_err(|_| "invalid angle")?;
-                    let id =
-                        document.add(Kind::MarkedDistanceTranslatedPoint(source, distance, angle));
+                    let fixed_cm = parts[2].parse().map_err(|_| "invalid fixed distance")?;
+                    let fixed_horizontal = match parts[3] {
+                        "horizontal_fixed" => true,
+                        "vertical_fixed" => false,
+                        _ => return Err("expected horizontal_fixed or vertical_fixed".into()),
+                    };
+                    let id = document.add(Kind::MixedRectangularTranslatedPoint(
+                        source,
+                        distance,
+                        fixed_cm,
+                        fixed_horizontal,
+                    ));
                     println!(
-                        "line {}: translate_marked_distance -> object {id}",
+                        "line {}: translate_rectangular_mixed -> object {id}",
                         index + 1
                     );
                 }
@@ -1038,10 +1216,18 @@ fn replay(path: &str) -> Result<(), String> {
                     if parts.len() != 3 {
                         return Err("expected source ID, center point ID, and ratio".into());
                     }
-                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
                     let center = parts[1].parse().map_err(|_| "invalid center ID")?;
                     let factor = parts[2].parse().map_err(|_| "invalid ratio")?;
-                    let kind = if document.circle_points(source).is_some() {
+                    let kind = if matches!(
+                        document
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Segment(_, _))
+                    ) {
+                        Kind::ScaledSegment(source, center, factor)
+                    } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
                     } else {
                         Kind::ScaledPoint(source, center, factor)
@@ -1059,7 +1245,15 @@ fn replay(path: &str) -> Result<(), String> {
                             "expected source, center, ratio origin, base, and target IDs".into(),
                         );
                     }
-                    let kind = if document.circle_points(ids[0]).is_some() {
+                    let kind = if matches!(
+                        document
+                            .objects
+                            .get(ids[0].saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Segment(_, _))
+                    ) {
+                        Kind::RatioScaledSegment(ids[0], ids[1], ids[2], ids[3], ids[4])
+                    } else if document.circle_points(ids[0]).is_some() {
                         Kind::RatioScaledCircle(ids[0], ids[1], ids[2], ids[3], ids[4])
                     } else {
                         Kind::RatioScaledPoint(ids[0], ids[1], ids[2], ids[3], ids[4])
@@ -1072,10 +1266,21 @@ fn replay(path: &str) -> Result<(), String> {
                     if parts.len() != 3 {
                         return Err("expected source point ID, center point ID, and angle".into());
                     }
-                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
                     let center = parts[1].parse().map_err(|_| "invalid center ID")?;
                     let angle = parts[2].parse().map_err(|_| "invalid angle")?;
-                    let id = document.add(Kind::RotatedPoint(source, center, angle));
+                    let kind = match document
+                        .objects
+                        .get(source.saturating_sub(1))
+                        .map(|o| &o.kind)
+                    {
+                        Some(Kind::Segment(_, _)) => Kind::RotatedSegment(source, center, angle),
+                        Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
+                            Kind::RotatedCircle(source, center, angle)
+                        }
+                        _ => Kind::RotatedPoint(source, center, angle),
+                    };
+                    let id = document.add(kind);
                     println!("line {}: rotate -> object {id}", index + 1);
                 }
                 "rotate_marked_angle" => {
@@ -1089,9 +1294,23 @@ fn replay(path: &str) -> Result<(), String> {
                                 .into(),
                         );
                     }
-                    let id = document.add(Kind::AngleRotatedPoint(
-                        parts[0], parts[1], parts[2], parts[3], parts[4],
-                    ));
+                    let source: usize = parts[0];
+                    let kind = match document
+                        .objects
+                        .get(source.saturating_sub(1))
+                        .map(|o| &o.kind)
+                    {
+                        Some(Kind::Segment(_, _)) => Kind::AngleRotatedSegment(
+                            source, parts[1], parts[2], parts[3], parts[4],
+                        ),
+                        Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
+                            Kind::AngleRotatedCircle(source, parts[1], parts[2], parts[3], parts[4])
+                        }
+                        _ => {
+                            Kind::AngleRotatedPoint(source, parts[1], parts[2], parts[3], parts[4])
+                        }
+                    };
+                    let id = document.add(kind);
                     println!("line {}: rotate_marked_angle -> object {id}", index + 1);
                 }
                 "segment" | "circle" | "circle_segment" | "midpoint" | "line" | "ray"
@@ -1108,7 +1327,17 @@ fn replay(path: &str) -> Result<(), String> {
                         "intersection" => Kind::Intersection(a, b),
                         "perpendicular" => Kind::Perpendicular(a, b),
                         "reflect" => {
-                            if document.circle_points(a).is_some() {
+                            if matches!(
+                                document.objects.get(a.saturating_sub(1)).map(|o| &o.kind),
+                                Some(Kind::Polygon(_))
+                            ) {
+                                Kind::ReflectedPolygon(a, b)
+                            } else if matches!(
+                                document.objects.get(a.saturating_sub(1)).map(|o| &o.kind),
+                                Some(Kind::Segment(_, _))
+                            ) {
+                                Kind::ReflectedSegment(a, b)
+                            } else if document.circle_points(a).is_some() {
                                 Kind::ReflectedCircle(a, b)
                             } else {
                                 Kind::ReflectedPoint(a, b)

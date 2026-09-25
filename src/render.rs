@@ -1536,6 +1536,12 @@ impl GeometryRenderer {
             match o.kind {
                 Kind::Circle(_, _)
                 | Kind::CircleBySegment(_, _)
+                | Kind::PolarTranslatedCircle(_, _, _, _)
+                | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+                | Kind::VectorTranslatedCircle(_, _, _)
+                | Kind::MarkedDistanceTranslatedCircle(_, _, _)
+                | Kind::AngleRotatedCircle(_, _, _, _, _)
+                | Kind::RotatedCircle(_, _, _)
                 | Kind::ReflectedCircle(_, _)
                 | Kind::ScaledCircle(_, _, _)
                 | Kind::RatioScaledCircle(_, _, _, _, _) => {
@@ -1563,7 +1569,7 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                Kind::Polygon(_) => {
+                Kind::Polygon(_) | Kind::ReflectedPolygon(_, _) => {
                     if let Some(points) = doc.polygon_points(o.id) {
                         let screen = points
                             .into_iter()
