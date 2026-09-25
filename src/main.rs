@@ -545,10 +545,10 @@ impl Editor {
             self.doc.path.clone()
         };
         let Some(path) = path else { return false };
-        let inserted_multi_page_links = self.doc.has_pending_multi_page_links();
+        let inserted_multi_page_additions = self.doc.has_pending_multi_page_additions();
         match self.doc.save_to(&path) {
             Ok(()) => {
-                if inserted_multi_page_links {
+                if inserted_multi_page_additions {
                     self.selection_order.clear();
                     self.image_textures.clear();
                     self.pending = None;
@@ -1544,7 +1544,11 @@ impl Editor {
         }
     }
     fn click(&mut self, v: &Viewport, p: egui::Pos2, multi: bool) {
-        if self.doc.partial_view && self.tool != Tool::Select {
+        if self.doc.partial_view
+            && self.tool != Tool::Select
+            && !(self.doc.page_count > 1
+                && matches!(self.tool, Tool::Point | Tool::Segment | Tool::Circle))
+        {
             self.status =
                 "This page contains unsupported records; construction cannot be saved safely"
                     .into();
@@ -1676,7 +1680,7 @@ impl Editor {
         }
     }
     fn pair(&mut self, mode: u8) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && !(self.doc.page_count > 1 && matches!(mode, 0..=4)) {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1691,6 +1695,20 @@ impl Editor {
             return;
         }
         let (a, b) = (ids[0], ids[1]);
+        if a == b
+            || self.doc.objects[a - 1].page != self.doc.active_page
+            || self.doc.objects[b - 1].page != self.doc.active_page
+            || self.doc.page_count > 1
+                && self
+                    .doc
+                    .position(a)
+                    .unwrap()
+                    .distance(self.doc.position(b).unwrap())
+                    <= 1e-9
+        {
+            self.status = "Select two distinct points on the current page".into();
+            return;
+        }
         let kind = match mode {
             0 => Kind::Segment(a, b),
             1 => Kind::Circle(a, b),
@@ -1741,7 +1759,7 @@ impl Editor {
         self.select_only(id);
     }
     fn circle_by_segment(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1763,6 +1781,12 @@ impl Editor {
             .collect();
         if selected.len() != 2 || centers.len() != 1 || segments.len() != 1 {
             self.status = "Select one center point and one radius segment".into();
+            return;
+        }
+        if self.doc.objects[centers[0] - 1].page != self.doc.active_page
+            || self.doc.objects[segments[0] - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::CircleBySegment(centers[0], segments[0]));
@@ -6545,6 +6569,98 @@ mod tests {
             editor.click(&viewport, click, false);
             assert_eq!(editor.doc.active_page, destination_page);
         }
+    }
+
+    #[test]
+    fn point_tool_adds_free_and_constrained_points_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        editor.tool = Tool::Point;
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600., 400.)),
+            scale: 1.,
+            center: Point { x: 250., y: 150. },
+        };
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 246., y: 111. }),
+            false,
+        );
+        assert!(
+            matches!(editor.doc.objects[5].kind, Kind::PointOnSegment(4, t) if (t - 0.75).abs() < 1e-12)
+        );
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 260., y: 220. }),
+            false,
+        );
+        assert!(
+            matches!(editor.doc.objects[6].kind, Kind::Free(Point { x, y }) if (x - 260.).abs() < 1e-8 && (y - 220.).abs() < 1e-8)
+        );
+        let saved = editor.doc.encode().unwrap();
+        assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 7);
+    }
+
+    #[test]
+    fn segment_and_circle_tools_construct_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        editor.tool = Tool::Segment;
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600., 400.)),
+            scale: 1.,
+            center: Point { x: 250., y: 150. },
+        };
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 111., y: 111. }),
+            false,
+        );
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 291., y: 111. }),
+            false,
+        );
+        assert_eq!(editor.doc.objects[3].kind, Kind::Segment(2, 3));
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_segment_port.gsp")
+        );
+        editor.tool = Tool::Circle;
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 111., y: 111. }),
+            false,
+        );
+        editor.click(
+            &viewport,
+            viewport.screen(Point { x: 291., y: 111. }),
+            false,
+        );
+        assert_eq!(editor.doc.objects[4].kind, Kind::Circle(2, 3));
+        let saved = editor.doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert_eq!(reopened.objects[4].kind, Kind::Circle(2, 3));
+        editor.selection_order = vec![2, 3];
+        editor.pair(1);
+        assert_eq!(editor.doc.objects[5].kind, Kind::Circle(2, 3));
+        editor.selection_order = vec![2, 3];
+        editor.pair(3);
+        assert_eq!(editor.doc.objects[6].kind, Kind::Line(2, 3));
+        editor.selection_order = vec![2, 3];
+        editor.pair(4);
+        assert_eq!(editor.doc.objects[7].kind, Kind::Ray(2, 3));
+        assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
     }
 
     #[test]

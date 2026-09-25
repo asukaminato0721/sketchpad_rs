@@ -883,6 +883,23 @@ fn put_record(out: &mut Vec<u8>, kind: u32, data: &[u8]) {
         out.push(0);
     }
 }
+fn is_multi_page_addition_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Free(_)
+            | Kind::PointOnSegment(_, _)
+            | Kind::PointOnCircle(_, _, _)
+            | Kind::PointOnArc(_, _)
+            | Kind::Segment(_, _)
+            | Kind::Circle(_, _)
+            | Kind::Line(_, _)
+            | Kind::Ray(_, _)
+            | Kind::Midpoint(_, _)
+            | Kind::CircleBySegment(_, _)
+            | Kind::LinkPageButton { .. }
+            | Kind::LinkUrlButton { .. }
+    )
+}
 fn polygon_subtype(vertex_count: usize) -> Option<u16> {
     49u16.checked_add(u16::try_from(vertex_count).ok()?)
 }
@@ -5352,7 +5369,7 @@ impl Document {
         }
     }
     pub fn set_selected_tracing(&mut self, tracing: bool) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 {
+        if self.partial_view && self.page_count == 1 {
             return Err("Cannot edit tracing in this sketch safely".into());
         }
         let ids: Vec<usize> = self
@@ -5384,7 +5401,7 @@ impl Document {
         &mut self,
         update: impl Fn(VisualStyle) -> Option<VisualStyle>,
     ) -> Result<usize, String> {
-        if self.partial_view {
+        if self.partial_view && self.page_count == 1 {
             return Err("Cannot edit styles in a sketch with unsupported records safely".into());
         }
         let changes: Vec<_> = self
@@ -5675,12 +5692,11 @@ impl Document {
                 .objects
                 .iter()
                 .any(|object| matches!(object.kind, Kind::Unsupported(_)))
-            && self.objects.iter().skip(self.source_count).all(|object| {
-                matches!(
-                    object.kind,
-                    Kind::LinkPageButton { .. } | Kind::LinkUrlButton { .. }
-                )
-            });
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
         if !multi_page_append && (self.partial_view || self.page_count != 1) {
             return Err("A Link URL button needs an editable page".into());
         }
@@ -5701,15 +5717,12 @@ impl Document {
             anchor: (10, y),
         }))
     }
-    pub fn has_pending_multi_page_links(&self) -> bool {
+    pub fn has_pending_multi_page_additions(&self) -> bool {
         self.page_count > 1
             && self.objects.len() > self.source_count
-            && self.objects[self.source_count..].iter().all(|object| {
-                matches!(
-                    object.kind,
-                    Kind::LinkPageButton { .. } | Kind::LinkUrlButton { .. }
-                )
-            })
+            && self.objects[self.source_count..]
+                .iter()
+                .all(|object| is_multi_page_addition_kind(&object.kind))
     }
     pub fn add_link_page_button(&mut self, target_page: usize) -> Result<usize, String> {
         self.add_link_page_button_with_target(target_page, None)
@@ -5745,12 +5758,11 @@ impl Document {
                 .objects
                 .iter()
                 .any(|object| matches!(object.kind, Kind::Unsupported(_)))
-            || self.objects.iter().skip(self.source_count).any(|object| {
-                !matches!(
-                    object.kind,
-                    Kind::LinkPageButton { .. } | Kind::LinkUrlButton { .. }
-                )
-            })
+            || self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .any(|object| !is_multi_page_addition_kind(&object.kind))
         {
             return Err("A Page Link needs a supported page and a different destination".into());
         }
@@ -7330,8 +7342,8 @@ impl Document {
             return Ok(());
         }
         if self.page_count > 1 {
-            if self.has_pending_multi_page_links() {
-                self.encode_multi_page_links()?;
+            if self.has_pending_multi_page_additions() {
+                self.encode_multi_page_additions()?;
             } else {
                 self.encode_multi_page_state()?;
             }
@@ -8832,7 +8844,40 @@ impl Document {
         out.splice(at..at, style);
         Ok(out)
     }
-    fn encode_multi_page_links(&self) -> Result<Vec<u8>, String> {
+    fn multi_page_local_reference(
+        &self,
+        page: usize,
+        current_id: usize,
+        reference: usize,
+    ) -> Result<u32, String> {
+        let target = self
+            .objects
+            .get(reference.saturating_sub(1))
+            .ok_or("Missing multi-page construction parent")?;
+        if reference == 0 || reference >= current_id || target.page != page || target.deleted {
+            return Err(
+                "Multi-page construction parent must precede its child on the same page".into(),
+            );
+        }
+        let preceding = self
+            .objects
+            .iter()
+            .take(self.source_count)
+            .filter(|object| object.page == page)
+            .chain(
+                self.objects
+                    .iter()
+                    .skip(self.source_count)
+                    .take_while(|object| object.id < current_id)
+                    .filter(|object| object.page == page),
+            );
+        let ordinal = preceding
+            .enumerate()
+            .find_map(|(index, object)| (object.id == reference).then_some(index + 1))
+            .ok_or("Missing page-local construction parent")?;
+        u32::try_from(ordinal).map_err(|_| "Too many objects on page".into())
+    }
+    fn encode_multi_page_additions(&self) -> Result<Vec<u8>, String> {
         let original = Self::from_bytes(&self.original, None)?;
         if self.page_count < 2
             || original.page_count != self.page_count
@@ -8846,13 +8891,10 @@ impl Document {
             || self.objects[self.source_count..].iter().any(|object| {
                 object.deleted
                     || object.page >= self.page_count
-                    || !matches!(
-                        object.kind,
-                        Kind::LinkPageButton { .. } | Kind::LinkUrlButton { .. }
-                    )
+                    || !is_multi_page_addition_kind(&object.kind)
             })
         {
-            return Err("Multi-page edit contains changes beyond Links".into());
+            return Err("Multi-page edit contains unsupported additions".into());
         }
         let rs = records(&self.original)?;
         let mut out = self.encode_multi_page_source_state()?;
@@ -8910,6 +8952,226 @@ impl Document {
             let mut groups = Vec::new();
             for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
+                    Kind::Free(point) => {
+                        if !point.x.is_finite() || !point.y.is_finite() {
+                            return Err("Multi-page point coordinates must be finite".into());
+                        }
+                        let mut object_header = header(0);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut coordinates = Vec::with_capacity(16);
+                        coordinates.extend_from_slice(&point.x.to_le_bytes());
+                        coordinates.extend_from_slice(&point.y.to_le_bytes());
+                        put_record(&mut groups, 0x0899, &coordinates);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::PointOnSegment(host, t) | Kind::PointOnArc(host, t) => {
+                        if !t.is_finite() || !(0.0..=1.0).contains(t) {
+                            return Err("Invalid path-point parameter".into());
+                        }
+                        let host_object = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing point host")?;
+                        if host_object.page != page
+                            || matches!(object.kind, Kind::PointOnSegment(_, _))
+                                && !matches!(host_object.kind, Kind::Segment(_, _))
+                            || matches!(object.kind, Kind::PointOnArc(_, _))
+                                && !is_arc_kind(&host_object.kind)
+                        {
+                            return Err("Invalid point host on this page".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut object_header = header(15);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        let code = if matches!(object.kind, Kind::PointOnArc(_, _)) {
+                            67
+                        } else {
+                            14
+                        };
+                        let mut constraint = vec![15, 0, code, 0];
+                        constraint.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut groups, 0x07d3, &constraint);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::PointOnCircle(host, x, y) => {
+                        if !x.is_finite() || !y.is_finite() || (x * x + y * y - 1.).abs() > 1e-6 {
+                            return Err("Invalid circle-point parameter".into());
+                        }
+                        let host_object = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing point host")?;
+                        if host_object.page != page || !is_circle_kind(&host_object.kind) {
+                            return Err("Invalid circle host on this page".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut object_header = header(15);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        let mut constraint = vec![15, 0, 28, 0];
+                        constraint.extend_from_slice(&x.to_le_bytes());
+                        constraint.extend_from_slice(&y.to_le_bytes());
+                        put_record(&mut groups, 0x07d3, &constraint);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Segment(a, b)
+                    | Kind::Circle(a, b)
+                    | Kind::Line(a, b)
+                    | Kind::Ray(a, b) => {
+                        if a == b
+                            || !self
+                                .objects
+                                .get(a.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || !self
+                                .objects
+                                .get(b.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || self
+                                .position(*a)
+                                .zip(self.position(*b))
+                                .is_none_or(|(first, second)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Straight object or circle needs two distinct points".into()
+                            );
+                        }
+                        let first = self.multi_page_local_reference(page, object.id, *a)?;
+                        let second = self.multi_page_local_reference(page, object.id, *b)?;
+                        let code = match object.kind {
+                            Kind::Segment(_, _) => 2,
+                            Kind::Circle(_, _) => 3,
+                            Kind::Line(_, _) => 63,
+                            Kind::Ray(_, _) => 64,
+                            _ => unreachable!(),
+                        };
+                        let mut object_header = header(code);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = Vec::with_capacity(12);
+                        references.extend_from_slice(&2u32.to_le_bytes());
+                        references.extend_from_slice(&first.to_le_bytes());
+                        references.extend_from_slice(&second.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Midpoint(a, b) => {
+                        let host = object
+                            .midpoint_host
+                            .ok_or("Midpoint needs a segment host")?;
+                        if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == *a && *second == *b) || (*first == *b && *second == *a))
+                        {
+                            return Err("Midpoint host has different endpoints".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, host)?;
+                        let mut object_header = header(1);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::CircleBySegment(center, radius) => {
+                        if !self
+                            .objects
+                            .get(center.saturating_sub(1))
+                            .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || !matches!(
+                                self.objects
+                                    .get(radius.saturating_sub(1))
+                                    .map(|parent| &parent.kind),
+                                Some(Kind::Segment(_, _))
+                            )
+                            || self
+                                .line_points(*radius)
+                                .is_none_or(|(first, second, _)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Circle by segment needs a point and nonzero segment".into()
+                            );
+                        }
+                        let local_center =
+                            self.multi_page_local_reference(page, object.id, *center)?;
+                        let local_radius =
+                            self.multi_page_local_reference(page, object.id, *radius)?;
+                        let mut object_header = header(4);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = Vec::with_capacity(12);
+                        references.extend_from_slice(&2u32.to_le_bytes());
+                        references.extend_from_slice(&local_center.to_le_bytes());
+                        references.extend_from_slice(&local_radius.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
                     Kind::LinkPageButton {
                         target_page,
                         target_button_ordinal,
@@ -8967,7 +9229,7 @@ impl Document {
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
                     }
-                    _ => return Err("Expected Link button".into()),
+                    _ => return Err("Expected supported multi-page addition".into()),
                 }
             }
             let count = u32::try_from(
@@ -9019,6 +9281,12 @@ impl Document {
         {
             let mut expected = saved.clone();
             expected.visible = current.visible;
+            if saved.visual_style.is_some() {
+                expected.tracing = current.tracing;
+            }
+            if saved.visual_style.is_some() && current.visual_style.is_some() {
+                expected.visual_style = current.visual_style;
+            }
             if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
                 if !point.x.is_finite() || !point.y.is_finite() {
                     return Err("Multi-page point coordinates must be finite".into());
@@ -9067,6 +9335,25 @@ impl Document {
                 return Err("Multi-page state edit changes unsupported object data".into());
             }
             let header = current.header_offset.ok_or("Missing object header")?;
+            if saved.tracing != current.tracing {
+                let record = rs
+                    .iter()
+                    .find(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing traced object header")?;
+                if record.data.len() < 5 {
+                    return Err("Short traced object header".into());
+                }
+                out[header + 4] = (out[header + 4] & !1) | u8::from(current.tracing);
+            }
+            if saved.visual_style != current.visual_style {
+                let record = rs
+                    .iter()
+                    .find(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing styled object header")?;
+                let style = current.visual_style.ok_or("Missing object style")?;
+                style_records::set_visual_style(&mut out[record.data.clone()], style)
+                    .map_err(|error| format!("Invalid style in object {}: {error}", current.id))?;
+            }
             if let (Kind::Free(before), Kind::Free(point)) = (&saved.kind, &current.kind)
                 && before != point
             {
@@ -9156,8 +9443,8 @@ impl Document {
         if !self.dirty {
             return Ok(self.original.clone());
         }
-        if self.has_pending_multi_page_links() {
-            return self.encode_multi_page_links();
+        if self.has_pending_multi_page_additions() {
+            return self.encode_multi_page_additions();
         }
         if self.page_count > 1 {
             return self.encode_multi_page_state();
@@ -10954,11 +11241,11 @@ impl Document {
         Ok(())
     }
     pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
-        let reordered_links = self.has_pending_multi_page_links();
+        let reordered_additions = self.has_pending_multi_page_additions();
         let data = self.encode()?;
         let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
         let had_deletion = self.objects.iter().any(|o| o.deleted);
-        if reordered_links {
+        if reordered_additions {
             let mut survivors: Vec<_> = self
                 .objects
                 .iter()
@@ -11004,7 +11291,7 @@ impl Document {
         self.objects = reparsed.objects.clone();
         self.marked_coordinate_system = reparsed.marked_coordinate_system;
         self.frame_styles = reparsed.frame_styles;
-        if had_deletion || reordered_links {
+        if had_deletion || reordered_additions {
             self.selected.clear();
         }
         self.original = data;
@@ -12361,6 +12648,427 @@ mod tests {
             assert_eq!(document.objects[id - 1].page, page);
             std::fs::remove_file(path).unwrap();
         }
+    }
+    #[test]
+    fn constrained_points_move_and_save_on_second_page() {
+        let cases: &[(&[u8], usize, Point, &[u8])] = &[
+            (
+                include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp"),
+                5,
+                Point { x: 246., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_segment_constrained_moved_port.gsp"),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_circle_constrained_native.gsp"),
+                5,
+                Point { x: 111., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_circle_constrained_moved_port.gsp"),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_arc_constrained_native.gsp"),
+                6,
+                Point { x: 241., y: 64. },
+                include_bytes!("../tests/fixtures/two_page_arc_constrained_moved_port.gsp"),
+            ),
+        ];
+        for (index, &(base, id, target, expected)) in cases.iter().enumerate() {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 1;
+            assert!(document.move_point(id, target));
+            assert!(document.can_save().is_ok());
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_constrained_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            let saved = std::fs::read(&path).unwrap();
+            assert_eq!(saved, expected);
+            let reopened = Document::from_bytes(&saved, None).unwrap();
+            assert_eq!(reopened.page_count, 2);
+            assert_eq!(reopened.objects[id - 1].page, 1);
+            match (index, &reopened.objects[id - 1].kind) {
+                (0, Kind::PointOnSegment(4, t)) => assert!((*t - 0.75).abs() < 1e-12),
+                (1, Kind::PointOnCircle(4, x, y)) => {
+                    assert!((*x + 1.).abs() < 1e-12);
+                    assert!(y.abs() < 1e-12);
+                }
+                (2, Kind::PointOnArc(5, t)) => assert!((*t - 0.6888239941915089).abs() < 1e-4),
+                _ => panic!("Unexpected constrained point after multi-page save"),
+            }
+            if index == 0 {
+                assert_eq!(
+                    saved,
+                    include_bytes!(
+                        "../tests/fixtures/two_page_segment_constrained_dragged_native.gsp"
+                    )
+                );
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    #[test]
+    fn multi_page_constraint_writer_rejects_invalid_edits() {
+        for (base, index, replacement) in [
+            (
+                include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp")
+                    .as_slice(),
+                4,
+                Kind::PointOnSegment(2, 0.5),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_arc_constrained_native.gsp").as_slice(),
+                5,
+                Kind::PointOnArc(5, 1.1),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_circle_constrained_native.gsp")
+                    .as_slice(),
+                4,
+                Kind::PointOnCircle(4, 0.5, 0.5),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.checkpoint();
+            document.objects[index].kind = replacement;
+            assert!(document.can_save().is_err());
+            assert!(document.encode().is_err());
+        }
+    }
+    #[test]
+    fn multi_page_visual_styles_save_on_both_pages() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        assert!(document.partial_view);
+        let blue = RgbColor {
+            red: 0,
+            green: 0,
+            blue: 255,
+        };
+        let purple = RgbColor {
+            red: 128,
+            green: 0,
+            blue: 128,
+        };
+        let green = RgbColor {
+            red: 0,
+            green: 128,
+            blue: 0,
+        };
+        document.active_page = 0;
+        document.selected.insert(1);
+        assert_eq!(
+            document
+                .set_selected_point_style(PointStyle::Large)
+                .unwrap(),
+            1
+        );
+        assert_eq!(document.set_selected_color(blue).unwrap(), 1);
+        document.active_page = 1;
+        document.selected.clear();
+        document.selected.insert(5);
+        assert_eq!(
+            document
+                .set_selected_point_style(PointStyle::Small)
+                .unwrap(),
+            1
+        );
+        assert_eq!(document.set_selected_color(purple).unwrap(), 1);
+        document.selected.clear();
+        document.selected.insert(4);
+        assert_eq!(
+            document.set_selected_line_width(LineWidth::Thick).unwrap(),
+            1
+        );
+        assert_eq!(
+            document
+                .set_selected_line_pattern(LinePattern::Dashed)
+                .unwrap(),
+            1
+        );
+        assert_eq!(document.set_selected_color(green).unwrap(), 1);
+        assert!(document.can_save().is_ok());
+        let saved = document.encode().unwrap();
+        assert_eq!(
+            saved,
+            include_bytes!("../tests/fixtures/two_page_styled_port.gsp")
+        );
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert_eq!(
+            reopened.objects[0].visual_style,
+            Some(VisualStyle::Point {
+                shape: PointStyle::Large,
+                color: blue
+            })
+        );
+        assert_eq!(
+            reopened.objects[3].visual_style,
+            Some(VisualStyle::Stroke {
+                line: SegmentLineStyle {
+                    width: LineWidth::Thick,
+                    pattern: LinePattern::Dashed
+                },
+                color: green
+            })
+        );
+        assert_eq!(
+            reopened.objects[4].visual_style,
+            Some(VisualStyle::Point {
+                shape: PointStyle::Small,
+                color: purple
+            })
+        );
+        assert!(document.move_point(5, Point { x: 246., y: 111. }));
+        document.add_link_page_button(0).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_style_link_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        let combined = Document::open(&path).unwrap();
+        assert_eq!(
+            combined.objects[0].visual_style,
+            reopened.objects[0].visual_style
+        );
+        assert_eq!(
+            combined.objects[3].visual_style,
+            reopened.objects[3].visual_style
+        );
+        assert_eq!(
+            combined.objects[4].visual_style,
+            reopened.objects[4].visual_style
+        );
+        assert!(
+            matches!(combined.objects[4].kind, Kind::PointOnSegment(4, t) if (t - 0.75).abs() < 1e-12)
+        );
+        assert!(matches!(
+            combined.objects[5].kind,
+            Kind::LinkPageButton { target_page: 0, .. }
+        ));
+        std::fs::remove_file(path).unwrap();
+
+        let mut invalid = Document::from_bytes(base, None).unwrap();
+        invalid.checkpoint();
+        invalid.objects[0].visual_style = Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                width: LineWidth::Thick,
+                pattern: LinePattern::Dashed,
+            },
+            color: green,
+        });
+        assert!(invalid.can_save().is_err());
+    }
+    #[test]
+    fn multi_page_trace_flags_save_and_toggle_back() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        document.selected.extend([4, 5]);
+        assert_eq!(document.set_selected_tracing(true).unwrap(), 2);
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_trace_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_traced_port.gsp")
+        );
+        assert!(document.objects[3].tracing);
+        assert!(document.objects[4].tracing);
+        assert_eq!(document.set_selected_tracing(false).unwrap(), 2);
+        document.save_to(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), base);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn multi_page_points_and_link_append_with_page_local_references() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 0;
+        let first = document.add(Kind::Free(Point { x: 150., y: 200. }));
+        document.active_page = 1;
+        let constrained = document.add(Kind::PointOnSegment(4, 0.75));
+        let link = document.add_link_page_button(0).unwrap();
+        assert_eq!((first, constrained, link), (6, 7, 8));
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_additions_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_mixed_additions_port.gsp")
+        );
+        assert_eq!(document.objects[1].page, 0);
+        assert!(
+            matches!(document.objects[6].kind, Kind::PointOnSegment(5, t) if (t - 0.75).abs() < 1e-12)
+        );
+        assert!(matches!(
+            document.objects[7].kind,
+            Kind::LinkPageButton { target_page: 0, .. }
+        ));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn multi_page_point_additions_refuse_cross_page_hosts() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 0;
+        document.add(Kind::PointOnSegment(4, 0.5));
+        assert!(document.can_save().is_err());
+    }
+
+    #[test]
+    fn multi_page_constrained_point_additions_reopen() {
+        for (index, base, kind, expected) in [
+            (
+                0,
+                include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp")
+                    .as_slice(),
+                Kind::PointOnSegment(4, 0.75),
+                include_bytes!("../tests/fixtures/two_page_segment_extra_point_port.gsp")
+                    .as_slice(),
+            ),
+            (
+                1,
+                include_bytes!("../tests/fixtures/two_page_circle_constrained_native.gsp")
+                    .as_slice(),
+                Kind::PointOnCircle(4, -1., -0.),
+                include_bytes!("../tests/fixtures/two_page_circle_extra_point_port.gsp").as_slice(),
+            ),
+            (
+                2,
+                include_bytes!("../tests/fixtures/two_page_arc_constrained_native.gsp").as_slice(),
+                Kind::PointOnArc(5, 0.6887639439801854),
+                include_bytes!("../tests/fixtures/two_page_arc_extra_point_port.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 1;
+            let id = document.add(kind);
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_add_constraint_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert_eq!(document.objects[id - 1].page, 1);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn multi_page_straight_and_circle_use_page_local_parents() {
+        fn last_object_group(bytes: &[u8]) -> &[u8] {
+            let entries = records(bytes).unwrap();
+            let start = entries
+                .iter()
+                .rposition(|entry| entry.kind == 0x07d0)
+                .unwrap();
+            let end = start
+                + entries[start..]
+                    .iter()
+                    .position(|entry| entry.kind == 0x07d7)
+                    .unwrap();
+            &bytes[entries[start].start..entries[end].data.end]
+        }
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        for (index, first, second, expected, native) in [
+            (
+                0,
+                Point { x: 111., y: 111. },
+                Point { x: 291., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_segment_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_segment_native.gsp").as_slice(),
+            ),
+            (
+                1,
+                Point { x: 201., y: 111. },
+                Point { x: 291., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_circle_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_circle_native.gsp").as_slice(),
+            ),
+            (
+                2,
+                Point { x: 111., y: 111. },
+                Point { x: 291., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_line_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_line_native.gsp").as_slice(),
+            ),
+            (
+                3,
+                Point { x: 111., y: 111. },
+                Point { x: 291., y: 111. },
+                include_bytes!("../tests/fixtures/two_page_ray_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_ray_native.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 1;
+            let a = document.add(Kind::Free(first));
+            let b = document.add(Kind::Free(second));
+            let path_id = document.add(match index {
+                0 => Kind::Segment(a, b),
+                1 => Kind::Circle(a, b),
+                2 => Kind::Line(a, b),
+                3 => Kind::Ray(a, b),
+                _ => unreachable!(),
+            });
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_path_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert_eq!(last_object_group(expected), last_object_group(native));
+            assert_eq!(document.objects[path_id - 1].page, 1);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn multi_page_constructed_paths_and_points_remap_across_pages() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 0;
+        let first = document.add(Kind::Free(Point { x: 150., y: 200. }));
+        let second = document.add(Kind::Free(Point { x: 250., y: 200. }));
+        document.add(Kind::Segment(first, second));
+        document.active_page = 1;
+        let center = document.add(Kind::Free(Point { x: 111., y: 111. }));
+        let radius = document.add(Kind::Free(Point { x: 291., y: 111. }));
+        let segment = document.add(Kind::Segment(center, radius));
+        document.add(Kind::PointOnSegment(segment, 0.5));
+        let circle = document.add(Kind::Circle(center, radius));
+        document.add(Kind::PointOnCircle(circle, 0., -1.));
+        document.add_link_page_button(0).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_construct_mixed_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_construct_mixed_port.gsp")
+        );
+        assert_eq!(document.objects[6].kind, Kind::Segment(5, 6));
+        assert_eq!(document.objects[8].kind, Kind::Circle(5, 6));
+        assert_eq!(document.objects[9].kind, Kind::PointOnCircle(9, 0., -1.));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn multi_page_path_addition_rejects_cross_page_parent() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let new_point = document.add(Kind::Free(Point { x: 200., y: 200. }));
+        document.add(Kind::Segment(1, new_point));
+        assert!(document.can_save().is_err());
     }
     #[test]
     fn multi_page_state_writer_refuses_geometry_changes() {

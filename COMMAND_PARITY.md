@@ -178,11 +178,11 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Workflow | Status |
 | --- | --- |
-| Select and drag free points | Partial: existing free points on supported multi-page files can be moved and saved. A Rust move matched native Sketchpad except for three opaque page-header bytes and cross-opened byte-identically. Moving a first-page point together with adding a Page Link also cross-opened byte-identically |
-| Point tool | Partial |
-| Segment tool | Partial |
-| Circle tool | Partial |
+| Select and drag points | Partial: existing free points and points constrained to segments, circles, or arcs can be moved and saved in supported multi-page files. A segment-point move matched native Sketchpad byte for byte; circle and arc moves cross-opened and saved byte-identically in native Sketchpad. Moving a first-page free point together with adding a Page Link also cross-opened byte-identically |
+| Point tool | Partial: free points and points on existing segments, circles, and arcs can be added on supported multi-page pages; generated files opened and saved byte-identically in Sketchpad 5 |
+| Segment tool | Partial: segments built from existing or newly created points on supported multi-page pages; generated object group matches native Sketchpad byte for byte and the file cross-opened |
+| Circle tool | Partial: circles built from existing or newly created points on supported multi-page pages; generated object group matches native Sketchpad byte for byte and the file cross-opened |
 | Text, image, table, iteration, plotting | Partial: literal text, point labels, a single PNG picture, and Cartesian `x`/`x²` plots cross-open. Literal captions with saved bold, italic, underline, and size records import as editable text; edits in mixed-style two-caption sketches cross-opened byte-identically. Bold, Italic, and Underline formatting of free text also cross-opened. Other text formatting, table, and iteration pending |
 | Import, export, print | Partial: single PNG import, SVG/PDF export, and Linux printing for supported visible geometry; other image formats and physical print verification pending |
-| Multi-page documents | Partial: page navigation and read-only complex objects |
+| Multi-page documents | Partial: page navigation, free and constrained point, segment, and circle creation, existing-point movement, visual styles and tracing, Hide/Show state, and Page/URL Link insertion; broader construction and page editing pending |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |
