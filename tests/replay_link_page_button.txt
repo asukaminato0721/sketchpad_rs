@@ -1,0 +1,8 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+link_page_button 1
+save tests/fixtures/action_link_page_port_generated.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+link_url_button https://example.org/
+save tests/fixtures/action_link_url_two_page_port_generated.gsp

@@ -1,0 +1,6 @@
+open tests/fixtures/presentation_two_hide_show_base.gsp
+presentation_button simultaneous 3 4
+save tests/fixtures/action_presentation_port_simultaneous.gsp
+open tests/fixtures/presentation_two_hide_show_base.gsp
+presentation_button sequential 3 4
+save tests/fixtures/action_presentation_port_sequential.gsp

@@ -1,0 +1,12 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 111 111
+point 291 111
+segment 2 3
+save tests/fixtures/two_page_segment_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 201 111
+point 291 111
+circle 2 3
+save tests/fixtures/two_page_circle_port.gsp

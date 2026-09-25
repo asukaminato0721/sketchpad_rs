@@ -1,0 +1,11 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 1
+point_style 1 thick
+color 1 #0000ff
+page 2
+point_style 5 small
+color 5 #800080
+line_width 4 thick
+line_pattern 4 dashed
+color 4 #008000
+save tests/fixtures/two_page_styled_port.gsp

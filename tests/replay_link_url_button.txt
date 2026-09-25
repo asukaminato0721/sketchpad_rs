@@ -1,0 +1,6 @@
+open tests/fixtures/point.gsp
+link_url_button https://example.org/
+save tests/fixtures/action_link_url_port_generated.gsp
+open tests/fixtures/point.gsp
+link_url_button sketchdoc://point.gsp
+save tests/fixtures/action_link_url_port_sketchdoc.gsp

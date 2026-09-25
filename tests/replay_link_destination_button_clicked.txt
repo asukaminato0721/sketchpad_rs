@@ -1,0 +1,4 @@
+open tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp
+page 1
+activate_button 2
+save tests/fixtures/action_link_page_activate_hide_show_port_clicked.gsp

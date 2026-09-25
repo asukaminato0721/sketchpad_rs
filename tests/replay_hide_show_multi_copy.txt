@@ -1,0 +1,6 @@
+# Copy a native two-point button with both of its target points.
+open tests/fixtures/action_hide_show_two_points_original.gsp
+copy 4
+paste
+check
+save tests/fixtures/action_hide_show_two_points_copied_generated.gsp

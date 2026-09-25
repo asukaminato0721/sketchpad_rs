@@ -1,0 +1,12 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+point_on 4 246 111
+save tests/fixtures/two_page_segment_extra_point_port.gsp
+open tests/fixtures/two_page_circle_constrained_native.gsp
+page 2
+point_on 4 111 111
+save tests/fixtures/two_page_circle_extra_point_port.gsp
+open tests/fixtures/two_page_arc_constrained_native.gsp
+page 2
+point_on 5 241 64
+save tests/fixtures/two_page_arc_extra_point_port.gsp

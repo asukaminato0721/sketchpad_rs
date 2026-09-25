@@ -1,0 +1,9 @@
+open tests/fixtures/two_page_two_points_native.gsp
+page 2
+move 2 261 171
+save tests/fixtures/two_page_point_moved_port.gsp
+open tests/fixtures/two_page_two_points_native.gsp
+page 1
+move 1 363 247
+link_page_button 2
+save tests/fixtures/two_page_point_moved_link_port.gsp

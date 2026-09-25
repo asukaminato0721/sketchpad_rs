@@ -1,0 +1,19 @@
+# Two constrained points sharing one Animation button, then per-point directions.
+new
+point 200 150
+point 300 150
+segment 1 2
+point_on 3 230 150
+point_on 3 270 150
+animation_button_multi 4 5
+check
+save tests/fixtures/action_animation_two_points_generated.gsp
+new
+point 200 150
+point 300 150
+segment 1 2
+point_on 3 230 150
+point_on 3 270 150
+animation_button_multi 4:bidirectional:24:repeat 5:backward:24:repeat
+check
+save tests/fixtures/action_animation_two_points_asymmetric_generated.gsp

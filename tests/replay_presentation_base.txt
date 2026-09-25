@@ -1,0 +1,5 @@
+point 150 120
+point 270 120
+hide_show_button 1
+hide_show_button 2
+save tests/fixtures/presentation_two_hide_show_base.gsp

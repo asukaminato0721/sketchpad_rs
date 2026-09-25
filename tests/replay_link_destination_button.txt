@@ -1,0 +1,4 @@
+open tests/fixtures/two_page_hide_show_first_native.gsp
+page 2
+link_page_button 1 1
+save tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp

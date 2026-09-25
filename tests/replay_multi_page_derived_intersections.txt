@@ -1,0 +1,32 @@
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+point 201 211
+parallel 5 4
+perpendicular 5 4
+save tests/fixtures/two_page_parallel_perpendicular_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+point 201 51
+point 201 211
+line 5 6
+intersection 4 7
+save tests/fixtures/two_page_straight_intersection_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+point 201 161
+point 281 161
+circle 5 6
+line_circle_intersection 4 7 0
+line_circle_intersection 4 7 1
+save tests/fixtures/two_page_line_circle_intersections_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 160 160
+point 260 160
+circle 2 3
+point 240 160
+point 340 160
+circle 5 6
+circle_circle_intersection 4 7 0
+circle_circle_intersection 4 7 1
+save tests/fixtures/two_page_circle_circle_intersections_port.gsp

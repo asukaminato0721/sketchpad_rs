@@ -1,0 +1,5 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+trace 4 on
+trace 5 on
+save tests/fixtures/two_page_traced_port.gsp

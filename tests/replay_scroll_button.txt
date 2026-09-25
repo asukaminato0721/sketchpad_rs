@@ -1,0 +1,7 @@
+point 150 120
+point 270 120
+segment 1 2
+scroll_button 1 upper_left
+save tests/fixtures/action_scroll_port_top_left.gsp
+scroll_button 2 center
+save tests/fixtures/action_scroll_port_two_buttons.gsp

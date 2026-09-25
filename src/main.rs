@@ -1730,7 +1730,7 @@ impl Editor {
         self.select_only(id);
     }
     fn derived_line(&mut self, perpendicular: bool) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1748,6 +1748,12 @@ impl Editor {
             .collect();
         if points.len() != 1 || lines.len() != 1 || self.doc.selected.len() != 2 {
             self.status = "Select one point and one straight object".into();
+            return;
+        }
+        if self.doc.objects[points[0] - 1].page != self.doc.active_page
+            || self.doc.objects[lines[0] - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
             return;
         }
         let kind = if perpendicular {
@@ -1829,7 +1835,7 @@ impl Editor {
         }
     }
     fn point_on_object(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1852,6 +1858,10 @@ impl Editor {
             self.status = "Select a segment, circle, or arc".into();
             return;
         };
+        if self.doc.objects[host - 1].page != self.doc.active_page {
+            self.status = "Select a host on the current page".into();
+            return;
+        }
         if self.selection_order.len() > 2 {
             self.status = "Select one host, optionally with a point to project".into();
             return;
@@ -1885,7 +1895,7 @@ impl Editor {
         self.select_only(id);
     }
     fn intersection(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1895,6 +1905,12 @@ impl Editor {
             return;
         }
         let (a, b) = (ids[0], ids[1]);
+        if self.doc.objects[a - 1].page != self.doc.active_page
+            || self.doc.objects[b - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
         let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
             vec![Kind::Intersection(a, b)]
         } else if (self.doc.line_points(a).is_some() && self.doc.circle_points(b).is_some())
@@ -1921,9 +1937,19 @@ impl Editor {
         self.doc.selected.clear();
         self.selection_order.clear();
         for kind in kinds {
+            if self.doc.page_count > 1 {
+                let mut probe = self.doc.clone();
+                let probe_id = probe.add(kind.clone());
+                if probe.position(probe_id).is_none() {
+                    continue;
+                }
+            }
             let id = self.doc.add(kind);
             self.doc.selected.insert(id);
             self.selection_order.push(id);
+        }
+        if self.selection_order.is_empty() {
+            self.status = "Selected paths have no intersection".into();
         }
     }
     fn angle_bisector(&mut self) {
@@ -6660,7 +6686,46 @@ mod tests {
         editor.selection_order = vec![2, 3];
         editor.pair(4);
         assert_eq!(editor.doc.objects[7].kind, Kind::Ray(2, 3));
+        editor.selection_order = vec![2, 3];
+        editor.pair(2);
+        assert_eq!(editor.doc.objects[8].kind, Kind::Midpoint(2, 3));
+        editor.selection_order = vec![2, 4];
+        editor.circle_by_segment();
+        assert_eq!(editor.doc.objects[9].kind, Kind::CircleBySegment(2, 4));
         assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
+    }
+
+    #[test]
+    fn derived_lines_intersection_and_point_on_object_work_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_segment_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        let point = editor.doc.add(Kind::Free(Point { x: 201., y: 211. }));
+        editor.selection_order = vec![point, 4];
+        editor.doc.selected = editor.selection_order.iter().copied().collect();
+        editor.derived_line(false);
+        assert_eq!(editor.doc.objects[5].kind, Kind::Parallel(point, 4));
+        editor.selection_order = vec![point, 4];
+        editor.doc.selected = editor.selection_order.iter().copied().collect();
+        editor.derived_line(true);
+        assert_eq!(editor.doc.objects[6].kind, Kind::Perpendicular(point, 4));
+        editor.selection_order = vec![4, 7];
+        editor.doc.selected = editor.selection_order.iter().copied().collect();
+        editor.intersection();
+        assert_eq!(editor.doc.objects[7].kind, Kind::Intersection(4, 7));
+        assert_eq!(editor.doc.position(8), Some(Point { x: 201., y: 111. }));
+        editor.selection_order = vec![4];
+        editor.doc.selected = editor.selection_order.iter().copied().collect();
+        editor.point_on_object();
+        assert!(
+            matches!(editor.doc.objects[8].kind, Kind::PointOnSegment(4, t) if (t - 0.5).abs() < 1e-12)
+        );
+        let saved = editor.doc.encode().unwrap();
+        assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 9);
     }
 
     #[test]

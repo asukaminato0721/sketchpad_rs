@@ -67,17 +67,17 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Point on Object | Partial: segment, circle, and arc hosts, including drag and generated-file cross-open |
-| Midpoint | Partial |
-| Intersection | Partial: straight, line-circle, and circle-circle constructions; generated examples opened in Sketchpad 5 |
+| Point on Object | Partial: segment, circle, and arc hosts, including drag and generated-file cross-open; creation works on supported multi-page pages |
+| Midpoint | Partial: supported multi-page segment hosts; generated object group matches native Sketchpad byte for byte and cross-opens |
+| Intersection | Partial: straight, line-circle, and circle-circle constructions work on supported multi-page pages; four generated files opened and saved byte-identically in Sketchpad 5, and the straight-intersection group matches a native construction byte for byte |
 | Segment | Partial |
-| Ray | Partial |
-| Line | Partial |
-| Parallel Line | Partial |
-| Perpendicular Line | Partial |
+| Ray | Partial: supported multi-page point pairs; generated object group matches native Sketchpad byte for byte and cross-opens |
+| Line | Partial: supported multi-page point pairs; generated object group matches native Sketchpad byte for byte and cross-opens |
+| Parallel Line | Partial: supported multi-page point and straight-path parents; generated group matches a native construction byte for byte and cross-opens |
+| Perpendicular Line | Partial: supported multi-page point and straight-path parents; generated group matches a native construction byte for byte and cross-opens |
 | Circle by Center+Point | Partial |
 | Angle Bisector | Partial: original fixture and generated ray cross-opened |
-| Circle by Center+Radius | Partial: segment radius variant cross-opened |
+| Circle by Center+Radius | Partial: segment radius variant on supported multi-page pages; generated object group matches native Sketchpad byte for byte and cross-opens |
 | Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, SVG, generated file opened in Sketchpad 5 |
@@ -184,5 +184,5 @@ The release gate is every sketch and document command verified after editing, sa
 | Circle tool | Partial: circles built from existing or newly created points on supported multi-page pages; generated object group matches native Sketchpad byte for byte and the file cross-opened |
 | Text, image, table, iteration, plotting | Partial: literal text, point labels, a single PNG picture, and Cartesian `x`/`x²` plots cross-open. Literal captions with saved bold, italic, underline, and size records import as editable text; edits in mixed-style two-caption sketches cross-opened byte-identically. Bold, Italic, and Underline formatting of free text also cross-opened. Other text formatting, table, and iteration pending |
 | Import, export, print | Partial: single PNG import, SVG/PDF export, and Linux printing for supported visible geometry; other image formats and physical print verification pending |
-| Multi-page documents | Partial: page navigation, free and constrained point, segment, and circle creation, existing-point movement, visual styles and tracing, Hide/Show state, and Page/URL Link insertion; broader construction and page editing pending |
+| Multi-page documents | Partial: page navigation, free and constrained point, segment, line, ray, midpoint, and circle creation, existing-point movement, visual styles and tracing, Hide/Show state, and Page/URL Link insertion; broader construction and page editing pending |
 | Cross-open generated files in Windows Sketchpad 5 | Partial: nine-object file edited and saved in Sketchpad 5, then edited in Rust and reopened under Wine |

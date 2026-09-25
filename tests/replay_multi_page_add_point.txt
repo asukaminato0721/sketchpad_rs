@@ -1,0 +1,4 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 221 131
+save tests/fixtures/two_page_one_new_point_port.gsp

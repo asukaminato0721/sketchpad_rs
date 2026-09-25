@@ -1,0 +1,8 @@
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+midpoint 2 3
+save tests/fixtures/two_page_midpoint_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+circle_segment 2 4
+save tests/fixtures/two_page_circle_segment_port.gsp

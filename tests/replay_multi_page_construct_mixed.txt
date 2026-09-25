@@ -1,0 +1,14 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 1
+point 150 200
+point 250 200
+segment 2 3
+page 2
+point 111 111
+point 291 111
+segment 5 6
+point_on 7 201 111
+circle 5 6
+point_on 9 111 291
+link_page_button 1
+save tests/fixtures/two_page_construct_mixed_port.gsp

@@ -1,0 +1,6 @@
+point 150 120
+point 270 120
+movement_button 1 2 medium follow
+save tests/fixtures/action_movement_port_default.gsp
+movement_button 1 2 instant initial
+save tests/fixtures/action_movement_port_two_buttons.gsp

@@ -1,0 +1,7 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 1
+point 150 200
+page 2
+point_on 4 246 111
+link_page_button 1
+save tests/fixtures/two_page_mixed_additions_port.gsp

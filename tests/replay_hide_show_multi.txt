@@ -1,0 +1,13 @@
+# A Hide/Show Action Button targeting two points while their segment remains visible.
+point 150 120
+point 270 120
+segment 1 2
+hide_show_button 1 2
+check
+save tests/fixtures/action_hide_show_two_points_generated.gsp
+activate_button 4
+check
+save tests/fixtures/action_hide_show_two_points_generated_clicked.gsp
+open tests/fixtures/action_hide_show_two_points_generated_clicked.gsp
+activate_button 4
+check

@@ -896,6 +896,11 @@ fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::Ray(_, _)
             | Kind::Midpoint(_, _)
             | Kind::CircleBySegment(_, _)
+            | Kind::Parallel(_, _)
+            | Kind::Perpendicular(_, _)
+            | Kind::Intersection(_, _)
+            | Kind::LineCircleIntersection(_, _, _)
+            | Kind::CircleCircleIntersection(_, _, _)
             | Kind::LinkPageButton { .. }
             | Kind::LinkUrlButton { .. }
     )
@@ -8877,6 +8882,39 @@ impl Document {
             .ok_or("Missing page-local construction parent")?;
         u32::try_from(ordinal).map_err(|_| "Too many objects on page".into())
     }
+    fn append_multi_page_reference_group(
+        groups: &mut Vec<u8>,
+        object: &Object,
+        code: u16,
+        refs: &[u32],
+    ) -> Result<(), String> {
+        let mut object_header = header(code);
+        if !object.visible {
+            object_header[2] = 1;
+        }
+        object_header[4] = u8::from(object.tracing);
+        if let Some(style) = object.visual_style {
+            style_records::set_visual_style(&mut object_header, style)?;
+        }
+        put_record(groups, 0x07d0, &object_header);
+        if is_point_kind(&object.kind) {
+            if let Some(label) = &object.label {
+                groups.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+            }
+        }
+        let mut references = Vec::with_capacity(4 + refs.len() * 4);
+        references.extend_from_slice(
+            &u32::try_from(refs.len())
+                .map_err(|_| "Too many construction parents")?
+                .to_le_bytes(),
+        );
+        for reference in refs {
+            references.extend_from_slice(&reference.to_le_bytes());
+        }
+        put_record(groups, 0x07d2, &references);
+        put_record(groups, 0x07d7, &[]);
+        Ok(())
+    }
     fn encode_multi_page_additions(&self) -> Result<Vec<u8>, String> {
         let original = Self::from_bytes(&self.original, None)?;
         if self.page_count < 2
@@ -9171,6 +9209,80 @@ impl Document {
                         references.extend_from_slice(&local_radius.to_le_bytes());
                         put_record(&mut groups, 0x07d2, &references);
                         put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Parallel(point, line) | Kind::Perpendicular(point, line) => {
+                        if !self
+                            .objects
+                            .get(point.saturating_sub(1))
+                            .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || self
+                                .line_points(*line)
+                                .is_none_or(|(first, second, _)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Derived line needs a point and nonzero straight object".into()
+                            );
+                        }
+                        let local_point =
+                            self.multi_page_local_reference(page, object.id, *point)?;
+                        let local_line = self.multi_page_local_reference(page, object.id, *line)?;
+                        let code = if matches!(object.kind, Kind::Parallel(_, _)) {
+                            6
+                        } else {
+                            5
+                        };
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            code,
+                            &[local_point, local_line],
+                        )?;
+                    }
+                    Kind::Intersection(a, b)
+                    | Kind::LineCircleIntersection(a, b, _)
+                    | Kind::CircleCircleIntersection(a, b, _) => {
+                        let code = match object.kind {
+                            Kind::Intersection(_, _)
+                                if self.line_points(*a).is_some()
+                                    && self.line_points(*b).is_some() =>
+                            {
+                                9
+                            }
+                            Kind::LineCircleIntersection(_, _, variant)
+                                if variant <= 1
+                                    && self.line_points(*a).is_some()
+                                    && self.circle_points(*b).is_some() =>
+                            {
+                                if variant == 0 {
+                                    12
+                                } else {
+                                    11
+                                }
+                            }
+                            Kind::CircleCircleIntersection(_, _, variant)
+                                if variant <= 1
+                                    && self.circle_points(*a).is_some()
+                                    && self.circle_points(*b).is_some() =>
+                            {
+                                if variant == 0 {
+                                    14
+                                } else {
+                                    13
+                                }
+                            }
+                            _ => return Err("Intersection needs compatible paths".into()),
+                        };
+                        if self.position(object.id).is_none() {
+                            return Err("Intersection has no finite point".into());
+                        }
+                        let local_a = self.multi_page_local_reference(page, object.id, *a)?;
+                        let local_b = self.multi_page_local_reference(page, object.id, *b)?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            code,
+                            &[local_a, local_b],
+                        )?;
                     }
                     Kind::LinkPageButton {
                         target_page,
@@ -13068,6 +13180,229 @@ mod tests {
         document.active_page = 1;
         let new_point = document.add(Kind::Free(Point { x: 200., y: 200. }));
         document.add(Kind::Segment(1, new_point));
+        assert!(document.can_save().is_err());
+    }
+    #[test]
+    fn multi_page_midpoint_and_circle_by_segment_match_native_groups() {
+        fn last_group(bytes: &[u8]) -> &[u8] {
+            let entries = records(bytes).unwrap();
+            let start = entries
+                .iter()
+                .rposition(|entry| entry.kind == 0x07d0)
+                .unwrap();
+            let end = start
+                + entries[start..]
+                    .iter()
+                    .position(|entry| entry.kind == 0x07d7)
+                    .unwrap();
+            &bytes[entries[start].start..entries[end].data.end]
+        }
+        let base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        for (index, kind, expected, native) in [
+            (
+                0,
+                Kind::Midpoint(2, 3),
+                include_bytes!("../tests/fixtures/two_page_midpoint_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_midpoint_native.gsp").as_slice(),
+            ),
+            (
+                1,
+                Kind::CircleBySegment(2, 4),
+                include_bytes!("../tests/fixtures/two_page_circle_segment_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/two_page_circle_segment_native.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 1;
+            let id = document.add(kind.clone());
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_mid_circle_{}_{}.gsp",
+                std::process::id(),
+                index
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert_eq!(last_group(expected), last_group(native));
+            assert_eq!(document.objects[id - 1].kind, kind);
+            if index == 0 {
+                assert_eq!(document.objects[id - 1].midpoint_host, Some(4));
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn multi_page_midpoint_and_circle_by_new_segment_reopen() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 111., y: 111. }));
+        let b = document.add(Kind::Free(Point { x: 291., y: 111. }));
+        let segment = document.add(Kind::Segment(a, b));
+        let midpoint = document.add(Kind::Midpoint(a, b));
+        let circle = document.add(Kind::CircleBySegment(a, segment));
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_new_mid_circle_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp")
+        );
+        assert_eq!(document.objects[midpoint - 1].midpoint_host, Some(segment));
+        assert_eq!(
+            document.objects[circle - 1].kind,
+            Kind::CircleBySegment(a, segment)
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn multi_page_derived_lines_and_intersections_save() {
+        fn object_group_with_code(bytes: &[u8], code: u16) -> &[u8] {
+            let entries = records(bytes).unwrap();
+            let start = entries
+                .iter()
+                .position(|entry| {
+                    entry.kind == 0x07d0
+                        && entry.data.len() >= 2
+                        && u16::from_le_bytes(
+                            bytes[entry.data.start..entry.data.start + 2]
+                                .try_into()
+                                .unwrap(),
+                        ) == code
+                })
+                .unwrap();
+            let end = start
+                + entries[start..]
+                    .iter()
+                    .position(|entry| entry.kind == 0x07d7)
+                    .unwrap();
+            &bytes[entries[start].start..entries[end].data.end]
+        }
+        fn saved(mut document: Document, expected: &[u8], name: &str) -> Document {
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_{}_{}.gsp",
+                name,
+                std::process::id()
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            std::fs::remove_file(path).unwrap();
+            document
+        }
+        let segment_base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        let mut document = Document::from_bytes(segment_base, None).unwrap();
+        document.active_page = 1;
+        let point = document.add(Kind::Free(Point { x: 201., y: 211. }));
+        document.add(Kind::Parallel(point, 4));
+        document.add(Kind::Perpendicular(point, 4));
+        let reopened = saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_parallel_perpendicular_port.gsp"),
+            "derived",
+        );
+        assert!(reopened.line_points(6).is_some());
+        assert!(reopened.line_points(7).is_some());
+        let generated =
+            include_bytes!("../tests/fixtures/two_page_parallel_perpendicular_port.gsp");
+        assert_eq!(
+            object_group_with_code(generated, 6),
+            object_group_with_code(
+                include_bytes!("../tests/fixtures/two_page_parallel_native.gsp"),
+                6,
+            )
+        );
+        assert_eq!(
+            object_group_with_code(generated, 5),
+            object_group_with_code(
+                include_bytes!("../tests/fixtures/two_page_perpendicular_native.gsp"),
+                5,
+            )
+        );
+
+        let mut document = Document::from_bytes(segment_base, None).unwrap();
+        document.active_page = 1;
+        let first = document.add(Kind::Free(Point { x: 201., y: 51. }));
+        let second = document.add(Kind::Free(Point { x: 201., y: 211. }));
+        let line = document.add(Kind::Line(first, second));
+        let crossing = document.add(Kind::Intersection(4, line));
+        let reopened = saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_straight_intersection_port.gsp"),
+            "straight_crossing",
+        );
+        assert_eq!(
+            reopened.position(crossing),
+            Some(Point { x: 201., y: 111. })
+        );
+        assert_eq!(
+            object_group_with_code(
+                include_bytes!("../tests/fixtures/two_page_straight_intersection_port.gsp"),
+                9,
+            ),
+            object_group_with_code(
+                include_bytes!("../tests/fixtures/two_page_straight_intersection_native.gsp"),
+                9,
+            )
+        );
+
+        let mut document = Document::from_bytes(segment_base, None).unwrap();
+        document.active_page = 1;
+        let center = document.add(Kind::Free(Point { x: 201., y: 161. }));
+        let radius = document.add(Kind::Free(Point { x: 281., y: 161. }));
+        let circle = document.add(Kind::Circle(center, radius));
+        let first = document.add(Kind::LineCircleIntersection(4, circle, 0));
+        let second = document.add(Kind::LineCircleIntersection(4, circle, 1));
+        let reopened = saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_line_circle_intersections_port.gsp"),
+            "line_circle_crossings",
+        );
+        assert_ne!(reopened.position(first), reopened.position(second));
+        assert!(reopened.position(first).is_some());
+        assert!(reopened.position(second).is_some());
+
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 160., y: 160. }));
+        let b = document.add(Kind::Free(Point { x: 260., y: 160. }));
+        let first_circle = document.add(Kind::Circle(a, b));
+        let c = document.add(Kind::Free(Point { x: 240., y: 160. }));
+        let d = document.add(Kind::Free(Point { x: 340., y: 160. }));
+        let second_circle = document.add(Kind::Circle(c, d));
+        let first = document.add(Kind::CircleCircleIntersection(
+            first_circle,
+            second_circle,
+            0,
+        ));
+        let second = document.add(Kind::CircleCircleIntersection(
+            first_circle,
+            second_circle,
+            1,
+        ));
+        let reopened = saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_circle_circle_intersections_port.gsp"),
+            "circle_crossings",
+        );
+        assert_ne!(reopened.position(first), reopened.position(second));
+        assert!(reopened.position(first).is_some());
+        assert!(reopened.position(second).is_some());
+    }
+
+    #[test]
+    fn multi_page_intersection_requires_finite_crossing() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let point = document.add(Kind::Free(Point { x: 201., y: 211. }));
+        let parallel = document.add(Kind::Parallel(point, 4));
+        document.add(Kind::Intersection(4, parallel));
         assert!(document.can_save().is_err());
     }
     #[test]
