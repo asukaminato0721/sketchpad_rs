@@ -17,6 +17,43 @@ pub enum VisibilityAction {
     Show,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationDirection {
+    Forward,
+    Backward,
+    Bidirectional,
+    Random,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnimationSettings {
+    pub direction: AnimationDirection,
+    pub speed: f32,
+    pub once: bool,
+}
+
+impl Default for AnimationSettings {
+    fn default() -> Self {
+        Self {
+            direction: AnimationDirection::Bidirectional,
+            speed: 24.,
+            once: false,
+        }
+    }
+}
+
+impl AnimationSettings {
+    pub fn validate(self) -> Result<(), String> {
+        if !self.speed.is_finite() || self.speed <= 0. || self.speed > 10_000. {
+            return Err("Animation speed must be positive and finite".into());
+        }
+        if self.once && self.direction == AnimationDirection::Bidirectional {
+            return Err("Once Only is unavailable for bidirectional motion".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Record {
     kind: u32,
@@ -292,7 +329,12 @@ impl AnimationButtonGroup {
         // The settings payload starts after the 36-byte header group,
         // 16-byte target record, and its own 8-byte record header.
         let default_settings = &include_bytes!("../assets/action_animation_group.bin")[60..96];
-        if settings != default_settings {
+        if settings.len() != 36
+            || settings.iter().zip(default_settings).enumerate().any(
+                |(index, (actual, expected))| !matches!(index, 7 | 8..=11) && actual != expected,
+            )
+            || self.settings().is_err()
+        {
             return Err("Unsupported Animation button settings".into());
         }
         let action = &self.records[3].payload;
@@ -316,6 +358,45 @@ impl AnimationButtonGroup {
 
     pub fn target_id(&self) -> u32 {
         u32_at(&self.records[1].payload, 4)
+    }
+
+    pub fn settings(&self) -> Result<AnimationSettings, String> {
+        let bytes = &self.records[2].payload;
+        if bytes.len() != 36 {
+            return Err("Animation settings are truncated".into());
+        }
+        let flags = bytes[7];
+        if flags & !0xb0 != 0 {
+            return Err("Unsupported animation direction flags".into());
+        }
+        let direction = match flags & 0x30 {
+            0x00 => AnimationDirection::Forward,
+            0x10 => AnimationDirection::Backward,
+            0x20 => AnimationDirection::Bidirectional,
+            0x30 => AnimationDirection::Random,
+            _ => unreachable!(),
+        };
+        let settings = AnimationSettings {
+            direction,
+            speed: f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+            once: flags & 0x80 != 0,
+        };
+        settings.validate()?;
+        Ok(settings)
+    }
+
+    pub fn set_settings(&mut self, settings: AnimationSettings) -> Result<(), String> {
+        settings.validate()?;
+        let direction = match settings.direction {
+            AnimationDirection::Forward => 0x00,
+            AnimationDirection::Backward => 0x10,
+            AnimationDirection::Bidirectional => 0x20,
+            AnimationDirection::Random => 0x30,
+        };
+        let bytes = &mut self.records[2].payload;
+        bytes[7] = direction | if settings.once { 0x80 } else { 0 };
+        bytes[8..12].copy_from_slice(&settings.speed.to_le_bytes());
+        Ok(())
     }
 
     pub fn set_single_target(&mut self, target: u32) -> Result<(), String> {
@@ -391,6 +472,80 @@ mod tests {
         assert_eq!(reopened.target_id(), 7);
         assert_eq!(reopened.screen_anchor(), (30, 40));
         assert_eq!(reopened.label_utf8().unwrap(), "Animate Point");
+        assert_eq!(reopened.settings().unwrap(), AnimationSettings::default());
+    }
+
+    #[test]
+    fn native_animation_direction_speed_and_once_settings_round_trip() {
+        use AnimationDirection::*;
+        for (file, expected) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_forward_original.gsp")
+                    .as_slice(),
+                AnimationSettings {
+                    direction: Forward,
+                    speed: 24.,
+                    once: false,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_backward_original.gsp")
+                    .as_slice(),
+                AnimationSettings {
+                    direction: Backward,
+                    speed: 24.,
+                    once: false,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_random_original.gsp").as_slice(),
+                AnimationSettings {
+                    direction: Random,
+                    speed: 24.,
+                    once: false,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_slow_original.gsp").as_slice(),
+                AnimationSettings {
+                    direction: Bidirectional,
+                    speed: 4.,
+                    once: false,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_fast_original.gsp").as_slice(),
+                AnimationSettings {
+                    direction: Bidirectional,
+                    speed: 80.,
+                    once: false,
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_forward_once_original.gsp")
+                    .as_slice(),
+                AnimationSettings {
+                    direction: Forward,
+                    speed: 24.,
+                    once: true,
+                },
+            ),
+        ] {
+            let bytes = action_group(file);
+            let group = AnimationButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.settings().unwrap(), expected);
+            assert_eq!(group.encode(), bytes);
+            let mut generated =
+                AnimationButtonGroup::from_original_template(4, "Animate Point", (10, 5)).unwrap();
+            generated.set_settings(expected).unwrap();
+            assert_eq!(
+                AnimationButtonGroup::parse(&generated.encode())
+                    .unwrap()
+                    .settings()
+                    .unwrap(),
+                expected
+            );
+        }
     }
 
     fn action_group(file: &[u8]) -> Vec<u8> {

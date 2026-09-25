@@ -1,5 +1,6 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
+use sketchpad_rs::action_records::{AnimationDirection, AnimationSettings};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, TextStyleCommand, records};
 use sketchpad_rs::graph::GridForm;
@@ -805,8 +806,32 @@ fn replay(path: &str) -> Result<(), String> {
                     println!("line {}: hide_show_button -> object {id}", index + 1);
                 }
                 "animation_button" => {
-                    let target: usize = rest.parse().map_err(|_| "invalid button target ID")?;
-                    let id = document.add_animation_button(target)?;
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.is_empty() || parts.len() > 4 {
+                        return Err("expected target [forward|backward|bidirectional|random] [speed] [once|repeat]".into());
+                    }
+                    let target: usize = parts[0].parse().map_err(|_| "invalid button target ID")?;
+                    let mut settings = AnimationSettings::default();
+                    if let Some(direction) = parts.get(1) {
+                        settings.direction = match *direction {
+                            "forward" => AnimationDirection::Forward,
+                            "backward" => AnimationDirection::Backward,
+                            "bidirectional" => AnimationDirection::Bidirectional,
+                            "random" => AnimationDirection::Random,
+                            _ => return Err("invalid animation direction".into()),
+                        };
+                    }
+                    if let Some(speed) = parts.get(2) {
+                        settings.speed = speed.parse().map_err(|_| "invalid animation speed")?;
+                    }
+                    if let Some(travel) = parts.get(3) {
+                        settings.once = match *travel {
+                            "once" => true,
+                            "repeat" => false,
+                            _ => return Err("expected once or repeat".into()),
+                        };
+                    }
+                    let id = document.add_animation_button_with_settings(target, settings)?;
                     println!("line {}: animation_button -> object {id}", index + 1);
                 }
                 "activate_button" => {

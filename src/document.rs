@@ -1,4 +1,6 @@
-use crate::action_records::{AnimationButtonGroup, HideShowButtonGroup, VisibilityAction};
+use crate::action_records::{
+    AnimationButtonGroup, AnimationSettings, HideShowButtonGroup, VisibilityAction,
+};
 use crate::coordinate_measure_records::{
     self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
 };
@@ -234,12 +236,14 @@ impl Kind {
             target,
             label,
             anchor,
+            settings,
         } = self
         {
             return Kind::AnimationButton {
                 target: m(*target),
                 label: label.clone(),
                 anchor: *anchor,
+                settings: *settings,
             };
         }
         if let Kind::Polygon(vertices) = self {
@@ -510,6 +514,7 @@ pub enum Kind {
         target: usize,
         label: String,
         anchor: (i16, i16),
+        settings: AnimationSettings,
     },
     HideShowButton {
         target: usize,
@@ -1992,6 +1997,7 @@ impl Document {
                                 target: *target,
                                 label: label.to_owned(),
                                 anchor: group.screen_anchor(),
+                                settings: group.settings().unwrap(),
                             },
                             Err(_) => Kind::Unsupported(code),
                         }
@@ -5248,6 +5254,33 @@ impl Document {
         }))
     }
     pub fn add_animation_button(&mut self, target: usize) -> Result<usize, String> {
+        let settings = self
+            .animation_button_default_settings(target)
+            .ok_or("An Animation button needs an animatable point on this page")?;
+        self.add_animation_button_with_settings(target, settings)
+    }
+    pub fn animation_button_default_settings(&self, target: usize) -> Option<AnimationSettings> {
+        let object = self.objects.get(target.checked_sub(1)?)?;
+        let direction = match object.kind {
+            Kind::Free(_) | Kind::PointOnCircle(_, _, _) => {
+                crate::action_records::AnimationDirection::Forward
+            }
+            Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _) => {
+                crate::action_records::AnimationDirection::Bidirectional
+            }
+            _ => return None,
+        };
+        Some(AnimationSettings {
+            direction,
+            ..AnimationSettings::default()
+        })
+    }
+    pub fn add_animation_button_with_settings(
+        &mut self,
+        target: usize,
+        settings: AnimationSettings,
+    ) -> Result<usize, String> {
+        settings.validate()?;
         let object = self
             .objects
             .get(target.checked_sub(1).ok_or("Invalid button target")?)
@@ -5267,6 +5300,11 @@ impl Document {
         {
             return Err("An Animation button needs an animatable point on this page".into());
         }
+        if matches!(object.kind, Kind::Free(_))
+            && settings.direction != crate::action_records::AnimationDirection::Forward
+        {
+            return Err("A free-point Animation button has no direction setting".into());
+        }
         let row = self
             .objects
             .iter()
@@ -5284,6 +5322,7 @@ impl Document {
             target,
             label: "Animate Point".into(),
             anchor: (10, y),
+            settings,
         }))
     }
     pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
@@ -6915,6 +6954,11 @@ impl Document {
                     return Err(format!("Invalid Hide/Show button {}", o.id));
                 }
             }
+            if let Kind::AnimationButton { settings, .. } = o.kind {
+                settings
+                    .validate()
+                    .map_err(|error| format!("Invalid Animation button {}: {error}", o.id))?;
+            }
             if let Kind::Midpoint(a, b) = o.kind {
                 let Some(host) = o.midpoint_host else {
                     return Err(format!("Midpoint {} has no segment host", o.id));
@@ -8269,8 +8313,15 @@ impl Document {
                 }
                 out[start..end].copy_from_slice(&encoded);
             }
-            if let (Kind::AnimationButton { label, anchor, .. }, Some(i)) =
-                (&o.kind, o.header_offset)
+            if let (
+                Kind::AnimationButton {
+                    label,
+                    anchor,
+                    settings,
+                    ..
+                },
+                Some(i),
+            ) = (&o.kind, o.header_offset)
             {
                 let start_record = rs
                     .iter()
@@ -8286,6 +8337,7 @@ impl Document {
                 let mut group = AnimationButtonGroup::parse(&out[start..end])?;
                 group.set_label(label)?;
                 group.set_screen_anchor(*anchor);
+                group.set_settings(*settings)?;
                 group.set_hidden(!o.visible);
                 let encoded = group.encode();
                 if encoded.len() != end - start {
@@ -8493,11 +8545,13 @@ impl Document {
                 target,
                 label,
                 anchor,
+                settings,
             } = &o.kind
             {
                 let mut group =
                     AnimationButtonGroup::from_original_template(*target as u32, label, *anchor)?;
                 group.set_hidden(!o.visible);
+                group.set_settings(*settings)?;
                 added.extend_from_slice(&group.encode());
                 continue;
             }
@@ -10504,7 +10558,7 @@ mod tests {
             assert!(!doc.partial_view);
             assert!(matches!(
                 &doc.objects[4].kind,
-                Kind::AnimationButton { target: 4, label, anchor: (10, 5) }
+                Kind::AnimationButton { target: 4, label, anchor: (10, 5), .. }
                     if label == "动画点"
             ));
             assert_eq!(doc.objects[4].kind.dependencies(), vec![4]);
@@ -10540,6 +10594,129 @@ mod tests {
         assert!(matches!(
             reopened.objects[pasted_button - 1].kind,
             Kind::AnimationButton { .. }
+        ));
+    }
+    #[test]
+    fn animation_button_variants_import_and_preserve_settings() {
+        use crate::action_records::AnimationDirection;
+        for (bytes, direction, speed, once) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_forward_original.gsp")
+                    .as_slice(),
+                AnimationDirection::Forward,
+                24.,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_backward_original.gsp")
+                    .as_slice(),
+                AnimationDirection::Backward,
+                24.,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_random_original.gsp").as_slice(),
+                AnimationDirection::Random,
+                24.,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_slow_original.gsp").as_slice(),
+                AnimationDirection::Bidirectional,
+                4.,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_fast_original.gsp").as_slice(),
+                AnimationDirection::Bidirectional,
+                80.,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_forward_once_original.gsp")
+                    .as_slice(),
+                AnimationDirection::Forward,
+                24.,
+                true,
+            ),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert!(matches!(
+                doc.objects[4].kind,
+                Kind::AnimationButton { settings: AnimationSettings { direction: value, speed: rate, once: one }, .. }
+                    if value == direction && rate == speed && one == once
+            ));
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_button_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let settings = AnimationSettings {
+            direction: AnimationDirection::Backward,
+            speed: 80.,
+            once: true,
+        };
+        let id = doc.add_animation_button_with_settings(4, settings).unwrap();
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(
+            matches!(reopened.objects[id-1].kind, Kind::AnimationButton { settings: actual, .. } if actual == settings)
+        );
+        assert_eq!(reopened.encode().unwrap(), encoded);
+        for (bytes, target, button) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_circle_original.gsp").as_slice(),
+                4,
+                5,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_free_original.gsp").as_slice(),
+                1,
+                2,
+            ),
+        ] {
+            let native = Document::from_bytes(bytes, None).unwrap();
+            assert!(!native.partial_view);
+            assert!(
+                matches!(native.objects[button-1].kind, Kind::AnimationButton { target: actual_target, settings: AnimationSettings { direction: AnimationDirection::Forward, speed: 24., once: false }, .. } if actual_target == target)
+            );
+            assert_eq!(native.encode().unwrap(), bytes);
+        }
+        let mut circle_doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_button_circle_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let circle_id = circle_doc.add_animation_button(4).unwrap();
+        assert!(matches!(
+            circle_doc.objects[circle_id - 1].kind,
+            Kind::AnimationButton {
+                settings: AnimationSettings {
+                    direction: AnimationDirection::Forward,
+                    ..
+                },
+                ..
+            }
+        ));
+        let mut free_doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_free_point_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let free_id = free_doc.add_animation_button(1).unwrap();
+        assert!(matches!(
+            free_doc.objects[free_id - 1].kind,
+            Kind::AnimationButton {
+                settings: AnimationSettings {
+                    direction: AnimationDirection::Forward,
+                    ..
+                },
+                ..
+            }
         ));
     }
     #[test]

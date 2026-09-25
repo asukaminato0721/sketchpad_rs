@@ -234,6 +234,11 @@ xvfb-run -a bash -c '
     sleep 0.5
     "$4" -window root "${capture_prefix}_after_dialog_close.png"
   fi
+  if [[ -n "${SKETCHPAD_WINE_DIALOG_FINAL_X:-}" ]]; then
+    xdotool mousemove "$SKETCHPAD_WINE_DIALOG_FINAL_X" "${SKETCHPAD_WINE_DIALOG_FINAL_Y:-348}" click 1
+    sleep 0.5
+    "$4" -window root "${capture_prefix}_after_dialog_final.png"
+  fi
   if [[ "${SKETCHPAD_WINE_DRAG_AFTER_MENU:-}" == "1" ]]; then
     xdotool mousemove "${SKETCHPAD_WINE_DRAG_FROM_X:-279}" "${SKETCHPAD_WINE_DRAG_FROM_Y:-299}" mousedown 1
     sleep 0.3

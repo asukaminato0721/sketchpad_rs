@@ -1,3 +1,4 @@
+use sketchpad_rs::action_records::{AnimationDirection, AnimationSettings};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point, TextStyleCommand};
 use sketchpad_rs::function_records::SimpleFunction;
@@ -147,6 +148,9 @@ struct AnimationTrack {
     free_velocity: Option<Point>,
     free_turn_remaining: f64,
     random_state: u64,
+    button_settings: Option<AnimationSettings>,
+    start_phase: f64,
+    distance_travelled: f64,
 }
 struct Editor {
     doc: Document,
@@ -169,6 +173,7 @@ struct Editor {
     animation_last_tick: Instant,
     animation_bounds: Option<(Point, Point)>,
     show_motion_controller: bool,
+    animation_button_dialog: Option<(usize, AnimationSettings)>,
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
@@ -248,6 +253,7 @@ impl Editor {
             animation_last_tick: Instant::now(),
             animation_bounds: None,
             show_motion_controller: false,
+            animation_button_dialog: None,
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
@@ -1456,9 +1462,11 @@ impl Editor {
                 }
                 if !multi
                     && let Some(id) = hit
-                    && let Kind::AnimationButton { target, .. } = &self.doc.objects[id - 1].kind
+                    && let Kind::AnimationButton {
+                        target, settings, ..
+                    } = &self.doc.objects[id - 1].kind
                 {
-                    self.animate_targets(&[*target], false);
+                    self.animate_button(*target, *settings);
                     self.selection_order.clear();
                     return;
                 }
@@ -2512,6 +2520,9 @@ impl Editor {
                 }),
                 free_turn_remaining: 0.35,
                 random_state,
+                button_settings: None,
+                start_phase: 0.,
+                distance_travelled: 0.,
             });
         }
         let phase = match object.kind {
@@ -2532,7 +2543,10 @@ impl Editor {
             direction: 1.,
             free_velocity: None,
             free_turn_remaining: 0.,
-            random_state: 0,
+            random_state: ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ phase.to_bits()) | 1,
+            button_settings: None,
+            start_phase: phase,
+            distance_travelled: 0.,
         })
     }
     fn animate_targets(&mut self, targets: &[usize], show_controller: bool) {
@@ -2559,6 +2573,22 @@ impl Editor {
         let selected = self.doc.selected.iter().copied().collect::<Vec<_>>();
         self.animate_targets(&selected, true);
     }
+    fn animate_button(&mut self, target: usize, settings: AnimationSettings) {
+        if self.animations.iter().any(|track| track.id == target) {
+            self.animations.retain(|track| track.id != target);
+            self.status = "Stopped animation".into();
+            return;
+        }
+        self.animate_targets(&[target], false);
+        if let Some(track) = self.animations.iter_mut().find(|track| track.id == target) {
+            track.button_settings = Some(settings);
+            track.direction = if settings.direction == AnimationDirection::Backward {
+                -1.
+            } else {
+                1.
+            };
+        }
+    }
     fn stop_animation(&mut self) {
         self.animations.clear();
         self.animation_paused = false;
@@ -2568,8 +2598,8 @@ impl Editor {
         if self.animations.is_empty() || self.animation_paused || !elapsed_seconds.is_finite() {
             return;
         }
-        let step = elapsed_seconds.clamp(0., 0.1) * self.animation_speed / 2.;
-        if step == 0. {
+        let base_step = elapsed_seconds.clamp(0., 0.1) * self.animation_speed / 2.;
+        if base_step == 0. {
             return;
         }
         self.capture_traces();
@@ -2582,12 +2612,16 @@ impl Editor {
                 return false;
             }
             let kind = &object.kind;
+            let speed_scale = track
+                .button_settings
+                .map_or(1., |settings| f64::from(settings.speed) / 24.);
+            let step = base_step * speed_scale;
             if let Some(mut velocity) = track.free_velocity {
                 let Kind::Free(current) = *kind else {
                     return false;
                 };
                 let elapsed = elapsed_seconds.clamp(0., 0.1);
-                track.free_turn_remaining -= elapsed * self.animation_speed;
+                track.free_turn_remaining -= elapsed * self.animation_speed * speed_scale;
                 if track.free_turn_remaining <= 0. {
                     let angle = Self::next_animation_random(&mut track.random_state)
                         * std::f64::consts::TAU;
@@ -2598,7 +2632,8 @@ impl Editor {
                     track.free_turn_remaining +=
                         0.35 + 0.45 * Self::next_animation_random(&mut track.random_state);
                 }
-                let distance = 90. * elapsed * self.animation_speed / f64::from(self.scale);
+                let distance =
+                    90. * elapsed * self.animation_speed * speed_scale / f64::from(self.scale);
                 let mut destination = Point {
                     x: current.x + velocity.x * distance,
                     y: current.y + velocity.y * distance,
@@ -2627,18 +2662,50 @@ impl Editor {
                     }
                 }
                 track.free_velocity = Some(velocity);
-                return self.doc.move_point(track.id, destination);
+                let moved = self.doc.move_point(track.id, destination);
+                return moved && !track.button_settings.is_some_and(|settings| settings.once);
             }
             let circular = matches!(kind, Kind::PointOnCircle(_, _, _));
-            track.phase += track.direction * step;
-            if circular {
-                track.phase = track.phase.rem_euclid(1.);
-            } else if track.phase > 1. {
-                track.phase = 2. - track.phase;
-                track.direction = -1.;
-            } else if track.phase < 0. {
-                track.phase = -track.phase;
-                track.direction = 1.;
+            match track.button_settings.map(|settings| settings.direction) {
+                Some(AnimationDirection::Forward) => {
+                    track.phase = (track.phase + step).rem_euclid(1.);
+                    track.distance_travelled += step;
+                }
+                Some(AnimationDirection::Backward) => {
+                    track.phase = (track.phase - step).rem_euclid(1.);
+                    track.distance_travelled += step;
+                }
+                Some(AnimationDirection::Random) => {
+                    track.phase = Self::next_animation_random(&mut track.random_state);
+                }
+                Some(AnimationDirection::Bidirectional) | None => {
+                    track.phase += track.direction * step;
+                    if circular {
+                        track.phase = track.phase.rem_euclid(1.);
+                    } else if track.phase > 1. {
+                        track.phase = 2. - track.phase;
+                        track.direction = -1.;
+                    } else if track.phase < 0. {
+                        track.phase = -track.phase;
+                        track.direction = 1.;
+                    }
+                }
+            }
+            let once_complete = track.button_settings.is_some_and(|settings| {
+                settings.once
+                    && (settings.direction == AnimationDirection::Random
+                        || track.distance_travelled >= 1.)
+            });
+            if once_complete
+                && !matches!(
+                    track.button_settings,
+                    Some(AnimationSettings {
+                        direction: AnimationDirection::Random,
+                        ..
+                    })
+                )
+            {
+                track.phase = track.start_phase;
             }
             let destination = match *kind {
                 Kind::PointOnSegment(host, _) => self
@@ -2659,7 +2726,8 @@ impl Editor {
                 Kind::PointOnArc(host, _) => self.doc.point_on_arc(host, track.phase),
                 _ => None,
             };
-            destination.is_some_and(|point| self.doc.move_point(track.id, point))
+            let moved = destination.is_some_and(|point| self.doc.move_point(track.id, point));
+            moved && !once_complete
         });
         self.animations = tracks;
     }
@@ -2810,10 +2878,10 @@ impl Editor {
                             .clicked()
                         {
                             if let Some(target) = animation_target {
-                                match self.doc.add_animation_button(target) {
-                                    Ok(id) => self.select_only(id),
-                                    Err(error) => self.status = error,
-                                }
+                                self.animation_button_dialog = self
+                                    .doc
+                                    .animation_button_default_settings(target)
+                                    .map(|settings| (target, settings));
                             }
                             ui.close();
                         }
@@ -4362,6 +4430,95 @@ impl Editor {
                 _ => {}
             }
         }
+        if let Some((target, mut settings)) = self.animation_button_dialog {
+            let mut create = false;
+            let mut cancel = false;
+            let free = matches!(self.doc.objects[target - 1].kind, Kind::Free(_));
+            let circle = matches!(
+                self.doc.objects[target - 1].kind,
+                Kind::PointOnCircle(_, _, _)
+            );
+            egui::Modal::new(egui::Id::new("animation_button_settings")).show(root.ctx(), |ui| {
+                ui.heading("Animation Button");
+                ui.label(format!("Animate point {target}"));
+                if free {
+                    ui.label("Free points move at random");
+                } else {
+                    let direction_name = match (circle, settings.direction) {
+                        (true, AnimationDirection::Forward) => "Counterclockwise",
+                        (true, AnimationDirection::Backward) => "Clockwise",
+                        (_, AnimationDirection::Forward) => "Forward",
+                        (_, AnimationDirection::Backward) => "Backward",
+                        (_, AnimationDirection::Bidirectional) => "Bidirectional",
+                        (_, AnimationDirection::Random) => "Random",
+                    };
+                    egui::ComboBox::from_label("Direction")
+                        .selected_text(direction_name)
+                        .show_ui(ui, |ui| {
+                            for (direction, name) in [
+                                (
+                                    AnimationDirection::Forward,
+                                    if circle {
+                                        "Counterclockwise"
+                                    } else {
+                                        "Forward"
+                                    },
+                                ),
+                                (
+                                    AnimationDirection::Backward,
+                                    if circle { "Clockwise" } else { "Backward" },
+                                ),
+                                (AnimationDirection::Bidirectional, "Bidirectional"),
+                                (AnimationDirection::Random, "Random"),
+                            ] {
+                                ui.selectable_value(&mut settings.direction, direction, name);
+                            }
+                        });
+                }
+                if !free && settings.direction == AnimationDirection::Bidirectional {
+                    settings.once = false;
+                }
+                ui.add_enabled(
+                    free || settings.direction != AnimationDirection::Bidirectional,
+                    egui::Checkbox::new(&mut settings.once, "Once Only"),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Speed");
+                    for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
+                        if ui.selectable_label(settings.speed == speed, name).clicked() {
+                            settings.speed = speed;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Custom speed");
+                    ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
+                });
+                ui.horizontal(|ui| {
+                    create = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.animation_button_dialog = None;
+            } else if create {
+                match self
+                    .doc
+                    .add_animation_button_with_settings(target, settings)
+                {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.animation_button_dialog = None;
+                    }
+                    Err(error) => {
+                        self.status = error;
+                        self.animation_button_dialog = Some((target, settings));
+                    }
+                }
+            } else {
+                self.animation_button_dialog = Some((target, settings));
+            }
+        }
         if self.named_parameter_dialog {
             let mut apply = false;
             let mut cancel = false;
@@ -5392,6 +5549,45 @@ mod tests {
         assert!(!editor.show_motion_controller);
         editor.tick_animation(0.1);
         assert_ne!(editor.doc.position(4).unwrap(), before);
+    }
+
+    #[test]
+    fn animation_button_direction_speed_once_and_second_click_control_motion() {
+        let base = include_bytes!("../tests/fixtures/animation_button_base.gsp");
+        for (direction, speed, expected_phase) in [
+            (AnimationDirection::Forward, 24., 0.55),
+            (AnimationDirection::Backward, 24., 0.45),
+            (AnimationDirection::Forward, 80., 0.5 + 0.05 * 80. / 24.),
+            (AnimationDirection::Forward, 4., 0.5 + 0.05 * 4. / 24.),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+            let settings = AnimationSettings {
+                direction,
+                speed,
+                once: false,
+            };
+            editor
+                .doc
+                .add_animation_button_with_settings(4, settings)
+                .unwrap();
+            editor.animate_button(4, settings);
+            editor.tick_animation(0.1);
+            assert!((editor.animations[0].phase - expected_phase).abs() < 1e-9);
+            editor.animate_button(4, settings);
+            assert!(editor.animations.is_empty());
+        }
+        let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+        let settings = AnimationSettings {
+            direction: AnimationDirection::Forward,
+            speed: 80.,
+            once: true,
+        };
+        editor.animate_button(4, settings);
+        for _ in 0..8 {
+            editor.tick_animation(0.1);
+        }
+        assert!(editor.animations.is_empty());
+        assert!((editor.doc.position(4).unwrap().x - 250.).abs() < 1e-9);
     }
 
     #[test]

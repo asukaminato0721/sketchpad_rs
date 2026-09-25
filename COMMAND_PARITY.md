@@ -31,7 +31,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5; one- and two-column tables include their source parameters and embedded source IDs; copied function plots retain their frame style and definition, and derivatives retain their source definition. Copying a selected function includes its Cartesian plotted child; copying either parametric source includes both functions and the curve, as observed in Sketchpad 5 |
 | Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5; copied one- and two-column tables remap their source IDs and pasted number/table anchors have the native 20-unit offset. Generated copied function plot, parametric curve, and derivative files opened and saved byte-identically in Sketchpad 5, with separate formula positions visible. A native copied plot imports as editable; its copied frame origin was moved in Rust and saved byte-identically in Sketchpad 5. Pasted plots hide their copied frame parts. Both choices of a selected parametric source receive the native `f`/`g` names; other graph copies remain pending |
 | Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5. Saved trailing function, Cartesian and parametric plot, and plotted-point groups opened and saved byte-identically in Sketchpad 5 after removal. Independent free points before surviving function plots, parametric plots, plotted points, and one- or two-column tables, plus an independent caption before a function plot, can be deleted with references remapped. Deleting a parameter removes its dependent table and path point while preserving an unrelated frame. Other earlier object kinds remain guarded |
-| Action Buttons | Partial: Hide/Show and default Animation button creation and interaction; other button kinds and Animation settings pending |
+| Action Buttons | Partial: Hide/Show and single-point Animation button creation and interaction; other button kinds and broader Animation targets pending |
 | Select All | Partial |
 | Select Parents | Partial: direct dependencies of supported objects |
 | Select Children | Partial: direct dependents of supported objects |
@@ -157,7 +157,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Command | Status |
 | --- | --- |
 | Hide/Show | Partial: original and generated buttons cross-opened, click updates target visibility, save/reopen verified |
-| Animation | Partial: default single-point button imports, creates, saves, and starts motion without the floating controller. Native and port-generated buttons cross-opened; the port-generated button moved its target when clicked in Sketchpad 5. Speed, direction, path settings, and multiple targets pending |
+| Animation | Partial: single-point buttons import, create, save, and start or stop motion without the floating controller. Native direction, speed preset, and Once Only records were mapped; forward, backward, bidirectional, random, three speed presets, and custom numeric speed are available. Port-generated default and custom buttons opened and saved byte-identically in Sketchpad 5; native free-point and circle defaults also match. Multiple targets, indirect geometric targets, parameters, and exact timing pending |
 | Movement | Pending |
 | Presentation | Pending |
 | Link | Pending |
