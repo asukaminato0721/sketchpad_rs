@@ -32,7 +32,7 @@ fn is_point_header(payload: &[u8]) -> bool {
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     matches!(
         (code, subtype),
-        (0 | 21 | 27 | 30 | 34, 4)
+        (0 | 16 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 4)
             | (0, 41)
             | (1, 11)
             | (15, 10)
@@ -98,7 +98,7 @@ fn is_circle_header(payload: &[u8]) -> bool {
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
-    matches!((code, subtype), (3 | 4 | 30 | 34, 28))
+    matches!((code, subtype), (3 | 4 | 30 | 32 | 34, 28))
 }
 
 pub fn circle_color(payload: &[u8]) -> Option<RgbColor> {

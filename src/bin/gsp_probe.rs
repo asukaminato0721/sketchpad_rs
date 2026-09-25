@@ -1006,6 +1006,33 @@ fn replay(path: &str) -> Result<(), String> {
                     ));
                     println!("line {}: translate -> object {id}", index + 1);
                 }
+                "translate_vector" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected source, vector start, and vector end IDs".into());
+                    }
+                    let ids = parts
+                        .iter()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let id = document.add(Kind::VectorTranslatedPoint(ids[0], ids[1], ids[2]));
+                    println!("line {}: translate_vector -> object {id}", index + 1);
+                }
+                "translate_marked_distance" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err("expected source point ID, distance value ID, and angle".into());
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let distance = parts[1].parse().map_err(|_| "invalid distance ID")?;
+                    let angle = parts[2].parse().map_err(|_| "invalid angle")?;
+                    let id =
+                        document.add(Kind::MarkedDistanceTranslatedPoint(source, distance, angle));
+                    println!(
+                        "line {}: translate_marked_distance -> object {id}",
+                        index + 1
+                    );
+                }
                 "dilate" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 3 {
@@ -1022,6 +1049,24 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(kind);
                     println!("line {}: dilate -> object {id}", index + 1);
                 }
+                "dilate_marked_ratio" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if ids.len() != 5 {
+                        return Err(
+                            "expected source, center, ratio origin, base, and target IDs".into(),
+                        );
+                    }
+                    let kind = if document.circle_points(ids[0]).is_some() {
+                        Kind::RatioScaledCircle(ids[0], ids[1], ids[2], ids[3], ids[4])
+                    } else {
+                        Kind::RatioScaledPoint(ids[0], ids[1], ids[2], ids[3], ids[4])
+                    };
+                    let id = document.add(kind);
+                    println!("line {}: dilate_marked_ratio -> object {id}", index + 1);
+                }
                 "rotate" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 3 {
@@ -1032,6 +1077,22 @@ fn replay(path: &str) -> Result<(), String> {
                     let angle = parts[2].parse().map_err(|_| "invalid angle")?;
                     let id = document.add(Kind::RotatedPoint(source, center, angle));
                     println!("line {}: rotate -> object {id}", index + 1);
+                }
+                "rotate_marked_angle" => {
+                    let parts = rest
+                        .split_whitespace()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if parts.len() != 5 {
+                        return Err(
+                            "expected source, center, angle start, vertex, and angle end IDs"
+                                .into(),
+                        );
+                    }
+                    let id = document.add(Kind::AngleRotatedPoint(
+                        parts[0], parts[1], parts[2], parts[3], parts[4],
+                    ));
+                    println!("line {}: rotate_marked_angle -> object {id}", index + 1);
                 }
                 "segment" | "circle" | "circle_segment" | "midpoint" | "line" | "ray"
                 | "reflect" | "parallel" | "intersection" | "perpendicular" => {

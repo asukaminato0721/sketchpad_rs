@@ -28,9 +28,9 @@ The release gate is every sketch and document command verified after editing, sa
 | Undo | Partial |
 | Redo | Partial |
 | Cut | Partial: supported single-page objects and their dependents; save/reopen tested |
-| Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5 |
-| Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5 |
-| Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5. Saved trailing function, Cartesian and parametric plot, and plotted-point groups opened and saved byte-identically in Sketchpad 5 after removal. Ordinary points after plots can be deleted with surviving later points. Deleting before a surviving plot remains pending |
+| Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5; one- and two-column tables include their source parameters and embedded source IDs; copied function plots retain their frame style and definition, and derivatives retain their source definition. Copying a selected function includes its Cartesian plotted child; copying either parametric source includes both functions and the curve, as observed in Sketchpad 5 |
+| Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5; copied one- and two-column tables remap their source IDs and pasted number/table anchors have the native 20-unit offset. Generated copied function plot, parametric curve, and derivative files opened and saved byte-identically in Sketchpad 5, with separate formula positions visible. A native copied plot imports as editable; its copied frame origin was moved in Rust and saved byte-identically in Sketchpad 5. Pasted plots hide their copied frame parts. Both choices of a selected parametric source receive the native `f`/`g` names; other graph copies remain pending |
+| Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5. Saved trailing function, Cartesian and parametric plot, and plotted-point groups opened and saved byte-identically in Sketchpad 5 after removal. Independent free points before surviving function plots, parametric plots, plotted points, and one- or two-column tables, plus an independent caption before a function plot, can be deleted with references remapped. Deleting a parameter removes its dependent table and path point while preserving an unrelated frame. Other earlier object kinds remain guarded |
 | Action Buttons | Partial: Hide/Show button creation and interaction; other button kinds pending |
 | Select All | Partial |
 | Select Parents | Partial: direct dependencies of supported objects |
@@ -89,13 +89,13 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Mark Center | Partial: marked point can be used for later rotate and dilate commands; original marked-only file is byte-identical to its unmarked source |
 | Mark Mirror | Partial: marked straight object can be used for later reflection; original marked-only file is byte-identical to its unmarked source |
-| Mark Angle | Pending |
-| Mark Ratio | Pending |
-| Mark Vector | Pending |
-| Mark Distance | Pending |
-| Translate | Partial: point translation by fixed polar angle and distance cross-opened |
-| Rotate | Partial: point around selected center by fixed angle; generated file opened, edited, and saved in Sketchpad 5 |
-| Dilate | Partial: point and circle by fixed ratio around a center point; generated file opened, edited, and saved in Sketchpad 5 |
+| Mark Angle | Partial: three selected points define a dynamic angle for rotation; a marked-only native save is byte-identical to its unmarked source |
+| Mark Ratio | Partial: three collinear points define a signed dynamic ratio for point and circle dilation; a marked-only native save is byte-identical to its unmarked source |
+| Mark Vector | Partial: the last two selected points define a dynamic vector for later translation; a marked-only native file is byte-identical to its unmarked source |
+| Mark Distance | Partial: a selected distance measurement can supply the dynamic distance for later polar point translations; a marked-only native save is byte-identical to its unmarked source |
+| Translate | Partial: points by fixed polar angle and distance, marked dynamic distance with fixed angle, or marked dynamic vector; generated vector and marked-distance translations opened and saved byte-identically in Sketchpad 5 after moving their dependencies |
+| Rotate | Partial: point around selected center by fixed or three-point marked angle; generated fixed and marked-angle files opened and saved byte-identically in Sketchpad 5, including after moving an angle point |
+| Dilate | Partial: point and circle by fixed or three-point marked ratio around a center point; generated dynamic point and circle files opened and saved byte-identically in Sketchpad 5, including after moving a ratio point |
 | Reflect | Partial: point and circle across selected segment or line; generated file opened, edited, and saved in Sketchpad 5 |
 | Iterate | Pending |
 | Define Custom Transform | Pending |

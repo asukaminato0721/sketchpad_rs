@@ -646,8 +646,9 @@ pub fn decode_simple_expression(data: &[u8]) -> Result<SimpleFunction, String> {
     if data.len() < 94
         || (data.len() - 92) % 2 != 0
         || (data.len() - 92) / 2 > MAX_EXPRESSION_WORDS
-        || &data[..14]
-            != &include_bytes!("../tests/fixtures/function_plot_identity.gsp")[0x96c..0x97a]
+        || &data[..12]
+            != &include_bytes!("../tests/fixtures/function_plot_identity.gsp")[0x96c..0x978]
+        || u16::from_le_bytes([data[12], data[13]]) > 4096
         || u16::from_le_bytes([data[14], data[15]]) > 4096
         || &data[16..18]
             != &include_bytes!("../tests/fixtures/function_plot_identity.gsp")[0x97c..0x97e]
@@ -690,6 +691,91 @@ pub fn encode_expression_record(
         record.push(0);
     }
     Ok(record)
+}
+
+pub fn expression_anchor(data: &[u8]) -> Option<(i16, i16)> {
+    (data.len() >= 16).then(|| {
+        (
+            i16::from_le_bytes(data[12..14].try_into().unwrap()),
+            i16::from_le_bytes(data[14..16].try_into().unwrap()),
+        )
+    })
+}
+
+fn group_expression_payload_start(group: &[u8]) -> Result<usize, String> {
+    let mut file = b"GSP4".to_vec();
+    file.extend_from_slice(group);
+    let record = records(&file)?
+        .into_iter()
+        .find(|record| record.kind == 0x0907)
+        .ok_or("Function group has no expression")?;
+    let payload = payload(&file, record);
+    decode_simple_expression(payload)?;
+    Ok(record.payload_start - 4)
+}
+
+pub fn group_expression_anchor(group: &[u8]) -> Result<(i16, i16), String> {
+    let start = group_expression_payload_start(group)?;
+    expression_anchor(&group[start..]).ok_or("Function expression has no anchor".into())
+}
+
+pub fn set_group_expression_anchor(group: &mut [u8], anchor: (i16, i16)) -> Result<(), String> {
+    let old = group_expression_anchor(group)?;
+    let dx = i32::from(anchor.0) - i32::from(old.0);
+    let dy = i32::from(anchor.1) - i32::from(old.1);
+    let start = group_expression_payload_start(group)?;
+    group[start + 12..start + 14].copy_from_slice(&anchor.0.to_le_bytes());
+    group[start + 14..start + 16].copy_from_slice(&anchor.1.to_le_bytes());
+    let mut file = b"GSP4".to_vec();
+    file.extend_from_slice(group);
+    let Some(bounds) = records(&file)?
+        .into_iter()
+        .find(|record| record.kind == 0x08a3)
+    else {
+        return Ok(());
+    };
+    if payload(&file, bounds).len() != 8 {
+        return Err("Invalid function text bounds".into());
+    }
+    let start = bounds.payload_start - 4;
+    for (index, shift) in [dx, dy, dx, dy].into_iter().enumerate() {
+        let offset = start + 2 * index;
+        let value = i16::from_le_bytes(group[offset..offset + 2].try_into().unwrap());
+        let updated =
+            i16::try_from(i32::from(value) + shift).map_err(|_| "Function text is off page")?;
+        group[offset..offset + 2].copy_from_slice(&updated.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn group_definition_label(group: &[u8]) -> Result<(usize, crate::text_records::LabelAux), String> {
+    let mut file = b"GSP4".to_vec();
+    file.extend_from_slice(group);
+    let record = records(&file)?
+        .into_iter()
+        .find(|record| record.kind == 0x07d5)
+        .ok_or("Function group has no name")?;
+    let label = crate::text_records::LabelAux::parse(payload(&file, record))?;
+    Ok((record.payload_start - 4, label))
+}
+
+pub fn group_definition_name(group: &[u8]) -> Result<String, String> {
+    let (_, label) = group_definition_label(group)?;
+    label
+        .name_utf8()
+        .map(str::to_owned)
+        .map_err(|error| error.to_string())
+}
+
+pub fn set_group_definition_name(group: &mut [u8], name: &str) -> Result<(), String> {
+    let (start, mut label) = group_definition_label(group)?;
+    let old_len = label.payload().len();
+    label.set_name(name)?;
+    if label.payload().len() != old_len {
+        return Err("Changing function name length is not yet supported".into());
+    }
+    group[start..start + old_len].copy_from_slice(label.payload());
+    Ok(())
 }
 
 fn group_ranges(bytes: &[u8], records: &[Record]) -> Result<Vec<(usize, usize, u16)>, String> {
@@ -1234,5 +1320,32 @@ mod tests {
         let plot = decode_minimal_plot(moved).unwrap();
         assert_eq!(plot.expression, SimpleFunction::Square);
         assert_eq!((plot.definition_id, plot.coordinate_system_id), (7, 6));
+    }
+
+    #[test]
+    fn copied_function_moves_expression_and_text_bounds() {
+        let mut definition = encode_definition_group(SimpleFunction::Square).unwrap();
+        assert_eq!(group_expression_anchor(&definition).unwrap(), (10, 5));
+        set_group_expression_anchor(&mut definition, (30, 25)).unwrap();
+        assert_eq!(group_expression_anchor(&definition).unwrap(), (30, 25));
+        assert_eq!(group_definition_name(&definition).unwrap(), "f");
+        set_group_definition_name(&mut definition, "g").unwrap();
+        assert_eq!(group_definition_name(&definition).unwrap(), "g");
+        let mut file = b"GSP4".to_vec();
+        file.extend_from_slice(&definition);
+        let bounds = records(&file)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.kind == 0x08a3)
+            .unwrap();
+        assert_eq!(payload(&file, bounds), &[30, 0, 25, 0, 110, 0, 52, 0]);
+
+        let mut derivative = encode_derivative_group(1, SimpleFunction::Square).unwrap();
+        let (x, y) = group_expression_anchor(&derivative).unwrap();
+        set_group_expression_anchor(&mut derivative, (x + 20, y + 20)).unwrap();
+        assert_eq!(
+            group_expression_anchor(&derivative).unwrap(),
+            (x + 20, y + 20)
+        );
     }
 }

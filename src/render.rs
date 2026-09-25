@@ -1175,23 +1175,33 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             row += 1;
         }
         if let Kind::FunctionDefinition(expression) = object.kind {
+            let (x, y) = object
+                .function_anchor
+                .map(|(x, y)| (r.min.x + x as f32 + 2., r.min.y + y as f32 + 23.))
+                .unwrap_or((r.min.x + 12., r.min.y + 28. + row as f32 * 20.));
             writeln!(
                 svg,
                 "<text x=\"{}\" y=\"{}\">{}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                expression.display()
+                x,
+                y,
+                doc.function_display_text(object.id)
+                    .unwrap_or_else(|| expression.display())
             )
             .unwrap();
             row += 1;
         }
         if let Kind::DerivativeFunction(_, expression) = object.kind {
+            let (x, y) = object
+                .function_anchor
+                .map(|(x, y)| (r.min.x + x as f32 + 2., r.min.y + y as f32 + 23.))
+                .unwrap_or((r.min.x + 12., r.min.y + 28. + row as f32 * 20.));
             writeln!(
                 svg,
                 "<text x=\"{}\" y=\"{}\">{}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                expression.display().replacen("f(x)", "f′(x)", 1)
+                x,
+                y,
+                doc.function_display_text(object.id)
+                    .unwrap_or_else(|| { expression.display().replacen("f(x)", "f′(x)", 1) })
             )
             .unwrap();
             row += 1;
@@ -1527,7 +1537,8 @@ impl GeometryRenderer {
                 Kind::Circle(_, _)
                 | Kind::CircleBySegment(_, _)
                 | Kind::ReflectedCircle(_, _)
-                | Kind::ScaledCircle(_, _, _) => {
+                | Kind::ScaledCircle(_, _, _)
+                | Kind::RatioScaledCircle(_, _, _, _, _) => {
                     if let Some((a, radius)) = doc.circle_points(o.id) {
                         let c = vp.screen(a);
                         let r = (radius as f32 * vp.scale).abs();
