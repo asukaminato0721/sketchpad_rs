@@ -338,12 +338,14 @@ impl Kind {
         }
         if let Kind::LinkPageButton {
             target_page,
+            target_button_ordinal,
             label,
             anchor,
         } = self
         {
             return Kind::LinkPageButton {
                 target_page: *target_page,
+                target_button_ordinal: *target_button_ordinal,
                 label: label.clone(),
                 anchor: *anchor,
             };
@@ -631,6 +633,7 @@ pub enum Kind {
     },
     LinkPageButton {
         target_page: usize,
+        target_button_ordinal: Option<usize>,
         label: String,
         anchor: (i16, i16),
     },
@@ -2231,6 +2234,7 @@ impl Document {
                             Ok(label) if group.target_page() < total_pages.max(1) => {
                                 Kind::LinkPageButton {
                                     target_page: group.target_page(),
+                                    target_button_ordinal: group.target_button_ordinal(),
                                     label: label.to_owned(),
                                     anchor: group.screen_anchor(),
                                 }
@@ -5708,6 +5712,32 @@ impl Document {
             })
     }
     pub fn add_link_page_button(&mut self, target_page: usize) -> Result<usize, String> {
+        self.add_link_page_button_with_target(target_page, None)
+    }
+    pub fn link_destination_buttons(&self, page: usize) -> Vec<usize> {
+        self.objects
+            .iter()
+            .filter(|object| {
+                object.page == page
+                    && !object.deleted
+                    && object.visible
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
+                    )
+            })
+            .map(|object| object.id)
+            .collect()
+    }
+    pub fn add_link_page_button_with_target(
+        &mut self,
+        target_page: usize,
+        target_button_ordinal: Option<usize>,
+    ) -> Result<usize, String> {
         if self.page_count < 2
             || target_page >= self.page_count
             || target_page == self.active_page
@@ -5724,6 +5754,15 @@ impl Document {
         {
             return Err("A Page Link needs a supported page and a different destination".into());
         }
+        let destination_buttons = self.link_destination_buttons(target_page);
+        if target_button_ordinal.is_some_and(|ordinal| {
+            ordinal == 0
+                || destination_buttons.get(ordinal - 1).is_none_or(|id| {
+                    !matches!(self.objects[id - 1].kind, Kind::HideShowButton { .. })
+                })
+        }) {
+            return Err("Page Link destination button is unavailable".into());
+        }
         let row = self
             .objects
             .iter()
@@ -5734,6 +5773,7 @@ impl Document {
         let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
         Ok(self.add(Kind::LinkPageButton {
             target_page,
+            target_button_ordinal,
             label: format!("Go to Page {}", target_page + 1),
             anchor: (10, y),
         }))
@@ -8861,27 +8901,62 @@ impl Document {
                 .map(|record| record.start)
                 .unwrap_or(trailer);
             let mut groups = Vec::new();
-            for object in new_objects {
+            for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
                     Kind::LinkPageButton {
                         target_page,
+                        target_button_ordinal,
                         label,
                         anchor,
                     } => {
                         if *target_page >= self.page_count || *target_page == page {
                             return Err("Invalid Page Link destination".into());
                         }
+                        let destination_buttons = self.link_destination_buttons(*target_page);
+                        if target_button_ordinal.is_some_and(|ordinal| {
+                            ordinal == 0
+                                || destination_buttons.get(ordinal - 1).is_none_or(|id| {
+                                    !matches!(
+                                        self.objects[id - 1].kind,
+                                        Kind::HideShowButton { .. }
+                                    )
+                                })
+                        }) {
+                            return Err("Page Link destination button is unavailable".into());
+                        }
                         let mut group = LinkPageButtonGroup::from_original_template(
                             *target_page,
                             label,
                             *anchor,
                         )?;
+                        group.set_target_button_ordinal(*target_button_ordinal)?;
+                        group.set_page_object_index(existing + added_index)?;
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
+                        if let Some(ordinal) = target_button_ordinal {
+                            let destination = &self.objects[destination_buttons[ordinal - 1] - 1];
+                            let header = destination
+                                .header_offset
+                                .ok_or("Missing destination button header")?;
+                            let header_index = rs
+                                .iter()
+                                .position(|record| {
+                                    record.kind == 0x07d0 && record.data.start == header
+                                })
+                                .ok_or("Missing destination button group")?;
+                            let action = rs[header_index + 1..]
+                                .iter()
+                                .take_while(|record| record.kind != 0x07d7)
+                                .find(|record| record.kind == 0x0906 && record.data.len() >= 20)
+                                .ok_or("Missing destination button action")?;
+                            out[action.data.start + 18..action.data.start + 20]
+                                .copy_from_slice(&1u16.to_le_bytes());
+                        }
                     }
                     Kind::LinkUrlButton { url, label, anchor } => {
                         let mut group =
                             LinkUrlButtonGroup::from_original_template(url, label, *anchor)?;
+                        group.set_page_object_index(existing + added_index)?;
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
                     }
@@ -9492,6 +9567,11 @@ impl Document {
             }
             if let Kind::LinkUrlButton { url, label, anchor } = &o.kind {
                 let mut group = LinkUrlButtonGroup::from_original_template(url, label, *anchor)?;
+                let index = self.objects[..o.id - 1]
+                    .iter()
+                    .filter(|object| !object.deleted)
+                    .count();
+                group.set_page_object_index(index)?;
                 group.set_hidden(!o.visible);
                 added.extend_from_slice(&group.encode());
                 continue;
@@ -10636,12 +10716,13 @@ impl Document {
             .iter()
             .filter(|object| !object.deleted)
             .collect();
-        self.validate_reparsed_in_order(reparsed, survivors)
+        self.validate_reparsed_in_order(reparsed, survivors, false)
     }
     fn validate_reparsed_in_order(
         &self,
         reparsed: &Self,
         survivors: Vec<&Object>,
+        reordered_links: bool,
     ) -> Result<(), String> {
         let mut ids = vec![0; self.objects.len() + 1];
         for (index, object) in survivors.iter().enumerate() {
@@ -10661,7 +10742,7 @@ impl Document {
                 != self
                     .marked_coordinate_system
                     .iter()
-                    .map(|id| id.map(|id| ids[id]))
+                    .map(|id| id.and_then(|id| (ids[id] != 0).then_some(ids[id])))
                     .collect::<Vec<_>>()
             || reparsed.frame_styles
                 != self
@@ -10672,8 +10753,9 @@ impl Document {
                         (remapped != 0).then_some((remapped, *style))
                     })
                     .collect()
-            || reparsed.active_coordinate_system()
-                != self.active_coordinate_system().map(|id| ids[id])
+            || !reordered_links
+                && reparsed.active_coordinate_system()
+                    != self.active_coordinate_system().map(|id| ids[id])
             || reparsed.objects.len() != survivors.len()
             || reparsed
                 .objects
@@ -10709,7 +10791,7 @@ impl Document {
                 .filter(|object| !object.deleted)
                 .collect();
             survivors.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
-            self.validate_reparsed_in_order(&reparsed, survivors)?;
+            self.validate_reparsed_in_order(&reparsed, survivors, true)?;
         } else {
             self.validate_reparsed(&reparsed)?;
         }
@@ -11865,7 +11947,7 @@ mod tests {
             assert_eq!(document.page_count, 2);
             assert_eq!(document.objects[1].page, source_page);
             assert!(matches!(&document.objects[1].kind,
-                Kind::LinkPageButton { target_page, label, anchor }
+                Kind::LinkPageButton { target_page, label, anchor, .. }
                 if *target_page == destination_page && label == "链接" && *anchor == (10, 5)
             ));
             assert_eq!(document.encode().unwrap(), bytes);
@@ -11936,6 +12018,49 @@ mod tests {
             Kind::LinkPageButton { .. }
         ));
         assert!(matches!(document.objects[4].kind, Kind::Free(_)));
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn page_link_destination_button_imports_and_writes_native_activation_flag() {
+        let native = include_bytes!(
+            "../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
+        );
+        let imported = Document::from_bytes(native, None).unwrap();
+        assert!(matches!(
+            imported.objects[3].kind,
+            Kind::LinkPageButton {
+                target_page: 0,
+                target_button_ordinal: Some(1),
+                ..
+            }
+        ));
+        assert_eq!(imported.encode().unwrap(), native);
+
+        let base = include_bytes!("../tests/fixtures/two_page_hide_show_first_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        document
+            .add_link_page_button_with_target(0, Some(1))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_link_destination_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert_eq!(
+            saved,
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
+            )
+        );
+        assert!(matches!(
+            document.objects[3].kind,
+            Kind::LinkPageButton {
+                target_button_ordinal: Some(1),
+                ..
+            }
+        ));
         std::fs::remove_file(path).unwrap();
     }
     #[test]

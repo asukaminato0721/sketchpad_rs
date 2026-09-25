@@ -58,7 +58,8 @@ presentations wait for a running action to finish before advancing.
 Edit > Action Buttons > Link creates a URL button or, on any page of a supported
 multi-page document, a Page Link. The editor opens HTTP(S) and file links with
 the system handler, opens `sketchdoc://` links in the current document's folder,
-and follows Page Links within the document.
+and follows Page Links within the document. A Page Link can also activate a
+Hide/Show button on its destination page.
 
 The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, Hide/Show, one- or two-point Animation, one-pair point Movement, one-point Scroll, Presentation, URL Link, and Page Link action buttons on supported multi-page documents, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
 

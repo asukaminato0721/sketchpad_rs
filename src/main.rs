@@ -189,6 +189,7 @@ struct PresentationButtonDraft {
 struct LinkButtonDraft {
     use_page: bool,
     target_page: usize,
+    target_button_ordinal: Option<usize>,
     url: String,
 }
 #[derive(Clone)]
@@ -549,6 +550,26 @@ impl Editor {
             Ok(()) => {
                 if inserted_multi_page_links {
                     self.selection_order.clear();
+                    self.image_textures.clear();
+                    self.pending = None;
+                    self.dragging = None;
+                    self.inspected = None;
+                    self.text_selected_range = None;
+                    self.marked_center = None;
+                    self.marked_mirror = None;
+                    self.marked_vector = None;
+                    self.marked_distance = None;
+                    self.marked_rectangular_distances = None;
+                    self.marked_angle = None;
+                    self.marked_ratio = None;
+                    self.trace_marks.clear();
+                    self.animations.clear();
+                    self.movements.clear();
+                    self.presentations.clear();
+                    self.animation_button_dialog = None;
+                    self.movement_button_dialog = None;
+                    self.scroll_button_dialog = None;
+                    self.presentation_button_dialog = None;
                 }
                 self.status = format!("Saved {}", path.display());
                 true
@@ -1601,9 +1622,15 @@ impl Editor {
                 }
                 if !multi
                     && let Some(id) = hit
-                    && let Kind::LinkPageButton { target_page, .. } = self.doc.objects[id - 1].kind
+                    && let Kind::LinkPageButton {
+                        target_page,
+                        target_button_ordinal,
+                        ..
+                    } = self.doc.objects[id - 1].kind
                 {
-                    if let Err(error) = self.activate_link_page(target_page) {
+                    if let Err(error) =
+                        self.activate_link_page(target_page, target_button_ordinal, v, 0)
+                    {
                         self.status = error;
                     }
                     return;
@@ -2836,10 +2863,29 @@ impl Editor {
         Ok(())
     }
 
-    fn activate_link_page(&mut self, target_page: usize) -> Result<(), String> {
+    fn activate_link_page(
+        &mut self,
+        target_page: usize,
+        target_button_ordinal: Option<usize>,
+        viewport: &Viewport,
+        depth: usize,
+    ) -> Result<(), String> {
         if target_page >= self.doc.page_count {
             return Err("Link destination page is unavailable".into());
         }
+        let destination_button = target_button_ordinal
+            .map(|ordinal| {
+                self.doc
+                    .link_destination_buttons(target_page)
+                    .get(
+                        ordinal
+                            .checked_sub(1)
+                            .ok_or("Invalid destination button ordinal")?,
+                    )
+                    .copied()
+                    .ok_or("Link destination button is unavailable")
+            })
+            .transpose()?;
         self.animations.clear();
         self.movements.clear();
         self.presentations.clear();
@@ -2848,6 +2894,14 @@ impl Editor {
         self.selection_order.clear();
         self.fit();
         self.status = format!("Opened page {}", target_page + 1);
+        if let Some(id) = destination_button {
+            let destination_viewport = Viewport {
+                rect: viewport.rect,
+                scale: self.scale,
+                center: self.center,
+            };
+            self.activate_child_action(id, &destination_viewport, depth + 1)?;
+        }
         Ok(())
     }
 
@@ -2934,7 +2988,11 @@ impl Editor {
                 target, placement, ..
             } => self.scroll_to_button_target(target, placement, viewport),
             Kind::LinkUrlButton { url, .. } => self.activate_link_url(&url),
-            Kind::LinkPageButton { target_page, .. } => self.activate_link_page(target_page),
+            Kind::LinkPageButton {
+                target_page,
+                target_button_ordinal,
+                ..
+            } => self.activate_link_page(target_page, target_button_ordinal, viewport, depth + 1),
             Kind::PresentationButton { .. } => {
                 self.activate_presentation_button(id, viewport, depth + 1)
             }
@@ -3452,6 +3510,7 @@ impl Editor {
                             self.link_dialog = Some(LinkButtonDraft {
                                 use_page: self.doc.page_count > 1,
                                 target_page: usize::from(self.doc.active_page == 0),
+                                target_button_ordinal: None,
                                 url: "https://".into(),
                             });
                             ui.close();
@@ -5286,14 +5345,48 @@ impl Editor {
                             .show_ui(ui, |ui| {
                                 for page in 0..self.doc.page_count {
                                     if page != self.doc.active_page {
-                                        ui.selectable_value(
-                                            &mut draft.target_page,
-                                            page,
-                                            format!("Page {}", page + 1),
-                                        );
+                                        if ui
+                                            .selectable_value(
+                                                &mut draft.target_page,
+                                                page,
+                                                format!("Page {}", page + 1),
+                                            )
+                                            .clicked()
+                                        {
+                                            draft.target_button_ordinal = None;
+                                        }
                                     }
                                 }
                             });
+                        let destination_buttons =
+                            self.doc.link_destination_buttons(draft.target_page);
+                        if destination_buttons.iter().any(|id| {
+                            matches!(self.doc.objects[id - 1].kind, Kind::HideShowButton { .. })
+                        }) {
+                            egui::ComboBox::from_id_salt("link_target_button")
+                                .selected_text(match draft.target_button_ordinal {
+                                    Some(ordinal) => format!("Button {ordinal} on page"),
+                                    None => "No button on page".into(),
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut draft.target_button_ordinal,
+                                        None,
+                                        "No button on page",
+                                    );
+                                    for (index, id) in destination_buttons.iter().enumerate() {
+                                        let label = match &self.doc.objects[id - 1].kind {
+                                            Kind::HideShowButton { label, .. } => label.as_str(),
+                                            _ => continue,
+                                        };
+                                        ui.selectable_value(
+                                            &mut draft.target_button_ordinal,
+                                            Some(index + 1),
+                                            label,
+                                        );
+                                    }
+                                });
+                        }
                     }
                     ui.radio_value(&mut draft.use_page, false, "URL");
                 }
@@ -5310,7 +5403,10 @@ impl Editor {
                 self.link_dialog = None;
             } else if create {
                 let result = if draft.use_page {
-                    self.doc.add_link_page_button(draft.target_page)
+                    self.doc.add_link_page_button_with_target(
+                        draft.target_page,
+                        draft.target_button_ordinal,
+                    )
                 } else {
                     self.doc.add_link_url_button(&draft.url)
                 };
@@ -6448,6 +6544,45 @@ mod tests {
                 .center();
             editor.click(&viewport, click, false);
             assert_eq!(editor.doc.active_page, destination_page);
+        }
+    }
+
+    #[test]
+    fn page_link_activates_destination_hide_show_button() {
+        for bytes in [
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
+            )
+            .as_slice(),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            editor.doc.active_page = 1;
+            editor.fit();
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: editor.scale,
+                center: editor.center,
+            };
+            let Kind::LinkPageButton { label, anchor, .. } = &editor.doc.objects[3].kind else {
+                panic!();
+            };
+            let click = editor
+                .action_button_rect(&viewport, *anchor, label)
+                .center();
+            editor.click(&viewport, click, false);
+            assert_eq!(editor.doc.active_page, 0);
+            assert!(!editor.doc.objects[0].visible);
+            assert!(matches!(
+                editor.doc.objects[1].kind,
+                Kind::HideShowButton {
+                    action: sketchpad_rs::action_records::VisibilityAction::Show,
+                    ..
+                }
+            ));
         }
     }
 

@@ -169,7 +169,6 @@ impl LinkPageButtonGroup {
             || u32_at(action, 4) != 24
             || u32_at(action, 8) != 12
             || u16_at(action, 12) != 5
-            || u32_at(action, 16) != 0
         {
             return Err("Unsupported Page Link action".into());
         }
@@ -186,6 +185,29 @@ impl LinkPageButtonGroup {
 
     pub fn target_page(&self) -> usize {
         u16_at(&self.records[1].payload, 14) as usize
+    }
+
+    pub fn target_button_ordinal(&self) -> Option<usize> {
+        let ordinal = u32_at(&self.records[1].payload, 16) as usize;
+        (ordinal != 0).then_some(ordinal)
+    }
+
+    pub fn set_target_button_ordinal(&mut self, ordinal: Option<usize>) -> Result<(), String> {
+        let value = u32::try_from(ordinal.unwrap_or(0))
+            .map_err(|_| "Destination button ordinal is too large")?;
+        if ordinal == Some(0) {
+            return Err("Destination button ordinals start at 1".into());
+        }
+        self.records[1].payload[16..20].copy_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn set_page_object_index(&mut self, index: usize) -> Result<(), String> {
+        let value = u16::try_from(index).map_err(|_| "Page has too many objects")?;
+        self.records[3]
+            .payload
+            .copy_from_slice(&value.to_le_bytes());
+        Ok(())
     }
 
     pub fn set_target_page(&mut self, target_page: usize) -> Result<(), String> {
@@ -304,6 +326,14 @@ impl LinkUrlButtonGroup {
         set_zero_terminated_text(&mut self.records[1], 24, url)?;
         let payload_len = self.records[1].payload.len() as u32;
         self.records[1].payload[4..8].copy_from_slice(&payload_len.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn set_page_object_index(&mut self, index: usize) -> Result<(), String> {
+        let value = u16::try_from(index).map_err(|_| "Page has too many objects")?;
+        self.records[3]
+            .payload
+            .copy_from_slice(&value.to_le_bytes());
         Ok(())
     }
 
@@ -1388,6 +1418,25 @@ mod tests {
             assert_eq!(group.screen_anchor(), (10, 5));
             assert_eq!(group.encode(), bytes);
         }
+    }
+
+    #[test]
+    fn native_page_link_can_select_a_button_on_destination_page() {
+        let native = include_bytes!(
+            "../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
+        );
+        let group = LinkPageButtonGroup::parse(&link_page_group(native)).unwrap();
+        assert_eq!(group.target_page(), 0);
+        assert_eq!(group.target_button_ordinal(), Some(1));
+        let mut generated =
+            LinkPageButtonGroup::from_original_template(0, "Go to Page 1", (10, 5)).unwrap();
+        generated.set_target_button_ordinal(Some(1)).unwrap();
+        assert_eq!(
+            LinkPageButtonGroup::parse(&generated.encode())
+                .unwrap()
+                .target_button_ordinal(),
+            Some(1)
+        );
     }
 
     #[test]

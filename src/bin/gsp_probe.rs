@@ -951,11 +951,22 @@ fn replay(path: &str) -> Result<(), String> {
                     document.active_page = page - 1;
                 }
                 "link_page_button" => {
-                    let page: usize = rest.parse().map_err(|_| "invalid destination page")?;
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if !matches!(parts.len(), 1 | 2) {
+                        return Err("expected destination page and optional button ordinal".into());
+                    }
+                    let page: usize = parts[0].parse().map_err(|_| "invalid destination page")?;
                     if page == 0 {
                         return Err("destination pages start at 1".into());
                     }
-                    let id = document.add_link_page_button(page - 1)?;
+                    let ordinal = parts
+                        .get(1)
+                        .map(|part| {
+                            part.parse()
+                                .map_err(|_| "invalid destination button ordinal")
+                        })
+                        .transpose()?;
+                    let id = document.add_link_page_button_with_target(page - 1, ordinal)?;
                     println!("line {}: link_page_button -> object {id}", index + 1);
                 }
                 "activate_button" => {
