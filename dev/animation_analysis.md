@@ -1,0 +1,50 @@
+# Display animation
+
+The editor animates selected free points and points constrained to segments,
+circles, and arcs. Segment and arc parameters reverse at their ends; circle
+angles wrap. Free points wander within the visible canvas with changes of
+direction at random intervals. The editor advances existing point kinds, so
+dependent constructions and traces update through the normal document
+evaluator. One undo checkpoint covers a motion session. The floating Motion
+Controller pauses, resumes, stops, and adjusts speed; the Display menu also
+has speed and stop commands.
+
+An Xvfb desktop probe opened
+`tests/fixtures/locus_polar_polygon_target_original.gsp`, selected its point
+on a segment, and used Display > Animate Objects. Captures at
+`/tmp/sketchpad_animation_gui_run0.png` and
+`/tmp/sketchpad_animation_gui_run1.png` show the point and dependent polygon
+interior moving. Captures under `/tmp/sketchpad_animation_controls_*.png` show
+pause holding the point still, resume moving it, and stop keeping its position.
+The controller initially covered the Tools panel; its default position is now
+inside the canvas.
+
+`tests/fixtures/animation_segment_locus_saved_by_port.gsp` was saved from the
+desktop with Ctrl+S after animation stopped. It has a changed segment
+parameter, imports without partial view, and round-trips exactly in Rust.
+Sketchpad 5 opened this file with the updated point and dependent polygon,
+then saved it byte-identically through Wine. The keyboard shortcut originally
+failed when keyboard focus was in the controller: reading the final modifier
+state missed a key press whose modifier had already been released. Save,
+Save As, and the existing Copy/Cut/Paste shortcuts now consume key events with
+their own modifiers.
+
+`tests/fixtures/animation_free_point_base.gsp` has one free point at
+(200, 150). Selecting it in Sketchpad 5 and choosing Display > Animate Objects
+opens the native Motion Controller and moves the point. A save during motion is
+`tests/fixtures/animation_free_point_native_saved.gsp`; its point is at
+(172.759, 111.861), and it imports without partial view. The capture at
+`/tmp/sketchpad_animation_free_point_animate_after_menu.png` shows the native
+controller. `dev/wine_free_animation_probe.sh` captured eight successive
+positions of one native run at roughly 0.4-second intervals: screen centers
+(280, 210), (258, 181), (232, 130), (272, 112), (268, 106), (258, 159),
+(278, 207), and (306, 249). Those samples show changing directions, so the
+port uses bounded wandering for its free-point mode. The exact native random
+trajectory, speed distribution, and animation-button records remain open.
+
+`tests/fixtures/animation_free_point_saved_by_port.gsp` was saved from the
+desktop after stopping a free-point animation. Its point moved to
+(169.694, 146.605); Rust reopens it without partial view, and Sketchpad 5
+opened and resaved it byte-identically through Wine. The Xvfb captures at
+`/tmp/sketchpad_free_port_animated_t0.png` and
+`/tmp/sketchpad_free_port_animated_t1.png` show the motion.

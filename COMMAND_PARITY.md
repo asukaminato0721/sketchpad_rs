@@ -10,8 +10,8 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | New Sketch | Partial |
 | Open | Partial |
-| Save | Partial |
-| Save As | Partial |
+| Save | Partial: menu and Ctrl+S; an animation-stopped file saved from the desktop opened and resaved byte-identically in Sketchpad 5 |
+| Save As | Partial: menu and Ctrl+Shift+S; broader document layouts pending |
 | Close | Partial: unsaved-change dialog |
 | Document Options | Pending |
 | Page Setup | Pending |
@@ -31,7 +31,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Copy | Partial: selected supported objects and required parents, including segment and midpoint cases observed in Sketchpad 5; one- and two-column tables include their source parameters and embedded source IDs; copied function plots retain their frame style and definition, and derivatives retain their source definition. Copying a selected function includes its Cartesian plotted child; copying either parametric source includes both functions and the curve, as observed in Sketchpad 5 |
 | Paste | Partial: internal clipboard, 20-unit offset, and generated segment cross-opened in Sketchpad 5; copied one- and two-column tables remap their source IDs and pasted number/table anchors have the native 20-unit offset. Generated copied function plot, parametric curve, and derivative files opened and saved byte-identically in Sketchpad 5, with separate formula positions visible. A native copied plot imports as editable; its copied frame origin was moved in Rust and saved byte-identically in Sketchpad 5. Pasted plots hide their copied frame parts. Both choices of a selected parametric source receive the native `f`/`g` names; other graph copies remain pending |
 | Clear | Partial: selected objects and dependent constructions in supported single-page files; generated result reopened in Sketchpad 5. Saved trailing function, Cartesian and parametric plot, and plotted-point groups opened and saved byte-identically in Sketchpad 5 after removal. Independent free points before surviving function plots, parametric plots, plotted points, and one- or two-column tables, plus an independent caption before a function plot, can be deleted with references remapped. Deleting a parameter removes its dependent table and path point while preserving an unrelated frame. Other earlier object kinds remain guarded |
-| Action Buttons | Partial: Hide/Show button creation and interaction; other button kinds pending |
+| Action Buttons | Partial: Hide/Show and default Animation button creation and interaction; other button kinds and Animation settings pending |
 | Select All | Partial |
 | Select Parents | Partial: direct dependencies of supported objects |
 | Select Children | Partial: direct dependents of supported objects |
@@ -53,13 +53,13 @@ The release gate is every sketch and document command verified after editing, sa
 | Show All Hidden | Partial |
 | Show Labels | Partial: point-label visibility through editor controls; other object labels pending |
 | Label Objects | Partial: point labels can be named, styled, copied, and saved; other object labels pending |
-| Trace Objects | Partial: point and segment header flags, save/reopen, undo/redo, and bounded native drag trails; generated point and segment files opened and saved byte-identically in Sketchpad 5, with point trail visually confirmed |
+| Trace Objects | Partial: point, segment, ray, line, circle, arc, and polygon trace flags, save/reopen, undo/redo, and bounded drag or animation trails; native ray, line, circle, arc, and polygon flags confirmed, polygon fill and full-line trails visually confirmed, and port-traced point, segment, ray, line, circle, arc, and polygon files opened and saved byte-identically in Sketchpad 5. Action-button traces and other object kinds pending |
 | Erase Traces | Partial: clears native in-memory trails; original application's trail clearing verified for a port-generated traced point |
-| Animate Objects | Pending |
-| Increase Speed | Pending |
-| Decrease Speed | Pending |
-| Stop Animation | Pending |
-| Hide/Show Motion Controller | Pending |
+| Animate Objects | Partial: selected free points wander within the visible canvas, and points on segments, circles, and arcs animate and update dependents. A segment-driven polygon locus and a free point moved visibly in the desktop; their stopped files cross-opened byte-identically in Sketchpad 5. Native free-point path details and other motion modes pending |
+| Increase Speed | Partial: doubles running constrained-point animation speed, bounded at 8× |
+| Decrease Speed | Partial: halves running constrained-point animation speed, bounded at 0.125× |
+| Stop Animation | Partial: stops the current constrained-point animation while keeping its current point positions |
+| Hide/Show Motion Controller | Partial: floating pause, resume, stop, and speed controls for constrained-point animation |
 | Hide/Show Toolbox | Pending |
 | Hide/Show Text Palette | Pending |
 
@@ -81,7 +81,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, SVG, generated file opened in Sketchpad 5 |
-| Locus | Partial: segment-, circle-, or arc-constrained points can drive a dependent point, segment, ray, line, circle, arc, or polygon interior through supported constructions. Native code 35 point curves and segment, ray, line, circle, arc, and polygon families import as editable objects, render in the desktop and SVG views, and can be constructed from the selected pair. Native midpoint, translated-point, circle-driver, arc-driver, two-step, two-branch, segment-family, direct-ray-family, bisector-ray-family, direct-line-family, parallel-line-family, perpendicular-line-family, circle-family, three-point-arc-family, circle-arc-family, base-polygon-family, and vector-translated-polygon-family examples were reproduced; generated and parent-edited files opened and saved byte-identically in Sketchpad 5. Other traced object kinds and locus options pending |
+| Locus | Partial: segment-, circle-, or arc-constrained points can drive a dependent point, segment, ray, line, circle, arc, or polygon interior through supported constructions. Native code 35 point curves and segment, ray, line, circle, arc, and polygon families import as editable objects, render in the desktop and SVG views, and can be constructed from the selected pair. Native midpoint, translated-point, circle-driver, arc-driver, two-step, two-branch, segment-family, direct-ray-family, bisector-ray-family, direct-line-family, parallel-line-family, perpendicular-line-family, circle-family, three-point-arc-family, circle-arc-family, base-polygon-family, vector-translated-polygon-family, polar-translated-polygon-family, and rectangular-translated-polygon-family examples were reproduced; generated files opened and saved byte-identically in Sketchpad 5. Other traced object kinds and locus options pending |
 
 ## Transform
 
@@ -157,7 +157,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Command | Status |
 | --- | --- |
 | Hide/Show | Partial: original and generated buttons cross-opened, click updates target visibility, save/reopen verified |
-| Animation | Pending |
+| Animation | Partial: default single-point button imports, creates, saves, and starts motion without the floating controller. Native and port-generated buttons cross-opened; the port-generated button moved its target when clicked in Sketchpad 5. Speed, direction, path settings, and multiple targets pending |
 | Movement | Pending |
 | Presentation | Pending |
 | Link | Pending |

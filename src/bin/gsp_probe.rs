@@ -804,6 +804,11 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_hide_show_button(target)?;
                     println!("line {}: hide_show_button -> object {id}", index + 1);
                 }
+                "animation_button" => {
+                    let target: usize = rest.parse().map_err(|_| "invalid button target ID")?;
+                    let id = document.add_animation_button(target)?;
+                    println!("line {}: animation_button -> object {id}", index + 1);
+                }
                 "activate_button" => {
                     let id: usize = rest.parse().map_err(|_| "invalid button ID")?;
                     document.activate_hide_show_button(id)?;

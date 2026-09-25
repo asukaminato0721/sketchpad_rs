@@ -1,4 +1,4 @@
-use crate::action_records::{HideShowButtonGroup, VisibilityAction};
+use crate::action_records::{AnimationButtonGroup, HideShowButtonGroup, VisibilityAction};
 use crate::coordinate_measure_records::{
     self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
 };
@@ -71,7 +71,7 @@ impl Kind {
         )
     }
     pub fn dependencies(&self) -> Vec<usize> {
-        if let Kind::HideShowButton { target, .. } = self {
+        if let Kind::HideShowButton { target, .. } | Kind::AnimationButton { target, .. } = self {
             return vec![*target];
         }
         if let Kind::Polygon(vertices) = self {
@@ -207,7 +207,7 @@ impl Kind {
                 vec![source, center, origin, base, target]
             }
             Kind::Polygon(_) => unreachable!(),
-            Kind::HideShowButton { .. } => unreachable!(),
+            Kind::HideShowButton { .. } | Kind::AnimationButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::ValueTablePair(_, _, _) => unreachable!(),
@@ -226,6 +226,18 @@ impl Kind {
             return Kind::HideShowButton {
                 target: m(*target),
                 action: *action,
+                label: label.clone(),
+                anchor: *anchor,
+            };
+        }
+        if let Kind::AnimationButton {
+            target,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::AnimationButton {
+                target: m(*target),
                 label: label.clone(),
                 anchor: *anchor,
             };
@@ -474,7 +486,7 @@ impl Kind {
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
             Kind::Polygon(_) => unreachable!(),
-            Kind::HideShowButton { .. } => unreachable!(),
+            Kind::HideShowButton { .. } | Kind::AnimationButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
         }
@@ -494,6 +506,11 @@ impl Kind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
+    AnimationButton {
+        target: usize,
+        label: String,
+        anchor: (i16, i16),
+    },
     HideShowButton {
         target: usize,
         action: VisibilityAction,
@@ -1007,7 +1024,10 @@ fn is_arc_kind(kind: &Kind) -> bool {
 fn is_locus_polygon_kind(kind: &Kind) -> bool {
     matches!(
         kind,
-        Kind::Polygon(_) | Kind::VectorTranslatedPolygon(_, _, _)
+        Kind::Polygon(_)
+            | Kind::VectorTranslatedPolygon(_, _, _)
+            | Kind::PolarTranslatedPolygon(_, _, _, _)
+            | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
     )
 }
 
@@ -1647,13 +1667,14 @@ impl Document {
             if i == rs.len() {
                 return Err("Unterminated object group".into());
             }
-            let action_group = (code == 62)
-                .then(|| HideShowButtonGroup::parse(&b[group_start..rs[i].data.end]))
-                .transpose();
-            if action_group.is_err() {
+            let action_bytes = (code == 62).then_some(&b[group_start..rs[i].data.end]);
+            let action_group =
+                action_bytes.and_then(|bytes| HideShowButtonGroup::parse(bytes).ok());
+            let animation_group =
+                action_bytes.and_then(|bytes| AnimationButtonGroup::parse(bytes).ok());
+            if code == 62 && action_group.is_none() && animation_group.is_none() {
                 safe = false;
             }
-            let action_group = action_group.ok().flatten();
             let coordinate_group = matches!(code, 49 | 65 | 66 | 86)
                 .then(|| coordinate_measure_records::decode_group(&b[group_start..rs[i].data.end]))
                 .transpose();
@@ -1962,6 +1983,19 @@ impl Document {
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
+                    (62, _, [target]) if animation_group.as_ref().is_some_and(|group| {
+                        group.target_id() == (*target - page_base) as u32
+                    }) => {
+                        let group = animation_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::AnimationButton {
+                                target: *target,
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
                     (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
                     (0, None, []) if rich_text.is_some() && text_box.is_some()
                         && text_style && label.is_none() => {
@@ -2088,7 +2122,16 @@ impl Document {
                                 Kind::PolarTranslatedPoint(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
                             } else if matches!(&objects[origin - 1].kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])))
                                 && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] {
-                                Kind::PolarTranslatedPolygon(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
+                                let distance = f64_at(payload, 40);
+                                // Sketchpad's native polygon-locus save replaces the unit
+                                // scale with the translated pixel distance in this cache form.
+                                let units = if payload[52..60] == [0x64, 0xe4, 0x83, 0x01, 0, 0, 0, 0]
+                                    && distance != 0. {
+                                    f64_at(payload, 32) / distance
+                                } else {
+                                    f64_at(payload, 32)
+                                };
+                                Kind::PolarTranslatedPolygon(*origin, f64_at(payload, 20), units, distance)
                             } else {
                                 Kind::Unsupported(code)
                             }
@@ -5068,7 +5111,11 @@ impl Document {
                 self.objects.get(id - 1).is_some_and(|o| {
                     !o.deleted
                         && o.page == self.active_page
-                        && (is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _)))
+                        && (is_point_kind(&o.kind)
+                            || self.line_points(id).is_some()
+                            || is_circle_kind(&o.kind)
+                            || is_arc_kind(&o.kind)
+                            || o.kind.is_polygon())
                         && o.tracing != tracing
                 })
             })
@@ -5170,7 +5217,7 @@ impl Document {
             || object.page != self.active_page
             || matches!(
                 object.kind,
-                Kind::HideShowButton { .. } | Kind::Unsupported(_)
+                Kind::HideShowButton { .. } | Kind::AnimationButton { .. } | Kind::Unsupported(_)
             )
         {
             return Err("A Hide/Show button needs a visible supported object on this page".into());
@@ -5181,7 +5228,10 @@ impl Document {
             .filter(|object| {
                 object.page == self.active_page
                     && !object.deleted
-                    && matches!(object.kind, Kind::HideShowButton { .. })
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. } | Kind::AnimationButton { .. }
+                    )
             })
             .count();
         let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
@@ -5194,6 +5244,45 @@ impl Document {
             target,
             action: VisibilityAction::Hide,
             label: label.into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn add_animation_button(&mut self, target: usize) -> Result<usize, String> {
+        let object = self
+            .objects
+            .get(target.checked_sub(1).ok_or("Invalid button target")?)
+            .ok_or("Invalid button target")?;
+        if self.partial_view
+            || self.page_count != 1
+            || object.deleted
+            || !object.visible
+            || object.page != self.active_page
+            || !matches!(
+                object.kind,
+                Kind::Free(_)
+                    | Kind::PointOnSegment(_, _)
+                    | Kind::PointOnCircle(_, _, _)
+                    | Kind::PointOnArc(_, _)
+            )
+        {
+            return Err("An Animation button needs an animatable point on this page".into());
+        }
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. } | Kind::AnimationButton { .. }
+                    )
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::AnimationButton {
+            target,
+            label: "Animate Point".into(),
             anchor: (10, y),
         }))
     }
@@ -6816,7 +6905,9 @@ impl Document {
             {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
-            if let Kind::HideShowButton { target, label, .. } = &o.kind {
+            if let Kind::HideShowButton { target, label, .. }
+            | Kind::AnimationButton { target, label, .. } = &o.kind
+            {
                 if self.page_count != 1
                     || self.objects[*target - 1].page != o.page
                     || label.len() > u16::MAX as usize
@@ -8178,6 +8269,33 @@ impl Document {
                 }
                 out[start..end].copy_from_slice(&encoded);
             }
+            if let (Kind::AnimationButton { label, anchor, .. }, Some(i)) =
+                (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved animation button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved animation button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = AnimationButtonGroup::parse(&out[start..end])?;
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err(
+                        "Editing a saved animation button label cannot change its byte length"
+                            .into(),
+                    );
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
         }
         if !self.image_read_only
             && let Some(Kind::Image { transform, .. }) = self
@@ -8371,6 +8489,18 @@ impl Document {
                 added.extend_from_slice(&group.encode());
                 continue;
             }
+            if let Kind::AnimationButton {
+                target,
+                label,
+                anchor,
+            } = &o.kind
+            {
+                let mut group =
+                    AnimationButtonGroup::from_original_template(*target as u32, label, *anchor)?;
+                group.set_hidden(!o.visible);
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
             if let Some(group) = self.graph_template_group(o)? {
                 added.extend_from_slice(&group);
                 continue;
@@ -8473,8 +8603,21 @@ impl Document {
                     h[10] = 0x21;
                     h[12..16].copy_from_slice(&[0xff, 0xb2, 0x66, 0]);
                     h[17] = 0x7f;
+                    if matches!(target_kind, Kind::PolarTranslatedPolygon(_, _, _, _)) {
+                        h[18..20].copy_from_slice(&[0xf0, 0x3f]);
+                    } else if matches!(
+                        target_kind,
+                        Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
+                    ) {
+                        h[18..20].copy_from_slice(&[0, 0x40]);
+                    }
                     h[20..24].copy_from_slice(
-                        &if matches!(target_kind, Kind::VectorTranslatedPolygon(_, _, _)) {
+                        &if matches!(
+                            target_kind,
+                            Kind::VectorTranslatedPolygon(_, _, _)
+                                | Kind::PolarTranslatedPolygon(_, _, _, _)
+                                | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
+                        ) {
                             2u32
                         } else {
                             1u32
@@ -10350,6 +10493,54 @@ mod tests {
             }
         ));
         fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn animation_button_imports_click_state_and_generated_file_round_trips() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_clicked.gsp").as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert!(matches!(
+                &doc.objects[4].kind,
+                Kind::AnimationButton { target: 4, label, anchor: (10, 5) }
+                    if label == "动画点"
+            ));
+            assert_eq!(doc.objects[4].kind.dependencies(), vec![4]);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let base = include_bytes!("../tests/fixtures/animation_button_base.gsp");
+        let mut doc = Document::from_bytes(base, None).unwrap();
+        let button = doc.add_animation_button(4).unwrap();
+        assert_eq!(button, 5);
+        let generated = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&generated, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.encode().unwrap(), generated);
+        assert!(matches!(
+            &reopened.objects[4].kind,
+            Kind::AnimationButton { target: 4, label, .. } if label == "Animate Point"
+        ));
+        let clicked = include_bytes!("../tests/fixtures/action_animation_port_clicked_by_wine.gsp");
+        let clicked_doc = Document::from_bytes(clicked, None).unwrap();
+        assert!(!clicked_doc.partial_view);
+        assert_ne!(clicked_doc.position(4), doc.position(4));
+        assert_eq!(clicked_doc.encode().unwrap(), clicked);
+        doc.selected.insert(button);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let pasted_button = *pasted.last().unwrap();
+        assert!(matches!(
+            doc.objects[pasted_button - 1].kind,
+            Kind::AnimationButton { target, .. } if target != 4 && target < pasted_button
+        ));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[pasted_button - 1].kind,
+            Kind::AnimationButton { .. }
+        ));
     }
     #[test]
     fn polygon_perimeter_matches_original_and_updates_after_drag() {
@@ -15838,7 +16029,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_flags_follow_undo_and_round_trip_for_points_and_segments() {
+    fn trace_flags_follow_undo_and_round_trip_for_supported_shapes() {
         for (bytes, traced_id) in [
             (
                 include_bytes!("../tests/fixtures/trace_point_original.gsp").as_slice(),
@@ -15859,6 +16050,26 @@ mod tests {
             (
                 include_bytes!("../tests/fixtures/trace_port_point_dragged_by_wine.gsp").as_slice(),
                 1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/trace_circle_original.gsp").as_slice(),
+                3,
+            ),
+            (
+                include_bytes!("../tests/fixtures/trace_polygon_original.gsp").as_slice(),
+                7,
+            ),
+            (
+                include_bytes!("../tests/fixtures/trace_ray_original.gsp").as_slice(),
+                3,
+            ),
+            (
+                include_bytes!("../tests/fixtures/trace_line_original.gsp").as_slice(),
+                3,
+            ),
+            (
+                include_bytes!("../tests/fixtures/trace_arc_original.gsp").as_slice(),
+                4,
             ),
         ] {
             let mut doc = Document::from_bytes(bytes, None).unwrap();
@@ -15888,6 +16099,23 @@ mod tests {
         assert!(doc.objects[pasted[0] - 1].tracing);
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert!(reopened.objects[pasted[0] - 1].tracing);
+
+        let a = doc.add(Kind::Free(Point { x: 120., y: 150. }));
+        let b = doc.add(Kind::Free(Point { x: 170., y: 150. }));
+        let c = doc.add(Kind::Free(Point { x: 145., y: 100. }));
+        let circle = doc.add(Kind::Circle(a, b));
+        let arc = doc.add(Kind::ThreePointArc(a, c, b));
+        let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+        let ray = doc.add(Kind::Ray(a, b));
+        let line = doc.add(Kind::Line(a, b));
+        doc.selected.clear();
+        doc.selected.extend([circle, arc, polygon, ray, line]);
+        assert_eq!(doc.set_selected_tracing(true).unwrap(), 5);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        for id in [circle, arc, polygon, ray, line] {
+            assert!(reopened.objects[id - 1].tracing);
+        }
     }
 
     #[test]
@@ -16563,5 +16791,103 @@ mod tests {
         let changed = moved.locus_polygons(11, 384).unwrap();
         assert_eq!(changed[0][0], Point { x: 200., y: 220. });
         assert_eq!(changed[125][0], Point { x: 400., y: 180. });
+    }
+    #[test]
+    fn polar_translated_polygon_locus_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/locus_polar_polygon_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(
+            native.objects[8].kind,
+            Kind::Locus(vec![8, 3, 4, 7, 8], 125)
+        );
+        let offset = 37.79527559055118 * 2.65;
+        let family = native.locus_polygons(9, 384).unwrap();
+        assert_eq!(family.len(), 126);
+        assert!((family[0][0].x - (120. + offset)).abs() < 1e-9);
+        assert_eq!(family[0][0].y, 180.);
+        assert!((family[125][0].x - (300. + offset)).abs() < 1e-9);
+        assert!((family[0][1].x - (150. + offset)).abs() < 1e-9);
+
+        let base = include_bytes!("../tests/fixtures/locus_polar_polygon_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 8), Ok(9));
+        let encoded = generated.encode().unwrap();
+        let locus_header = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x07d0)
+            .last()
+            .unwrap();
+        assert_eq!(
+            &encoded[locus_header.data.start + 18..locus_header.data.start + 20],
+            &[0xf0, 0x3f]
+        );
+        assert_eq!(
+            &encoded[locus_header.data.start + 20..locus_header.data.start + 24],
+            &2u32.to_le_bytes()
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[8].kind, native.objects[8].kind);
+        assert_eq!(reopened.locus_polygons(9, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_polygons(9, 384).unwrap();
+        assert!((changed[0][0].x - (100. + offset)).abs() < 1e-9);
+        assert_eq!(changed[0][0].y, 220.);
+        assert!((changed[125][0].x - (300. + offset)).abs() < 1e-9);
+    }
+    #[test]
+    fn rectangular_translated_polygon_locus_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/locus_rectangular_polygon_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(
+            native.objects[8].kind,
+            Kind::Locus(vec![8, 3, 4, 7, 8], 125)
+        );
+        let dx = 37.79527559055118 * 2.;
+        let dy = 37.79527559055118 * 0.5;
+        let family = native.locus_polygons(9, 384).unwrap();
+        assert_eq!(family.len(), 126);
+        assert!((family[0][0].x - (120. + dx)).abs() < 1e-9);
+        assert!((family[0][0].y - (180. + dy)).abs() < 1e-9);
+        assert!((family[125][0].x - (300. + dx)).abs() < 1e-9);
+
+        let base = include_bytes!("../tests/fixtures/locus_rectangular_polygon_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 8), Ok(9));
+        let encoded = generated.encode().unwrap();
+        let locus_header = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x07d0)
+            .last()
+            .unwrap();
+        assert_eq!(
+            &encoded[locus_header.data.start + 18..locus_header.data.start + 20],
+            &[0, 0x40]
+        );
+        assert_eq!(
+            &encoded[locus_header.data.start + 20..locus_header.data.start + 24],
+            &2u32.to_le_bytes()
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[8].kind, native.objects[8].kind);
+        assert_eq!(reopened.locus_polygons(9, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_polygons(9, 384).unwrap();
+        assert!((changed[0][0].x - (100. + dx)).abs() < 1e-9);
+        assert!((changed[0][0].y - (220. + dy)).abs() < 1e-9);
+        assert!((changed[125][0].x - (300. + dx)).abs() < 1e-9);
     }
 }

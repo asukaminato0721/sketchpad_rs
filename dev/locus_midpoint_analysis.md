@@ -142,3 +142,21 @@ the base polygon's 1. Constructing this locus also changes the translated
 polygon's header bytes 18–19 from `51 5c` to `39 20`; the writer now applies
 that change when the target has an active locus. Generated and parent-edited
 files opened, displayed, and resaved byte-identically in Sketchpad 5.
+
+`tests/fixtures/locus_polar_polygon_target_original.gsp` traces the same
+triangle after a fixed 0° polar translation of 2.65 cm. Its code 35 references
+and 125 samples match the vector-translated polygon locus; the stage field is
+2, while header bytes 18–19 are `f0 3f`. Native locus construction also rewrites
+the polar translation's cached unit length to its pixel distance and replaces
+the trailing cache bytes. The parser recognizes this observed cache form and
+recovers the original unit length. A Rust-generated locus opened, displayed,
+and resaved byte-identically in Sketchpad 5; moving the path endpoint updates
+the swept interior in the port.
+
+`tests/fixtures/locus_rectangular_polygon_target_original.gsp` traces the
+triangle after a fixed rectangular translation of 2 cm horizontally and
+−0.5 cm vertically. It uses the same five references and 125 samples, with
+header bytes 18–19 set to `00 40` and stage 2. Native creation clears the
+last eight bytes of the translation constraint. The generated file opened,
+displayed, and resaved byte-identically in Sketchpad 5; a moved path endpoint
+also updates the locus in the port.

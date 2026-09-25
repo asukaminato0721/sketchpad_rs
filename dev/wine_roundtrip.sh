@@ -91,8 +91,17 @@ xvfb-run -a bash -c '
   if [[ "${SKETCHPAD_WINE_DRAG:-}" == "1" ]]; then
     xdotool mousemove "${SKETCHPAD_WINE_DRAG_FROM_X:-279}" "${SKETCHPAD_WINE_DRAG_FROM_Y:-299}" mousedown 1
     sleep 0.3
-    xdotool mousemove "${SKETCHPAD_WINE_DRAG_TO_X:-320}" "${SKETCHPAD_WINE_DRAG_TO_Y:-250}"
+    drag_from_x="${SKETCHPAD_WINE_DRAG_FROM_X:-279}"
+    drag_from_y="${SKETCHPAD_WINE_DRAG_FROM_Y:-299}"
+    drag_to_x="${SKETCHPAD_WINE_DRAG_TO_X:-320}"
+    drag_to_y="${SKETCHPAD_WINE_DRAG_TO_Y:-250}"
+    drag_steps="${SKETCHPAD_WINE_DRAG_STEPS:-1}"
+    for step in $(seq 1 "$drag_steps"); do
+      xdotool mousemove "$((drag_from_x + (drag_to_x - drag_from_x) * step / drag_steps))" "$((drag_from_y + (drag_to_y - drag_from_y) * step / drag_steps))"
+      sleep 0.08
+    done
     sleep 0.3
+    "$4" -window root "${capture_prefix}_during_drag.png"
     xdotool mouseup 1
     sleep 0.5
     "$4" -window root "${capture_prefix}_after_drag.png"
@@ -103,6 +112,11 @@ xvfb-run -a bash -c '
     xdotool key --clearmodifiers "$SKETCHPAD_WINE_ACTION_KEY"
     sleep 0.6
     "$4" -window root "${capture_prefix}_after_action.png"
+  fi
+  if [[ "${SKETCHPAD_WINE_ACTION_CLICK_ONLY:-}" == "1" ]]; then
+    xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-105}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-85}" click 1
+    sleep 1
+    "$4" -window root "${capture_prefix}_after_action_click.png"
   fi
   if [[ -n "${SKETCHPAD_WINE_ACTION_KEYS:-}" ]]; then
     xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-259}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-249}" click 1

@@ -3,7 +3,7 @@ use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point, TextSty
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::graph::{GraphPoint, GridForm};
 use sketchpad_rs::plot_points_records::PlotPointsMode;
-use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
+use sketchpad_rs::render::{GeometryRenderer, TraceMark, Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, VisualStyle};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{
@@ -12,6 +12,7 @@ use std::{
     path::PathBuf,
     process::{Command, Stdio},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use winit::{
     event::{Event, WindowEvent},
@@ -139,9 +140,13 @@ enum CircleMeasure {
     Area,
 }
 #[derive(Clone, Copy)]
-enum TraceMark {
-    Point(Point, RgbColor),
-    Segment(Point, Point, RgbColor),
+struct AnimationTrack {
+    id: usize,
+    phase: f64,
+    direction: f64,
+    free_velocity: Option<Point>,
+    free_turn_remaining: f64,
+    random_state: u64,
 }
 struct Editor {
     doc: Document,
@@ -158,6 +163,12 @@ struct Editor {
     marked_angle: Option<[usize; 3]>,
     marked_ratio: Option<[usize; 3]>,
     trace_marks: Vec<TraceMark>,
+    animations: Vec<AnimationTrack>,
+    animation_speed: f64,
+    animation_paused: bool,
+    animation_last_tick: Instant,
+    animation_bounds: Option<(Point, Point)>,
+    show_motion_controller: bool,
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
@@ -231,6 +242,12 @@ impl Editor {
             marked_angle: None,
             marked_ratio: None,
             trace_marks: Vec::new(),
+            animations: Vec::new(),
+            animation_speed: 1.,
+            animation_paused: false,
+            animation_last_tick: Instant::now(),
+            animation_bounds: None,
+            show_motion_controller: false,
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
@@ -748,6 +765,7 @@ impl Editor {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
+                    | Kind::AnimationButton { label, anchor, .. }
                     if sketchpad_rs::render::action_button_rect(v, *anchor, label).contains(p))
         }) {
             return Some(object.id);
@@ -1433,6 +1451,14 @@ impl Editor {
                         Ok(()) => self.status = format!("Activated button {id}"),
                         Err(error) => self.status = error,
                     }
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && let Kind::AnimationButton { target, .. } = &self.doc.objects[id - 1].kind
+                {
+                    self.animate_targets(&[*target], false);
                     self.selection_order.clear();
                     return;
                 }
@@ -2430,7 +2456,11 @@ impl Editor {
             .filter(|o| o.tracing && o.visible && !o.deleted && o.page == self.doc.active_page)
         {
             let color = match object.visual_style {
-                Some(VisualStyle::Point { color, .. } | VisualStyle::Stroke { color, .. }) => color,
+                Some(
+                    VisualStyle::Point { color, .. }
+                    | VisualStyle::Stroke { color, .. }
+                    | VisualStyle::Polygon { color },
+                ) => color,
                 _ => RgbColor {
                     red: 23,
                     green: 107,
@@ -2439,25 +2469,229 @@ impl Editor {
             };
             if let Some(point) = self.doc.position(object.id) {
                 self.trace_marks.push(TraceMark::Point(point, color));
-            } else if matches!(object.kind, Kind::Segment(_, _))
-                && let Some((a, b, LineMode::Segment)) = self.doc.line_points(object.id)
-            {
-                self.trace_marks.push(TraceMark::Segment(a, b, color));
+            } else if let Some((a, b, mode)) = self.doc.line_points(object.id) {
+                self.trace_marks
+                    .push(TraceMark::Straight(a, b, mode, color));
+            } else if let Some((center, radius)) = self.doc.circle_points(object.id) {
+                self.trace_marks
+                    .push(TraceMark::Circle(center, radius, color));
+            } else if let Some(points) = self.doc.arc_points(object.id, 128) {
+                self.trace_marks.push(TraceMark::Arc(points, color));
+            } else if let Some(points) = self.doc.polygon_points(object.id) {
+                self.trace_marks.push(TraceMark::Polygon(points, color));
             }
         }
         if self.trace_marks.len() > 8192 {
             self.trace_marks.drain(..self.trace_marks.len() - 8192);
         }
     }
+    fn next_animation_random(state: &mut u64) -> f64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state >> 11) as f64 / (1u64 << 53) as f64
+    }
+    fn animation_track(&self, id: usize) -> Option<AnimationTrack> {
+        let object = self.doc.objects.get(id.checked_sub(1)?)?;
+        if object.deleted || !object.visible || object.page != self.doc.active_page {
+            return None;
+        }
+        if let Kind::Free(point) = object.kind {
+            let mut random_state = ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                ^ point.x.to_bits().rotate_left(17)
+                ^ point.y.to_bits().rotate_left(41))
+                | 1;
+            let angle = Self::next_animation_random(&mut random_state) * std::f64::consts::TAU;
+            return Some(AnimationTrack {
+                id,
+                phase: 0.,
+                direction: 1.,
+                free_velocity: Some(Point {
+                    x: angle.cos(),
+                    y: angle.sin(),
+                }),
+                free_turn_remaining: 0.35,
+                random_state,
+            });
+        }
+        let phase = match object.kind {
+            Kind::PointOnSegment(host, t)
+                if matches!(self.doc.line_points(host), Some((_, _, LineMode::Segment))) =>
+            {
+                t
+            }
+            Kind::PointOnCircle(host, x, y) if self.doc.circle_points(host).is_some() => {
+                y.atan2(x).rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU
+            }
+            Kind::PointOnArc(host, t) if self.doc.point_on_arc(host, t).is_some() => t,
+            _ => return None,
+        };
+        phase.is_finite().then_some(AnimationTrack {
+            id,
+            phase,
+            direction: 1.,
+            free_velocity: None,
+            free_turn_remaining: 0.,
+            random_state: 0,
+        })
+    }
+    fn animate_targets(&mut self, targets: &[usize], show_controller: bool) {
+        let added = targets
+            .iter()
+            .copied()
+            .filter(|id| !self.animations.iter().any(|track| track.id == *id))
+            .filter_map(|id| self.animation_track(id))
+            .collect::<Vec<_>>();
+        if added.is_empty() {
+            self.status = "Select a free point or a point on a segment, circle, or arc".into();
+            return;
+        }
+        if self.animations.is_empty() {
+            self.doc.checkpoint();
+        }
+        self.status = format!("Animating {} point(s)", added.len());
+        self.animations.extend(added);
+        self.animation_paused = false;
+        self.animation_last_tick = Instant::now();
+        self.show_motion_controller |= show_controller;
+    }
+    fn animate_selected(&mut self) {
+        let selected = self.doc.selected.iter().copied().collect::<Vec<_>>();
+        self.animate_targets(&selected, true);
+    }
+    fn stop_animation(&mut self) {
+        self.animations.clear();
+        self.animation_paused = false;
+        self.status = "Stopped animation".into();
+    }
+    fn tick_animation(&mut self, elapsed_seconds: f64) {
+        if self.animations.is_empty() || self.animation_paused || !elapsed_seconds.is_finite() {
+            return;
+        }
+        let step = elapsed_seconds.clamp(0., 0.1) * self.animation_speed / 2.;
+        if step == 0. {
+            return;
+        }
+        self.capture_traces();
+        let mut tracks = std::mem::take(&mut self.animations);
+        tracks.retain_mut(|track| {
+            let Some(object) = self.doc.objects.get(track.id - 1) else {
+                return false;
+            };
+            if object.deleted || !object.visible || object.page != self.doc.active_page {
+                return false;
+            }
+            let kind = &object.kind;
+            if let Some(mut velocity) = track.free_velocity {
+                let Kind::Free(current) = *kind else {
+                    return false;
+                };
+                let elapsed = elapsed_seconds.clamp(0., 0.1);
+                track.free_turn_remaining -= elapsed * self.animation_speed;
+                if track.free_turn_remaining <= 0. {
+                    let angle = Self::next_animation_random(&mut track.random_state)
+                        * std::f64::consts::TAU;
+                    velocity = Point {
+                        x: angle.cos(),
+                        y: angle.sin(),
+                    };
+                    track.free_turn_remaining +=
+                        0.35 + 0.45 * Self::next_animation_random(&mut track.random_state);
+                }
+                let distance = 90. * elapsed * self.animation_speed / f64::from(self.scale);
+                let mut destination = Point {
+                    x: current.x + velocity.x * distance,
+                    y: current.y + velocity.y * distance,
+                };
+                if let Some((min, max)) = self.animation_bounds {
+                    let margin = 10. / f64::from(self.scale);
+                    let left = min.x.min(max.x) + margin;
+                    let right = min.x.max(max.x) - margin;
+                    let top = min.y.min(max.y) + margin;
+                    let bottom = min.y.max(max.y) - margin;
+                    if left < right && top < bottom {
+                        if destination.x < left {
+                            destination.x = left;
+                            velocity.x = velocity.x.abs();
+                        } else if destination.x > right {
+                            destination.x = right;
+                            velocity.x = -velocity.x.abs();
+                        }
+                        if destination.y < top {
+                            destination.y = top;
+                            velocity.y = velocity.y.abs();
+                        } else if destination.y > bottom {
+                            destination.y = bottom;
+                            velocity.y = -velocity.y.abs();
+                        }
+                    }
+                }
+                track.free_velocity = Some(velocity);
+                return self.doc.move_point(track.id, destination);
+            }
+            let circular = matches!(kind, Kind::PointOnCircle(_, _, _));
+            track.phase += track.direction * step;
+            if circular {
+                track.phase = track.phase.rem_euclid(1.);
+            } else if track.phase > 1. {
+                track.phase = 2. - track.phase;
+                track.direction = -1.;
+            } else if track.phase < 0. {
+                track.phase = -track.phase;
+                track.direction = 1.;
+            }
+            let destination = match *kind {
+                Kind::PointOnSegment(host, _) => self
+                    .doc
+                    .line_points(host)
+                    .filter(|(_, _, mode)| *mode == LineMode::Segment)
+                    .map(|(a, b, _)| Point {
+                        x: a.x + (b.x - a.x) * track.phase,
+                        y: a.y + (b.y - a.y) * track.phase,
+                    }),
+                Kind::PointOnCircle(host, _, _) => self.doc.circle_points(host).map(|(c, r)| {
+                    let angle = track.phase * std::f64::consts::TAU;
+                    Point {
+                        x: c.x + r * angle.cos(),
+                        y: c.y - r * angle.sin(),
+                    }
+                }),
+                Kind::PointOnArc(host, _) => self.doc.point_on_arc(host, track.phase),
+                _ => None,
+            };
+            destination.is_some_and(|point| self.doc.move_point(track.id, point))
+        });
+        self.animations = tracks;
+    }
+    fn tick_animation_clock(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.animation_last_tick).as_secs_f64();
+        self.animation_last_tick = now;
+        self.tick_animation(elapsed);
+    }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
+        if self.pending_action.is_none() {
+            if root.input_mut(|input| {
+                input.consume_key(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::S,
+                )
+            }) {
+                self.save(true);
+            } else if root
+                .input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::S))
+            {
+                self.save(false);
+            }
+        }
         if !root.ctx().egui_wants_keyboard_input() && self.pending_action.is_none() {
-            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::C)) {
+            if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) {
                 self.copy_selected();
             }
-            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::X)) {
+            if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::X)) {
                 self.cut_selected();
             }
-            if root.input(|input| input.modifiers.command && input.key_pressed(egui::Key::V)) {
+            if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::V)) {
                 self.paste();
             }
         }
@@ -2542,7 +2776,9 @@ impl Editor {
                                     && !object.deleted
                                     && !matches!(
                                         object.kind,
-                                        Kind::HideShowButton { .. } | Kind::Unsupported(_)
+                                        Kind::HideShowButton { .. }
+                                            | Kind::AnimationButton { .. }
+                                            | Kind::Unsupported(_)
                                     )
                             })
                         });
@@ -2561,11 +2797,32 @@ impl Editor {
                             }
                             ui.close();
                         }
+                        let animation_target = self
+                            .selection_order
+                            .iter()
+                            .copied()
+                            .find(|id| self.animation_track(*id).is_some());
+                        if ui
+                            .add_enabled(
+                                animation_target.is_some() && !self.doc.partial_view,
+                                egui::Button::new("Animation"),
+                            )
+                            .clicked()
+                        {
+                            if let Some(target) = animation_target {
+                                match self.doc.add_animation_button(target) {
+                                    Ok(id) => self.select_only(id),
+                                    Err(error) => self.status = error,
+                                }
+                            }
+                            ui.close();
+                        }
                     });
                     if ui
                         .add_enabled(!self.doc.undo.is_empty(), egui::Button::new("Undo"))
                         .clicked()
                     {
+                        self.animations.clear();
                         self.doc.undo();
                         self.image_textures.clear();
                         ui.close();
@@ -2574,6 +2831,7 @@ impl Editor {
                         .add_enabled(!self.doc.redo.is_empty(), egui::Button::new("Redo"))
                         .clicked()
                     {
+                        self.animations.clear();
                         self.doc.redo();
                         self.image_textures.clear();
                         ui.close();
@@ -3319,7 +3577,7 @@ impl Editor {
                         .clicked()
                     {
                         self.status = match self.doc.set_selected_tracing(!tracing) {
-                            Ok(0) => "Select at least one point or segment".into(),
+                            Ok(0) => "Select a geometric object".into(),
                             Ok(count) => format!("Updated tracing on {count} object(s)"),
                             Err(error) => error,
                         };
@@ -3330,6 +3588,43 @@ impl Editor {
                         self.status = "Erased traces".into();
                         ui.close();
                     }
+                    ui.separator();
+                    if ui.button("Animate Objects").clicked() {
+                        self.animate_selected();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!self.animations.is_empty(), egui::Button::new("Increase Speed"))
+                        .clicked()
+                    {
+                        self.animation_speed = (self.animation_speed * 2.).min(8.);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!self.animations.is_empty(), egui::Button::new("Decrease Speed"))
+                        .clicked()
+                    {
+                        self.animation_speed = (self.animation_speed / 2.).max(0.125);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!self.animations.is_empty(), egui::Button::new("Stop Animation"))
+                        .clicked()
+                    {
+                        self.stop_animation();
+                        ui.close();
+                    }
+                    if ui
+                        .button(if self.show_motion_controller {
+                            "Hide Motion Controller"
+                        } else {
+                            "Show Motion Controller"
+                        })
+                        .clicked()
+                    {
+                        self.show_motion_controller = !self.show_motion_controller;
+                        ui.close();
+                    }
                     if ui.button("Fit Sketch").clicked() {
                         self.fit();
                         ui.close();
@@ -3337,6 +3632,34 @@ impl Editor {
                 });
             });
         });
+        if self.show_motion_controller {
+            let mut open = true;
+            egui::Window::new("Motion Controller")
+                .default_pos(egui::pos2(220., 45.))
+                .open(&mut open)
+                .show(root.ctx(), |ui| {
+                    ui.label(format!("{} point(s)", self.animations.len()));
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(if self.animation_paused {
+                                "Resume"
+                            } else {
+                                "Pause"
+                            })
+                            .clicked()
+                            && !self.animations.is_empty()
+                        {
+                            self.animation_paused = !self.animation_paused;
+                            self.animation_last_tick = Instant::now();
+                        }
+                        if ui.button("Stop").clicked() {
+                            self.stop_animation();
+                        }
+                    });
+                    ui.add(egui::Slider::new(&mut self.animation_speed, 0.125..=8.).text("Speed"));
+                });
+            self.show_motion_controller = open;
+        }
         egui::Panel::left("tools").min_size(110.).show(root, |ui| {
             ui.heading("Tools");
             if self.doc.page_count > 1 {
@@ -3345,6 +3668,7 @@ impl Editor {
                         .add_enabled(self.doc.active_page > 0, egui::Button::new("‹"))
                         .clicked()
                     {
+                        self.animations.clear();
                         self.doc.active_page -= 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();
@@ -3362,6 +3686,7 @@ impl Editor {
                         )
                         .clicked()
                     {
+                        self.animations.clear();
                         self.doc.active_page += 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();
@@ -3583,6 +3908,7 @@ impl Editor {
                     scale: self.scale,
                     center: self.center,
                 };
+                self.animation_bounds = Some((vp.world(r.min), vp.world(r.max)));
                 if response.hovered() {
                     let dy = ui.input(|i| i.smooth_scroll_delta.y);
                     if dy != 0. {
@@ -3634,6 +3960,7 @@ impl Editor {
                                     _ => egui::Vec2::ZERO,
                                 };
                                 self.doc.checkpoint();
+                                self.animations.retain(|track| track.id != id);
                                 self.dragging = Some(id);
                                 self.capture_traces();
                             }
@@ -3703,29 +4030,6 @@ impl Editor {
                             self.plot_samples_draft = samples.to_string();
                         }
                         _ => {}
-                    }
-                }
-                for mark in &self.trace_marks {
-                    match *mark {
-                        TraceMark::Point(at, color) => {
-                            let at = vp.screen(at);
-                            if r.contains(at) {
-                                ui.painter().circle_filled(
-                                    at,
-                                    2.,
-                                    egui::Color32::from_rgb(color.red, color.green, color.blue),
-                                );
-                            }
-                        }
-                        TraceMark::Segment(a, b, color) => {
-                            ui.painter().line_segment(
-                                [vp.screen(a), vp.screen(b)],
-                                egui::Stroke::new(
-                                    1.,
-                                    egui::Color32::from_rgb(color.red, color.green, color.blue),
-                                ),
-                            );
-                        }
                     }
                 }
                 for object in self.doc.objects.iter().filter(|object| {
@@ -3944,7 +4248,9 @@ impl Editor {
                             );
                         }
                     }
-                    if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
+                    if let Kind::HideShowButton { label, anchor, .. }
+                    | Kind::AnimationButton { label, anchor, .. } = &object.kind
+                    {
                         let box_rect =
                             sketchpad_rs::render::action_button_rect(&vp, *anchor, label);
                         ui.painter().rect_filled(
@@ -4979,7 +5285,7 @@ mod tests {
         ));
         assert!(matches!(
             editor.trace_marks[3],
-            TraceMark::Segment(Point { x: 35., y: 45. }, _, _)
+            TraceMark::Straight(Point { x: 35., y: 45. }, _, LineMode::Segment, _)
         ));
         editor.trace_marks.clear();
         assert!(editor.trace_marks.is_empty());
@@ -4989,6 +5295,103 @@ mod tests {
         editor.doc.set_selected_tracing(false).unwrap();
         editor.capture_traces();
         assert!(editor.trace_marks.is_empty());
+    }
+
+    #[test]
+    fn traced_circle_arc_and_polygon_capture_geometry_changes() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 20., y: 30. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 80., y: 30. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 45., y: 70. }));
+        let circle = editor.doc.add(Kind::Circle(a, b));
+        let arc = editor.doc.add(Kind::ThreePointArc(a, c, b));
+        let polygon = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        editor.doc.selected.extend([circle, arc, polygon]);
+        assert_eq!(editor.doc.set_selected_tracing(true).unwrap(), 3);
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 3);
+        assert!(matches!(editor.trace_marks[0], TraceMark::Circle(_, _, _)));
+        assert!(matches!(editor.trace_marks[1], TraceMark::Arc(_, _)));
+        assert!(matches!(editor.trace_marks[2], TraceMark::Polygon(_, _)));
+        assert!(editor.doc.move_point(b, Point { x: 90., y: 40. }));
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 6);
+        match (&editor.trace_marks[0], &editor.trace_marks[3]) {
+            (TraceMark::Circle(_, first, _), TraceMark::Circle(_, second, _)) => {
+                assert_ne!(first, second);
+            }
+            _ => panic!("Expected two circle trace samples"),
+        }
+        match (&editor.trace_marks[1], &editor.trace_marks[4]) {
+            (TraceMark::Arc(first, _), TraceMark::Arc(second, _)) => {
+                assert_ne!(first, second);
+            }
+            _ => panic!("Expected two arc trace samples"),
+        }
+        match (&editor.trace_marks[2], &editor.trace_marks[5]) {
+            (TraceMark::Polygon(first, _), TraceMark::Polygon(second, _)) => {
+                assert_ne!(first, second);
+            }
+            _ => panic!("Expected two polygon trace samples"),
+        }
+    }
+
+    #[test]
+    fn traced_ray_and_line_capture_modes_and_motion() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 20., y: 30. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 80., y: 30. }));
+        let ray = editor.doc.add(Kind::Ray(a, b));
+        let line = editor.doc.add(Kind::Line(a, b));
+        editor.doc.selected.extend([ray, line]);
+        assert_eq!(editor.doc.set_selected_tracing(true).unwrap(), 2);
+        editor.capture_traces();
+        assert_eq!(editor.trace_marks.len(), 2);
+        assert!(matches!(
+            editor.trace_marks[0],
+            TraceMark::Straight(_, _, LineMode::Ray, _)
+        ));
+        assert!(matches!(
+            editor.trace_marks[1],
+            TraceMark::Straight(_, _, LineMode::Line, _)
+        ));
+        assert!(editor.doc.move_point(a, Point { x: 35., y: 45. }));
+        editor.capture_traces();
+        assert!(matches!(
+            editor.trace_marks[2],
+            TraceMark::Straight(Point { x: 35., y: 45. }, _, LineMode::Ray, _)
+        ));
+        assert!(matches!(
+            editor.trace_marks[3],
+            TraceMark::Straight(Point { x: 35., y: 45. }, _, LineMode::Line, _)
+        ));
+    }
+
+    #[test]
+    fn clicking_animation_button_starts_its_target_without_controller() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_button_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let button = editor.doc.add_animation_button(4).unwrap();
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 250., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[button - 1].kind
+        else {
+            panic!("Expected animation button")
+        };
+        let click = sketchpad_rs::render::action_button_rect(&viewport, *anchor, label).center();
+        let before = editor.doc.position(4).unwrap();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 1);
+        assert!(!editor.show_motion_controller);
+        editor.tick_animation(0.1);
+        assert_ne!(editor.doc.position(4).unwrap(), before);
     }
 
     #[test]
@@ -5830,6 +6233,119 @@ mod tests {
             Some((Point { x: 160., y: 120. }, 30.))
         );
     }
+
+    #[test]
+    fn animation_moves_constrained_points_and_their_dependents() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 100., y: 0. }));
+        let path = editor.doc.add(Kind::Segment(a, b));
+        let moving = editor.doc.add(Kind::PointOnSegment(path, 0.25));
+        editor.doc.add(Kind::Segment(a, moving));
+        let midpoint = editor.doc.add(Kind::Midpoint(a, moving));
+        let center = editor.doc.add(Kind::Free(Point { x: 200., y: 200. }));
+        let edge = editor.doc.add(Kind::Free(Point { x: 220., y: 200. }));
+        let circle = editor.doc.add(Kind::Circle(center, edge));
+        let orbit = editor.doc.add(Kind::PointOnCircle(circle, 1., 0.));
+        editor.doc.selected.extend([moving, orbit]);
+        editor.animate_selected();
+        assert_eq!(editor.animations.len(), 2);
+        for _ in 0..10 {
+            editor.tick_animation(0.1);
+        }
+        assert!((editor.doc.position(moving).unwrap().x - 75.).abs() < 1e-9);
+        assert!((editor.doc.position(midpoint).unwrap().x - 37.5).abs() < 1e-9);
+        assert!((editor.doc.position(orbit).unwrap().x - 180.).abs() < 1e-9);
+        assert!((editor.doc.position(orbit).unwrap().y - 200.).abs() < 1e-9);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+        editor.stop_animation();
+        editor.doc.undo();
+        assert_eq!(editor.doc.position(moving), Some(Point { x: 25., y: 0. }));
+        assert_eq!(editor.doc.position(orbit), Some(Point { x: 220., y: 200. }));
+    }
+
+    #[test]
+    fn arc_animation_bounces_and_pause_holds_position() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 0. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 70., y: 70. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 0., y: 100. }));
+        let arc = editor.doc.add(Kind::ThreePointArc(a, b, c));
+        let moving = editor.doc.add(Kind::PointOnArc(arc, 0.9));
+        editor.select_only(moving);
+        editor.animate_selected();
+        editor.animation_speed = 2.;
+        editor.tick_animation(0.1);
+        assert!((editor.animations[0].phase - 1.).abs() < 1e-9);
+        editor.tick_animation(0.1);
+        assert!((editor.animations[0].phase - 0.9).abs() < 1e-9);
+        assert_eq!(editor.animations[0].direction, -1.);
+        let at = editor.doc.position(moving);
+        editor.animation_paused = true;
+        editor.tick_animation(0.1);
+        assert_eq!(editor.doc.position(moving), at);
+        editor.stop_animation();
+        assert!(editor.animations.is_empty());
+    }
+
+    #[test]
+    fn animation_stopped_file_from_desktop_roundtrips() {
+        let bytes = include_bytes!("../tests/fixtures/animation_segment_locus_saved_by_port.gsp");
+        let document = Document::from_bytes(bytes, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        let Kind::PointOnSegment(3, t) = document.objects[3].kind else {
+            panic!("Animated point lost its segment constraint");
+        };
+        assert!((0.6..0.9).contains(&t));
+        assert!((document.position(4).unwrap().x - (120. + 180. * t)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn free_point_animation_wanders_within_canvas_and_saves() {
+        let mut editor = Editor::new(Document::new());
+        let moving = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        editor.animation_bounds = Some((Point { x: 0., y: 0. }, Point { x: 200., y: 200. }));
+        editor.select_only(moving);
+        editor.animate_selected();
+        assert!(editor.animations[0].free_velocity.is_some());
+        for _ in 0..150 {
+            editor.tick_animation(0.1);
+            let at = editor.doc.position(moving).unwrap();
+            assert!((10.0..=190.).contains(&at.x));
+            assert!((10.0..=190.).contains(&at.y));
+        }
+        let stopped_at = editor.doc.position(moving).unwrap();
+        assert_ne!(stopped_at, Point { x: 100., y: 100. });
+        editor.animation_paused = true;
+        editor.tick_animation(0.1);
+        assert_eq!(editor.doc.position(moving), Some(stopped_at));
+        editor.stop_animation();
+        let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(moving), Some(stopped_at));
+        editor.doc.undo();
+        assert_eq!(
+            editor.doc.position(moving),
+            Some(Point { x: 100., y: 100. })
+        );
+    }
+
+    #[test]
+    fn free_point_animation_desktop_file_roundtrips() {
+        let bytes = include_bytes!("../tests/fixtures/animation_free_point_saved_by_port.gsp");
+        let document = Document::from_bytes(bytes, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        let at = document.position(1).unwrap();
+        assert_ne!(at, Point { x: 200., y: 150. });
+        assert!((at.x - 169.69428734643552).abs() < 1e-9);
+        assert!((at.y - 146.60481682616518).abs() < 1e-9);
+    }
 }
 
 fn main() {
@@ -5895,6 +6411,7 @@ fn main() {
         egui_wgpu::RendererOptions::default(),
     );
     let geometry = GeometryRenderer::new(&device, config.format);
+    let mut next_animation_frame = Instant::now();
     window.request_redraw();
     event_loop
         .run(move |event, elwt| match event {
@@ -5922,6 +6439,7 @@ fn main() {
                         if size.width == 0 || size.height == 0 {
                             return;
                         }
+                        editor.tick_animation_clock();
                         let input = egui_state.take_egui_input(&window);
                         editor.sync_document_fonts(&ctx);
                         let mut viewport = None;
@@ -5966,6 +6484,7 @@ fn main() {
                             &viewport.unwrap(),
                             [size.width, size.height],
                             output.pixels_per_point,
+                            &editor.trace_marks,
                         );
                         let mut extra = egui_renderer.update_buffers(
                             &device,
@@ -6006,6 +6525,19 @@ fn main() {
                         let _ = response;
                         window.request_redraw();
                     }
+                }
+            }
+            Event::AboutToWait => {
+                if !editor.animations.is_empty() && !editor.animation_paused {
+                    let now = Instant::now();
+                    if now >= next_animation_frame {
+                        window.request_redraw();
+                        next_animation_frame = now + Duration::from_millis(16);
+                    }
+                    elwt.set_control_flow(ControlFlow::WaitUntil(next_animation_frame));
+                } else {
+                    next_animation_frame = Instant::now();
+                    elwt.set_control_flow(ControlFlow::Wait);
                 }
             }
             _ => {}

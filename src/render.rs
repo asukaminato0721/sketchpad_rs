@@ -1246,7 +1246,9 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
-        if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
+        if let Kind::HideShowButton { label, anchor, .. }
+        | Kind::AnimationButton { label, anchor, .. } = &object.kind
+        {
             let box_rect = action_button_rect(vp, *anchor, label);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
             writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
@@ -1366,53 +1368,74 @@ impl Mesh {
         }
     }
     fn polygon(&mut self, points: &[Pos2], fill: [f32; 4]) {
-        if points.len() < 3 {
-            return;
-        }
-        let cross =
-            |a: Pos2, b: Pos2, c: Pos2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-        let signed_area: f32 = points
-            .iter()
-            .zip(points.iter().cycle().skip(1))
-            .take(points.len())
-            .map(|(a, b)| a.x * b.y - b.x * a.y)
-            .sum();
-        let winding = signed_area.signum();
-        let mut remaining: Vec<usize> = (0..points.len()).collect();
-        while remaining.len() >= 3 {
-            let mut ear = None;
-            for i in 0..remaining.len() {
-                let a = points[remaining[(i + remaining.len() - 1) % remaining.len()]];
-                let b = points[remaining[i]];
-                let c = points[remaining[(i + 1) % remaining.len()]];
-                if cross(a, b, c) * winding <= 1e-4 {
-                    continue;
-                }
-                let has_inner = remaining.iter().enumerate().any(|(j, &vertex)| {
-                    if j == i
-                        || j == (i + 1) % remaining.len()
-                        || j == (i + remaining.len() - 1) % remaining.len()
-                    {
-                        return false;
-                    }
-                    let p = points[vertex];
-                    cross(a, b, p) * winding >= -1e-4
-                        && cross(b, c, p) * winding >= -1e-4
-                        && cross(c, a, p) * winding >= -1e-4
-                });
-                if !has_inner {
-                    ear = Some(i);
-                    self.tri(a, b, c, fill);
-                    break;
-                }
-            }
-            let Some(index) = ear else {
-                break;
-            };
-            remaining.remove(index);
+        for [a, b, c] in polygon_triangles(points) {
+            self.tri(points[a], points[b], points[c], fill);
         }
     }
 }
+
+pub fn polygon_triangles(points: &[Pos2]) -> Vec<[usize; 3]> {
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    let cross = |a: Pos2, b: Pos2, c: Pos2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    let signed_area: f32 = points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .take(points.len())
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum();
+    let winding = signed_area.signum();
+    let mut remaining: Vec<usize> = (0..points.len()).collect();
+    let mut triangles = Vec::with_capacity(points.len() - 2);
+    while remaining.len() >= 3 {
+        let mut ear = None;
+        for i in 0..remaining.len() {
+            let a = points[remaining[(i + remaining.len() - 1) % remaining.len()]];
+            let b = points[remaining[i]];
+            let c = points[remaining[(i + 1) % remaining.len()]];
+            if cross(a, b, c) * winding <= 1e-4 {
+                continue;
+            }
+            let has_inner = remaining.iter().enumerate().any(|(j, &vertex)| {
+                if j == i
+                    || j == (i + 1) % remaining.len()
+                    || j == (i + remaining.len() - 1) % remaining.len()
+                {
+                    return false;
+                }
+                let p = points[vertex];
+                cross(a, b, p) * winding >= -1e-4
+                    && cross(b, c, p) * winding >= -1e-4
+                    && cross(c, a, p) * winding >= -1e-4
+            });
+            if !has_inner {
+                ear = Some(i);
+                triangles.push([
+                    remaining[(i + remaining.len() - 1) % remaining.len()],
+                    remaining[i],
+                    remaining[(i + 1) % remaining.len()],
+                ]);
+                break;
+            }
+        }
+        let Some(index) = ear else {
+            break;
+        };
+        remaining.remove(index);
+    }
+    triangles
+}
+
+#[derive(Clone)]
+pub enum TraceMark {
+    Point(Point, RgbColor),
+    Straight(Point, Point, LineMode, RgbColor),
+    Circle(Point, f64, RgbColor),
+    Arc(Vec<Point>, RgbColor),
+    Polygon(Vec<Point>, RgbColor),
+}
+
 pub struct GeometryRenderer {
     pipeline: wgpu::RenderPipeline,
 }
@@ -1473,6 +1496,7 @@ impl GeometryRenderer {
         vp: &Viewport,
         size: [u32; 2],
         ppp: f32,
+        traces: &[TraceMark],
     ) {
         let mut mesh = Mesh {
             vertices: Vec::new(),
@@ -1519,6 +1543,62 @@ impl GeometryRenderer {
         }
         for (a, b, is_selected) in defined_axis_annotations(doc, vp).0 {
             mesh.line(a, b, 1., if is_selected { selected } else { dark });
+        }
+        for mark in traces {
+            match mark {
+                TraceMark::Point(point, color) => {
+                    mesh.disk(vp.screen(*point), 2., rgba(*color, 1.));
+                }
+                TraceMark::Straight(a, b, mode, color) => {
+                    if let Some((a, b)) = clipped_line(vp.screen(*a), vp.screen(*b), *mode, vp.rect)
+                    {
+                        mesh.line(a, b, 1., rgba(*color, 1.));
+                    }
+                }
+                TraceMark::Circle(center, radius, color) => {
+                    let center = vp.screen(*center);
+                    let radius = (*radius as f32 * vp.scale).abs();
+                    let points = (0..64)
+                        .map(|step| {
+                            let angle = step as f32 * std::f32::consts::TAU / 64.;
+                            center + egui::vec2(angle.cos(), angle.sin()) * radius
+                        })
+                        .collect::<Vec<_>>();
+                    mesh.styled_path(
+                        &points,
+                        true,
+                        SegmentLineStyle {
+                            width: LineWidth::Hairline,
+                            pattern: LinePattern::Solid,
+                        },
+                        rgba(*color, 1.),
+                    );
+                }
+                TraceMark::Arc(points, color) => {
+                    let screen = points
+                        .iter()
+                        .copied()
+                        .map(|point| vp.screen(point))
+                        .collect::<Vec<_>>();
+                    mesh.styled_path(
+                        &screen,
+                        false,
+                        SegmentLineStyle {
+                            width: LineWidth::Hairline,
+                            pattern: LinePattern::Solid,
+                        },
+                        rgba(*color, 1.),
+                    );
+                }
+                TraceMark::Polygon(points, color) => {
+                    let screen = points
+                        .iter()
+                        .copied()
+                        .map(|point| vp.screen(point))
+                        .collect::<Vec<_>>();
+                    mesh.polygon(&screen, rgba(*color, 0.025));
+                }
+            }
         }
         // Draw paths first and points last.
         for o in &doc.objects {
