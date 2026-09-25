@@ -1,7 +1,7 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, records};
+use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, TextStyleCommand, records};
 use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{Viewport, svg_page};
@@ -368,6 +368,50 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_default_coordinate_system(origin)?;
                     println!("line {}: coordinate_system -> object {id}", index + 1);
                 }
+                "coordinate_system_at_point" => {
+                    let origin: usize = rest.parse().map_err(|_| "invalid origin point ID")?;
+                    let id = document.add_coordinate_system_at_point(origin)?;
+                    println!(
+                        "line {}: coordinate_system_at_point -> object {id}",
+                        index + 1
+                    );
+                }
+                "coordinate_system_from_circle" => {
+                    let circle: usize = rest.parse().map_err(|_| "invalid circle ID")?;
+                    let id = document.add_coordinate_system_from_circle(circle)?;
+                    println!(
+                        "line {}: coordinate_system_from_circle -> object {id}",
+                        index + 1
+                    );
+                }
+                "coordinate_system_from_distances" => {
+                    let mut origin = None;
+                    let mut distances = Vec::new();
+                    for value in rest.split_whitespace() {
+                        if let Some(id) = value.strip_prefix("origin=") {
+                            if origin.is_some() {
+                                return Err("duplicate origin".into());
+                            }
+                            origin = Some(id.parse().map_err(|_| "invalid origin ID")?);
+                        } else {
+                            distances.push(value.parse().map_err(|_| "invalid distance ID")?);
+                        }
+                    }
+                    let id = document.add_coordinate_system_from_distances(
+                        origin,
+                        &distances,
+                        Point { x: 199., y: 125. },
+                    )?;
+                    println!(
+                        "line {}: coordinate_system_from_distances -> object {id}",
+                        index + 1
+                    );
+                }
+                "mark_coordinate_system" => {
+                    let selected: usize = rest.parse().map_err(|_| "invalid graph object ID")?;
+                    let frame = document.mark_coordinate_system(selected)?;
+                    println!("line {}: marked coordinate system {frame}", index + 1);
+                }
                 "show_grid" => {
                     let visible = match rest {
                         "on" => true,
@@ -611,6 +655,93 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.plot_new_function(expression, Point { x: 199., y: 125. })?;
                     println!("line {}: plot_function -> object {id}", index + 1);
                 }
+                "plot_existing_function" => {
+                    let definition = rest.parse::<usize>().map_err(|_| "invalid function ID")?;
+                    let id = document.plot_function(definition, Point { x: 199., y: 125. })?;
+                    println!("line {}: plot_existing_function -> object {id}", index + 1);
+                }
+                "differentiate" | "differentiate_radians" | "differentiate_degrees" => {
+                    let source = rest.parse::<usize>().map_err(|_| "invalid function ID")?;
+                    let id = match command {
+                        "differentiate_radians" => {
+                            document.add_derivative_function_with_angle_unit(source, true)?
+                        }
+                        "differentiate_degrees" => {
+                            document.add_derivative_function_with_angle_unit(source, false)?
+                        }
+                        _ => document.add_derivative_function(source)?,
+                    };
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "edit_function" | "edit_function_radians" | "edit_function_degrees" => {
+                    let (definition, formula) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected edit_function ID EXPRESSION")?;
+                    let definition = definition
+                        .parse::<usize>()
+                        .map_err(|_| "invalid function ID")?;
+                    let expression =
+                        sketchpad_rs::function_records::SimpleFunction::parse(formula)?;
+                    match command {
+                        "edit_function_radians" => document
+                            .set_function_expression_with_angle_unit(
+                                definition, expression, true,
+                            )?,
+                        "edit_function_degrees" => document
+                            .set_function_expression_with_angle_unit(
+                                definition, expression, false,
+                            )?,
+                        _ => document.set_function_expression(definition, expression)?,
+                    }
+                    println!("line {}: {command} -> object {definition}", index + 1);
+                }
+                "plot_parametric" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [x, y, mode, min, max] = parts.as_slice() else {
+                        return Err(
+                            "expected plot_parametric X_ID Y_ID rectangular|polar MIN MAX".into(),
+                        );
+                    };
+                    let x = x.parse::<usize>().map_err(|_| "invalid X function ID")?;
+                    let y = y.parse::<usize>().map_err(|_| "invalid Y function ID")?;
+                    let mode = match *mode {
+                        "rectangular" => PlotPointsMode::Cartesian,
+                        "polar" => PlotPointsMode::Polar,
+                        _ => return Err("expected rectangular or polar mode".into()),
+                    };
+                    let min = min.parse::<f64>().map_err(|_| "invalid domain start")?;
+                    let max = max.parse::<f64>().map_err(|_| "invalid domain end")?;
+                    let id = document.plot_parametric_curve(
+                        x,
+                        y,
+                        mode,
+                        min,
+                        max,
+                        Point { x: 199., y: 125. },
+                    )?;
+                    println!("line {}: plot_parametric -> object {id}", index + 1);
+                }
+                "set_plot_range" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, min, max, samples] = parts.as_slice() else {
+                        return Err("expected set_plot_range ID MIN MAX SAMPLES".into());
+                    };
+                    let id = id.parse::<usize>().map_err(|_| "invalid plot ID")?;
+                    let min = min.parse::<f64>().map_err(|_| "invalid domain start")?;
+                    let max = max.parse::<f64>().map_err(|_| "invalid domain end")?;
+                    let samples = samples.parse::<u32>().map_err(|_| "invalid sample count")?;
+                    document.set_plot_range(id, min, max, samples)?;
+                    println!("line {}: set_plot_range -> object {id}", index + 1);
+                }
+                "plot_function_degrees" => {
+                    let expression = sketchpad_rs::function_records::SimpleFunction::parse(rest)?;
+                    let id = document.plot_new_function_with_angle_unit(
+                        expression,
+                        Point { x: 199., y: 125. },
+                        false,
+                    )?;
+                    println!("line {}: plot_function_degrees -> object {id}", index + 1);
+                }
                 "ratio" => {
                     let ids = rest
                         .split_whitespace()
@@ -718,6 +849,86 @@ fn replay(path: &str) -> Result<(), String> {
                         .replace("\\n", "\n");
                     let id = document.add_text(&content, Point { x, y })?;
                     println!("line {}: text -> object {id}", index + 1);
+                }
+                "edit_text" => {
+                    let (id, content) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected edit_text ID CONTENT")?;
+                    let id = id.parse::<usize>().map_err(|_| "invalid text ID")?;
+                    document.edit_text(id, &content.replace("\\n", "\n"))?;
+                    println!("line {}: edit_text -> object {id}", index + 1);
+                }
+                "format_text" => {
+                    let (id, flag) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected format_text ID bold|italic|underline|larger|smaller")?;
+                    let id = id.parse::<usize>().map_err(|_| "invalid text ID")?;
+                    let command = match flag {
+                        "bold" => TextStyleCommand::Bold,
+                        "italic" => TextStyleCommand::Italic,
+                        "underline" => TextStyleCommand::Underline,
+                        "larger" => TextStyleCommand::IncreaseSize,
+                        "smaller" => TextStyleCommand::DecreaseSize,
+                        _ => {
+                            return Err(
+                                "expected bold, italic, underline, larger, or smaller".into()
+                            );
+                        }
+                    };
+                    document.selected.clear();
+                    document.selected.insert(id);
+                    document.toggle_selected_text_style(command)?;
+                    println!("line {}: format_text -> object {id}", index + 1);
+                }
+                "font_text" => {
+                    let (id, family) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected font_text ID FAMILY")?;
+                    let id = id.parse::<usize>().map_err(|_| "invalid text ID")?;
+                    document.selected.clear();
+                    document.selected.insert(id);
+                    document.set_selected_text_family(family.trim())?;
+                    println!("line {}: font_text -> object {id}", index + 1);
+                }
+                "format_range" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 4 {
+                        return Err(
+                            "expected format_range ID START END bold|italic|underline|larger|smaller".into()
+                        );
+                    }
+                    let id = parts[0].parse::<usize>().map_err(|_| "invalid text ID")?;
+                    let start = parts[1]
+                        .parse::<usize>()
+                        .map_err(|_| "invalid range start")?;
+                    let end = parts[2].parse::<usize>().map_err(|_| "invalid range end")?;
+                    let command = match parts[3] {
+                        "bold" => TextStyleCommand::Bold,
+                        "italic" => TextStyleCommand::Italic,
+                        "underline" => TextStyleCommand::Underline,
+                        "larger" => TextStyleCommand::IncreaseSize,
+                        "smaller" => TextStyleCommand::DecreaseSize,
+                        _ => {
+                            return Err(
+                                "expected bold, italic, underline, larger, or smaller".into()
+                            );
+                        }
+                    };
+                    document.format_text_range(id, start, end, command)?;
+                    println!("line {}: format_range -> object {id}", index + 1);
+                }
+                "format_range_family" => {
+                    let parts = rest.splitn(4, char::is_whitespace).collect::<Vec<_>>();
+                    if parts.len() != 4 {
+                        return Err("expected format_range_family ID START END FAMILY".into());
+                    }
+                    let id = parts[0].parse::<usize>().map_err(|_| "invalid text ID")?;
+                    let start = parts[1]
+                        .parse::<usize>()
+                        .map_err(|_| "invalid range start")?;
+                    let end = parts[2].parse::<usize>().map_err(|_| "invalid range end")?;
+                    document.format_text_range_family(id, start, end, parts[3].trim())?;
+                    println!("line {}: format_range_family -> object {id}", index + 1);
                 }
                 "text_edit" => {
                     let (id, content) = rest
@@ -896,6 +1107,7 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(
                             Kind::Free(_)
                                 | Kind::GraphVerticalUnit(_, _)
+                                | Kind::DistanceVerticalUnit(_, _, _)
                                 | Kind::PointOnSegment(_, _)
                                 | Kind::PointOnCircle(_, _, _)
                                 | Kind::PointOnArc(_, _)

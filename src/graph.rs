@@ -98,6 +98,20 @@ pub enum GraphObject {
     VerticalUnit { horizontal_unit: usize, step: f64 },
     /// Code 58: an axis through two points. `axis` is 1 for X, 0 for Y.
     Axis { start: usize, end: usize, axis: u32 },
+    /// Code 60: an axis whose origin and unit scale come from a circle.
+    CircleAxis { circle: usize, axis: u32 },
+    /// Code 59: an axis scaled by a segment or measured distance.
+    DistanceAxis {
+        origin: usize,
+        distance: usize,
+        axis: u32,
+    },
+    /// Code 56: the matching Y-unit point for a single defining distance.
+    DistanceVerticalUnit {
+        x_axis: usize,
+        step: f64,
+        independent: bool,
+    },
     /// Code 61: the coordinate system joining two axes.
     CoordinateSystem {
         x_axis: usize,
@@ -117,6 +131,11 @@ impl GraphObject {
                 horizontal_unit, ..
             } => vec![horizontal_unit],
             Self::Axis { start, end, .. } => vec![start, end],
+            Self::CircleAxis { circle, .. } => vec![circle],
+            Self::DistanceAxis {
+                origin, distance, ..
+            } => vec![origin, distance],
+            Self::DistanceVerticalUnit { x_axis, .. } => vec![x_axis],
             Self::CoordinateSystem { x_axis, y_axis, .. } => vec![x_axis, y_axis],
             Self::Slope { line, coordinates } => vec![line, coordinates],
         }
@@ -179,6 +198,28 @@ pub fn decode_graph_object(
                 axis,
             })
         }
+        (60, [circle]) => {
+            let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
+            let axis = u32_le(payload)?;
+            matches!(axis, 0 | 1).then_some(GraphObject::CircleAxis {
+                circle: *circle,
+                axis,
+            })
+        }
+        (59, [origin, distance]) => {
+            let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
+            let axis = u32_le(payload)?;
+            matches!(axis, 0 | 1).then_some(GraphObject::DistanceAxis {
+                origin: *origin,
+                distance: *distance,
+                axis,
+            })
+        }
+        (56 | 57, [x_axis]) => Some(GraphObject::DistanceVerticalUnit {
+            x_axis: *x_axis,
+            step: fixed_step(records, code)?,
+            independent: code == 57,
+        }),
         (61, [x_axis, y_axis]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0904)?.1;
             (payload.len() == 8
@@ -259,6 +300,188 @@ pub fn coordinate_system_groups(first_id: usize, origin: GraphPoint) -> Result<V
     Ok(groups)
 }
 
+/// Five groups for Define Origin when the selected origin point already exists.
+/// `first_id` is the new horizontal unit point; the frame is `first_id + 4`.
+pub fn coordinate_system_groups_at_point(
+    first_id: usize,
+    origin_id: usize,
+    origin: GraphPoint,
+) -> Result<Vec<u8>, String> {
+    let virtual_origin = first_id.checked_sub(1).ok_or("Invalid graph object ID")?;
+    if origin_id == 0 || origin_id >= first_id {
+        return Err("Invalid graph origin reference".into());
+    }
+    let mut groups = coordinate_system_groups(virtual_origin, origin)?;
+    groups.drain(..68);
+    let mut offset = 0;
+    while offset < groups.len() {
+        let length = u32_le(&groups[offset..offset + 4]).ok_or("Invalid graph template")? as usize;
+        let kind = u32_le(&groups[offset + 4..offset + 8]).ok_or("Invalid graph template")?;
+        let payload = offset + 8;
+        let end = payload
+            .checked_add(length)
+            .ok_or("Graph template overflow")?;
+        if end > groups.len() {
+            return Err("Invalid graph template length".into());
+        }
+        if kind == 0x07d2 {
+            let count =
+                u32_le(&groups[payload..payload + 4]).ok_or("Invalid graph references")? as usize;
+            if length != 4 + count * 4 {
+                return Err("Invalid graph references".into());
+            }
+            for index in 0..count {
+                let at = payload + 4 + index * 4;
+                if u32_le(&groups[at..at + 4]) == Some(virtual_origin as u32) {
+                    groups[at..at + 4].copy_from_slice(&(origin_id as u32).to_le_bytes());
+                }
+            }
+        }
+        offset = end + length % 2;
+    }
+    Ok(groups)
+}
+
+/// Two circle-based axes and their frame from Graph > Define Unit Circle.
+pub fn unit_circle_groups(first_id: usize, circle_id: usize) -> Result<Vec<u8>, String> {
+    let first = u32::try_from(first_id).map_err(|_| "Graph object ID overflow")?;
+    let second = first.checked_add(1).ok_or("Graph object ID overflow")?;
+    let circle = u32::try_from(circle_id).map_err(|_| "Circle ID overflow")?;
+    if circle == 0 || circle >= first || first == 0 {
+        return Err("Invalid circle coordinate-system references".into());
+    }
+    let mut groups = include_bytes!("../assets/graph_unit_circle_groups.bin").to_vec();
+    if groups.len() != 312 {
+        return Err("Invalid unit-circle template length".into());
+    }
+    for (start, code, count) in [(0, 60, 1), (116, 60, 1), (232, 61, 2)] {
+        if u32_le(&groups[start + 8..start + 12]) != Some(code)
+            || u32_le(&groups[start + 36..start + 40]) != Some(4 * (count + 1))
+            || u32_le(&groups[start + 40..start + 44]) != Some(0x07d2)
+            || u32_le(&groups[start + 44..start + 48]) != Some(count)
+        {
+            return Err("Invalid unit-circle template references".into());
+        }
+    }
+    groups[48..52].copy_from_slice(&circle.to_le_bytes());
+    groups[164..168].copy_from_slice(&circle.to_le_bytes());
+    groups[280..284].copy_from_slice(&first.to_le_bytes());
+    groups[284..288].copy_from_slice(&second.to_le_bytes());
+    Ok(groups)
+}
+
+/// Native groups for Define Unit Distance(s), with an optional new origin.
+/// The X axis is the first new axis; the caller supplies IDs in selection order.
+pub fn distance_coordinate_groups(
+    x_axis_id: usize,
+    origin_id: usize,
+    distances: &[usize],
+    new_origin: Option<GraphPoint>,
+) -> Result<(Vec<u8>, Vec<usize>), String> {
+    if !matches!(distances.len(), 1 | 2) || x_axis_id == 0 || origin_id == 0 {
+        return Err("Invalid defining distances".into());
+    }
+    let first = if new_origin.is_some() {
+        x_axis_id.checked_sub(1).ok_or("Invalid graph origin ID")?
+    } else {
+        x_axis_id
+    };
+    if new_origin.is_some() && origin_id != first {
+        return Err("Invalid new graph origin".into());
+    }
+    if new_origin.is_none() && origin_id >= first {
+        return Err("Invalid selected graph origin".into());
+    }
+    if distances
+        .iter()
+        .any(|&distance| distance == 0 || distance >= first)
+    {
+        return Err("Invalid defining-distance reference".into());
+    }
+    let (template, sizes): (&[u8], &[usize]) = if distances.len() == 1 {
+        (
+            include_bytes!("../assets/graph_distance_square_groups.bin"),
+            &[68, 120, 80, 120, 80],
+        )
+    } else {
+        (
+            include_bytes!("../assets/graph_distance_rectangular_groups.bin"),
+            &[68, 120, 120, 80],
+        )
+    };
+    if template.len() != sizes.iter().sum::<usize>() {
+        return Err("Invalid defining-distance template".into());
+    }
+    let mut out = Vec::new();
+    let mut offsets = vec![0];
+    let mut at = 0;
+    for (index, &size) in sizes.iter().enumerate() {
+        let mut group = template[at..at + size].to_vec();
+        at += size;
+        if index == 0 {
+            if let Some(origin) = new_origin {
+                if !origin.x.is_finite() || !origin.y.is_finite() {
+                    return Err("Invalid defining-distance origin".into());
+                }
+                group[44..52].copy_from_slice(&origin.x.to_le_bytes());
+                group[52..60].copy_from_slice(&origin.y.to_le_bytes());
+            } else {
+                continue;
+            }
+        } else {
+            let refs: Vec<usize> = if distances.len() == 1 {
+                match index {
+                    1 => vec![origin_id, distances[0]],
+                    2 => vec![x_axis_id],
+                    3 => vec![origin_id, x_axis_id + 1],
+                    4 => vec![x_axis_id, x_axis_id + 2],
+                    _ => unreachable!(),
+                }
+            } else {
+                match index {
+                    1 => vec![origin_id, distances[0]],
+                    2 => vec![origin_id, distances[1]],
+                    3 => vec![x_axis_id, x_axis_id + 1],
+                    _ => unreachable!(),
+                }
+            };
+            let mut record = 0;
+            let mut patched = false;
+            while record + 8 <= group.len() {
+                let length =
+                    u32_le(&group[record..record + 4]).ok_or("Invalid graph record")? as usize;
+                let kind = u32_le(&group[record + 4..record + 8]).ok_or("Invalid graph record")?;
+                let payload = record + 8;
+                let end = payload.checked_add(length).ok_or("Graph record overflow")?;
+                if end > group.len() {
+                    return Err("Invalid graph record length".into());
+                }
+                if kind == 0x07d2 {
+                    if length != 4 + 4 * refs.len()
+                        || u32_le(&group[payload..payload + 4]) != Some(refs.len() as u32)
+                    {
+                        return Err("Invalid defining-distance references".into());
+                    }
+                    for (slot, reference) in refs.iter().enumerate() {
+                        let value = u32::try_from(*reference).map_err(|_| "Graph ID overflow")?;
+                        group[payload + 4 + slot * 4..payload + 8 + slot * 4]
+                            .copy_from_slice(&value.to_le_bytes());
+                    }
+                    patched = true;
+                    break;
+                }
+                record = end + length % 2;
+            }
+            if !patched {
+                return Err("Missing defining-distance references".into());
+            }
+        }
+        out.extend_from_slice(&group);
+        offsets.push(out.len());
+    }
+    Ok((out, offsets))
+}
+
 pub fn set_coordinate_system_style(
     group: &mut [u8],
     form: GridForm,
@@ -292,14 +515,36 @@ pub fn set_coordinate_system_style(
 }
 
 pub fn set_vertical_unit_form(group: &mut [u8], form: GridForm, step: f64) -> Result<(), String> {
-    if !step.is_finite() || step <= 0.0 {
-        return Err("Invalid vertical graph unit".into());
-    }
     let code: u16 = if form == GridForm::Rectangular {
         55
     } else {
         54
     };
+    set_vertical_unit_code(group, code, step)
+}
+
+pub fn set_distance_vertical_unit_form(
+    group: &mut [u8],
+    independent: bool,
+    step: f64,
+) -> Result<(), String> {
+    let code: u16 = if independent { 57 } else { 56 };
+    set_vertical_unit_code(group, code, step)?;
+    if group.len() < 36 || u32_le(&group[..4]) != Some(28) || u32_le(&group[4..8]) != Some(0x07d0) {
+        return Err("Invalid defining-distance unit header".into());
+    }
+    if independent {
+        group[10] &= !4;
+    } else {
+        group[10] |= 4;
+    }
+    Ok(())
+}
+
+fn set_vertical_unit_code(group: &mut [u8], code: u16, step: f64) -> Result<(), String> {
+    if !step.is_finite() || step <= 0.0 {
+        return Err("Invalid vertical graph unit".into());
+    }
     let mut offset = 0;
     let mut header = false;
     let mut constraint = false;

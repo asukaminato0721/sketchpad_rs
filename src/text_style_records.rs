@@ -65,6 +65,7 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     Ok(out)
 }
 
+#[cfg(test)]
 fn one<'a>(records: &[Record], bytes: &'a [u8], kind: u32) -> Result<&'a [u8], String> {
     let mut matches = records.iter().filter(|r| r.kind == kind);
     let record = matches.next().ok_or("Missing font record")?;
@@ -78,9 +79,36 @@ fn one<'a>(records: &[Record], bytes: &'a [u8], kind: u32) -> Result<&'a [u8], S
 
 /// Read the active font fields, while rejecting unknown Boolean encodings.
 pub fn decode_font_state(bytes: &[u8]) -> Result<FontState, String> {
+    decode_font_state_at(bytes, 0)
+}
+
+/// Resolve the style index stored in a free-text object's 0x07d8 record.
+pub fn decode_font_state_at(bytes: &[u8], index: usize) -> Result<FontState, String> {
     let rs = records(bytes)?;
-    let family_record = one(&rs, bytes, 0x04b1)?;
-    if family_record.len() < 4 || family_record[..2] != [0, 0] {
+    let record = rs
+        .iter()
+        .filter(|record| record.kind == 0x04b3)
+        .nth(index)
+        .ok_or("Missing indexed font style")?;
+    let len =
+        u32::from_le_bytes(bytes[record.start..record.start + 4].try_into().unwrap()) as usize;
+    let style = &bytes[record.payload..record.payload + len];
+    if style.len() != 20 {
+        return Err("Unsupported font style record".into());
+    }
+    let family_index = u16::from_le_bytes(style[..2].try_into().unwrap()) as usize;
+    let family_record = rs
+        .iter()
+        .filter(|record| record.kind == 0x04b1)
+        .nth(family_index)
+        .ok_or("Missing indexed font family")?;
+    let family_len = u32::from_le_bytes(
+        bytes[family_record.start..family_record.start + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let family_record = &bytes[family_record.payload..family_record.payload + family_len];
+    if family_record.len() < 4 {
         return Err("Unsupported font family record".into());
     }
     let end = family_record[2..]
@@ -93,10 +121,6 @@ pub fn decode_font_state(bytes: &[u8]) -> Result<FontState, String> {
         .to_owned();
     if family.is_empty() || family.len() > 255 {
         return Err("Invalid font name".into());
-    }
-    let style = one(&rs, bytes, 0x04b3)?;
-    if style.len() != 20 || style[..2] != [0, 0] {
-        return Err("Unsupported font style record".into());
     }
     let word = |at| u16::from_le_bytes(style[at..at + 2].try_into().unwrap());
     let flag = |at| -> Result<bool, String> {
@@ -117,6 +141,59 @@ pub fn decode_font_state(bytes: &[u8]) -> Result<FontState, String> {
         italic: flag(6)?,
         underline: flag(8)?,
     })
+}
+
+pub fn encode_style_payload(template: &[u8], style: &FontState) -> Result<[u8; 20], String> {
+    if template.len() != 20 || !(8..=512).contains(&style.size_code) {
+        return Err("Unsupported font style template".into());
+    }
+    let mut payload: [u8; 20] = template.try_into().unwrap();
+    payload[2..4].copy_from_slice(&style.size_code.to_le_bytes());
+    for (at, enabled) in [(4, style.bold), (6, style.italic), (8, style.underline)] {
+        payload[at..at + 2].copy_from_slice(&(if enabled { 2u16 } else { 1u16 }).to_le_bytes());
+    }
+    Ok(payload)
+}
+
+pub fn font_families(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let rs = records(bytes)?;
+    rs.iter()
+        .filter(|record| record.kind == 0x04b1)
+        .map(|record| {
+            let len = u32::from_le_bytes(bytes[record.start..record.start + 4].try_into().unwrap())
+                as usize;
+            let payload = &bytes[record.payload..record.payload + len];
+            let end = payload
+                .get(2..)
+                .ok_or("Short font family record")?
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or("Unterminated font name")?
+                + 2;
+            let name = std::str::from_utf8(&payload[2..end])
+                .map_err(|_| "Invalid font name")?
+                .to_owned();
+            if name.is_empty() || name.len() > 255 {
+                return Err("Invalid font name".into());
+            }
+            Ok(name)
+        })
+        .collect()
+}
+
+pub fn encode_font_family_payload(name: &str) -> Result<Vec<u8>, String> {
+    if name.is_empty()
+        || name.len() > 255
+        || !name
+            .bytes()
+            .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+    {
+        return Err("Font family must be 1–255 printable ASCII characters".into());
+    }
+    let len = (2 + name.len() + 1 + 2).max(12);
+    let mut payload = vec![0; len + len % 2];
+    payload[2..2 + name.len()].copy_from_slice(name.as_bytes());
+    Ok(payload)
 }
 
 fn fixture(variant: VerifiedHelloStyle) -> &'static [u8] {
@@ -223,5 +300,16 @@ mod tests {
             one(&before, original, 0x07d5).unwrap(),
             one(&after, styled, 0x07d5).unwrap()
         );
+    }
+
+    #[test]
+    fn indexed_styles_resolve_independent_font_families() {
+        let mixed = include_bytes!("../tests/fixtures/text_two_font_cjk_first.gsp");
+        assert_eq!(decode_font_state_at(mixed, 0).unwrap().family, "Tahoma");
+        assert_eq!(
+            decode_font_state_at(mixed, 1).unwrap().family,
+            "@Noto Sans CJK JP"
+        );
+        assert!(decode_font_state_at(mixed, 2).is_err());
     }
 }

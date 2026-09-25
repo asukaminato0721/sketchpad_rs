@@ -7,8 +7,15 @@ const TWO_PARAMETERS: &[u8] = include_bytes!("../tests/fixtures/table_two_parame
 const NAMED_PARAMETER: &[u8] =
     include_bytes!("../tests/fixtures/table_parameter_speed_original.gsp");
 const TWO_COLUMN_TABLE: &[u8] = include_bytes!("../tests/fixtures/table_two_columns_original.gsp");
+#[cfg(test)]
 const TWO_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../tests/fixtures/table_two_columns_two_rows_original.gsp");
+#[cfg(test)]
+const THREE_ROW_PAIR_TABLE: &[u8] =
+    include_bytes!("../tests/fixtures/table_pair_three_rows_distinct_original.gsp");
+#[cfg(test)]
+const FOUR_ROW_PAIR_TABLE: &[u8] =
+    include_bytes!("../tests/fixtures/table_pair_four_rows_original.gsp");
 const CALCULATION: &[u8] = include_bytes!("../tests/fixtures/table_calculate_2_plus_3.gsp");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -566,8 +573,6 @@ fn append_to_blank(blank: &[u8], group: &[u8]) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
-const SNAPSHOT_ROW: &[u8] = b"0<H<T4x1.00>>";
-
 fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
@@ -577,18 +582,49 @@ fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     }
 }
 
-fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u8>, String> {
-    if source == 0 || !(1..=256).contains(&rows) {
+fn table_value_text(value: f64) -> Result<String, String> {
+    decimal_words(value)?;
+    let rendered = if value < 0.0 {
+        format!("–{:.2}", -value)
+    } else {
+        format!("{value:.2}")
+    };
+    Ok(format!("T{}x{rendered}>>", rendered.len()))
+}
+
+fn take_table_value(text: &str) -> Option<(f64, &str)> {
+    let rest = text.strip_prefix('T')?;
+    let (width, following) = rest.split_once('x')?;
+    let width = width.parse::<usize>().ok()?;
+    if !(4..=8).contains(&width) {
+        return None;
+    }
+    let rendered = following.get(..width)?;
+    let rest = following.get(width..)?.strip_prefix(">>")?;
+    let ascii = rendered
+        .strip_prefix('–')
+        .map_or_else(|| rendered.to_owned(), |absolute| format!("-{absolute}"));
+    let value = ascii.parse::<f64>().ok()?;
+    let consumed = &text[..text.len() - rest.len()];
+    (table_value_text(value).ok()?.as_str() == consumed).then_some((value, rest))
+}
+
+fn canonical_table_values(
+    source: u32,
+    anchor: (i16, i16),
+    values: &[f64],
+) -> Result<Vec<u8>, String> {
+    if source == 0 || !(1..=256).contains(&values.len()) {
         return Err("Invalid table source or row count".into());
     }
     let base = table_template();
     let rs = records(&base, 0)?;
-    let mut layout = base[rs[2].payload..rs[2].end].to_vec();
+    let mut layout = base[rs[2].payload..rs[2].payload + 51].to_vec();
     layout[12..14].copy_from_slice(&anchor.0.to_le_bytes());
     layout[14..16].copy_from_slice(&anchor.1.to_le_bytes());
-    layout[16..18].copy_from_slice(&((rows + 2) as u16).to_le_bytes());
-    for _ in 1..rows {
-        layout.extend_from_slice(SNAPSHOT_ROW);
+    layout[16..18].copy_from_slice(&((values.len() + 2) as u16).to_le_bytes());
+    for &value in values {
+        layout.extend_from_slice(format!("0<H<{}", table_value_text(value)?).as_bytes());
     }
     while layout.len() % 4 != 0 {
         layout.push(0);
@@ -599,6 +635,101 @@ fn canonical_table(source: u32, anchor: (i16, i16), rows: usize) -> Result<Vec<u
     refs[4..8].copy_from_slice(&source.to_le_bytes());
     let mut group = Vec::new();
     put_record(&mut group, 0x07d0, &base[rs[0].payload..rs[0].end]);
+    put_record(&mut group, 0x07d2, &refs);
+    put_record(&mut group, 0x090d, &layout);
+    put_record(&mut group, 0x07d8, &base[rs[3].payload..rs[3].end]);
+    put_record(&mut group, 0x07d7, &[]);
+    Ok(group)
+}
+
+fn default_table_values(layout: &[u8], rows: usize) -> Option<Vec<f64>> {
+    let text = layout.get(51..)?;
+    let used = text
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(text.len());
+    if text.len() - used > 3 {
+        return None;
+    }
+    let mut rest = std::str::from_utf8(&text[..used]).ok()?;
+    let mut values = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let (value, following) = take_table_value(rest.strip_prefix("0<H<")?)?;
+        rest = following;
+        values.push(value);
+    }
+    rest.is_empty().then_some(values)
+}
+
+fn pair_table_values(layout: &[u8], rows: usize) -> Option<Vec<[f64; 2]>> {
+    for padding in 0..=3 {
+        let Some(text) = layout.get(72..layout.len().checked_sub(padding)?) else {
+            continue;
+        };
+        let Ok(mut rest) = std::str::from_utf8(text) else {
+            continue;
+        };
+        let mut values = Vec::with_capacity(rows);
+        let mut valid = true;
+        for _ in 0..rows {
+            let Some((x, following)) = rest.strip_prefix("0<H<").and_then(take_table_value) else {
+                valid = false;
+                break;
+            };
+            let Some((y, following)) = following.strip_prefix("<H<").and_then(take_table_value)
+            else {
+                valid = false;
+                break;
+            };
+            values.push([x, y]);
+            rest = following;
+        }
+        if valid && rest.is_empty() {
+            return Some(values);
+        }
+    }
+    None
+}
+
+fn canonical_pair_table(
+    values: &[[f64; 2]],
+    anchor: (i16, i16),
+    sources: [u32; 2],
+) -> Result<Vec<u8>, String> {
+    if !(1..=256).contains(&values.len()) {
+        return Err("Pair table requires one to 256 rows".into());
+    }
+    if sources[0] == 0 || sources[1] == 0 || sources[0] == sources[1] {
+        return Err("Invalid pair table sources".into());
+    }
+    let base = object_group(TWO_COLUMN_TABLE, 3);
+    let rs = records(&base, 0)?;
+    let mut layout = base[rs[2].payload..rs[2].payload + 72].to_vec();
+    layout[12..14].copy_from_slice(&anchor.0.to_le_bytes());
+    layout[14..16].copy_from_slice(&anchor.1.to_le_bytes());
+    layout[16..18].copy_from_slice(&((values.len() + 2) as u16).to_le_bytes());
+    for &[x, y] in values {
+        let row = format!("0<H<{}<H<{}", table_value_text(x)?, table_value_text(y)?);
+        layout.extend_from_slice(row.as_bytes());
+    }
+    let used_len = layout.len();
+    while layout.len() % 4 != 0 {
+        layout.push(0);
+    }
+    // Keep the opaque alignment bytes observed in the original two- and
+    // three-row files, so existing generated files retain their exact bytes.
+    match (values.len(), used_len) {
+        (2, 122) => layout[122..124].copy_from_slice(&[10, 72]),
+        (3, 147) => layout[147] = 230,
+        _ => {}
+    }
+    let length = layout.len() as u32;
+    layout[4..8].copy_from_slice(&length.to_le_bytes());
+    let mut group = Vec::new();
+    put_record(&mut group, 0x07d0, &base[rs[0].payload..rs[0].end]);
+    let mut refs = base[rs[1].payload..rs[1].end].to_vec();
+    refs[4..8].copy_from_slice(&sources[0].to_le_bytes());
+    refs[8..12].copy_from_slice(&sources[1].to_le_bytes());
     put_record(&mut group, 0x07d2, &refs);
     put_record(&mut group, 0x090d, &layout);
     put_record(&mut group, 0x07d8, &base[rs[3].payload..rs[3].end]);
@@ -726,59 +857,81 @@ impl TableGroup {
     }
 
     pub fn pair_snapshot_rows(rows: usize, anchor: (i16, i16)) -> Result<Self, String> {
-        let mut group = match rows {
-            1 => Self::pair_snapshot(),
-            2 => Self {
-                bytes: object_group(TWO_ROW_PAIR_TABLE, 3),
-            },
-            _ => {
-                return Err(
-                    "Only one or two rows of the default parameter pair are supported".into(),
-                );
-            }
-        };
-        group.set_anchor(anchor);
-        Ok(group)
+        Self::pair_snapshot_rows_for_sources(rows, anchor, [2, 1])
+    }
+
+    pub fn pair_snapshot_rows_for_sources(
+        rows: usize,
+        anchor: (i16, i16),
+        sources: [u32; 2],
+    ) -> Result<Self, String> {
+        if !(1..=256).contains(&rows) {
+            return Err("Pair table requires one to 256 rows".into());
+        }
+        Ok(Self {
+            bytes: canonical_pair_table(&vec![[1.0, 1.0]; rows], anchor, sources)?,
+        })
     }
 
     pub fn parse_pair(bytes: &[u8]) -> Result<Self, String> {
-        let template = match bytes.len() {
-            182 => Self::pair_snapshot(),
-            206 => Self {
-                bytes: object_group(TWO_ROW_PAIR_TABLE, 3),
-            },
-            _ => return Err("Unsupported two-column table length".into()),
-        };
         let rs = records(bytes, 0)?;
         if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
-            || bytes.len() != template.bytes.len()
             || rs[1].end - rs[1].payload != 12
-            || rs[2].end - rs[2].payload != if bytes.len() == 182 { 100 } else { 124 }
+            || rs[2].end - rs[2].payload < 100
         {
             return Err("Unsupported two-column table layout".into());
         }
-        for (i, (actual, expected)) in bytes.iter().zip(&template.bytes).enumerate() {
+        let rows = u16::from_le_bytes(
+            bytes[rs[2].payload + 16..rs[2].payload + 18]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let rows = rows.checked_sub(2).ok_or("Invalid pair table row count")?;
+        if !(1..=256).contains(&rows) {
+            return Err("Unsupported pair table row count".into());
+        }
+        let sources = [
+            u32::from_le_bytes(
+                bytes[rs[1].payload + 4..rs[1].payload + 8]
+                    .try_into()
+                    .unwrap(),
+            ),
+            u32::from_le_bytes(
+                bytes[rs[1].payload + 8..rs[1].payload + 12]
+                    .try_into()
+                    .unwrap(),
+            ),
+        ];
+        let layout = &bytes[rs[2].payload..rs[2].end];
+        let values = pair_table_values(layout, rows).ok_or("Invalid pair table rows")?;
+        let anchor = (
+            i16::from_le_bytes(layout[12..14].try_into().unwrap()),
+            i16::from_le_bytes(layout[14..16].try_into().unwrap()),
+        );
+        let template = canonical_pair_table(&values, anchor, sources)?;
+        let template_records = records(&template, 0)?;
+        if bytes.len() != template.len()
+            || rs[2].end - rs[2].payload != template_records[2].end - template_records[2].payload
+        {
+            return Err("Unsupported two-column table length".into());
+        }
+        let padding = template_records[2].end
+            - template_records[2].payload
+            - (72
+                + values
+                    .iter()
+                    .map(|[x, y]| {
+                        4 + table_value_text(*x).unwrap().len()
+                            + 3
+                            + table_value_text(*y).unwrap().len()
+                    })
+                    .sum::<usize>());
+        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
             let mutable = i == 10
                 || (rs[2].payload + 12..rs[2].payload + 16).contains(&i)
-                || (rs[2].end - 3..rs[2].end).contains(&i);
-            let row_value =
-                (143..147).contains(&i) || bytes.len() == 206 && (168..172).contains(&i);
-            if !mutable && !row_value && actual != expected {
+                || (rs[2].end - padding..rs[2].end).contains(&i);
+            if !mutable && actual != expected {
                 return Err("Unsupported two-column table variant".into());
-            }
-        }
-        for at in if bytes.len() == 206 {
-            &[143, 168][..]
-        } else {
-            &[143][..]
-        } {
-            let value = &bytes[*at..*at + 4];
-            if !value[0].is_ascii_digit()
-                || value[1] != b'.'
-                || !value[2].is_ascii_digit()
-                || !value[3].is_ascii_digit()
-            {
-                return Err("Unsupported pair table row value".into());
             }
         }
         Ok(Self {
@@ -806,33 +959,29 @@ impl TableGroup {
 
     pub fn pair_values(&self) -> Option<Vec<[f64; 2]>> {
         self.pair_source_ids()?;
-        let positions: &[usize] = if self.bytes.len() == 206 {
-            &[143, 168]
-        } else {
-            &[143]
-        };
-        positions
-            .iter()
-            .map(|&i| {
-                let text = std::str::from_utf8(&self.bytes[i..i + 4]).ok()?;
-                Some([text.parse::<f64>().ok()?, 1.])
-            })
-            .collect()
+        let rs = records(&self.bytes, 0).ok()?;
+        pair_table_values(&self.bytes[rs[2].payload..rs[2].end], self.rows())
     }
 
     pub fn set_pair_row_value(&mut self, row: usize, value: f64) -> Result<(), String> {
-        if !(0.0..10.0).contains(&value)
-            || decimal_words(value).is_err()
-            || self.pair_source_ids() != Some([2, 1])
-        {
-            return Err("Unsupported pair table value".into());
-        }
-        let offset = match (self.bytes.len(), row) {
-            (182, 0) | (206, 0) => 143,
-            (206, 1) => 168,
-            _ => return Err("Invalid pair table row".into()),
-        };
-        self.bytes[offset..offset + 4].copy_from_slice(format!("{value:.2}").as_bytes());
+        let mut values = self
+            .pair_values()
+            .and_then(|values| values.get(row).copied())
+            .ok_or("Invalid pair table row")?;
+        values[0] = value;
+        self.set_pair_row_values(row, values)
+    }
+
+    pub fn set_pair_row_values(&mut self, row: usize, values: [f64; 2]) -> Result<(), String> {
+        let mut all = self.pair_values().ok_or("Invalid pair table")?;
+        *all.get_mut(row).ok_or("Invalid pair table row")? = values;
+        let mut changed = canonical_pair_table(
+            &all,
+            self.anchor(),
+            self.pair_source_ids().ok_or("Invalid pair table sources")?,
+        )?;
+        changed[10] = self.bytes[10];
+        self.bytes = changed;
         Self::parse_pair(&self.bytes)?;
         Ok(())
     }
@@ -841,9 +990,26 @@ impl TableGroup {
         self.set_pair_row_value(self.rows() - 1, value)
     }
 
+    pub fn set_last_pair_axis_value(&mut self, axis: usize, value: f64) -> Result<(), String> {
+        if axis > 1 {
+            return Err("Invalid pair table column".into());
+        }
+        let row = self.rows() - 1;
+        let mut values = self
+            .pair_values()
+            .and_then(|values| values.get(row).copied())
+            .ok_or("Invalid pair table row")?;
+        values[axis] = value;
+        self.set_pair_row_values(row, values)
+    }
+
     pub fn for_source(source: u32, anchor: (i16, i16)) -> Result<Self, String> {
+        Self::for_source_value(source, anchor, 1.0)
+    }
+
+    pub fn for_source_value(source: u32, anchor: (i16, i16), value: f64) -> Result<Self, String> {
         Ok(Self {
-            bytes: canonical_table(source, anchor, 1)?,
+            bytes: canonical_table_values(source, anchor, &[value])?,
         })
     }
 
@@ -885,7 +1051,8 @@ impl TableGroup {
         if rows == 2 && normalized[rs[2].end - 2] == b't' && normalized[rs[2].end - 1] == 0 {
             normalized[rs[2].end - 2] = 0;
         }
-        if normalized != canonical_table(source, anchor, rows)? {
+        let values = default_table_values(layout, rows).ok_or("Invalid default table rows")?;
+        if normalized != canonical_table_values(source, anchor, &values)? {
             return Err("Unsupported one-column table variant".into());
         }
         Ok(Self {
@@ -901,6 +1068,23 @@ impl TableGroup {
     pub fn named_label_value(&self) -> Option<(String, String)> {
         let (name, values) = self.named_label_values()?;
         Some((name, values.into_iter().next()?))
+    }
+
+    pub fn default_values(&self) -> Option<Vec<f64>> {
+        if self.named_label_values().is_some() {
+            return None;
+        }
+        let rs = records(&self.bytes, 0).ok()?;
+        default_table_values(&self.bytes[rs[2].payload..rs[2].end], self.rows())
+    }
+
+    pub fn set_last_default_value(&mut self, value: f64) -> Result<(), String> {
+        let mut values = self
+            .default_values()
+            .ok_or("Not a default parameter table")?;
+        *values.last_mut().ok_or("Table has no rows")? = value;
+        self.bytes = canonical_table_values(self.source_id(), self.anchor(), &values)?;
+        Ok(())
     }
 
     pub fn add_named_snapshot(&mut self, value: &str) -> Result<(), String> {
@@ -922,10 +1106,11 @@ impl TableGroup {
     }
 
     pub fn add_default_snapshot(&mut self) -> Result<(), String> {
-        if self.named_label_values().is_some() {
-            return Err("Use the named parameter value for this table row".into());
-        }
-        self.bytes = canonical_table(self.source_id(), self.anchor(), self.rows() + 1)?;
+        let mut values = self
+            .default_values()
+            .ok_or("Not a default parameter table")?;
+        values.push(*values.last().ok_or("Table has no rows")?);
+        self.bytes = canonical_table_values(self.source_id(), self.anchor(), &values)?;
         Ok(())
     }
 
@@ -938,8 +1123,15 @@ impl TableGroup {
             self.bytes = canonical_named_table(self.source_id(), &name, &values, self.anchor())?;
             return Ok(());
         }
-        let rows = self.rows().checked_sub(1).ok_or("Table has no rows")?;
-        self.bytes = canonical_table(self.source_id(), self.anchor(), rows)?;
+        let mut values = self
+            .default_values()
+            .ok_or("Not a default parameter table")?;
+        if values.len() <= 1 {
+            return Err("Table has only one row".into());
+        }
+        let live = values.pop().unwrap();
+        *values.last_mut().unwrap() = live;
+        self.bytes = canonical_table_values(self.source_id(), self.anchor(), &values)?;
         Ok(())
     }
 
@@ -950,6 +1142,40 @@ impl TableGroup {
                 .try_into()
                 .unwrap(),
         )
+    }
+
+    pub fn remap_sources(&self, ids: &[usize]) -> Result<Self, String> {
+        let mut group = self.clone();
+        let rs = records(&group.bytes, 0)?;
+        let references = rs.get(1).ok_or("Missing table references")?;
+        if references.kind != 0x07d2 {
+            return Err("Missing table source references".into());
+        }
+        let count = match references.end - references.payload {
+            8 => 1,
+            12 => 2,
+            _ => return Err("Unsupported table source count".into()),
+        };
+        for index in 0..count {
+            let at = references.payload + 4 + index * 4;
+            let old = u32::from_le_bytes(group.bytes[at..at + 4].try_into().unwrap()) as usize;
+            let new = ids
+                .get(old)
+                .copied()
+                .filter(|id| *id != 0)
+                .ok_or("Table source was deleted")?;
+            group.bytes[at..at + 4].copy_from_slice(
+                &u32::try_from(new)
+                    .map_err(|_| "Too many table sources")?
+                    .to_le_bytes(),
+            );
+        }
+        if count == 1 {
+            Self::parse(&group.bytes)?;
+        } else {
+            Self::parse_pair(&group.bytes)?;
+        }
+        Ok(group)
     }
 
     pub fn anchor(&self) -> (i16, i16) {
@@ -1224,5 +1450,58 @@ mod tests {
         let blank = include_bytes!("../tests/fixtures/text_object_blank.gsp");
         let output = append_literal_sum(blank).unwrap();
         assert_eq!(object_group(&output, 1), calculation.as_bytes());
+    }
+
+    #[test]
+    fn original_pair_tables_decode_through_four_rows() {
+        for (source, expected) in [
+            (TWO_COLUMN_TABLE, vec![[1., 1.]]),
+            (TWO_ROW_PAIR_TABLE, vec![[1., 1.], [1., 1.]]),
+            (THREE_ROW_PAIR_TABLE, vec![[1., 1.], [2., 1.], [2., 1.]]),
+            (
+                FOUR_ROW_PAIR_TABLE,
+                vec![[1., 1.], [2., 1.], [2., 1.], [2., 1.]],
+            ),
+        ] {
+            let group = object_group(source, 3);
+            let table = TableGroup::parse_pair(&group)
+                .unwrap_or_else(|error| panic!("pair table: {error}"));
+            assert_eq!(table.rows(), expected.len());
+            assert_eq!(table.pair_values(), Some(expected));
+            assert_eq!(table.as_bytes(), group);
+        }
+    }
+
+    #[test]
+    fn generated_pair_rows_reopen_after_value_edits() {
+        for rows in [1, 2, 3, 4, 5, 8, 16] {
+            let mut table = TableGroup::pair_snapshot_rows(rows, (10, 71)).unwrap();
+            for row in 0..rows {
+                table.set_pair_row_value(row, (row % 10) as f64).unwrap();
+            }
+            let reopened = TableGroup::parse_pair(table.as_bytes()).unwrap();
+            assert_eq!(reopened.rows(), rows);
+            assert_eq!(reopened.pair_values(), table.pair_values());
+        }
+        let limit = TableGroup::pair_snapshot_rows(256, (10, 71)).unwrap();
+        assert_eq!(
+            TableGroup::parse_pair(limit.as_bytes()).unwrap().rows(),
+            256
+        );
+        assert!(TableGroup::pair_snapshot_rows(257, (10, 71)).is_err());
+    }
+    #[test]
+    fn table_source_ids_can_shift_after_an_earlier_object_is_deleted() {
+        let ids = [0, 0, 1, 2];
+        let one = TableGroup::for_source_value(2, (10, 38), 3.25).unwrap();
+        let shifted = one.remap_sources(&ids).unwrap();
+        assert_eq!(shifted.source_id(), 1);
+        assert_eq!(shifted.default_values(), Some(vec![3.25]));
+        assert!(one.remap_sources(&[0, 0, 0]).is_err());
+
+        let pair = TableGroup::pair_snapshot_rows_for_sources(2, (10, 71), [3, 2]).unwrap();
+        let shifted = pair.remap_sources(&ids).unwrap();
+        assert_eq!(shifted.pair_source_ids(), Some([2, 1]));
+        assert_eq!(shifted.pair_values(), pair.pair_values());
     }
 }

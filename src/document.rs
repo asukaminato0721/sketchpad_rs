@@ -13,9 +13,10 @@ use crate::style_records::{
 use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
+use crate::text_style_records::{self, FontState};
 use crate::value_equation_records::{self, CartesianFrame, EquationValue, ValueEquationKind};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -98,7 +99,9 @@ impl Kind {
             | Kind::CircleRadius(host)
             | Kind::CircleArea(host)
             | Kind::ArcAngle(host)
-            | Kind::ArcLength(host) => vec![host],
+            | Kind::ArcLength(host)
+            | Kind::CircleAxis(host, _) => vec![host],
+            Kind::DistanceVerticalUnit(host, _, _) => vec![host],
             Kind::GraphHorizontalUnit(origin, _) | Kind::GraphVerticalUnit(origin, _) => {
                 vec![origin]
             }
@@ -117,11 +120,14 @@ impl Kind {
             | Kind::ReflectedCircle(a, b)
             | Kind::PointDistance(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
+            | Kind::DistanceAxis(a, b, _)
             | Kind::CoordinateSystem(a, b)
             | Kind::SlopeMeasurement(a, b)
             | Kind::FunctionPlot(a, b, _, _, _)
             | Kind::PathValuePoint(a, b)
             | Kind::PlottedPoint(a, b, _, _) => vec![a, b],
+            Kind::ParametricPlot(x, y, frame, _, _, _, _) => vec![x, y, frame],
+            Kind::DerivativeFunction(source, _) => vec![source],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
             | Kind::RotatedPoint(source, center, _) => {
@@ -208,11 +214,22 @@ impl Kind {
             Kind::GraphHorizontalUnit(a, step) => Kind::GraphHorizontalUnit(m(a), step),
             Kind::GraphVerticalUnit(a, step) => Kind::GraphVerticalUnit(m(a), step),
             Kind::GraphAxis(a, b, axis) => Kind::GraphAxis(m(a), m(b), axis),
+            Kind::CircleAxis(circle, axis) => Kind::CircleAxis(m(circle), axis),
+            Kind::DistanceAxis(origin, distance, axis) => {
+                Kind::DistanceAxis(m(origin), m(distance), axis)
+            }
+            Kind::DistanceVerticalUnit(axis, step, independent) => {
+                Kind::DistanceVerticalUnit(m(axis), step, independent)
+            }
             Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
             Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
             Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
+            Kind::DerivativeFunction(source, expr) => Kind::DerivativeFunction(m(source), expr),
             Kind::FunctionPlot(a, b, min, max, samples) => {
                 Kind::FunctionPlot(m(a), m(b), min, max, samples)
+            }
+            Kind::ParametricPlot(x, y, frame, min, max, samples, mode) => {
+                Kind::ParametricPlot(m(x), m(y), m(frame), min, max, samples, mode)
             }
             Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
             Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
@@ -260,6 +277,17 @@ impl Kind {
             Kind::ValueEquation { .. } => unreachable!(),
         }
     }
+    fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
+        let mut remapped = self.remap(ids);
+        match (&mut remapped, self) {
+            (Kind::ValueTable(_, group), Kind::ValueTable(_, original))
+            | (Kind::ValueTablePair(_, _, group), Kind::ValueTablePair(_, _, original)) => {
+                *group = original.remap_sources(ids)?;
+            }
+            _ => {}
+        }
+        Ok(remapped)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -289,6 +317,9 @@ pub enum Kind {
     GraphHorizontalUnit(usize, f64),
     GraphVerticalUnit(usize, f64),
     GraphAxis(usize, usize, u32),
+    CircleAxis(usize, u32),
+    DistanceAxis(usize, usize, u32),
+    DistanceVerticalUnit(usize, f64, bool),
     CoordinateSystem(usize, usize),
     SlopeMeasurement(usize, usize),
     CoordinateMeasurement {
@@ -303,7 +334,9 @@ pub enum Kind {
         second: usize,
     },
     FunctionDefinition(SimpleFunction),
+    DerivativeFunction(usize, SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
+    ParametricPlot(usize, usize, usize, f64, f64, u32, PlotPointsMode),
     PathLiteralPoint(usize, f64),
     PathValuePoint(usize, usize),
     PlottedPoint(usize, usize, PlotPointsMode, [f64; 2]),
@@ -346,6 +379,14 @@ pub enum LineMode {
     Line,
     Ray,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextStyleCommand {
+    Bold,
+    Italic,
+    Underline,
+    IncreaseSize,
+    DecreaseSize,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object {
     pub id: usize,
@@ -360,10 +401,22 @@ pub struct Object {
     pub header_offset: Option<usize>,
     pub label: Option<LabelAux>,
     pub visual_style: Option<VisualStyle>,
+    pub text_style_override: Option<FontState>,
+    pub rich_text_override: Option<text_object::RichTextTemplate>,
 }
 #[derive(Clone, Debug)]
 pub struct Clipboard {
-    objects: Vec<(usize, Kind, bool, bool, Option<usize>, Option<VisualStyle>)>,
+    objects: Vec<(
+        usize,
+        Kind,
+        bool,
+        bool,
+        Option<usize>,
+        Option<VisualStyle>,
+        Option<FontState>,
+        Option<LabelAux>,
+        Option<text_object::RichTextTemplate>,
+    )>,
 }
 impl Clipboard {
     pub fn len(&self) -> usize {
@@ -512,6 +565,8 @@ fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
             | Kind::GraphAxis(_, _, _)
+            | Kind::CircleAxis(_, _)
+            | Kind::DistanceAxis(_, _, _)
     )
 }
 
@@ -524,6 +579,7 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PointOnArc(_, _)
             | Kind::GraphHorizontalUnit(_, _)
             | Kind::GraphVerticalUnit(_, _)
+            | Kind::DistanceVerticalUnit(_, _, _)
             | Kind::PathLiteralPoint(_, _)
             | Kind::PathValuePoint(_, _)
             | Kind::PlottedPoint(_, _, _, _)
@@ -548,6 +604,13 @@ fn is_circle_kind(kind: &Kind) -> bool {
     )
 }
 
+fn is_defining_distance_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(_, _) | Kind::SegmentLength(_) | Kind::PointDistance(_, _)
+    )
+}
+
 fn is_plot_path_kind(kind: &Kind) -> bool {
     matches!(
         kind,
@@ -555,6 +618,8 @@ fn is_plot_path_kind(kind: &Kind) -> bool {
             | Kind::Ray(_, _)
             | Kind::Line(_, _)
             | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+            | Kind::CircleAxis(_, 0 | 1)
+            | Kind::DistanceAxis(_, _, 0 | 1)
     ) || is_circle_kind(kind)
 }
 
@@ -823,12 +888,34 @@ pub struct Document {
     pub snap_points: Vec<bool>,
     pub grid_dotted: Vec<bool>,
     pub grid_form: Vec<GridForm>,
+    pub angle_unit_radians: bool,
+    pub marked_coordinate_system: Vec<Option<usize>>,
+    pub frame_styles: BTreeMap<usize, (GridForm, bool)>,
     original: Vec<u8>,
+    run_font_families: Vec<String>,
     source_count: usize,
     safe_structure: bool,
     image_read_only: bool,
-    pub undo: Vec<(Vec<Object>, Vec<bool>, Vec<bool>, Vec<GridForm>)>,
-    pub redo: Vec<(Vec<Object>, Vec<bool>, Vec<bool>, Vec<GridForm>)>,
+    pub undo: Vec<(
+        Vec<Object>,
+        Vec<bool>,
+        Vec<bool>,
+        Vec<GridForm>,
+        bool,
+        Vec<Option<usize>>,
+        BTreeMap<usize, (GridForm, bool)>,
+        Vec<String>,
+    )>,
+    pub redo: Vec<(
+        Vec<Object>,
+        Vec<bool>,
+        Vec<bool>,
+        Vec<GridForm>,
+        bool,
+        Vec<Option<usize>>,
+        BTreeMap<usize, (GridForm, bool)>,
+        Vec<String>,
+    )>,
 }
 impl Document {
     pub fn new() -> Self {
@@ -860,17 +947,24 @@ impl Document {
         let image_read_only =
             has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../assets/point_template.gsp"))?;
+        let angle_unit_radians = rs
+            .iter()
+            .find(|record| record.kind == 0x273a && record.data.len() == 2)
+            .is_some_and(|record| b[record.data.clone()] == [0, 0]);
         let safe_outside: BTreeSet<u32> = baseline_records
             .iter()
             .map(|record| record.kind)
             .chain([0x2328, 0x232d])
             .collect();
+        let text_style_count = rs.iter().filter(|record| record.kind == 0x04b3).count();
+        let font_family_count = rs.iter().filter(|record| record.kind == 0x04b1).count();
         let mut objects: Vec<Object> = Vec::new();
         let mut i = 0;
         let mut safe = true;
         let mut snap_points = Vec::new();
         let mut grid_dotted = Vec::new();
         let mut grid_form = Vec::new();
+        let mut frame_styles = BTreeMap::new();
         let (mut page, mut page_base, mut page_count) = (0, 0, 0);
         while i < rs.len() {
             if rs[i].kind == 0x3e8 {
@@ -922,13 +1016,13 @@ impl Document {
             while i < rs.len() && rs[i].kind != 0x7d7 {
                 let r = &rs[i];
                 let d = &b[r.data.clone()];
-                if matches!(code, 52 | 54 | 55 | 58 | 61 | 87) {
+                if matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87) {
                     graph_records.push((r.kind, d.to_vec()));
                 }
-                if code == 0 && r.kind == 0x0907 {
+                if matches!(code, 0 | 78) && r.kind == 0x0907 {
                     function_expression = Some(d.to_vec());
                 }
-                if code == 72 && r.kind == 0x0902 {
+                if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
                     function_range = Some(d.to_vec());
                 }
                 match r.kind {
@@ -938,7 +1032,10 @@ impl Document {
                     },
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
-                    0x07d8 if code == 0 => text_style = d == [0, 0],
+                    0x07d8 if code == 0 => {
+                        text_style = d.len() == 2
+                            && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
+                    }
                     0x899 if d.len() == 16 => {
                         point = Some(Point {
                             x: f64_at(d, 0),
@@ -1004,7 +1101,7 @@ impl Document {
                         };
                         measurement_style = d == sample;
                     }
-                    0x7d3 if matches!(code, 15 | 21 | 27 | 30 | 54 | 55) => {
+                    0x7d3 if matches!(code, 15 | 21 | 27 | 30 | 54 | 55 | 56 | 57) => {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
                     0x7d2 if matches!(code, 67 | 68) && d.len() == 8 => {
@@ -1036,16 +1133,17 @@ impl Document {
                     && !(code == 0 && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898))
                     && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
-                    && !(matches!(code, 52 | 54 | 55 | 58 | 61 | 87)
+                    && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 49 | 65 | 66 | 86)
                         && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(code == 78 && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
-                    && !(code == 72 && r.kind == 0x0902)
+                    && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                 {
                     safe = false;
                 }
@@ -1132,20 +1230,67 @@ impl Document {
                     {
                         Kind::GraphAxis(start, end, axis)
                     }
+                    GraphObject::CircleAxis { circle, axis }
+                        if objects
+                            .get(circle - 1)
+                            .is_some_and(|o| is_circle_kind(&o.kind)) =>
+                    {
+                        Kind::CircleAxis(circle, axis)
+                    }
+                    GraphObject::DistanceAxis {
+                        origin,
+                        distance,
+                        axis,
+                    } if objects
+                        .get(origin - 1)
+                        .is_some_and(|o| is_point_kind(&o.kind))
+                        && objects
+                            .get(distance - 1)
+                            .is_some_and(|o| is_defining_distance_kind(&o.kind)) =>
+                    {
+                        Kind::DistanceAxis(origin, distance, axis)
+                    }
+                    GraphObject::DistanceVerticalUnit {
+                        x_axis,
+                        step,
+                        independent,
+                    } if objects
+                        .get(x_axis - 1)
+                        .is_some_and(|o| matches!(o.kind, Kind::DistanceAxis(_, _, 1))) =>
+                    {
+                        Kind::DistanceVerticalUnit(x_axis, step, independent)
+                    }
                     GraphObject::CoordinateSystem {
                         x_axis,
                         y_axis,
                         form,
                         dotted,
-                    } if objects
-                        .get(x_axis - 1)
-                        .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001)))
-                        && objects
-                            .get(y_axis - 1)
-                            .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 0))) =>
+                    } if (objects.get(x_axis - 1).is_some_and(|o| {
+                        matches!(o.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001))
+                    }) && objects
+                        .get(y_axis - 1)
+                        .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 0))))
+                        || matches!(
+                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                            (Some(Object { kind: Kind::CircleAxis(a, 1), .. }),
+                             Some(Object { kind: Kind::CircleAxis(b, 0), .. })) if a == b
+                        )
+                        || matches!(
+                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                            (Some(Object { kind: Kind::DistanceAxis(a, _, 1), .. }),
+                             Some(Object { kind: Kind::DistanceAxis(b, _, 0), .. })) if a == b
+                        )
+                        || matches!(
+                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                            (Some(Object { kind: Kind::DistanceAxis(origin, _, 1), .. }),
+                             Some(Object { kind: Kind::GraphAxis(y_origin, unit, 0), .. }))
+                                if origin == y_origin && objects.get(unit - 1)
+                                    .is_some_and(|o| matches!(o.kind, Kind::DistanceVerticalUnit(host, _, _) if host == x_axis))
+                        ) =>
                     {
                         grid_dotted[page] = dotted;
                         grid_form[page] = form;
+                        frame_styles.insert(objects.len() + 1, (form, dotted));
                         Kind::CoordinateSystem(x_axis, y_axis)
                     }
                     GraphObject::Slope { line, coordinates }
@@ -1234,25 +1379,48 @@ impl Document {
                                 && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| match &o.kind {
                                     Kind::Parameter(parameter) => match table.named_label_value() {
                                         Some((name, _)) => name == parameter.name(),
-                                        None => *source == page_base + 1 && parameter.name() == "t[1]",
+                                        None => parameter.name() == "t[1]",
                                     },
                                     _ => false,
                                 }) => Kind::ValueTable(*source, table),
                             _ => Kind::Unsupported(code),
                         }
                     }
-                    (91, None, [first, second]) if *first == page_base + 2 && *second == page_base + 1
-                        && [first, second].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))) => {
+                    (91, None, [first, second]) if objects.get(first - 1).is_some_and(|o| {
+                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[2]")
+                    }) && objects.get(second - 1).is_some_and(|o| {
+                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[1]")
+                    }) => {
                         match TableGroup::parse_pair(&b[group_start..rs[i].data.end]) {
-                            Ok(table) if table.pair_source_ids() == Some([2, 1]) => Kind::ValueTablePair(*first, *second, table),
+                            Ok(table) if table.pair_source_ids() == Some([
+                                (*first - page_base) as u32,
+                                (*second - page_base) as u32,
+                            ]) => Kind::ValueTablePair(*first, *second, table),
                             _ => Kind::Unsupported(code),
                         }
                     }
                     (72, None, [definition, frame]) if function_range.is_some()
-                        && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_)))
+                        && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
                         match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
                             Ok((min,max,samples)) => Kind::FunctionPlot(*definition,*frame,min,max,samples),
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (78, None, [source]) if *source > 0 && function_expression.is_some()
+                        && matches!(objects.get(source - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))) => {
+                        match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
+                            Ok(expression) => Kind::DerivativeFunction(*source, expression),
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (126 | 127, None, [x, y, frame]) if function_range.is_some()
+                        && *x > 0 && *y > 0 && *frame > 0 && x != y
+                        && matches!(objects.get(x - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                        && matches!(objects.get(y - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                        && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
+                        match function_records::decode_parametric_range(function_range.as_ref().unwrap(), code == 127) {
+                            Ok((min,max,samples)) => Kind::ParametricPlot(*x,*y,*frame,min,max,samples,if code == 127 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian }),
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
@@ -1273,9 +1441,9 @@ impl Document {
                     (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
                     (0, None, []) if rich_text.is_some() && text_box.is_some()
                         && text_style && label.is_none() => {
-                        match text_object::decode_plain_text(rich_text.as_ref().unwrap(), text_box.as_ref().unwrap()) {
-                            Ok((text, rect)) => Kind::PlainText { text, rect },
-                            Err(_) => Kind::Unsupported(code),
+                        match text_object::decode_rich_text(rich_text.as_ref().unwrap(), text_box.as_ref().unwrap()) {
+                            Ok((text, rect, runs)) if runs.iter().flatten().all(|run| run.style.family_index.is_none_or(|index| usize::from(index) < font_family_count)) => Kind::PlainText { text, rect },
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (36, _, [host])
@@ -1506,6 +1674,8 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style: style_records::visual_style(h),
+                text_style_override: None,
+                rich_text_override: None,
             });
             if matches!(objects.last().map(|o| &o.kind), Some(Kind::Unsupported(_))) {
                 safe = false;
@@ -1533,6 +1703,32 @@ impl Document {
         {
             safe = false;
         }
+        let mut marked_coordinate_system = vec![None; page_count.max(1)];
+        let mut link_page = 0usize;
+        let mut seen_page = false;
+        for record in &rs {
+            if record.kind == 0x3e8 {
+                if seen_page {
+                    link_page += 1;
+                }
+                seen_page = true;
+            } else if record.kind == 0x232d && record.data.len() == 4 {
+                let id = u32_at(b, record.data.start) as usize;
+                if objects.get(id.saturating_sub(1)).is_some_and(|object| {
+                    object.page == link_page && matches!(object.kind, Kind::CoordinateSystem(_, _))
+                }) {
+                    marked_coordinate_system[link_page] = Some(id);
+                } else {
+                    safe = false;
+                }
+            }
+        }
+        for (page, marked) in marked_coordinate_system.iter().enumerate() {
+            if let Some((form, dotted)) = marked.and_then(|id| frame_styles.get(&id).copied()) {
+                grid_form[page] = form;
+                grid_dotted[page] = dotted;
+            }
+        }
         Ok(Self {
             objects,
             path,
@@ -1556,7 +1752,11 @@ impl Document {
             } else {
                 grid_form
             },
+            angle_unit_radians,
+            marked_coordinate_system,
+            frame_styles,
             original: b.to_vec(),
+            run_font_families: Vec::new(),
             source_count,
             safe_structure: safe,
             image_read_only,
@@ -1570,28 +1770,60 @@ impl Document {
             self.snap_points.clone(),
             self.grid_dotted.clone(),
             self.grid_form.clone(),
+            self.angle_unit_radians,
+            self.marked_coordinate_system.clone(),
+            self.frame_styles.clone(),
+            self.run_font_families.clone(),
         ));
         self.redo.clear();
         self.dirty = true;
     }
     pub fn undo(&mut self) {
-        if let Some((objects, snap_points, grid_dotted, grid_form)) = self.undo.pop() {
+        if let Some((
+            objects,
+            snap_points,
+            grid_dotted,
+            grid_form,
+            radians,
+            marked,
+            styles,
+            families,
+        )) = self.undo.pop()
+        {
             self.redo.push((
                 std::mem::replace(&mut self.objects, objects),
                 std::mem::replace(&mut self.snap_points, snap_points),
                 std::mem::replace(&mut self.grid_dotted, grid_dotted),
                 std::mem::replace(&mut self.grid_form, grid_form),
+                std::mem::replace(&mut self.angle_unit_radians, radians),
+                std::mem::replace(&mut self.marked_coordinate_system, marked),
+                std::mem::replace(&mut self.frame_styles, styles),
+                std::mem::replace(&mut self.run_font_families, families),
             ));
             self.dirty = true;
         }
     }
     pub fn redo(&mut self) {
-        if let Some((objects, snap_points, grid_dotted, grid_form)) = self.redo.pop() {
+        if let Some((
+            objects,
+            snap_points,
+            grid_dotted,
+            grid_form,
+            radians,
+            marked,
+            styles,
+            families,
+        )) = self.redo.pop()
+        {
             self.undo.push((
                 std::mem::replace(&mut self.objects, objects),
                 std::mem::replace(&mut self.snap_points, snap_points),
                 std::mem::replace(&mut self.grid_dotted, grid_dotted),
                 std::mem::replace(&mut self.grid_form, grid_form),
+                std::mem::replace(&mut self.angle_unit_radians, radians),
+                std::mem::replace(&mut self.marked_coordinate_system, marked),
+                std::mem::replace(&mut self.frame_styles, styles),
+                std::mem::replace(&mut self.run_font_families, families),
             ));
             self.dirty = true;
         }
@@ -1667,20 +1899,351 @@ impl Document {
         if self.partial_view {
             return Err("Cannot edit text in a sketch with unsupported records safely".into());
         }
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let text = normalized.as_str();
         let object = self
             .objects
             .get(id.checked_sub(1).ok_or("Invalid text ID")?)
             .ok_or("Invalid text ID")?;
-        let Kind::PlainText { rect, .. } = object.kind else {
+        let Kind::PlainText {
+            rect,
+            text: ref current,
+        } = object.kind
+        else {
             return Err("Object is not free text".into());
         };
         let rect = TextRect::roomy_at(rect.left, rect.top, text)?;
         text_object::encode_plain_text_group(text, rect)?;
+        let rich = if current != text {
+            let runs = self.text_rich_runs(id).ok_or("Unsupported text markup")?;
+            if runs
+                .iter()
+                .flatten()
+                .any(|run| run.style != text_object::RichRunStyle::default())
+            {
+                Some(text_object::remap_rich_text(&runs, text, rect)?)
+            } else {
+                None
+            }
+        } else {
+            object.rich_text_override.clone()
+        };
         self.checkpoint();
         self.objects[id - 1].kind = Kind::PlainText {
             text: text.to_owned(),
             rect,
         };
+        self.objects[id - 1].rich_text_override = rich;
+        Ok(())
+    }
+    fn text_rich_template(&self, id: usize) -> Option<text_object::RichTextTemplate> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::PlainText { ref text, .. } = object.kind else {
+            return None;
+        };
+        if let Some(template) = &object.rich_text_override {
+            return (template.decode().ok()?.0 == *text).then(|| template.clone());
+        }
+        let header = object.header_offset?;
+        let rs = records(&self.original).ok()?;
+        let start = rs
+            .iter()
+            .position(|record| record.kind == 0x07d0 && record.data.start == header)?;
+        let group = rs[start + 1..]
+            .iter()
+            .take_while(|record| record.kind != 0x07d7)
+            .collect::<Vec<_>>();
+        let rich = group.iter().find(|record| record.kind == 0x08fc)?;
+        let bbox = group.iter().find(|record| record.kind == 0x0898)?;
+        let template = text_object::RichTextTemplate::from_parts(
+            &self.original[rich.data.clone()],
+            &self.original[bbox.data.clone()],
+        )
+        .ok()?;
+        (template.decode().ok()?.0 == *text).then_some(template)
+    }
+    pub fn text_rich_runs(&self, id: usize) -> Option<Vec<Vec<text_object::RichTextRun>>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::PlainText { ref text, .. } = object.kind else {
+            return None;
+        };
+        if let Some(template) = self.text_rich_template(id) {
+            return Some(template.decode().ok()?.2);
+        }
+        Some(
+            text.split('\n')
+                .map(|line| {
+                    vec![text_object::RichTextRun {
+                        text: line.to_owned(),
+                        style: text_object::RichRunStyle::default(),
+                    }]
+                })
+                .collect(),
+        )
+    }
+    pub fn text_font_state(&self, id: usize) -> Option<FontState> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if !matches!(object.kind, Kind::PlainText { .. })
+            && !(is_point_kind(&object.kind) && object.label.is_some())
+        {
+            return None;
+        }
+        if let Some(style) = &object.text_style_override {
+            return Some(style.clone());
+        }
+        let style = if let Some(header) = object.header_offset {
+            let rs = records(&self.original).ok()?;
+            let start = rs
+                .iter()
+                .position(|record| record.kind == 0x07d0 && record.data.start == header)?;
+            let record = rs[start + 1..]
+                .iter()
+                .take_while(|record| record.kind != 0x07d7)
+                .find(|record| record.kind == 0x07d8 && record.data.len() == 2);
+            record.map_or(0, |record| {
+                u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
+            })
+        } else {
+            0
+        };
+        text_style_records::decode_font_state_at(&self.original, style).ok()
+    }
+    pub fn text_font_families(&self) -> Option<Vec<String>> {
+        let mut families = text_style_records::font_families(&self.original).ok()?;
+        families.extend(self.run_font_families.iter().cloned());
+        Some(families)
+    }
+    pub fn toggle_selected_text_style(
+        &mut self,
+        command: TextStyleCommand,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot format text in this sketch safely".into());
+        }
+        let updates = self
+            .selected
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.objects.get(id - 1).is_some_and(|object| {
+                    !object.deleted
+                        && object.page == self.active_page
+                        && (matches!(object.kind, Kind::PlainText { .. })
+                            || (is_point_kind(&object.kind) && object.label.is_some()))
+                })
+            })
+            .map(|id| {
+                let mut style = self.text_font_state(id).ok_or("Unsupported text font")?;
+                match command {
+                    TextStyleCommand::Bold => style.bold = !style.bold,
+                    TextStyleCommand::Italic => style.italic = !style.italic,
+                    TextStyleCommand::Underline => style.underline = !style.underline,
+                    TextStyleCommand::IncreaseSize => {
+                        style.size_code = match style.size_code {
+                            14 => 16,
+                            16 => 18,
+                            18 => 24,
+                            24 => 36,
+                            36 => 48,
+                            48 => 64,
+                            _ => return Err("This text size has no verified larger step".into()),
+                        }
+                    }
+                    TextStyleCommand::DecreaseSize => {
+                        style.size_code = match style.size_code {
+                            16 => 14,
+                            18 => 16,
+                            24 => 18,
+                            36 => 24,
+                            48 => 36,
+                            64 => 48,
+                            _ => return Err("This text size has no verified smaller step".into()),
+                        }
+                    }
+                }
+                Ok((id, style))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if updates.is_empty() {
+            return Err("Select free text to format".into());
+        }
+        let count = updates.len();
+        self.checkpoint();
+        for (id, style) in updates {
+            self.objects[id - 1].text_style_override = Some(style);
+        }
+        Ok(count)
+    }
+    pub fn set_selected_text_family(&mut self, family: &str) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot format text in this sketch safely".into());
+        }
+        text_style_records::encode_font_family_payload(family)?;
+        let updates = self
+            .selected
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.objects.get(id - 1).is_some_and(|object| {
+                    !object.deleted
+                        && object.page == self.active_page
+                        && (matches!(object.kind, Kind::PlainText { .. })
+                            || (is_point_kind(&object.kind) && object.label.is_some()))
+                })
+            })
+            .map(|id| {
+                let mut style = self.text_font_state(id).ok_or("Unsupported text font")?;
+                style.family = family.to_owned();
+                Ok((id, style))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if updates.is_empty() {
+            return Err("Select free text or labeled points to format".into());
+        }
+        let count = updates.len();
+        self.checkpoint();
+        for (id, style) in updates {
+            self.objects[id - 1].text_style_override = Some(style);
+        }
+        Ok(count)
+    }
+    pub fn format_text_range(
+        &mut self,
+        id: usize,
+        start: usize,
+        end: usize,
+        command: TextStyleCommand,
+    ) -> Result<(), String> {
+        self.format_text_range_with(id, start, end, |style, base| {
+            match command {
+                TextStyleCommand::Bold | TextStyleCommand::Italic | TextStyleCommand::Underline => {
+                    let (override_flag, baseline) = match command {
+                        TextStyleCommand::Bold => (&mut style.bold, base.bold),
+                        TextStyleCommand::Italic => (&mut style.italic, base.italic),
+                        TextStyleCommand::Underline => (&mut style.underline, base.underline),
+                        _ => unreachable!(),
+                    };
+                    let next = !override_flag.unwrap_or(baseline);
+                    *override_flag = (next != baseline).then_some(next);
+                }
+                TextStyleCommand::IncreaseSize | TextStyleCommand::DecreaseSize => {
+                    let current = style.size_code.unwrap_or(base.size_code);
+                    let next = match (command, current) {
+                        (TextStyleCommand::IncreaseSize, 14) => 16,
+                        (TextStyleCommand::IncreaseSize, 16) => 18,
+                        (TextStyleCommand::IncreaseSize, 18) => 24,
+                        (TextStyleCommand::IncreaseSize, 24) => 36,
+                        (TextStyleCommand::IncreaseSize, 36) => 48,
+                        (TextStyleCommand::IncreaseSize, 48) => 64,
+                        (TextStyleCommand::DecreaseSize, 16) => 14,
+                        (TextStyleCommand::DecreaseSize, 18) => 16,
+                        (TextStyleCommand::DecreaseSize, 24) => 18,
+                        (TextStyleCommand::DecreaseSize, 36) => 24,
+                        (TextStyleCommand::DecreaseSize, 48) => 36,
+                        (TextStyleCommand::DecreaseSize, 64) => 48,
+                        (TextStyleCommand::IncreaseSize, _) => {
+                            return Err("This text size has no verified larger step".into());
+                        }
+                        _ => return Err("This text size has no verified smaller step".into()),
+                    };
+                    style.size_code = (next != base.size_code).then_some(next);
+                }
+            }
+            Ok(())
+        })
+    }
+    pub fn format_text_range_family(
+        &mut self,
+        id: usize,
+        start: usize,
+        end: usize,
+        family: &str,
+    ) -> Result<(), String> {
+        text_style_records::encode_font_family_payload(family)?;
+        let families = self
+            .text_font_families()
+            .ok_or("Unsupported font family table")?;
+        let index = families.iter().position(|name| name == family);
+        let next_index = index.unwrap_or(families.len());
+        let next_index = u16::try_from(next_index).map_err(|_| "Too many font families")?;
+        self.format_text_range_with(id, start, end, |style, base| {
+            style.family_index = (family != base.family).then_some(next_index);
+            Ok(())
+        })?;
+        if index.is_none() {
+            self.run_font_families.push(family.to_owned());
+        }
+        Ok(())
+    }
+    fn format_text_range_with(
+        &mut self,
+        id: usize,
+        start: usize,
+        end: usize,
+        mut modify: impl FnMut(&mut text_object::RichRunStyle, &FontState) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot format text in this sketch safely".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid text ID")?)
+            .ok_or("Invalid text ID")?;
+        let Kind::PlainText { ref text, rect } = object.kind else {
+            return Err("Object is not free text".into());
+        };
+        if object.deleted || object.page != self.active_page {
+            return Err("Text is not on the active page".into());
+        }
+        if start >= end || end > text.chars().count() {
+            return Err("Select a valid text range".into());
+        }
+        let base = self.text_font_state(id).ok_or("Unsupported text font")?;
+        let rows = self.text_rich_runs(id).ok_or("Unsupported text markup")?;
+        let mut position = 0;
+        let mut changed = 0;
+        let mut styled_rows = Vec::new();
+        let row_count = rows.len();
+        for (line_index, row) in rows.into_iter().enumerate() {
+            let mut styled = Vec::<text_object::RichTextRun>::new();
+            for run in row {
+                for ch in run.text.chars() {
+                    let mut style = run.style;
+                    if (start..end).contains(&position) {
+                        modify(&mut style, &base)?;
+                        changed += 1;
+                    }
+                    if let Some(last) = styled.last_mut().filter(|last| last.style == style) {
+                        last.text.push(ch);
+                    } else {
+                        styled.push(text_object::RichTextRun {
+                            text: ch.to_string(),
+                            style,
+                        });
+                    }
+                    position += 1;
+                }
+            }
+            if styled.is_empty() {
+                styled.push(text_object::RichTextRun {
+                    text: String::new(),
+                    style: text_object::RichRunStyle::default(),
+                });
+            }
+            styled_rows.push(styled);
+            if line_index + 1 < row_count {
+                position += 1;
+            }
+        }
+        if changed == 0 {
+            return Err("Select text characters to format".into());
+        }
+        let template = text_object::encode_rich_runs(&styled_rows, rect)?;
+        if template.decode()?.0 != *text {
+            return Err("Styled text did not round-trip".into());
+        }
+        self.checkpoint();
+        self.objects[id - 1].rich_text_override = Some(template);
         Ok(())
     }
     pub fn move_text(&mut self, id: usize, at: Point) -> Result<(), String> {
@@ -1769,6 +2332,8 @@ impl Document {
             constraint_offset: None,
             header_offset: None,
             label: None,
+            text_style_override: None,
+            rich_text_override: None,
         });
         id
     }
@@ -1776,12 +2341,18 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot add a parameter in this sketch".into());
         }
-        let mut group = match self.objects.as_slice() {
-            [] => ParameterGroup::default_value(),
-            [first] if matches!(&first.kind, Kind::Parameter(group) if group.name() == "t[1]" && group.value() == 1.0) => {
-                ParameterGroup::second_default_value()
-            }
-            _ => return Err("The verified parameter sequence is t[1], then t[2]".into()),
+        let first = self.objects.iter().find(|object| {
+            !object.deleted
+                && matches!(&object.kind, Kind::Parameter(group) if group.name() == "t[1]")
+        });
+        let second = self.objects.iter().find(|object| {
+            !object.deleted
+                && matches!(&object.kind, Kind::Parameter(group) if group.name() == "t[2]")
+        });
+        let mut group = match (first, second) {
+            (None, None) => ParameterGroup::default_value(),
+            (Some(_), None) => ParameterGroup::second_default_value(),
+            _ => return Err("The supported parameter sequence is t[1], then t[2]".into()),
         };
         group.set_anchor(anchor)?;
         self.checkpoint();
@@ -1820,38 +2391,40 @@ impl Document {
         let Some(Kind::Parameter(group)) = self.objects.get(id - 1).map(|o| &o.kind) else {
             return Err("Select a parameter".into());
         };
-        if group.name() == "t[1]"
-            && self.objects.iter().any(|object| {
-                matches!(
-                    object.kind,
-                    Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _)
-                )
-            })
-        {
-            return Err("Editing a tabulated t[1] value is not yet supported".into());
-        }
         let mut group = group.clone();
         group.set_value(value)?;
-        let table = (id == 2 && group.name() == "t[2]")
-            .then(|| self.objects.get(2))
-            .flatten()
-            .and_then(|object| {
-                if let Kind::ValueTablePair(_, _, table) = &object.kind {
-                    Some(table.clone())
-                } else {
-                    None
+        let mut tables = Vec::new();
+        let mut single_tables = Vec::new();
+        if group.name() == "t[1]" {
+            for (index, object) in self.objects.iter().enumerate() {
+                if let Kind::ValueTable(source, table) = &object.kind
+                    && *source == id
+                    && table.default_values().is_some()
+                {
+                    let mut changed = table.clone();
+                    changed.set_last_default_value(value)?;
+                    single_tables.push((index, *source, changed));
                 }
-            });
-        let table = table
-            .map(|mut table| {
-                table.set_last_pair_value(value)?;
-                Ok::<_, String>(table)
-            })
-            .transpose()?;
+            }
+        }
+        if matches!(group.name(), "t[1]" | "t[2]") {
+            for (index, object) in self.objects.iter().enumerate() {
+                if let Kind::ValueTablePair(first, second, table) = &object.kind {
+                    if *first == id || *second == id {
+                        let mut changed = table.clone();
+                        changed.set_last_pair_axis_value(usize::from(*second == id), value)?;
+                        tables.push((index, *first, *second, changed));
+                    }
+                }
+            }
+        }
         self.checkpoint();
         self.objects[id - 1].kind = Kind::Parameter(group);
-        if let Some(table) = table {
-            self.objects[2].kind = Kind::ValueTablePair(2, 1, table);
+        for (index, source, table) in single_tables {
+            self.objects[index].kind = Kind::ValueTable(source, table);
+        }
+        for (index, first, second, table) in tables {
+            self.objects[index].kind = Kind::ValueTablePair(first, second, table);
         }
         Ok(())
     }
@@ -1875,12 +2448,12 @@ impl Document {
         let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).map(|o| &o.kind) else {
             return Err("Select a supported parameter".into());
         };
-        let group = if source == 1
-            && self.objects.len() == 1
-            && parameter.name() == "t[1]"
-            && parameter.value() == 1.0
-        {
-            TableGroup::for_source(1, anchor)?
+        let group = if parameter.name() == "t[1]" {
+            TableGroup::for_source_value(
+                u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
+                anchor,
+                parameter.value(),
+            )?
         } else if !matches!(parameter.name(), "t[1]" | "t[2]") {
             TableGroup::named_snapshot(
                 u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
@@ -1894,18 +2467,36 @@ impl Document {
         Ok(self.append_object(Kind::ValueTable(source, group)))
     }
     pub fn tabulate_default_pair(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
-        if self.partial_view
-            || self.page_count != 1
-            || self.objects.len() != 2
-            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]")
-            || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]")
-        {
-            return Err("Only the verified t[1], t[2] pair can be tabulated".into());
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot tabulate this parameter pair".into());
         }
-        let mut group = TableGroup::pair_snapshot();
-        group.set_anchor(anchor);
+        let pair = self
+            .objects
+            .iter()
+            .filter_map(|object| match &object.kind {
+                Kind::Parameter(group) if !object.deleted && group.name() == "t[1]" => {
+                    Some((object.id, 1, group.value()))
+                }
+                Kind::Parameter(group) if !object.deleted && group.name() == "t[2]" => {
+                    Some((object.id, 2, group.value()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let [first, second] = pair.as_slice() else {
+            return Err("Select supported t[1] and t[2] parameters".into());
+        };
+        if first.1 != 1 || second.1 != 2 {
+            return Err("Select supported t[1] and t[2] parameters".into());
+        }
+        let sources = [
+            u32::try_from(second.0).map_err(|_| "Invalid parameter ID")?,
+            u32::try_from(first.0).map_err(|_| "Invalid parameter ID")?,
+        ];
+        let mut group = TableGroup::pair_snapshot_rows_for_sources(1, anchor, sources)?;
+        group.set_pair_row_values(0, [second.2, first.2])?;
         self.checkpoint();
-        Ok(self.append_object(Kind::ValueTablePair(2, 1, group)))
+        Ok(self.append_object(Kind::ValueTablePair(second.0, first.0, group)))
     }
     pub fn move_number(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
         let object = self
@@ -1952,23 +2543,29 @@ impl Document {
                 }
                 Kind::ValueTable(*source, group)
             }
-            Kind::ValueTablePair(_, _, group) => {
+            Kind::ValueTablePair(first, second, group) => {
                 let values = group.pair_values().ok_or("Invalid pair table")?;
                 let rows = if add {
                     group.rows() + 1
                 } else {
                     group.rows().checked_sub(1).ok_or("Table has no rows")?
                 };
-                let mut changed = TableGroup::pair_snapshot_rows(rows, group.anchor())?;
-                if add {
-                    for (row, value) in values.iter().enumerate() {
-                        changed.set_pair_row_value(row, value[0])?;
-                    }
-                    changed.set_last_pair_value(values.last().unwrap()[0])?;
-                } else {
-                    changed.set_last_pair_value(values.last().unwrap()[0])?;
+                let mut changed = TableGroup::pair_snapshot_rows_for_sources(
+                    rows,
+                    group.anchor(),
+                    group
+                        .pair_source_ids()
+                        .ok_or("Invalid pair table sources")?,
+                )?;
+                for row in 0..rows {
+                    let value = if row + 1 == rows {
+                        values.last().unwrap()
+                    } else {
+                        &values[row]
+                    };
+                    changed.set_pair_row_values(row, *value)?;
                 }
-                Kind::ValueTablePair(2, 1, changed)
+                Kind::ValueTablePair(*first, *second, changed)
             }
             _ => return Err("Object is not a table".into()),
         };
@@ -1977,32 +2574,92 @@ impl Document {
         Ok(())
     }
     pub fn active_coordinate_system(&self) -> Option<usize> {
+        self.active_coordinate_system_for_page(self.active_page)
+    }
+    fn active_coordinate_system_for_page(&self, page: usize) -> Option<usize> {
+        if let Some(id) = self.marked_coordinate_system.get(page).copied().flatten()
+            && self.objects.get(id.checked_sub(1)?).is_some_and(|object| {
+                object.page == page
+                    && !object.deleted
+                    && matches!(object.kind, Kind::CoordinateSystem(_, _))
+            })
+        {
+            return Some(id);
+        }
         self.objects
             .iter()
             .rev()
             .find(|o| {
-                o.page == self.active_page
-                    && !o.deleted
-                    && matches!(o.kind, Kind::CoordinateSystem(_, _))
+                o.page == page && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
             })
             .map(|o| o.id)
     }
-    fn active_vertical_unit(&self, page: usize) -> Option<usize> {
-        let frame = self.objects.iter().rev().find(|o| {
-            o.page == page && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
-        })?;
-        let Kind::CoordinateSystem(_, y_axis) = frame.kind else {
-            return None;
-        };
-        let Kind::GraphAxis(_, y_unit, 0) = self.objects.get(y_axis.checked_sub(1)?)?.kind else {
-            return None;
-        };
-        Some(y_unit)
+    pub fn coordinate_system_for_object(&self, id: usize) -> Option<usize> {
+        self.objects.iter().rev().find_map(|frame| {
+            if frame.page != self.active_page || frame.deleted {
+                return None;
+            }
+            let Kind::CoordinateSystem(x_axis, y_axis) = frame.kind else {
+                return None;
+            };
+            match (
+                self.objects.get(x_axis.checked_sub(1)?)?.kind.clone(),
+                self.objects.get(y_axis.checked_sub(1)?)?.kind.clone(),
+            ) {
+                (Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001), Kind::GraphAxis(_, y_unit, 0)) => {
+                    [frame.id, x_axis, y_axis, origin, x_unit, y_unit]
+                        .contains(&id)
+                        .then_some(frame.id)
+                }
+                (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) if circle == other => {
+                    [frame.id, x_axis, y_axis, circle]
+                        .contains(&id)
+                        .then_some(frame.id)
+                }
+                (Kind::DistanceAxis(origin, distance, 1), Kind::DistanceAxis(other, second, 0))
+                    if origin == other =>
+                {
+                    [frame.id, x_axis, y_axis, origin, distance, second]
+                        .contains(&id)
+                        .then_some(frame.id)
+                }
+                (Kind::DistanceAxis(origin, distance, 1), Kind::GraphAxis(other, unit, 0))
+                    if origin == other
+                        && matches!(
+                            self.objects.get(unit.checked_sub(1)?)?.kind,
+                            Kind::DistanceVerticalUnit(host, _, _) if host == x_axis
+                        ) =>
+                {
+                    [frame.id, x_axis, y_axis, origin, distance, unit]
+                        .contains(&id)
+                        .then_some(frame.id)
+                }
+                _ => None,
+            }
+        })
+    }
+    pub fn mark_coordinate_system(&mut self, selected: usize) -> Result<usize, String> {
+        let frame = self
+            .coordinate_system_for_object(selected)
+            .ok_or("Select a coordinate system axis, origin, or unit point")?;
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot mark a coordinate system in this sketch".into());
+        }
+        if self.active_coordinate_system() != Some(frame) {
+            self.checkpoint();
+            self.marked_coordinate_system[self.active_page] = Some(frame);
+            if let Some((form, dotted)) = self.frame_styles.get(&frame).copied() {
+                self.grid_form[self.active_page] = form;
+                self.grid_dotted[self.active_page] = dotted;
+            }
+        }
+        Ok(frame)
     }
     fn active_x_axis(&self, page: usize) -> Option<usize> {
-        let frame = self.objects.iter().rev().find(|o| {
-            o.page == page && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
-        })?;
+        let frame = self.objects.get(
+            self.active_coordinate_system_for_page(page)?
+                .checked_sub(1)?,
+        )?;
         let Kind::CoordinateSystem(x_axis, _) = frame.kind else {
             return None;
         };
@@ -2023,22 +2680,242 @@ impl Document {
         let y_unit = self.append_object(Kind::GraphVerticalUnit(x_unit, step));
         let y_axis = self.append_object(Kind::GraphAxis(center, y_unit, 0));
         let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
+        self.marked_coordinate_system[self.active_page] = Some(frame);
+        self.frame_styles.insert(frame, (GridForm::Square, false));
         self.snap_points[self.active_page] = false;
         self.grid_dotted[self.active_page] = false;
         self.grid_form[self.active_page] = GridForm::Square;
         Ok(frame)
     }
+    pub fn add_coordinate_system_at_point(&mut self, origin: usize) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot define a coordinate system in this sketch".into());
+        }
+        let point = self.position(origin).ok_or("Select one origin point")?;
+        if !point.x.is_finite() || !point.y.is_finite() {
+            return Err("Coordinate-system origin must be finite".into());
+        }
+        let step: f64 = 37.79527559055118;
+        self.checkpoint();
+        let x_unit = self.append_object(Kind::GraphHorizontalUnit(origin, step));
+        let x_axis = self.append_object(Kind::GraphAxis(origin, x_unit, 1));
+        let y_unit = self.append_object(Kind::GraphVerticalUnit(x_unit, step));
+        let y_axis = self.append_object(Kind::GraphAxis(origin, y_unit, 0));
+        let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
+        self.marked_coordinate_system[self.active_page] = Some(frame);
+        self.frame_styles.insert(frame, (GridForm::Square, false));
+        self.grid_form[self.active_page] = GridForm::Square;
+        self.grid_dotted[self.active_page] = false;
+        Ok(frame)
+    }
+    pub fn add_coordinate_system_from_circle(&mut self, circle: usize) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot define a coordinate system in this sketch".into());
+        }
+        if !self
+            .objects
+            .get(circle.saturating_sub(1))
+            .is_some_and(|object| {
+                object.page == self.active_page && !object.deleted && is_circle_kind(&object.kind)
+            })
+        {
+            return Err("Select one circle".into());
+        }
+        let (_, radius) = self.circle_points(circle).ok_or("Invalid unit circle")?;
+        if !radius.is_finite() || radius <= 0.0 {
+            return Err("Invalid unit circle".into());
+        }
+        self.checkpoint();
+        let x_axis = self.append_object(Kind::CircleAxis(circle, 1));
+        let y_axis = self.append_object(Kind::CircleAxis(circle, 0));
+        let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
+        self.marked_coordinate_system[self.active_page] = Some(frame);
+        self.frame_styles.insert(frame, (GridForm::Square, false));
+        self.grid_form[self.active_page] = GridForm::Square;
+        self.grid_dotted[self.active_page] = false;
+        Ok(frame)
+    }
+    pub fn add_coordinate_system_from_distances(
+        &mut self,
+        origin: Option<usize>,
+        distances: &[usize],
+        default_origin: Point,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot define a coordinate system in this sketch".into());
+        }
+        if !matches!(distances.len(), 1 | 2)
+            || distances[0] == *distances.last().unwrap() && distances.len() == 2
+            || distances.iter().any(|&id| {
+                self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
+                    id == 0
+                        || object.deleted
+                        || object.page != self.active_page
+                        || !is_defining_distance_kind(&object.kind)
+                }) || self.defining_distance_pixels(id).is_none()
+            })
+        {
+            return Err("Select one or two nonzero defining distances".into());
+        }
+        if let Some(id) = origin {
+            if self.objects.get(id.saturating_sub(1)).is_none_or(|object| {
+                id == 0
+                    || object.deleted
+                    || object.page != self.active_page
+                    || !is_point_kind(&object.kind)
+            }) {
+                return Err("Select one origin point".into());
+            }
+        } else if !default_origin.x.is_finite() || !default_origin.y.is_finite() {
+            return Err("Coordinate-system origin must be finite".into());
+        }
+        self.checkpoint();
+        let origin = origin.unwrap_or_else(|| self.append_object(Kind::Free(default_origin)));
+        let x_axis = self.append_object(Kind::DistanceAxis(origin, distances[0], 1));
+        let (y_axis, form) = if distances.len() == 1 {
+            let unit =
+                self.append_object(Kind::DistanceVerticalUnit(x_axis, 37.79527559055118, false));
+            (
+                self.append_object(Kind::GraphAxis(origin, unit, 0)),
+                GridForm::Square,
+            )
+        } else {
+            (
+                self.append_object(Kind::DistanceAxis(origin, distances[1], 0)),
+                GridForm::Rectangular,
+            )
+        };
+        let frame = self.append_object(Kind::CoordinateSystem(x_axis, y_axis));
+        self.marked_coordinate_system[self.active_page] = Some(frame);
+        self.frame_styles.insert(frame, (form, false));
+        self.grid_form[self.active_page] = form;
+        self.grid_dotted[self.active_page] = false;
+        Ok(frame)
+    }
     pub fn add_function_definition(&mut self, expression: SimpleFunction) -> Result<usize, String> {
+        self.add_function_definition_with_angle_unit(expression, true)
+    }
+    fn function_expression(&self, id: usize) -> Option<SimpleFunction> {
+        match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::FunctionDefinition(expression) | Kind::DerivativeFunction(_, expression) => {
+                Some(expression)
+            }
+            _ => None,
+        }
+    }
+    pub fn add_derivative_function(&mut self, source: usize) -> Result<usize, String> {
+        self.add_derivative_function_with_angle_unit(source, self.angle_unit_radians)
+    }
+    pub fn add_derivative_function_with_angle_unit(
+        &mut self,
+        source: usize,
+        radians: bool,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot define a derivative in this sketch".into());
+        }
+        let object = self
+            .objects
+            .get(source.saturating_sub(1))
+            .ok_or("Select one function")?;
+        if object.id != source || object.deleted || object.page != self.active_page {
+            return Err("Select one function".into());
+        }
+        let expression = self
+            .function_expression(source)
+            .ok_or("Select one function")?;
+        let derivative = expression.symbolic_derivative()?;
+        self.checkpoint();
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
+        Ok(self.append_object(Kind::DerivativeFunction(source, derivative)))
+    }
+    pub fn add_function_definition_with_angle_unit(
+        &mut self,
+        expression: SimpleFunction,
+        radians: bool,
+    ) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot add a function to this sketch".into());
         }
         self.checkpoint();
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
         Ok(self.append_object(Kind::FunctionDefinition(expression)))
+    }
+    pub fn set_function_expression(
+        &mut self,
+        definition: usize,
+        expression: SimpleFunction,
+    ) -> Result<(), String> {
+        self.set_function_expression_with_angle_unit(
+            definition,
+            expression,
+            self.angle_unit_radians,
+        )
+    }
+    pub fn set_function_expression_with_angle_unit(
+        &mut self,
+        definition: usize,
+        expression: SimpleFunction,
+        radians: bool,
+    ) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot edit a function in this sketch".into());
+        }
+        let object = self
+            .objects
+            .get(definition.saturating_sub(1))
+            .ok_or("Select one function definition")?;
+        if object.id != definition
+            || object.page != self.active_page
+            || object.deleted
+            || !matches!(object.kind, Kind::FunctionDefinition(_))
+        {
+            return Err("Select one function definition".into());
+        }
+        if object.kind == Kind::FunctionDefinition(expression)
+            && (!expression.uses_trigonometry() || self.angle_unit_radians == radians)
+        {
+            return Ok(());
+        }
+        let mut updates = BTreeMap::new();
+        updates.insert(definition, expression);
+        for object in &self.objects {
+            if let Kind::DerivativeFunction(source, _) = object.kind
+                && let Some(source_expression) = updates.get(&source).copied()
+            {
+                updates.insert(object.id, source_expression.symbolic_derivative()?);
+            }
+        }
+        self.checkpoint();
+        self.objects[definition - 1].kind = Kind::FunctionDefinition(expression);
+        for (id, expression) in updates {
+            if id != definition
+                && let Kind::DerivativeFunction(source, _) = self.objects[id - 1].kind
+            {
+                self.objects[id - 1].kind = Kind::DerivativeFunction(source, expression);
+            }
+        }
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
+        Ok(())
     }
     pub fn plot_new_function(
         &mut self,
         expression: SimpleFunction,
         origin: Point,
+    ) -> Result<usize, String> {
+        self.plot_new_function_with_angle_unit(expression, origin, true)
+    }
+    pub fn plot_new_function_with_angle_unit(
+        &mut self,
+        expression: SimpleFunction,
+        origin: Point,
+        radians: bool,
     ) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot plot a function in this sketch".into());
@@ -2048,6 +2925,9 @@ impl Document {
             None => self.add_default_coordinate_system(origin)?,
         };
         self.checkpoint();
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
         let definition = self.append_object(Kind::FunctionDefinition(expression));
         Ok(self.append_object(Kind::FunctionPlot(
             definition,
@@ -2057,26 +2937,241 @@ impl Document {
             750,
         )))
     }
+    pub fn plot_function(&mut self, definition: usize, origin: Point) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot plot a function in this sketch".into());
+        }
+        if !self
+            .objects
+            .get(definition.saturating_sub(1))
+            .is_some_and(|object| {
+                object.id == definition
+                    && object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                    )
+            })
+        {
+            return Err("Select one function definition".into());
+        }
+        let frame = match self.active_coordinate_system() {
+            Some(id) => id,
+            None => self.add_default_coordinate_system(origin)?,
+        };
+        self.checkpoint();
+        Ok(self.append_object(Kind::FunctionPlot(
+            definition,
+            frame,
+            -5.265208333333335,
+            5.265208333333335,
+            750,
+        )))
+    }
+    pub fn set_plot_range(
+        &mut self,
+        plot: usize,
+        min: f64,
+        max: f64,
+        samples: u32,
+    ) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("Cannot edit a plot in this sketch".into());
+        }
+        if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+            return Err("Invalid plot range or sample count".into());
+        }
+        let object = self
+            .objects
+            .get(plot.saturating_sub(1))
+            .ok_or("Select one plot")?;
+        if object.id != plot || object.page != self.active_page || object.deleted {
+            return Err("Select one plot".into());
+        }
+        let updated = match object.kind {
+            Kind::FunctionPlot(definition, frame, _, _, _) => {
+                Kind::FunctionPlot(definition, frame, min, max, samples)
+            }
+            Kind::ParametricPlot(x, y, frame, _, _, _, mode) => {
+                Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
+            }
+            _ => return Err("Select one function or parametric plot".into()),
+        };
+        if object.kind == updated {
+            return Ok(());
+        }
+        self.checkpoint();
+        self.objects[plot - 1].kind = updated;
+        Ok(())
+    }
     pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
-        let Kind::FunctionPlot(definition, frame, min, max, _) =
+        let Kind::FunctionPlot(definition, frame, min, max, samples) =
             self.objects.get(id.checked_sub(1)?)?.kind
         else {
             return None;
         };
-        let Kind::FunctionDefinition(expression) =
-            self.objects.get(definition.checked_sub(1)?)?.kind
-        else {
-            return None;
-        };
+        let expression = self.function_expression(definition)?;
         let frame = self.graph_frame(frame)?;
-        let count = count.clamp(2, 4096);
+        let count = count.min(samples as usize).clamp(2, 4096);
         (0..count)
             .map(|i| {
                 let x = min + (max - min) * (i as f64 / (count - 1) as f64);
-                let p = frame.world(x, expression.evaluate(x))?;
+                let p = frame.world(
+                    x,
+                    expression.evaluate_with_angle_unit(x, self.angle_unit_radians),
+                )?;
                 Some(Point { x: p.x, y: p.y })
             })
             .collect()
+    }
+    pub fn function_plot_segments(&self, id: usize, count: usize) -> Option<Vec<(Point, Point)>> {
+        let Kind::FunctionPlot(definition, frame, min, max, samples) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let expression = self.function_expression(definition)?;
+        let frame = self.graph_frame(frame)?;
+        let count = count.min(samples as usize).clamp(2, 4096);
+        let sample = |index: usize| {
+            let x = min + (max - min) * (index as f64 / (count - 1) as f64);
+            (
+                x,
+                expression.evaluate_with_angle_unit(x, self.angle_unit_radians),
+            )
+        };
+        let mut segments = Vec::with_capacity(count - 1);
+        let mut left = sample(0);
+        for index in 1..count {
+            let right = sample(index);
+            let (x0, y0) = left;
+            let (x1, y1) = right;
+            left = right;
+            if !y0.is_finite() || !y1.is_finite() {
+                continue;
+            }
+            let low = y0.min(y1);
+            let high = y0.max(y1);
+            let tolerance = 1e-3 * high.abs().max(low.abs()).max(1.0);
+            let crosses_gap = expression.may_have_poles()
+                && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
+                    let x = x0 + (x1 - x0) * fraction;
+                    let y = expression.evaluate_with_angle_unit(x, self.angle_unit_radians);
+                    !y.is_finite() || y < low - tolerance || y > high + tolerance
+                });
+            if crosses_gap {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (frame.world(x0, y0), frame.world(x1, y1)) {
+                segments.push((Point { x: a.x, y: a.y }, Point { x: b.x, y: b.y }));
+            }
+        }
+        Some(segments)
+    }
+    pub fn plot_parametric_curve(
+        &mut self,
+        x_definition: usize,
+        y_definition: usize,
+        mode: PlotPointsMode,
+        min: f64,
+        max: f64,
+        origin: Point,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || x_definition == y_definition {
+            return Err("Select two distinct functions".into());
+        }
+        for id in [x_definition, y_definition] {
+            if !self
+                .objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|object| {
+                    object.id == id
+                        && object.page == self.active_page
+                        && !object.deleted
+                        && matches!(
+                            object.kind,
+                            Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                        )
+                })
+            {
+                return Err("Select two distinct functions".into());
+            }
+        }
+        if !min.is_finite() || !max.is_finite() || min >= max {
+            return Err("Invalid parametric plot domain".into());
+        }
+        let existing_frame = self.active_coordinate_system();
+        let frame = match existing_frame {
+            Some(id) => id,
+            None => self.add_default_coordinate_system(origin)?,
+        };
+        if existing_frame.is_none() && mode == PlotPointsMode::Polar {
+            self.frame_styles.insert(frame, (GridForm::Polar, false));
+            self.grid_form[self.active_page] = GridForm::Polar;
+        }
+        self.checkpoint();
+        Ok(self.append_object(Kind::ParametricPlot(
+            x_definition,
+            y_definition,
+            frame,
+            min,
+            max,
+            750,
+            mode,
+        )))
+    }
+    pub fn parametric_plot_segments(&self, id: usize, count: usize) -> Option<Vec<(Point, Point)>> {
+        let Kind::ParametricPlot(x_id, y_id, frame_id, min, max, samples, mode) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let x_function = self.function_expression(x_id)?;
+        let y_function = self.function_expression(y_id)?;
+        let frame = self.graph_frame(frame_id)?;
+        let sample = |t: f64| {
+            let x = x_function.evaluate_with_angle_unit(t, self.angle_unit_radians);
+            let y = y_function.evaluate_with_angle_unit(t, self.angle_unit_radians);
+            match mode {
+                PlotPointsMode::Cartesian => (x, y),
+                PlotPointsMode::Polar => (x * y.cos(), x * y.sin()),
+            }
+        };
+        let count = count.min(samples as usize).clamp(2, 4096);
+        let mut segments = Vec::with_capacity(count - 1);
+        let mut left = (min, sample(min));
+        for index in 1..count {
+            let t = min + (max - min) * (index as f64 / (count - 1) as f64);
+            let right = (t, sample(t));
+            let ((t0, (x0, y0)), (t1, (x1, y1))) = (left, right);
+            left = right;
+            if ![x0, y0, x1, y1].into_iter().all(f64::is_finite) {
+                continue;
+            }
+            let tolerance = 1e-3
+                * [x0, y0, x1, y1]
+                    .into_iter()
+                    .map(f64::abs)
+                    .fold(1.0, f64::max);
+            let crosses_gap = (x_function.may_have_poles() || y_function.may_have_poles())
+                && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
+                    let (x, y) = sample(t0 + (t1 - t0) * fraction);
+                    !x.is_finite()
+                        || !y.is_finite()
+                        || x < x0.min(x1) - tolerance
+                        || x > x0.max(x1) + tolerance
+                        || y < y0.min(y1) - tolerance
+                        || y > y0.max(y1) + tolerance
+                });
+            if crosses_gap {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (frame.world(x0, y0), frame.world(x1, y1)) {
+                segments.push((Point { x: a.x, y: a.y }, Point { x: b.x, y: b.y }));
+            }
+        }
+        Some(segments)
     }
     pub fn plot_default_parameter(&mut self, mode: PlotPointsMode) -> Result<usize, String> {
         self.plot_points_at(mode, [1.0, 1.0])
@@ -2133,24 +3228,38 @@ impl Document {
         table: usize,
         mode: PlotPointsMode,
     ) -> Result<Vec<usize>, String> {
-        if self.partial_view
-            || self.page_count != 1
-            || table != 3
-            || self.objects.len() != 9
-            || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]" && group.value() == 1.0)
-            || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]" && (0.0..10.0).contains(&group.value()))
-            || !matches!(self.objects.get(2).map(|o| &o.kind), Some(Kind::ValueTablePair(2, 1, group)) if (1..=2).contains(&group.rows()))
-            || self.active_coordinate_system() != Some(9)
-        {
+        if self.partial_view || self.page_count != 1 {
             return Err(
                 "Plot Table Data requires the verified t[2], t[1] table and coordinate system"
                     .into(),
             );
         }
-        let Some(Kind::ValueTablePair(_, _, table_group)) = self.objects.get(2).map(|o| &o.kind)
+        let frame = self
+            .active_coordinate_system()
+            .ok_or("Define a coordinate system before plotting table data")?;
+        let source = self
+            .objects
+            .first()
+            .filter(|object| !object.deleted && object.page == self.active_page)
+            .ok_or("Plot Table Data requires a source object")?
+            .id;
+        let Some(object) = table
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
         else {
             return Err("Select the verified pair table".into());
         };
+        let Kind::ValueTablePair(first, second, table_group) = &object.kind else {
+            return Err("Select the verified pair table".into());
+        };
+        if object.deleted
+            || object.page != self.active_page
+            || !(1..=256).contains(&table_group.rows())
+            || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]")
+            || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]")
+        {
+            return Err("Select the supported t[2], t[1] table".into());
+        }
         let rows = table_group
             .pair_values()
             .ok_or("Invalid pair table values")?;
@@ -2170,9 +3279,10 @@ impl Document {
                     stored[1] * plot_points_records::DEGREES_TO_RADIANS,
                 ],
             };
-            let group = plot_points_records::encode_group(mode, [1, 9], stored)?;
+            let group =
+                plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
             let style = style_records::visual_style(&group[8..36]);
-            let id = self.append_object(Kind::PlottedPoint(1, 9, mode, stored));
+            let id = self.append_object(Kind::PlottedPoint(source, frame, mode, stored));
             self.objects[id - 1].visual_style = style;
             ids.push(id);
         }
@@ -2294,7 +3404,7 @@ impl Document {
         }
     }
     pub fn grid_visible(&self) -> bool {
-        self.grid_enabled() && !self.snap_points[self.active_page]
+        self.grid_enabled()
     }
     pub fn grid_enabled(&self) -> bool {
         self.active_coordinate_system()
@@ -2307,10 +3417,17 @@ impl Document {
         if !object.visible || object.deleted || object.page != self.active_page {
             return false;
         }
-        if matches!(object.kind, Kind::GraphVerticalUnit(_, _))
-            && self.grid_form[object.page] != GridForm::Rectangular
-        {
+        if matches!(object.kind, Kind::DistanceVerticalUnit(_, _, false)) {
             return false;
+        }
+        if matches!(object.kind, Kind::GraphVerticalUnit(_, _)) {
+            let form = self
+                .coordinate_system_for_object(id)
+                .and_then(|frame| self.frame_styles.get(&frame))
+                .map_or(self.grid_form[object.page], |style| style.0);
+            if form != GridForm::Rectangular {
+                return false;
+            }
         }
         !self.objects.iter().any(|frame| {
             let Kind::CoordinateSystem(x_axis, y_axis) = frame.kind else {
@@ -2318,6 +3435,41 @@ impl Document {
             };
             if frame.visible || frame.deleted || frame.page != object.page {
                 return false;
+            }
+            if let (Some(Kind::CircleAxis(circle, 1)), Some(Kind::CircleAxis(other, 0))) = (
+                x_axis
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|o| &o.kind),
+                y_axis
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|o| &o.kind),
+            ) && circle == other
+            {
+                return [frame.id, x_axis, y_axis].contains(&id);
+            }
+            if let Some(Kind::DistanceAxis(origin, _, 1)) = x_axis
+                .checked_sub(1)
+                .and_then(|at| self.objects.get(at))
+                .map(|o| &o.kind)
+            {
+                let unit = match y_axis
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|o| &o.kind)
+                {
+                    Some(Kind::GraphAxis(_, unit, 0)) => Some(*unit),
+                    _ => None,
+                };
+                return [
+                    Some(frame.id),
+                    Some(x_axis),
+                    Some(y_axis),
+                    Some(*origin),
+                    unit,
+                ]
+                .contains(&Some(id));
             }
             let Some(Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001)) = x_axis
                 .checked_sub(1)
@@ -2375,10 +3527,13 @@ impl Document {
         })
     }
     pub fn set_grid_dotted(&mut self, dotted: bool) {
-        if self.active_coordinate_system().is_some() && self.grid_dotted[self.active_page] != dotted
+        if let Some(frame) = self.active_coordinate_system()
+            && self.grid_dotted[self.active_page] != dotted
         {
             self.checkpoint();
             self.grid_dotted[self.active_page] = dotted;
+            self.frame_styles
+                .insert(frame, (self.grid_form[self.active_page], dotted));
         }
     }
     pub fn set_grid_form(&mut self, form: GridForm) -> Result<(), String> {
@@ -2388,9 +3543,63 @@ impl Document {
         if self.grid_form[self.active_page] == form {
             return Ok(());
         }
-        let Kind::CoordinateSystem(_, y_axis) = self.objects[frame - 1].kind else {
+        let Kind::CoordinateSystem(x_axis, y_axis) = self.objects[frame - 1].kind else {
             return Err("Invalid coordinate system".into());
         };
+        if matches!(
+            self.objects.get(x_axis - 1).map(|object| &object.kind),
+            Some(Kind::CircleAxis(_, 1))
+        ) {
+            if form == GridForm::Rectangular {
+                return Err("A unit circle cannot define a rectangular grid".into());
+            }
+            self.checkpoint();
+            self.grid_form[self.active_page] = form;
+            self.frame_styles
+                .insert(frame, (form, self.grid_dotted[self.active_page]));
+            return Ok(());
+        }
+        if let Some(Kind::DistanceAxis(_, distance, 1)) =
+            self.objects.get(x_axis - 1).map(|object| &object.kind)
+        {
+            let unit = match self.objects.get(y_axis - 1).map(|object| &object.kind) {
+                Some(Kind::DistanceAxis(_, _, 0)) if form != GridForm::Square => None,
+                Some(Kind::GraphAxis(_, unit, 0))
+                    if matches!(
+                        self.objects.get(unit.saturating_sub(1)).map(|object| &object.kind),
+                        Some(Kind::DistanceVerticalUnit(host, _, _)) if *host == x_axis
+                    ) =>
+                {
+                    Some(*unit)
+                }
+                _ => return Err("This defining-distance frame cannot use that grid form".into()),
+            };
+            let unit_change = unit.and_then(|unit| {
+                let Kind::DistanceVerticalUnit(_, step, independent) = self.objects[unit - 1].kind
+                else {
+                    return None;
+                };
+                let next = match form {
+                    GridForm::Square => (step, false),
+                    GridForm::Rectangular if !independent => {
+                        (self.defining_distance_pixels(*distance)?, true)
+                    }
+                    GridForm::Rectangular | GridForm::Polar => (step, independent),
+                };
+                Some((unit, next))
+            });
+            if unit.is_some() && unit_change.is_none() {
+                return Err("Invalid defining-distance unit".into());
+            }
+            self.checkpoint();
+            if let Some((unit, (step, independent))) = unit_change {
+                self.objects[unit - 1].kind = Kind::DistanceVerticalUnit(x_axis, step, independent);
+            }
+            self.grid_form[self.active_page] = form;
+            self.frame_styles
+                .insert(frame, (form, self.grid_dotted[self.active_page]));
+            return Ok(());
+        }
         let Some(Kind::GraphAxis(_, y_unit, 0)) = y_axis
             .checked_sub(1)
             .and_then(|at| self.objects.get(at))
@@ -2424,6 +3633,8 @@ impl Document {
         self.checkpoint();
         self.objects[y_unit - 1].kind = Kind::GraphVerticalUnit(x_unit, y_step);
         self.grid_form[self.active_page] = form;
+        self.frame_styles
+            .insert(frame, (form, self.grid_dotted[self.active_page]));
         Ok(())
     }
     pub fn axis_trigonometric(&self) -> bool {
@@ -2459,24 +3670,78 @@ impl Document {
         else {
             return None;
         };
-        let Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001) =
-            self.objects.get(x_axis.checked_sub(1)?)?.kind
-        else {
-            return None;
-        };
-        let Kind::GraphAxis(y_origin, y_unit, 0) = self.objects.get(y_axis.checked_sub(1)?)?.kind
-        else {
-            return None;
-        };
-        if origin != y_origin {
-            return None;
-        }
         let map = |p: Point| GraphPoint { x: p.x, y: p.y };
-        Some(CoordinateFrame {
-            origin: map(self.position(origin)?),
-            x_unit: map(self.position(x_unit)?),
-            y_unit: map(self.position(y_unit)?),
-        })
+        match (
+            self.objects.get(x_axis.checked_sub(1)?)?.kind.clone(),
+            self.objects.get(y_axis.checked_sub(1)?)?.kind.clone(),
+        ) {
+            (
+                Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001),
+                Kind::GraphAxis(y_origin, y_unit, 0),
+            ) if origin == y_origin => Some(CoordinateFrame {
+                origin: map(self.position(origin)?),
+                x_unit: map(self.position(x_unit)?),
+                y_unit: map(self.position(y_unit)?),
+            }),
+            (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) if circle == other => {
+                let (origin, radius) = self.circle_points(circle)?;
+                (radius.is_finite() && radius > 0.0).then_some(CoordinateFrame {
+                    origin: map(origin),
+                    x_unit: GraphPoint {
+                        x: origin.x + radius,
+                        y: origin.y,
+                    },
+                    y_unit: GraphPoint {
+                        x: origin.x,
+                        y: origin.y - radius,
+                    },
+                })
+            }
+            (Kind::DistanceAxis(origin, first, 1), Kind::DistanceAxis(other, second, 0))
+                if origin == other =>
+            {
+                let origin = self.position(origin)?;
+                let x = self.defining_distance_pixels(first)?;
+                let y = self.defining_distance_pixels(second)?;
+                Some(CoordinateFrame {
+                    origin: map(origin),
+                    x_unit: GraphPoint {
+                        x: origin.x + x,
+                        y: origin.y,
+                    },
+                    y_unit: GraphPoint {
+                        x: origin.x,
+                        y: origin.y - y,
+                    },
+                })
+            }
+            (Kind::DistanceAxis(origin, _, 1), Kind::GraphAxis(other, unit, 0))
+                if origin == other
+                    && matches!(
+                        self.objects.get(unit.checked_sub(1)?)?.kind,
+                        Kind::DistanceVerticalUnit(host, _, _) if host == x_axis
+                    ) =>
+            {
+                let origin = self.position(origin)?;
+                let x = self.line_points(x_axis)?.1;
+                Some(CoordinateFrame {
+                    origin: map(origin),
+                    x_unit: map(x),
+                    y_unit: map(self.position(unit)?),
+                })
+            }
+            _ => None,
+        }
+    }
+    fn defining_distance_pixels(&self, id: usize) -> Option<f64> {
+        let kind = &self.objects.get(id.checked_sub(1)?)?.kind;
+        let value = match *kind {
+            Kind::Segment(a, b) => self.position(a)?.distance(self.position(b)?),
+            Kind::SegmentLength(_) => self.segment_length_cm(id)? * 37.79527559055118,
+            Kind::PointDistance(_, _) => self.point_distance_cm(id)? * 37.79527559055118,
+            _ => return None,
+        };
+        (value.is_finite() && value > 0.).then_some(value)
     }
     pub fn slope_value(&self, id: usize) -> Option<f64> {
         let Kind::SlopeMeasurement(line, frame) = self.objects.get(id.checked_sub(1)?)?.kind else {
@@ -2711,6 +3976,9 @@ impl Document {
                         object.tracing,
                         object.midpoint_host,
                         object.visual_style,
+                        self.text_font_state(id),
+                        object.label.clone(),
+                        self.text_rich_template(id),
                     )
                 })
                 .collect(),
@@ -2729,7 +3997,18 @@ impl Document {
         let max_source = clipboard.objects.last().ok_or("Clipboard is empty")?.0;
         let mut ids = vec![0; max_source + 1];
         let mut created = Vec::with_capacity(clipboard.len());
-        for (old_id, kind, visible, tracing, midpoint_host, visual_style) in &clipboard.objects {
+        for (
+            old_id,
+            kind,
+            visible,
+            tracing,
+            midpoint_host,
+            visual_style,
+            text_style,
+            label,
+            rich_text,
+        ) in &clipboard.objects
+        {
             if kind
                 .dependencies()
                 .into_iter()
@@ -2738,10 +4017,22 @@ impl Document {
             {
                 return Err("Clipboard has an unresolved dependency".into());
             }
-            let mut remapped = kind.remap(&ids);
+            let mut remapped = kind.remap_checked(&ids)?;
             if let Kind::Free(ref mut point) = remapped {
                 point.x += 20.;
                 point.y += 20.;
+            }
+            if let Kind::PlainText { ref mut rect, .. } = remapped {
+                rect.left = rect.left.checked_add(20).ok_or("Pasted text is off page")?;
+                rect.top = rect.top.checked_add(20).ok_or("Pasted text is off page")?;
+                rect.right = rect
+                    .right
+                    .checked_add(20)
+                    .ok_or("Pasted text is off page")?;
+                rect.bottom = rect
+                    .bottom
+                    .checked_add(20)
+                    .ok_or("Pasted text is off page")?;
             }
             let id = candidate.objects.len() + 1;
             candidate.objects.push(Object {
@@ -2755,8 +4046,10 @@ impl Document {
                 point_offset: None,
                 constraint_offset: None,
                 header_offset: None,
-                label: None,
+                label: label.clone(),
                 visual_style: *visual_style,
+                text_style_override: text_style.clone(),
+                rich_text_override: rich_text.clone(),
             });
             ids[*old_id] = id;
             created.push(id);
@@ -2801,22 +4094,27 @@ impl Document {
                 break;
             }
         }
-        self.checkpoint();
-        for object in &mut self.objects {
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        for object in &mut candidate.objects {
             if removed.contains(&object.id) {
                 object.deleted = true;
             }
         }
-        if !self.objects.iter().any(|object| {
-            object.page == self.active_page
+        if !candidate.objects.iter().any(|object| {
+            object.page == candidate.active_page
                 && !object.deleted
                 && matches!(object.kind, Kind::CoordinateSystem(_, _))
         }) {
-            self.grid_dotted[self.active_page] = false;
-            self.snap_points[self.active_page] = false;
-            self.grid_form[self.active_page] = GridForm::Square;
+            candidate.grid_dotted[candidate.active_page] = false;
+            candidate.snap_points[candidate.active_page] = false;
+            candidate.grid_form[candidate.active_page] = GridForm::Square;
         }
-        self.selected.clear();
+        candidate.selected.clear();
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        candidate.validate_reparsed(&reparsed)?;
+        *self = candidate;
         Ok(removed.into_iter().collect())
     }
     pub fn set_selected_visibility(&mut self, visible: bool) {
@@ -3043,6 +4341,17 @@ impl Document {
                     };
                     return (point.x.is_finite() && point.y.is_finite()).then_some(point);
                 }
+                if matches!(
+                    kind,
+                    Kind::CircleAxis(_, 0 | 1) | Kind::DistanceAxis(_, _, 0 | 1)
+                ) {
+                    let (start, end, _) = d.line_points(path)?;
+                    let point = Point {
+                        x: start.x + (end.x - start.x) * t,
+                        y: start.y + (end.y - start.y) * t,
+                    };
+                    return (point.x.is_finite() && point.y.is_finite()).then_some(point);
+                }
                 let (start, end) = match kind {
                     Kind::GraphAxis(a, b, 0 | 1 | 0x1_0001)
                     | Kind::Segment(a, b)
@@ -3084,6 +4393,23 @@ impl Document {
                     Some(Point {
                         x: origin.x,
                         y: origin.y - step,
+                    })
+                }
+                Kind::DistanceVerticalUnit(x_axis, step, independent) => {
+                    let Kind::DistanceAxis(origin, distance, 1) =
+                        d.objects.get(x_axis.checked_sub(1)?)?.kind
+                    else {
+                        return None;
+                    };
+                    let origin = go(d, origin, seen)?;
+                    let length = if *independent {
+                        *step
+                    } else {
+                        d.defining_distance_pixels(distance)?
+                    };
+                    Some(Point {
+                        x: origin.x,
+                        y: origin.y - length,
                     })
                 }
                 Kind::PathLiteralPoint(path, t) => on_path(d, *path, *t, seen),
@@ -3364,6 +4690,37 @@ impl Document {
             let result = match object.kind {
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
+                Kind::CircleAxis(circle, axis @ (0 | 1)) => {
+                    let (center, radius) = d.circle_points(circle)?;
+                    let unit = if axis == 1 {
+                        Point {
+                            x: center.x + radius,
+                            y: center.y,
+                        }
+                    } else {
+                        Point {
+                            x: center.x,
+                            y: center.y - radius,
+                        }
+                    };
+                    Some((center, unit, LineMode::Line))
+                }
+                Kind::DistanceAxis(origin, distance, axis @ (0 | 1)) => {
+                    let center = d.position(origin)?;
+                    let length = d.defining_distance_pixels(distance)?;
+                    let unit = if axis == 1 {
+                        Point {
+                            x: center.x + length,
+                            y: center.y,
+                        }
+                    } else {
+                        Point {
+                            x: center.x,
+                            y: center.y - length,
+                        }
+                    };
+                    Some((center, unit, LineMode::Line))
+                }
                 Kind::Line(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::Ray(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Ray)),
                 Kind::Parallel(p, line) | Kind::Perpendicular(p, line) => {
@@ -3580,6 +4937,24 @@ impl Document {
                 }
                 Kind::GraphVerticalUnit(horizontal_unit, step)
             }
+            Some(Kind::DistanceVerticalUnit(x_axis, _, true)) => {
+                let x_axis = *x_axis;
+                let Some(Kind::DistanceAxis(origin, _, 1)) = x_axis
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|object| &object.kind)
+                else {
+                    return false;
+                };
+                let Some(origin) = self.position(*origin) else {
+                    return false;
+                };
+                let step = origin.y - p.y;
+                if !step.is_finite() || step <= 0.0 {
+                    return false;
+                }
+                Kind::DistanceVerticalUnit(x_axis, step, true)
+            }
             Some(Kind::PointOnSegment(host, _)) => {
                 let host = *host;
                 let Some((a, b, LineMode::Segment)) = self.line_points(host) else {
@@ -3746,20 +5121,32 @@ impl Document {
         {
             return Err("Deleting objects in this document cannot be saved safely".into());
         }
-        if self.objects.iter().any(|o| o.deleted)
-            && self.objects.iter().any(|o| {
-                matches!(
-                    o.kind,
-                    Kind::FunctionDefinition(_)
-                        | Kind::FunctionPlot(_, _, _, _, _)
-                        | Kind::PathLiteralPoint(_, _)
-                        | Kind::PathValuePoint(_, _)
-                        | Kind::PlottedPoint(_, _, _, _)
-                )
-            })
+        let first_deleted = self.objects.iter().position(|object| object.deleted);
+        let last_plot_related = self.objects.iter().rposition(|o| {
+            matches!(
+                o.kind,
+                Kind::FunctionDefinition(_)
+                    | Kind::DerivativeFunction(_, _)
+                    | Kind::FunctionPlot(_, _, _, _, _)
+                    | Kind::ParametricPlot(_, _, _, _, _, _, _)
+                    | Kind::PathLiteralPoint(_, _)
+                    | Kind::PathValuePoint(_, _)
+                    | Kind::PlottedPoint(_, _, _, _)
+            )
+        });
+        let only_free_points_deleted = self
+            .objects
+            .iter()
+            .filter(|object| object.deleted)
+            .all(|object| matches!(object.kind, Kind::Free(_)) && object.label.is_none());
+        if first_deleted.is_some_and(|first| last_plot_related.is_some_and(|last| first <= last))
+            && self.objects[first_deleted.unwrap()..]
+                .iter()
+                .any(|object| !object.deleted)
+            && !only_free_points_deleted
         {
             return Err(
-                "Deleting objects in a plot or function document cannot be saved safely".into(),
+                "Deleting an object before a surviving plot or function is not supported".into(),
             );
         }
         if self
@@ -3791,7 +5178,11 @@ impl Document {
                 return Err(format!("Non-finite coordinates in object {}", o.id));
             }
             if let Kind::PlainText { text, rect } = &o.kind {
-                text_object::encode_plain_text_group(text, *rect)?;
+                if let Some(template) = &o.rich_text_override {
+                    template.encode_group(text, *rect)?;
+                } else {
+                    text_object::encode_plain_text_group(text, *rect)?;
+                }
             }
             match &o.kind {
                 Kind::Parameter(group) => {
@@ -3807,7 +5198,7 @@ impl Document {
                             match &o.kind {
                                 Kind::Parameter(parameter) => match group.named_label_value() {
                                     Some((name, _)) => name == parameter.name(),
-                                    None => *source == 1 && parameter.name() == "t[1]",
+                                    None => parameter.name() == "t[1]",
                                 },
                                 _ => false,
                             }
@@ -3818,10 +5209,9 @@ impl Document {
                 }
                 Kind::ValueTablePair(first, second, group) => {
                     TableGroup::parse_pair(group.as_bytes())?;
-                    if (*first, *second) != (2, 1)
-                        || group.pair_source_ids() != Some([2, 1])
-                        || !matches!(self.objects.first().map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[1]")
-                        || !matches!(self.objects.get(1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]")
+                    if group.pair_source_ids() != Some([*first as u32, *second as u32])
+                        || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[1]")
+                        || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]")
                     {
                         return Err("Unsupported two-column table source".into());
                     }
@@ -3906,31 +5296,45 @@ impl Document {
                 return Err(format!("Invalid points in ratio measurement {}", o.id));
             }
             if matches!(o.kind, Kind::GraphHorizontalUnit(_, step) | Kind::GraphVerticalUnit(_, step) if !step.is_finite() || step <= 0.0)
+                || matches!(o.kind, Kind::DistanceVerticalUnit(_, step, _) if !step.is_finite() || step <= 0.0)
                 || matches!(o.kind, Kind::GraphAxis(_, _, axis) if !matches!(axis, 0 | 1 | 0x1_0001))
+                || matches!(o.kind, Kind::CircleAxis(_, axis) if !matches!(axis, 0 | 1))
+                || matches!(o.kind, Kind::DistanceAxis(_, _, axis) if !matches!(axis, 0 | 1))
             {
                 return Err(format!("Invalid graph object {}", o.id));
             }
             if matches!(
                 o.kind,
-                Kind::GraphHorizontalUnit(_, _) | Kind::GraphVerticalUnit(_, _)
+                Kind::GraphHorizontalUnit(_, _)
+                    | Kind::GraphVerticalUnit(_, _)
+                    | Kind::DistanceVerticalUnit(_, _, _)
             ) && self
                 .position(o.id)
                 .is_none_or(|p| !p.x.is_finite() || !p.y.is_finite())
             {
                 return Err(format!("Undefined graph point {}", o.id));
             }
-            if matches!(o.kind, Kind::GraphAxis(_, _, _)) && self.line_points(o.id).is_none() {
+            if matches!(
+                o.kind,
+                Kind::GraphAxis(_, _, _) | Kind::CircleAxis(_, _) | Kind::DistanceAxis(_, _, _)
+            ) && self.line_points(o.id).is_none()
+            {
                 return Err(format!("Undefined graph axis {}", o.id));
             }
             if matches!(o.kind, Kind::CoordinateSystem(_, _)) && self.graph_frame(o.id).is_none() {
                 return Err(format!("Invalid coordinate system {}", o.id));
+            }
+            if let Kind::DerivativeFunction(source, _) = o.kind
+                && (source >= o.id || self.function_expression(source).is_none())
+            {
+                return Err(format!("Invalid derivative source in object {}", o.id));
             }
             if let Kind::FunctionPlot(definition, frame, min, max, samples) = o.kind {
                 if !matches!(
                     self.objects
                         .get(definition.saturating_sub(1))
                         .map(|o| &o.kind),
-                    Some(Kind::FunctionDefinition(_))
+                    Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))
                 ) || self.graph_frame(frame).is_none()
                     || !min.is_finite()
                     || !max.is_finite()
@@ -3939,13 +5343,22 @@ impl Document {
                 {
                     return Err(format!("Invalid function plot {}", o.id));
                 }
-                if o.id > self.source_count
-                    && (min != -5.265208333333335 || max != 5.265208333333335 || samples != 750)
+            }
+            if let Kind::ParametricPlot(x, y, frame, min, max, samples, _) = o.kind {
+                if x == y
+                    || [x, y].into_iter().any(|id| {
+                        !matches!(
+                            self.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                            Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))
+                        )
+                    })
+                    || self.graph_frame(frame).is_none()
+                    || !min.is_finite()
+                    || !max.is_finite()
+                    || min >= max
+                    || !(2..=4096).contains(&samples)
                 {
-                    return Err(format!(
-                        "Cannot encode modified function range in object {}",
-                        o.id
-                    ));
+                    return Err(format!("Invalid parametric plot {}", o.id));
                 }
             }
             if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
@@ -4286,6 +5699,293 @@ impl Document {
         Ok(())
     }
     fn graph_template_group(&self, object: &Object) -> Result<Option<Vec<u8>>, String> {
+        let distance_x_axis = match object.kind {
+            Kind::Free(_)
+                if matches!(
+                    self.objects.get(object.id).map(|next| &next.kind),
+                    Some(Kind::DistanceAxis(origin, _, 1)) if *origin == object.id
+                ) =>
+            {
+                object.id.checked_add(1)
+            }
+            Kind::DistanceAxis(_, _, 1) => Some(object.id),
+            Kind::DistanceAxis(_, _, 0) => object.id.checked_sub(1),
+            Kind::DistanceVerticalUnit(axis, _, _) => Some(axis),
+            Kind::GraphAxis(_, unit, 0) => match self
+                .objects
+                .get(unit.saturating_sub(1))
+                .map(|other| &other.kind)
+            {
+                Some(Kind::DistanceVerticalUnit(axis, _, _)) => Some(*axis),
+                _ => None,
+            },
+            Kind::CoordinateSystem(axis, _)
+                if matches!(
+                    self.objects
+                        .get(axis.saturating_sub(1))
+                        .map(|other| &other.kind),
+                    Some(Kind::DistanceAxis(_, _, 1))
+                ) =>
+            {
+                Some(axis)
+            }
+            _ => None,
+        };
+        if let Some(x_axis_id) = distance_x_axis {
+            let Kind::DistanceAxis(origin_id, first_distance, 1) = self
+                .objects
+                .get(x_axis_id.saturating_sub(1))
+                .ok_or("Missing defining-distance X axis")?
+                .kind
+            else {
+                return Err("Invalid defining-distance X axis".into());
+            };
+            let new_origin =
+                if origin_id.checked_add(1) == Some(x_axis_id) && origin_id > self.source_count {
+                    let point = self
+                        .objects
+                        .get(origin_id - 1)
+                        .ok_or("Missing graph origin")?;
+                    let Kind::Free(position) = point.kind else {
+                        return Err("Invalid defining-distance origin".into());
+                    };
+                    Some(graph::GraphPoint {
+                        x: position.x,
+                        y: position.y,
+                    })
+                } else {
+                    None
+                };
+            let y = self
+                .objects
+                .get(x_axis_id)
+                .ok_or("Missing defining-distance Y axis")?;
+            let (distances, frame_id) = match y.kind {
+                Kind::DistanceAxis(other, second_distance, 0) if other == origin_id => {
+                    (vec![first_distance, second_distance], x_axis_id + 2)
+                }
+                Kind::DistanceVerticalUnit(host, step, _)
+                    if host == x_axis_id && step.is_finite() && step > 0. =>
+                {
+                    let y_axis = self
+                        .objects
+                        .get(x_axis_id + 1)
+                        .ok_or("Missing defining-distance Y axis")?;
+                    if !matches!(y_axis.kind, Kind::GraphAxis(origin, unit, 0) if origin == origin_id && unit == x_axis_id + 1)
+                    {
+                        return Err("Invalid defining-distance Y axis".into());
+                    }
+                    (vec![first_distance], x_axis_id + 3)
+                }
+                _ => return Err("Unsupported defining-distance construction".into()),
+            };
+            let frame = self
+                .objects
+                .get(frame_id - 1)
+                .ok_or("Missing defining-distance frame")?;
+            if !matches!(frame.kind, Kind::CoordinateSystem(a,b) if a == x_axis_id && b == frame_id - 1)
+            {
+                return Err("Invalid defining-distance frame".into());
+            }
+            let (bytes, offsets) =
+                graph::distance_coordinate_groups(x_axis_id, origin_id, &distances, new_origin)?;
+            let first_id = if new_origin.is_some() {
+                origin_id
+            } else {
+                x_axis_id
+            };
+            let index = object
+                .id
+                .checked_sub(first_id)
+                .ok_or("Invalid graph object ID")?;
+            let end = *offsets.get(index + 1).ok_or("Invalid graph object ID")?;
+            let mut group = bytes[offsets[index]..end].to_vec();
+            if !object.visible {
+                group[10] |= 1;
+            }
+            if matches!(object.kind, Kind::CoordinateSystem(_, _)) {
+                let (form, dotted) = self
+                    .frame_styles
+                    .get(&object.id)
+                    .copied()
+                    .unwrap_or((self.grid_form[object.page], self.grid_dotted[object.page]));
+                graph::set_coordinate_system_style(&mut group, form, dotted)?;
+            }
+            if let Kind::DistanceVerticalUnit(_, step, independent) = object.kind {
+                graph::set_distance_vertical_unit_form(&mut group, independent, step)?;
+            }
+            return Ok(Some(group));
+        }
+        let circle_axis_start = match object.kind {
+            Kind::CircleAxis(_, 1) => Some(object.id),
+            Kind::CircleAxis(_, 0) => object.id.checked_sub(1),
+            Kind::CoordinateSystem(x_axis, _)
+                if matches!(
+                    self.objects.get(x_axis.saturating_sub(1)).map(|o| &o.kind),
+                    Some(Kind::CircleAxis(_, 1))
+                ) =>
+            {
+                Some(x_axis)
+            }
+            _ => None,
+        };
+        if let Some(first) = circle_axis_start {
+            if first == 0 {
+                return Err("Invalid unit-circle graph object ID".into());
+            }
+            let [Some(x_axis), Some(y_axis), Some(frame)] = self
+                .objects
+                .get(first - 1..first + 2)
+                .map(|slice| [slice.get(0), slice.get(1), slice.get(2)])
+                .unwrap_or([None; 3])
+            else {
+                return Err("Incomplete unit-circle coordinate system".into());
+            };
+            let Kind::CircleAxis(circle, 1) = x_axis.kind else {
+                return Err("Invalid unit-circle X axis".into());
+            };
+            if !matches!(y_axis.kind, Kind::CircleAxis(other, 0) if other == circle)
+                || !matches!(frame.kind, Kind::CoordinateSystem(a, b) if a == first && b == first + 1)
+            {
+                return Err("Invalid unit-circle coordinate system".into());
+            }
+            let bytes = graph::unit_circle_groups(first, circle)?;
+            let offsets = [0, 116, 232, 312];
+            let index = object
+                .id
+                .checked_sub(first)
+                .ok_or("Invalid graph object ID")?;
+            if index >= 3 {
+                return Err("Invalid graph object ID".into());
+            }
+            let mut group = bytes[offsets[index]..offsets[index + 1]].to_vec();
+            if !object.visible {
+                group[10] |= 1;
+            }
+            if matches!(object.kind, Kind::CoordinateSystem(_, _)) {
+                let (form, dotted) = self
+                    .frame_styles
+                    .get(&object.id)
+                    .copied()
+                    .unwrap_or((self.grid_form[object.page], self.grid_dotted[object.page]));
+                graph::set_coordinate_system_style(&mut group, form, dotted)?;
+            }
+            return Ok(Some(group));
+        }
+        let shared_x_unit = match object.kind {
+            Kind::GraphHorizontalUnit(_, _) => Some(object.id),
+            Kind::GraphAxis(_, unit, 1 | 0x1_0001) => Some(unit),
+            Kind::GraphVerticalUnit(unit, _) => Some(unit),
+            Kind::GraphAxis(_, y_unit, 0) => {
+                match y_unit
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|o| &o.kind)
+                {
+                    Some(Kind::GraphVerticalUnit(unit, _)) => Some(*unit),
+                    _ => None,
+                }
+            }
+            Kind::CoordinateSystem(x_axis, _) => {
+                match x_axis
+                    .checked_sub(1)
+                    .and_then(|at| self.objects.get(at))
+                    .map(|o| &o.kind)
+                {
+                    Some(Kind::GraphAxis(_, unit, 1 | 0x1_0001)) => Some(*unit),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(x_unit_id) = shared_x_unit
+            && x_unit_id > self.source_count
+            && let Some(Kind::GraphHorizontalUnit(origin_id, _)) =
+                self.objects.get(x_unit_id - 1).map(|o| &o.kind)
+            && !(*origin_id > self.source_count && origin_id.checked_add(1) == Some(x_unit_id))
+        {
+            let step: f64 = 37.79527559055118;
+            let [
+                Some(x_unit),
+                Some(x_axis),
+                Some(y_unit),
+                Some(y_axis),
+                Some(frame),
+            ] = self
+                .objects
+                .get(x_unit_id - 1..x_unit_id + 4)
+                .map(|slice| {
+                    [
+                        slice.get(0),
+                        slice.get(1),
+                        slice.get(2),
+                        slice.get(3),
+                        slice.get(4),
+                    ]
+                })
+                .unwrap_or([None; 5])
+            else {
+                return Err("Incomplete coordinate-system group".into());
+            };
+            let origin_id = *origin_id;
+            let y_step = match y_unit.kind {
+                Kind::GraphVerticalUnit(host, value)
+                    if host == x_unit_id && value.is_finite() && value > 0.0 =>
+                {
+                    value
+                }
+                _ => return Err("Unsupported vertical unit".into()),
+            };
+            let form = self
+                .frame_styles
+                .get(&frame.id)
+                .map_or(self.grid_form[object.page], |style| style.0);
+            if !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == origin_id && value == step)
+                || !matches!(x_axis.kind, Kind::GraphAxis(a,b,1 | 0x1_0001) if a == origin_id && b == x_unit_id)
+                || !matches!(y_axis.kind, Kind::GraphAxis(a,b,0) if a == origin_id && b == x_unit_id+2)
+                || !matches!(frame.kind, Kind::CoordinateSystem(a,b) if a == x_unit_id+1 && b == x_unit_id+3)
+            {
+                return Err("Unsupported coordinate-system construction".into());
+            }
+            let point = self
+                .position(origin_id)
+                .ok_or("Undefined coordinate-system origin")?;
+            let bytes = graph::coordinate_system_groups_at_point(
+                x_unit_id,
+                origin_id,
+                GraphPoint {
+                    x: point.x,
+                    y: point.y,
+                },
+            )?;
+            let offsets = [0, 80, 200, 280, 400, 480];
+            let index = object
+                .id
+                .checked_sub(x_unit_id)
+                .ok_or("Invalid graph object ID")?;
+            if index >= 5 {
+                return Err("Invalid graph object ID".into());
+            }
+            let mut group = bytes[offsets[index]..offsets[index + 1]].to_vec();
+            if !object.visible {
+                group[10] |= 1;
+            }
+            if matches!(object.kind, Kind::CoordinateSystem(_, _)) {
+                let (form, dotted) = self
+                    .frame_styles
+                    .get(&object.id)
+                    .copied()
+                    .unwrap_or((self.grid_form[object.page], self.grid_dotted[object.page]));
+                graph::set_coordinate_system_style(&mut group, form, dotted)?;
+            }
+            if matches!(object.kind, Kind::GraphVerticalUnit(_, _)) {
+                graph::set_vertical_unit_form(&mut group, form, y_step)?;
+            }
+            if let Kind::GraphAxis(_, _, axis @ (1 | 0x1_0001)) = object.kind {
+                graph::set_x_axis_trigonometric(&mut group, axis == 0x1_0001)?;
+            }
+            return Ok(Some(group));
+        }
         let first = match object.kind {
             Kind::Free(_) if self.objects.get(object.id).is_some_and(|next| matches!(next.kind, Kind::GraphHorizontalUnit(host, _) if host == object.id)) => Some(object.id),
             Kind::GraphHorizontalUnit(_, _) => object.id.checked_sub(1),
@@ -4326,7 +6026,10 @@ impl Document {
             return Err("Incomplete coordinate-system group".into());
         };
         let step: f64 = 37.79527559055118;
-        let form = self.grid_form[object.page];
+        let form = self
+            .frame_styles
+            .get(&frame.id)
+            .map_or(self.grid_form[object.page], |style| style.0);
         let y_step = match y_unit.kind {
             Kind::GraphVerticalUnit(host, value)
                 if host == first + 1
@@ -4365,7 +6068,12 @@ impl Document {
             group[10] |= 1;
         }
         if matches!(object.kind, Kind::CoordinateSystem(_, _)) {
-            graph::set_coordinate_system_style(&mut group, form, self.grid_dotted[object.page])?;
+            let (form, dotted) = self
+                .frame_styles
+                .get(&object.id)
+                .copied()
+                .unwrap_or((form, self.grid_dotted[object.page]));
+            graph::set_coordinate_system_style(&mut group, form, dotted)?;
         }
         if matches!(object.kind, Kind::GraphVerticalUnit(_, _)) {
             graph::set_vertical_unit_form(&mut group, form, y_step)?;
@@ -4375,6 +6083,63 @@ impl Document {
         }
         Ok(Some(group))
     }
+    fn patch_marked_coordinate_link(&self, mut out: Vec<u8>) -> Result<Vec<u8>, String> {
+        let Some(frame) = self.active_coordinate_system() else {
+            return Ok(out);
+        };
+        let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
+        let rs = records(&out)?;
+        if let Some(link) = rs.iter().find(|record| record.kind == 0x232d) {
+            if link.data.len() != 4 {
+                return Err("Invalid coordinate-system page link".into());
+            }
+            out[link.data.clone()].copy_from_slice(&frame.to_le_bytes());
+        } else {
+            let trailer = rs
+                .iter()
+                .find(|record| record.kind == 0x03e9)
+                .ok_or("Missing document trailer")?
+                .start;
+            let mut link = Vec::new();
+            put_record(&mut link, 0x232d, &frame.to_le_bytes());
+            out.splice(trailer..trailer, link);
+        }
+        Ok(out)
+    }
+    fn patch_defined_coordinate_grid_style(&self, mut out: Vec<u8>) -> Result<Vec<u8>, String> {
+        if !self.objects.iter().skip(self.source_count).any(|object| {
+            !object.deleted
+                && matches!(
+                    object.kind,
+                    Kind::CircleAxis(_, _) | Kind::DistanceAxis(_, _, _)
+                )
+        }) {
+            return Ok(out);
+        }
+        let rs = records(&out)?;
+        let styles: Vec<_> = rs.iter().filter(|record| record.kind == 0x04b3).collect();
+        if styles.iter().any(|record| {
+            record.data.len() >= 4 && out[record.data.start + 2..record.data.start + 4] == [14, 0]
+        }) {
+            return Ok(out);
+        }
+        // Sketchpad adds this page style for circle- and distance-defined frames.
+        // Without it the native app displays the axes but omits the grid lines.
+        let mut style = Vec::new();
+        put_record(
+            &mut style,
+            0x04b3,
+            &[0, 0, 14, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+        );
+        let anchor = styles
+            .last()
+            .copied()
+            .or_else(|| rs.iter().find(|record| record.kind == 0x04b1))
+            .ok_or("Missing page style records")?;
+        let at = anchor.data.end + anchor.data.len() % 2;
+        out.splice(at..at, style);
+        Ok(out)
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         if !self.dirty {
             return Ok(self.original.clone());
@@ -4382,18 +6147,34 @@ impl Document {
         self.can_save()?;
         let rs = records(&self.original)?;
         let mut out = self.original.clone();
+        if let Some(record) = rs.iter().find(|record| record.kind == 0x273a) {
+            if record.data.len() != 2 {
+                return Err("Invalid angle-unit record".into());
+            }
+            out[record.data.start..record.data.end]
+                .copy_from_slice(&[u8::from(!self.angle_unit_radians), 0]);
+        } else if self.angle_unit_radians {
+            return Err("Missing angle-unit record".into());
+        }
         for o in self.objects.iter().take(self.source_count) {
             if let Some(i) = o.header_offset {
                 let mut class = u32_at(&out, i);
-                if matches!(o.kind, Kind::GraphVerticalUnit(_, _))
-                    && self.active_vertical_unit(o.page) == Some(o.id)
-                {
-                    let code = if self.grid_form[o.page] == GridForm::Rectangular {
+                if matches!(o.kind, Kind::GraphVerticalUnit(_, _)) {
+                    let form = self
+                        .coordinate_system_for_object(o.id)
+                        .and_then(|frame| self.frame_styles.get(&frame).copied())
+                        .map_or(self.grid_form[o.page], |style| style.0);
+                    let code = if form == GridForm::Rectangular {
                         55
                     } else {
                         54
                     };
                     class = (class & !0xffff) | code;
+                }
+                if let Kind::DistanceVerticalUnit(_, _, independent) = o.kind {
+                    let code = if independent { 57 } else { 56 };
+                    class =
+                        (class & !0x0004_ffff) | code | if independent { 0 } else { 0x0004_0000 };
                 }
                 if o.visible {
                     class &= !0x1_0000;
@@ -4409,14 +6190,24 @@ impl Document {
             if let Some(i) = o.constraint_offset {
                 match o.kind {
                     Kind::GraphVerticalUnit(_, step)
-                        if self.active_vertical_unit(o.page) == Some(o.id)
-                            && matches!(out.get(i..i + 4), Some([55, 0, 0, 0] | [54, 0, 0, 0])) =>
+                        if matches!(out.get(i..i + 4), Some([55, 0, 0, 0] | [54, 0, 0, 0])) =>
                     {
-                        let code: u16 = if self.grid_form[o.page] == GridForm::Rectangular {
+                        let form = self
+                            .coordinate_system_for_object(o.id)
+                            .and_then(|frame| self.frame_styles.get(&frame).copied())
+                            .map_or(self.grid_form[o.page], |style| style.0);
+                        let code: u16 = if form == GridForm::Rectangular {
                             55
                         } else {
                             54
                         };
+                        out[i..i + 2].copy_from_slice(&code.to_le_bytes());
+                        out[i + 4..i + 12].copy_from_slice(&step.to_le_bytes());
+                    }
+                    Kind::DistanceVerticalUnit(_, step, independent)
+                        if matches!(out.get(i..i + 4), Some([56, 0, 0, 0] | [57, 0, 0, 0])) =>
+                    {
+                        let code: u16 = if independent { 57 } else { 56 };
                         out[i..i + 2].copy_from_slice(&code.to_le_bytes());
                         out[i + 4..i + 12].copy_from_slice(&step.to_le_bytes());
                     }
@@ -4492,16 +6283,7 @@ impl Document {
             .objects
             .iter()
             .take(self.source_count)
-            .filter(|object| {
-                matches!(object.kind, Kind::CoordinateSystem(_, _))
-                    && !object.deleted
-                    && !self.objects.iter().any(|later| {
-                        later.id > object.id
-                            && later.page == object.page
-                            && !later.deleted
-                            && matches!(later.kind, Kind::CoordinateSystem(_, _))
-                    })
-            })
+            .filter(|object| matches!(object.kind, Kind::CoordinateSystem(_, _)) && !object.deleted)
         {
             let header = object
                 .header_offset
@@ -4515,17 +6297,20 @@ impl Document {
                 .take_while(|record| record.kind != 0x7d7)
                 .find(|record| record.kind == 0x0904 && record.data.len() == 8)
                 .ok_or("Missing coordinate-system grid record")?;
-            out[flag.data.start] = self.grid_form[object.page].code();
-            out[flag.data.start + 2] = u8::from(self.grid_dotted[object.page]);
+            let (form, dotted) = self
+                .frame_styles
+                .get(&object.id)
+                .copied()
+                .unwrap_or((self.grid_form[object.page], self.grid_dotted[object.page]));
+            out[flag.data.start] = form.code();
+            out[flag.data.start + 2] = u8::from(dotted);
         }
         for object in self
             .objects
             .iter()
             .take(self.source_count)
             .filter(|object| {
-                !object.deleted
-                    && self.active_x_axis(object.page) == Some(object.id)
-                    && matches!(object.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001))
+                !object.deleted && matches!(object.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001))
             })
         {
             let header = object.header_offset.ok_or("Missing X-axis header")?;
@@ -4565,9 +6350,10 @@ impl Document {
                 .copy_from_slice(&value.to_le_bytes());
         }
         if self.objects.len() == self.source_count {
-            return self.patch_visual_styles(
+            let out = self.patch_marked_coordinate_link(out)?;
+            return self.patch_text_font_overrides(self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
-            );
+            )?);
         }
         let preamble = rs
             .iter()
@@ -4613,7 +6399,11 @@ impl Document {
                 continue;
             }
             if let Kind::PlainText { text, rect } = &o.kind {
-                let mut group = text_object::encode_plain_text_group(text, *rect)?;
+                let mut group = if let Some(template) = &o.rich_text_override {
+                    template.encode_group(text, *rect)?
+                } else {
+                    text_object::encode_plain_text_group(text, *rect)?
+                };
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -4670,11 +6460,37 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::FunctionPlot(definition, frame, _, _, _) = o.kind {
-                let Kind::FunctionDefinition(expression) = self.objects[definition - 1].kind else {
-                    return Err("Invalid function definition".into());
-                };
-                let mut group = function_records::encode_plot_group(expression, definition, frame)?;
+            if let Kind::DerivativeFunction(source, expression) = o.kind {
+                let mut group = function_records::encode_derivative_group(source, expression)?;
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::FunctionPlot(definition, frame, min, max, samples) = o.kind {
+                let expression = self
+                    .function_expression(definition)
+                    .ok_or("Invalid function definition")?;
+                let mut group = function_records::encode_plot_group_with_range(
+                    expression, definition, frame, min, max, samples,
+                )?;
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::ParametricPlot(x, y, frame, min, max, samples, mode) = o.kind {
+                let mut group = function_records::encode_parametric_plot_group(
+                    x,
+                    y,
+                    frame,
+                    min,
+                    max,
+                    samples,
+                    mode == PlotPointsMode::Polar,
+                )?;
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -4977,12 +6793,6 @@ impl Document {
             }
             put_record(&mut added, 0x7d7, &[]);
         }
-        let new_frame = self
-            .objects
-            .iter()
-            .skip(self.source_count)
-            .find(|object| matches!(object.kind, Kind::CoordinateSystem(_, _)))
-            .map(|object| object.id);
         let added_len = added.len();
         out.splice(insert_at..insert_at, added);
         let last_function = self
@@ -4994,39 +6804,30 @@ impl Document {
                 matches!(
                     o.kind,
                     Kind::FunctionDefinition(_)
+                        | Kind::DerivativeFunction(_, _)
                         | Kind::FunctionPlot(_, _, _, _, _)
+                        | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::PlottedPoint(_, _, _, _)
                         | Kind::CoordinateMeasurement { .. }
                 )
             })
             .map(|o| o.id);
-        let mut footer_added = 0;
         if let Some(id) = last_function {
             if let Some(marker) = rs
                 .iter()
                 .find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer)
             {
-                if marker.data.len() != 4 {
-                    return Err("Invalid function marker".into());
+                if marker.data.len() == 4 {
+                    let offset = marker.data.start + added_len;
+                    out[offset..offset + 4].copy_from_slice(&(id as u32).to_le_bytes());
                 }
-                let offset = marker.data.start + added_len;
-                out[offset..offset + 4].copy_from_slice(&(id as u32).to_le_bytes());
             } else {
                 let mut marker = Vec::new();
                 put_record(&mut marker, 0x2328, &(id as u32).to_le_bytes());
-                footer_added = marker.len();
                 out.splice(insert_at + added_len..insert_at + added_len, marker);
             }
         }
-        if let Some(frame) = new_frame {
-            let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
-            let mut page_link = Vec::new();
-            put_record(&mut page_link, 0x232d, &frame.to_le_bytes());
-            out.splice(
-                trailer + added_len + footer_added..trailer + added_len + footer_added,
-                page_link,
-            );
-        }
+        let mut out = self.patch_marked_coordinate_link(out)?;
         records(&out)?;
         if let Some(resource) = picture_resource {
             let resource_at = records(&out)?
@@ -5036,9 +6837,137 @@ impl Document {
                 .start;
             out.splice(resource_at..resource_at, resource);
         }
-        self.patch_visual_styles(
-            self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
-        )
+        self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
+            self.patch_visual_styles(
+                self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
+            )?,
+        )?)
+    }
+    fn patch_text_font_overrides(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let overrides = self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .enumerate()
+            .filter_map(|(ordinal, object)| {
+                object
+                    .text_style_override
+                    .as_ref()
+                    .map(|style| (ordinal, object, style))
+            })
+            .collect::<Vec<_>>();
+        if overrides.is_empty() && self.run_font_families.is_empty() {
+            return Ok(bytes);
+        }
+        if overrides.iter().any(|(_, object, _)| {
+            !matches!(object.kind, Kind::PlainText { .. })
+                && !(is_point_kind(&object.kind) && object.label.is_some())
+        }) {
+            return Err("Only free text and labeled points can have font styles".into());
+        }
+        let rs = records(&bytes)?;
+        let last_family = rs
+            .iter()
+            .filter(|record| record.kind == 0x04b1)
+            .last()
+            .ok_or("Missing font family table")?;
+        let style_records = rs
+            .iter()
+            .filter(|record| record.kind == 0x04b3)
+            .collect::<Vec<_>>();
+        style_records.last().ok_or("Missing font style table")?;
+        let mut known = (0..style_records.len())
+            .map(|index| text_style_records::decode_font_state_at(&bytes, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut families = text_style_records::font_families(&bytes)?;
+        let mut appended_families = Vec::new();
+        let mut appended = Vec::new();
+        let mut targets = Vec::new();
+        for family in &self.run_font_families {
+            if families.contains(family) {
+                return Err("Duplicate pending text font family".into());
+            }
+            if families.len() > u16::MAX as usize {
+                return Err("Too many font families".into());
+            }
+            let payload = text_style_records::encode_font_family_payload(family)?;
+            put_record(&mut appended_families, 0x04b1, &payload);
+            families.push(family.clone());
+        }
+        for (ordinal, _, style) in overrides {
+            let family_index =
+                if let Some(index) = families.iter().position(|name| name == &style.family) {
+                    index
+                } else {
+                    let index = families.len();
+                    if index > u16::MAX as usize {
+                        return Err("Too many font families".into());
+                    }
+                    let payload = text_style_records::encode_font_family_payload(&style.family)?;
+                    put_record(&mut appended_families, 0x04b1, &payload);
+                    families.push(style.family.clone());
+                    index
+                };
+            let index = if let Some(index) = known.iter().position(|known| known == style) {
+                index
+            } else {
+                let family_template = known
+                    .iter()
+                    .take(style_records.len())
+                    .position(|known| known.family == style.family)
+                    .unwrap_or(0);
+                let index = known.len();
+                if index > u16::MAX as usize {
+                    return Err("Too many text styles".into());
+                }
+                let template = &bytes[style_records[family_template].data.clone()];
+                let mut payload = text_style_records::encode_style_payload(template, style)?;
+                payload[..2].copy_from_slice(&(family_index as u16).to_le_bytes());
+                put_record(&mut appended, 0x04b3, &payload);
+                known.push(style.clone());
+                index
+            };
+            targets.push((ordinal, index as u16));
+        }
+        if !appended_families.is_empty() {
+            let insert_at = last_family.data.end + last_family.data.len() % 2;
+            bytes.splice(insert_at..insert_at, appended_families);
+        }
+        if !appended.is_empty() {
+            let rs = records(&bytes)?;
+            let last = rs
+                .iter()
+                .filter(|record| record.kind == 0x04b3)
+                .last()
+                .ok_or("Missing font style table")?;
+            let insert_at = last.data.end + last.data.len() % 2;
+            bytes.splice(insert_at..insert_at, appended);
+        }
+        let rs = records(&bytes)?;
+        let starts = rs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| (record.kind == 0x07d0).then_some(index))
+            .collect::<Vec<_>>();
+        for (ordinal, index) in targets {
+            let start = *starts.get(ordinal).ok_or("Missing styled text object")?;
+            let group = rs[start + 1..]
+                .iter()
+                .take_while(|record| record.kind != 0x07d7)
+                .collect::<Vec<_>>();
+            if !group
+                .iter()
+                .any(|record| matches!(record.kind, 0x08fc | 0x07d5))
+            {
+                return Err("Font style target has no text".into());
+            }
+            let reference = group
+                .iter()
+                .find(|record| record.kind == 0x07d8 && record.data.len() == 2)
+                .ok_or("Missing free-text font reference")?;
+            bytes[reference.data.clone()].copy_from_slice(&index.to_le_bytes());
+        }
+        Ok(bytes)
     }
     fn patch_trace_flags(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let entries = records(&bytes)?;
@@ -5085,6 +7014,10 @@ impl Document {
         let mut ordinal = 0usize;
         let mut current_group: Option<usize> = None;
         let survivors: Vec<&Object> = self.objects.iter().filter(|o| !o.deleted).collect();
+        let mut ids = vec![0; self.objects.len() + 1];
+        for (index, object) in survivors.iter().enumerate() {
+            ids[object.id] = index + 1;
+        }
         for (index, record) in rs.iter().enumerate() {
             if record.kind == 0x07d0 {
                 ordinal += 1;
@@ -5103,16 +7036,64 @@ impl Document {
                 continue;
             }
             let group = &rs[start_index..=index];
-            if let Some(replacement) = match &object.kind {
-                Kind::Parameter(value) => Some(value.as_bytes()),
-                Kind::Calculation(value) => Some(value.as_bytes()),
-                Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
-                    Some(value.as_bytes())
+            if let Some((min, max, samples, polar)) = match object.kind {
+                Kind::FunctionPlot(_, _, min, max, samples) => Some((min, max, samples, None)),
+                Kind::ParametricPlot(_, _, _, min, max, samples, mode) => {
+                    Some((min, max, samples, Some(mode == PlotPointsMode::Polar)))
                 }
                 _ => None,
             } {
-                if bytes[group[0].start..record.data.end] != *replacement {
-                    let mut replacement = replacement.to_vec();
+                let range = group
+                    .iter()
+                    .find(|record| record.kind == 0x0902)
+                    .ok_or("Missing saved plot range")?;
+                let original = &bytes[range.data.clone()];
+                let previous = match polar {
+                    Some(polar) => function_records::decode_parametric_range(original, polar)?,
+                    None => function_records::decode_plot_range(original)?,
+                };
+                if previous != (min, max, samples) {
+                    let mut payload = original.to_vec();
+                    payload[..8].copy_from_slice(&min.to_le_bytes());
+                    payload[8..16].copy_from_slice(&max.to_le_bytes());
+                    payload[16..20].copy_from_slice(&samples.to_le_bytes());
+                    let mut replacement = Vec::new();
+                    put_record(&mut replacement, 0x0902, &payload);
+                    edits.push((
+                        range.start,
+                        range.data.end + original.len() % 2,
+                        replacement,
+                    ));
+                }
+                continue;
+            }
+            if let Kind::FunctionDefinition(expression) | Kind::DerivativeFunction(_, expression) =
+                object.kind
+            {
+                let record = group
+                    .iter()
+                    .find(|record| record.kind == 0x0907)
+                    .ok_or("Missing saved function expression")?;
+                let original = &bytes[record.data.clone()];
+                if function_records::decode_simple_expression(original)? != expression {
+                    edits.push((
+                        record.start,
+                        record.data.end + original.len() % 2,
+                        function_records::encode_expression_record(original, expression)?,
+                    ));
+                }
+                continue;
+            }
+            if let Some(replacement) = match &object.kind {
+                Kind::Parameter(value) => Some(value.as_bytes().to_vec()),
+                Kind::Calculation(value) => Some(value.as_bytes().to_vec()),
+                Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
+                    Some(value.remap_sources(&ids)?.as_bytes().to_vec())
+                }
+                _ => None,
+            } {
+                if bytes[group[0].start..record.data.end] != replacement {
+                    let mut replacement = replacement;
                     if !object.visible {
                         replacement[10] |= 1;
                     }
@@ -5133,12 +7114,27 @@ impl Document {
                     &bytes[rich.data.clone()],
                     &bytes[bbox.data.clone()],
                 )?;
-                if old_text != *text || old_rect != *rect {
-                    let mut replacement = text_object::encode_plain_text_group(text, *rect)?;
-                    if !object.visible {
-                        replacement[10] |= 1;
+                if old_text != *text || old_rect != *rect || object.rich_text_override.is_some() {
+                    let (new_rich, new_bbox) = if let Some(template) = &object.rich_text_override {
+                        template.encode_parts(text, *rect)?
+                    } else {
+                        text_object::encode_from_template(
+                            &bytes[rich.data.clone()],
+                            &bytes[bbox.data.clone()],
+                            text,
+                            *rect,
+                        )?
+                    };
+                    if bytes[rich.data.clone()] != new_rich {
+                        let mut rich_record = Vec::new();
+                        put_record(&mut rich_record, 0x08fc, &new_rich);
+                        edits.push((rich.start, rich.data.end + rich.data.len() % 2, rich_record));
                     }
-                    edits.push((group[0].start, record.data.end, replacement));
+                    if bytes[bbox.data.clone()] != new_bbox {
+                        let mut box_record = Vec::new();
+                        put_record(&mut box_record, 0x0898, &new_bbox);
+                        edits.push((bbox.start, bbox.data.end + bbox.data.len() % 2, box_record));
+                    }
                 }
             }
             if let Some(label) = &object.label {
@@ -5168,28 +7164,42 @@ impl Document {
         records(&bytes)?;
         Ok(bytes)
     }
-    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
-        let data = self.encode()?;
-        let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
-        let had_deletion = self.objects.iter().any(|o| o.deleted);
+    fn validate_reparsed(&self, reparsed: &Self) -> Result<(), String> {
         let mut ids = vec![0; self.objects.len() + 1];
         let mut survivors = Vec::new();
         for object in self.objects.iter().filter(|o| !o.deleted) {
             ids[object.id] = survivors.len() + 1;
             survivors.push(object);
         }
-        if reparsed.snap_points != self.snap_points
+        let expected_kinds = survivors
+            .iter()
+            .map(|object| object.kind.remap_checked(&ids))
+            .collect::<Result<Vec<_>, String>>()?;
+        if reparsed.partial_view && self.safe_structure
+            || reparsed.snap_points != self.snap_points
             || reparsed.grid_dotted != self.grid_dotted
             || reparsed.grid_form != self.grid_form
+            || reparsed.angle_unit_radians != self.angle_unit_radians
+            || reparsed.frame_styles
+                != self
+                    .frame_styles
+                    .iter()
+                    .filter_map(|(id, style)| {
+                        let remapped = ids.get(*id).copied().unwrap_or(0);
+                        (remapped != 0).then_some((remapped, *style))
+                    })
+                    .collect()
+            || reparsed.active_coordinate_system()
+                != self.active_coordinate_system().map(|id| ids[id])
             || reparsed.objects.len() != survivors.len()
             || reparsed
                 .objects
                 .iter()
-                .zip(survivors)
-                .any(|(saved, current)| {
+                .zip(survivors.iter().zip(&expected_kinds))
+                .any(|(saved, (current, expected_kind))| {
                     saved.id != ids[current.id]
                         || saved.page != current.page
-                        || saved.kind != current.kind.remap(&ids)
+                        || saved.kind != *expected_kind
                         || saved.visible != current.visible
                         || saved.label != current.label
                         || saved.visual_style != current.visual_style
@@ -5198,6 +7208,13 @@ impl Document {
         {
             return Err("Serialized sketch does not preserve the edited objects".into());
         }
+        Ok(())
+    }
+    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
+        let data = self.encode()?;
+        let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
+        let had_deletion = self.objects.iter().any(|o| o.deleted);
+        self.validate_reparsed(&reparsed)?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let stem = path.file_name().ok_or("Invalid path")?.to_string_lossy();
         let mut n = 0;
@@ -5224,10 +7241,13 @@ impl Document {
         }
         result?;
         self.objects = reparsed.objects.clone();
+        self.marked_coordinate_system = reparsed.marked_coordinate_system;
+        self.frame_styles = reparsed.frame_styles;
         if had_deletion {
             self.selected.clear();
         }
         self.original = data;
+        self.run_font_families.clear();
         self.source_count = self.objects.len();
         self.path = Some(path.to_path_buf());
         self.safe_structure = reparsed.safe_structure;
@@ -5463,6 +7483,384 @@ mod tests {
             "P"
         );
         assert!(!reopened.partial_view);
+    }
+    #[test]
+    fn styled_text_imports_and_edits_without_changing_other_runs() {
+        for source in [
+            include_bytes!("../tests/fixtures/text_style_bold_off.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/text_style_italic_on.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/text_style_underline_on.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/text_style_larger.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/text_two_objects_first_bold_off_original.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/text_two_objects_second_bold_off_original.gsp")
+                .as_slice(),
+        ] {
+            let doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), source);
+        }
+
+        let original =
+            include_bytes!("../tests/fixtures/text_two_objects_first_bold_off_original.gsp");
+        let mut doc = Document::from_bytes(original, None).unwrap();
+        let other = doc.objects[1].kind.clone();
+        doc.edit_text(1, "Greetings").unwrap();
+        let edited = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&edited, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[1].kind, other);
+        assert!(
+            matches!(&reopened.objects[0].kind, Kind::PlainText { text, .. } if text == "Greetings")
+        );
+        for kind in [0x04b1, 0x04b3, 0x273c] {
+            let payloads = |bytes: &[u8]| {
+                records(bytes)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|record| record.kind == kind)
+                    .map(|record| bytes[record.data].to_vec())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(payloads(&edited), payloads(original));
+        }
+        doc.move_text(1, Point { x: 110., y: 100. }).unwrap();
+        let moved = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!moved.partial_view);
+        assert_eq!(moved.objects[1].kind, other);
+        doc.undo();
+        assert_eq!(doc.encode().unwrap(), edited);
+    }
+    #[test]
+    fn text_formatting_keeps_independent_styles_through_save_undo_and_copy() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_two_objects_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(doc.text_font_state(1).unwrap().bold);
+        doc.selected.insert(1);
+        assert_eq!(
+            doc.toggle_selected_text_style(TextStyleCommand::Bold)
+                .unwrap(),
+            1
+        );
+        assert!(!doc.text_font_state(1).unwrap().bold);
+        assert!(doc.text_font_state(2).unwrap().bold);
+        let one_formatted = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&one_formatted, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(!reopened.text_font_state(1).unwrap().bold);
+        assert!(reopened.text_font_state(2).unwrap().bold);
+        doc.undo();
+        assert!(doc.text_font_state(1).unwrap().bold);
+        doc.redo();
+        assert!(!doc.text_font_state(1).unwrap().bold);
+
+        doc.selected.clear();
+        doc.selected.insert(2);
+        doc.toggle_selected_text_style(TextStyleCommand::Italic)
+            .unwrap();
+        doc.toggle_selected_text_style(TextStyleCommand::Underline)
+            .unwrap();
+        let font = doc.text_font_state(2).unwrap();
+        assert!(font.bold && font.italic && font.underline);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        assert_eq!(pasted, vec![3]);
+        assert_eq!(doc.text_font_state(3).unwrap(), font);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_font_state(3).unwrap(), font);
+        assert_eq!(reopened.text_font_state(2).unwrap(), font);
+        assert!(!reopened.text_font_state(1).unwrap().bold);
+    }
+    #[test]
+    fn mixed_font_families_survive_style_edit_and_copy() {
+        let source = include_bytes!("../tests/fixtures/text_two_font_cjk_first.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), source);
+        assert_eq!(doc.text_font_state(1).unwrap().family, "@Noto Sans CJK JP");
+        assert_eq!(doc.text_font_state(2).unwrap().family, "Tahoma");
+        doc.selected.insert(1);
+        doc.toggle_selected_text_style(TextStyleCommand::Italic)
+            .unwrap();
+        let copied = doc.copy_selected().unwrap();
+        assert_eq!(doc.paste(&copied).unwrap(), vec![3]);
+        doc.selected.clear();
+        doc.selected.insert(2);
+        doc.toggle_selected_text_style(TextStyleCommand::Bold)
+            .unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(
+            reopened.text_font_state(1).unwrap().family,
+            "@Noto Sans CJK JP"
+        );
+        assert!(reopened.text_font_state(1).unwrap().italic);
+        assert_eq!(reopened.text_font_state(2).unwrap().family, "Tahoma");
+        assert!(!reopened.text_font_state(2).unwrap().bold);
+        assert_eq!(reopened.text_font_state(3), reopened.text_font_state(1));
+    }
+    #[test]
+    fn native_mixed_format_text_moves_without_losing_runs() {
+        let source = include_bytes!("../tests/fixtures/text_mixed_bold_italic_he_original.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), source);
+        let runs = doc.text_rich_runs(1).unwrap();
+        assert_eq!(runs[0][0].text, "He");
+        assert_eq!(runs[0][0].style.bold, Some(false));
+        assert_eq!(runs[0][0].style.italic, Some(true));
+        assert_eq!(runs[0][1].text, "llo");
+        doc.edit_text(1, "Hexllo").unwrap();
+        let edited = doc.text_rich_runs(1).unwrap();
+        assert_eq!(edited[0][0].text, "Hex");
+        assert_eq!(edited[0][0].style, runs[0][0].style);
+        assert_eq!(edited[0][1].text, "llo");
+        let edited_file = doc.encode().unwrap();
+        let reopened_edit = Document::from_bytes(&edited_file, None).unwrap();
+        assert_eq!(reopened_edit.text_rich_runs(1).unwrap(), edited);
+        doc.undo();
+        assert_eq!(doc.text_rich_runs(1).unwrap(), runs);
+        doc.move_text(1, Point { x: 140., y: 110. }).unwrap();
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_rich_runs(1).unwrap(), runs);
+        assert_eq!(reopened.encode().unwrap(), encoded);
+
+        doc.selected.insert(1);
+        let clipboard = doc.copy_selected().unwrap();
+        assert_eq!(doc.paste(&clipboard).unwrap(), vec![2]);
+        assert_eq!(doc.text_rich_runs(2).unwrap(), runs);
+        let Kind::PlainText { rect: first, .. } = &doc.objects[0].kind else {
+            unreachable!()
+        };
+        let Kind::PlainText { rect: second, .. } = &doc.objects[1].kind else {
+            unreachable!()
+        };
+        assert_eq!(second.left, first.left + 20);
+        assert_eq!(second.top, first.top + 20);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_rich_runs(2).unwrap(), runs);
+    }
+    #[test]
+    fn substring_size_steps_preserve_native_rich_text() {
+        let source = include_bytes!("../tests/fixtures/text_mixed_size36_he_original.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), source);
+        let original = doc.text_rich_runs(1).unwrap();
+        assert_eq!(original[0][0].style.size_code, Some(36));
+        doc.format_text_range(1, 0, 2, TextStyleCommand::DecreaseSize)
+            .unwrap();
+        assert_eq!(doc.text_rich_runs(1).unwrap()[0][0].style.size_code, None);
+        doc.format_text_range(1, 0, 2, TextStyleCommand::IncreaseSize)
+            .unwrap();
+        assert_eq!(doc.text_rich_runs(1).unwrap(), original);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_rich_runs(1).unwrap(), original);
+    }
+    #[test]
+    fn native_mixed_family_caption_edits_and_reopens() {
+        let source = include_bytes!("../tests/fixtures/text_mixed_adventor_he_original.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), source);
+        assert_eq!(doc.text_font_families().unwrap()[1], "TeX Gyre Adventor");
+        let runs = doc.text_rich_runs(1).unwrap();
+        assert_eq!(runs[0][0].style.family_index, Some(1));
+        doc.edit_text(1, "Hexllo").unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_rich_runs(1).unwrap()[0][0].text, "Hex");
+        assert_eq!(
+            reopened.text_rich_runs(1).unwrap()[0][0].style.family_index,
+            Some(1)
+        );
+    }
+    #[test]
+    fn selected_range_can_add_a_font_family_and_undo_it() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_object_generated_Hello.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.format_text_range_family(1, 0, 2, "TeX Gyre Adventor")
+            .unwrap();
+        assert_eq!(doc.text_font_families().unwrap()[1], "TeX Gyre Adventor");
+        assert_eq!(
+            doc.text_rich_runs(1).unwrap()[0][0].style.family_index,
+            Some(1)
+        );
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.text_rich_runs(1).unwrap(),
+            doc.text_rich_runs(1).unwrap()
+        );
+        doc.undo();
+        assert_eq!(
+            doc.text_rich_runs(1).unwrap()[0][0].style.family_index,
+            None
+        );
+        assert_eq!(doc.text_font_families().unwrap().len(), 1);
+        doc.redo();
+        assert_eq!(
+            doc.text_rich_runs(1).unwrap()[0][0].style.family_index,
+            Some(1)
+        );
+        let path =
+            std::env::temp_dir().join(format!("sketchpad_run_family_{}.gsp", std::process::id()));
+        doc.save_to(&path).unwrap();
+        let first = fs::read(&path).unwrap();
+        doc.save_to(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), first);
+        assert_eq!(doc.text_font_families().unwrap()[1], "TeX Gyre Adventor");
+        fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn selected_caption_range_writes_native_style_markup() {
+        let source = include_bytes!("../tests/fixtures/text_object_generated_Hello.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        doc.format_text_range(1, 0, 2, TextStyleCommand::Bold)
+            .unwrap();
+        let runs = doc.text_rich_runs(1).unwrap();
+        assert_eq!(runs[0][0].text, "He");
+        assert_eq!(runs[0][0].style.bold, Some(false));
+        assert_eq!(runs[0][1].text, "llo");
+        let encoded = doc.encode().unwrap();
+        assert!(
+            encoded
+                .windows(b"<VL<H<SW1<T2xHe>><T3xllo>>>".len())
+                .any(|part| part == b"<VL<H<SW1<T2xHe>><T3xllo>>>")
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_rich_runs(1).unwrap(), runs);
+        doc.format_text_range(1, 0, 2, TextStyleCommand::Italic)
+            .unwrap();
+        assert_eq!(
+            doc.text_rich_runs(1).unwrap()[0][0].style.italic,
+            Some(true)
+        );
+        doc.undo();
+        assert_eq!(doc.text_rich_runs(1).unwrap(), runs);
+        doc.edit_text(1, "Hexllo").unwrap();
+        let edited = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        let edited_runs = edited.text_rich_runs(1).unwrap();
+        assert_eq!(edited_runs[0][0].text, "Hex");
+        assert_eq!(edited_runs[0][0].style.bold, Some(false));
+        assert_eq!(edited_runs[0][1].text, "llo");
+    }
+    #[test]
+    fn selected_text_can_use_new_font_families_independently() {
+        let source = include_bytes!("../tests/fixtures/text_two_objects_generated.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        doc.selected.insert(1);
+        assert_eq!(doc.set_selected_text_family("Arial").unwrap(), 1);
+        doc.toggle_selected_text_style(TextStyleCommand::Italic)
+            .unwrap();
+        assert_eq!(doc.text_font_state(1).unwrap().family, "Arial");
+        assert_eq!(doc.text_font_state(2).unwrap().family, "Tahoma");
+        doc.selected.clear();
+        doc.selected.insert(2);
+        doc.set_selected_text_family("@Noto Sans CJK JP").unwrap();
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_font_state(1).unwrap().family, "Arial");
+        assert!(reopened.text_font_state(1).unwrap().italic);
+        assert_eq!(
+            reopened.text_font_state(2).unwrap().family,
+            "@Noto Sans CJK JP"
+        );
+        assert_eq!(reopened.encode().unwrap(), encoded);
+        assert!(doc.set_selected_text_family("").is_err());
+        assert!(doc.set_selected_text_family("Noto 日本語").is_err());
+        doc.undo();
+        assert_eq!(doc.text_font_state(2).unwrap().family, "Tahoma");
+    }
+    #[test]
+    fn text_size_commands_follow_verified_native_steps() {
+        for (source, size) in [
+            (
+                include_bytes!("../tests/fixtures/text_style_smaller_18_original.gsp").as_slice(),
+                18,
+            ),
+            (
+                include_bytes!("../tests/fixtures/text_style_larger_48_original.gsp").as_slice(),
+                48,
+            ),
+        ] {
+            let doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.text_font_state(1).unwrap().size_code, size);
+            assert_eq!(doc.encode().unwrap(), source);
+        }
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_object_generated_Hello.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.selected.insert(1);
+        for size in [36, 48, 64] {
+            doc.toggle_selected_text_style(TextStyleCommand::IncreaseSize)
+                .unwrap();
+            assert_eq!(doc.text_font_state(1).unwrap().size_code, size);
+        }
+        assert!(
+            doc.toggle_selected_text_style(TextStyleCommand::IncreaseSize)
+                .is_err()
+        );
+        for size in [48, 36, 24, 18, 16, 14] {
+            doc.toggle_selected_text_style(TextStyleCommand::DecreaseSize)
+                .unwrap();
+            assert_eq!(doc.text_font_state(1).unwrap().size_code, size);
+        }
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.text_font_state(1).unwrap().size_code, 14);
+        doc.undo();
+        assert_eq!(doc.text_font_state(1).unwrap().size_code, 16);
+    }
+    #[test]
+    fn point_label_styles_are_independent_and_survive_copy() {
+        let source =
+            include_bytes!("../tests/fixtures/text_two_point_labels_first_bold_off_original.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), source);
+        assert!(!doc.text_font_state(1).unwrap().bold);
+        assert!(doc.text_font_state(2).unwrap().bold);
+
+        doc.selected.insert(2);
+        doc.toggle_selected_text_style(TextStyleCommand::Italic)
+            .unwrap();
+        assert!(doc.text_font_state(2).unwrap().italic);
+        assert!(!doc.text_font_state(1).unwrap().bold);
+        let copied = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&copied).unwrap();
+        assert_eq!(pasted, vec![3]);
+        assert_eq!(doc.objects[2].label, doc.objects[1].label);
+        assert_eq!(doc.text_font_state(3), doc.text_font_state(2));
+        doc.selected.clear();
+        doc.selected.insert(1);
+        doc.toggle_selected_text_style(TextStyleCommand::IncreaseSize)
+            .unwrap();
+        assert_eq!(doc.text_font_state(1).unwrap().size_code, 36);
+        assert_eq!(doc.text_font_state(2).unwrap().size_code, 24);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(!reopened.text_font_state(1).unwrap().bold);
+        assert_eq!(reopened.text_font_state(1).unwrap().size_code, 36);
+        assert!(reopened.text_font_state(2).unwrap().italic);
+        assert_eq!(reopened.text_font_state(3), reopened.text_font_state(2));
+        assert_eq!(reopened.objects[2].label, reopened.objects[1].label);
     }
     #[test]
     fn source_point_label_rename_and_hide_survive_save() {
@@ -6104,6 +8502,89 @@ mod tests {
         assert_eq!(
             parsed.objects.iter().map(|o| &o.kind).collect::<Vec<_>>(),
             wine.objects.iter().map(|o| &o.kind).collect::<Vec<_>>()
+        );
+    }
+    #[test]
+    fn clearing_trailing_function_objects_keeps_savable_state() {
+        let source = include_bytes!("../tests/fixtures/function_plot_square.gsp");
+        let mut plot = Document::from_bytes(source, None).unwrap();
+        plot.selected.insert(8);
+        assert_eq!(plot.clear_selected().unwrap(), vec![8]);
+        let reopened = Document::from_bytes(&plot.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 7);
+        assert!(matches!(
+            reopened.objects[6].kind,
+            Kind::FunctionDefinition(_)
+        ));
+
+        let mut definition = Document::from_bytes(source, None).unwrap();
+        definition.selected.insert(7);
+        assert_eq!(definition.clear_selected().unwrap(), vec![7, 8]);
+        let reopened = Document::from_bytes(&definition.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 6);
+
+        let mut unsafe_edit = Document::from_bytes(source, None).unwrap();
+        unsafe_edit.selected.insert(1);
+        assert!(unsafe_edit.clear_selected().is_err());
+        assert!(!unsafe_edit.dirty);
+        assert_eq!(unsafe_edit.encode().unwrap(), source);
+
+        let mut with_points = Document::from_bytes(source, None).unwrap();
+        let first = with_points.add(Kind::Free(Point { x: 310., y: 190. }));
+        let second = with_points.add(Kind::Free(Point { x: 340., y: 210. }));
+        let mut saved = Document::from_bytes(&with_points.encode().unwrap(), None).unwrap();
+        saved.selected.insert(first);
+        assert_eq!(saved.clear_selected().unwrap(), vec![first]);
+        let reopened = Document::from_bytes(&saved.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[7].kind,
+            Kind::FunctionPlot(_, _, _, _, _)
+        ));
+        assert_eq!(
+            reopened.position(second - 1),
+            Some(Point { x: 340., y: 210. })
+        );
+    }
+    #[test]
+    fn clearing_earlier_point_remaps_table_and_live_path_sources() {
+        let mut original = Document::new();
+        let extra = original.add(Kind::Free(Point { x: 100., y: 100. }));
+        let parameter = original.add_default_parameter((10, 5)).unwrap();
+        original
+            .tabulate_default_parameter(parameter, (10, 38))
+            .unwrap();
+        original
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        original.plot_parameter_on_path(parameter, None).unwrap();
+        let mut saved = Document::from_bytes(&original.encode().unwrap(), None).unwrap();
+        saved.selected.insert(extra);
+        assert_eq!(saved.clear_selected().unwrap(), vec![extra]);
+        let reopened = Document::from_bytes(&saved.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(
+            matches!(&reopened.objects[1].kind, Kind::ValueTable(1, group) if group.source_id() == 1)
+        );
+        assert!(matches!(
+            reopened.objects[8].kind,
+            Kind::PathValuePoint(1, _)
+        ));
+
+        let mut pair = Document::new();
+        let extra = pair.add(Kind::Free(Point { x: 100., y: 100. }));
+        pair.add_default_parameter((10, 5)).unwrap();
+        pair.add_default_parameter((10, 38)).unwrap();
+        pair.tabulate_default_pair((10, 71)).unwrap();
+        let mut saved = Document::from_bytes(&pair.encode().unwrap(), None).unwrap();
+        saved.selected.insert(extra);
+        assert_eq!(saved.clear_selected().unwrap(), vec![extra]);
+        let reopened = Document::from_bytes(&saved.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(
+            matches!(&reopened.objects[2].kind, Kind::ValueTablePair(2, 1, group) if group.pair_source_ids() == Some([2, 1]))
         );
     }
     #[test]
@@ -6981,6 +9462,398 @@ mod tests {
     }
 
     #[test]
+    fn marking_an_older_coordinate_system_updates_the_page_link_and_new_plot_reference() {
+        let source = include_bytes!("../tests/fixtures/graph_two_coordinate_systems_original.gsp");
+        let native_marked =
+            include_bytes!("../tests/fixtures/graph_mark_coordinate_system_original.gsp");
+        let native = Document::from_bytes(native_marked, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.active_coordinate_system(), Some(9));
+        assert_eq!(native.encode().unwrap(), native_marked);
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.active_coordinate_system(), Some(14));
+        assert_eq!(doc.coordinate_system_for_object(4), Some(9));
+        assert_eq!(doc.coordinate_system_for_object(1), Some(14));
+        assert_eq!(doc.encode().unwrap(), source);
+
+        assert_eq!(doc.mark_coordinate_system(4).unwrap(), 9);
+        assert_eq!(doc.active_coordinate_system(), Some(9));
+        doc.undo();
+        assert_eq!(doc.active_coordinate_system(), Some(14));
+        doc.redo();
+        assert_eq!(doc.active_coordinate_system(), Some(9));
+        let marked = doc.encode().unwrap();
+        let mut expected = source.to_vec();
+        let link = records(source)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x232d)
+            .unwrap();
+        expected[link.data].copy_from_slice(&9_u32.to_le_bytes());
+        assert_eq!(marked, expected);
+        let reopened = Document::from_bytes(&marked, None).unwrap();
+        assert_eq!(reopened.active_coordinate_system(), Some(9));
+
+        let point = doc
+            .plot_points_at(PlotPointsMode::Cartesian, [1.0, 2.0])
+            .unwrap();
+        assert!(matches!(
+            doc.objects[point - 1].kind,
+            Kind::PlottedPoint(_, 9, _, _)
+        ));
+        let plotted = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(plotted.active_coordinate_system(), Some(9));
+        assert!(matches!(
+            plotted.objects[point - 1].kind,
+            Kind::PlottedPoint(_, 9, _, _)
+        ));
+    }
+
+    #[test]
+    fn selected_point_can_define_a_second_coordinate_system() {
+        let source = include_bytes!("../tests/fixtures/graph_defined_coordinate_system.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        let frame = doc.add_coordinate_system_at_point(1).unwrap();
+        assert_eq!(frame, 14);
+        assert_eq!(doc.active_coordinate_system(), Some(14));
+        assert_eq!(doc.objects.len(), 14);
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.active_coordinate_system(), Some(14));
+        assert_eq!(
+            reopened.objects[9].kind,
+            Kind::GraphHorizontalUnit(1, 37.79527559055118)
+        );
+        assert_eq!(reopened.objects[13].kind, Kind::CoordinateSystem(11, 13));
+        assert_eq!(reopened.graph_frame(14).unwrap().origin.x, 150.0);
+    }
+
+    #[test]
+    fn circle_defined_coordinate_system_tracks_its_radius_and_round_trips() {
+        let native = include_bytes!("../tests/fixtures/graph_unit_circle_original.gsp");
+        let mut original = Document::from_bytes(native, None).unwrap();
+        assert!(!original.partial_view);
+        assert_eq!(original.encode().unwrap(), native);
+        assert_eq!(original.active_coordinate_system(), Some(6));
+        let radius = original.circle_points(3).unwrap().1;
+        let frame = original.graph_frame(6).unwrap();
+        assert!((frame.x_unit.x - frame.origin.x - radius).abs() < 1e-12);
+        assert!((frame.origin.y - frame.y_unit.y - radius).abs() < 1e-12);
+        assert!(original.move_point(2, Point { x: 383., y: 217. }));
+        let moved = original.graph_frame(6).unwrap();
+        assert!((moved.x_unit.x - moved.origin.x - 60.).abs() < 1e-12);
+
+        let mut generated =
+            Document::from_bytes(include_bytes!("../tests/fixtures/circle.gsp"), None).unwrap();
+        assert_eq!(generated.add_coordinate_system_from_circle(3).unwrap(), 6);
+        let bytes = generated.encode().unwrap();
+        let native_styles: Vec<_> = records(native)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x04b3)
+            .collect();
+        let generated_styles: Vec<_> = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x04b3)
+            .collect();
+        assert_eq!(generated_styles.len(), 2);
+        assert_eq!(
+            &bytes[generated_styles[1].data.clone()],
+            &native[native_styles[1].data.clone()]
+        );
+        let mut reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[3].kind, Kind::CircleAxis(3, 1));
+        assert_eq!(reopened.objects[4].kind, Kind::CircleAxis(3, 0));
+        assert_eq!(reopened.objects[5].kind, Kind::CoordinateSystem(4, 5));
+        assert_eq!(reopened.active_coordinate_system(), Some(6));
+        assert_eq!(reopened.graph_frame(6), generated.graph_frame(6));
+        assert!(reopened.set_grid_form(GridForm::Rectangular).is_err());
+        reopened.set_grid_form(GridForm::Polar).unwrap();
+        let polar = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+        assert_eq!(polar.grid_form[0], GridForm::Polar);
+    }
+
+    #[test]
+    fn distance_defined_frames_decode_and_follow_their_sources() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/graph_unit_segment_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/graph_unit_segment_point_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/graph_two_segments_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/graph_two_segments_point_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/graph_unit_distance_value_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/graph_unit_segment_dragged_by_wine.gsp").as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            assert!(
+                doc.graph_frame(doc.active_coordinate_system().unwrap())
+                    .is_some()
+            );
+        }
+        let mut square = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_unit_segment_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let original = square.graph_frame(8).unwrap();
+        assert!((original.x_unit.x - original.origin.x - 188.73261509341728).abs() < 1e-6);
+        assert!((original.origin.y - original.y_unit.y - 188.73261509341728).abs() < 1e-6);
+        square.move_point(2, Point { x: 168., y: 204. });
+        let moved = square.graph_frame(8).unwrap();
+        assert!((moved.x_unit.x - moved.origin.x - 100.).abs() < 1e-9);
+        assert!((moved.origin.y - moved.y_unit.y - 100.).abs() < 1e-9);
+        let saved_square = Document::from_bytes(&square.encode().unwrap(), None).unwrap();
+        assert_eq!(saved_square.graph_frame(8), Some(moved));
+        square.set_grid_visible(false);
+        assert!(!square.is_displayed(4));
+        assert!(square.is_displayed(3));
+        let native_dragged = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_unit_segment_dragged_by_wine.gsp"),
+            None,
+        )
+        .unwrap();
+        let dragged_frame = native_dragged.graph_frame(8).unwrap();
+        assert!(
+            (dragged_frame.x_unit.x - dragged_frame.origin.x - 192f64.hypot(103.)).abs() < 1e-9
+        );
+        assert!(
+            (dragged_frame.origin.y - dragged_frame.y_unit.y - 192f64.hypot(103.)).abs() < 1e-9
+        );
+
+        let mut rectangular = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_segments_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let frame = rectangular.graph_frame(10).unwrap();
+        assert_eq!(frame.x_unit.x - frame.origin.x, 100.);
+        assert_eq!(frame.origin.y - frame.y_unit.y, 150.);
+        rectangular.move_point(5, Point { x: 350., y: 200. });
+        let changed = rectangular.graph_frame(10).unwrap();
+        assert_eq!(changed.x_unit.x - changed.origin.x, 100.);
+        assert_eq!(changed.origin.y - changed.y_unit.y, 200.);
+    }
+
+    #[test]
+    fn generated_distance_defined_frames_reopen_with_their_grid_style() {
+        let sources: [(&[u8], Option<usize>, &[usize], usize, GridForm); 6] = [
+            (
+                include_bytes!("../tests/fixtures/segment.gsp"),
+                None,
+                &[3],
+                8,
+                GridForm::Square,
+            ),
+            (
+                include_bytes!("../tests/fixtures/segment.gsp"),
+                Some(2),
+                &[3],
+                7,
+                GridForm::Square,
+            ),
+            (
+                include_bytes!("../tests/fixtures/graph_two_segments_base.gsp"),
+                None,
+                &[3, 6],
+                10,
+                GridForm::Rectangular,
+            ),
+            (
+                include_bytes!("../tests/fixtures/graph_two_segments_base.gsp"),
+                Some(1),
+                &[3, 6],
+                9,
+                GridForm::Rectangular,
+            ),
+            (
+                include_bytes!("../tests/fixtures/wine_point_distance.gsp"),
+                None,
+                &[6],
+                11,
+                GridForm::Square,
+            ),
+            (
+                include_bytes!("../tests/fixtures/wine_segment_length.gsp"),
+                None,
+                &[4],
+                9,
+                GridForm::Square,
+            ),
+        ];
+        for (source, origin, distances, expected_id, form) in sources {
+            let mut doc = Document::from_bytes(source, None).unwrap();
+            assert_eq!(
+                doc.add_coordinate_system_from_distances(
+                    origin,
+                    distances,
+                    Point { x: 199., y: 125. },
+                )
+                .unwrap(),
+                expected_id
+            );
+            let bytes = doc.encode().unwrap();
+            let reopened = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.active_coordinate_system(), Some(expected_id));
+            assert_eq!(reopened.grid_form[0], form);
+            assert_eq!(
+                reopened.graph_frame(expected_id),
+                doc.graph_frame(expected_id)
+            );
+            assert!(records(&bytes).unwrap().iter().any(|record| {
+                record.kind == 0x04b3
+                    && bytes[record.data.start + 2..record.data.start + 4] == [14, 0]
+            }));
+        }
+        let polar = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_unit_segment_polar_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(polar.grid_form[0], GridForm::Polar);
+    }
+
+    #[test]
+    fn one_distance_rectangular_unit_edits_and_grid_form_conversions_round_trip() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/graph_unit_segment_rectangular_original.gsp")
+                .as_slice(),
+            include_bytes!(
+                "../tests/fixtures/graph_unit_segment_rectangular_to_square_original.gsp"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../tests/fixtures/graph_unit_segment_rectangular_to_polar_original.gsp"
+            )
+            .as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let mut generated = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_unit_segment_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        generated.set_grid_form(GridForm::Rectangular).unwrap();
+        assert!(generated.is_displayed(6));
+        let rectangular = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert_eq!(rectangular.grid_form[0], GridForm::Rectangular);
+        assert_eq!(
+            rectangular.objects[5].kind,
+            Kind::DistanceVerticalUnit(5, 168f64.hypot(86.), true)
+        );
+        assert_eq!(rectangular.graph_frame(8), generated.graph_frame(8));
+
+        let mut edited = rectangular;
+        edited.move_point(2, Point { x: 168., y: 204. });
+        let frame = edited.graph_frame(8).unwrap();
+        assert_eq!(frame.x_unit.x - frame.origin.x, 100.);
+        assert!((frame.origin.y - frame.y_unit.y - 168f64.hypot(86.)).abs() < 1e-9);
+        assert!(edited.move_point(6, Point { x: 199., y: 45. }));
+        let moved = edited.graph_frame(8).unwrap();
+        assert_eq!(moved.origin.y - moved.y_unit.y, 80.);
+        let saved = Document::from_bytes(&edited.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.graph_frame(8), Some(moved));
+
+        let mut polar_edited = saved;
+        polar_edited.set_grid_form(GridForm::Polar).unwrap();
+        let polar = Document::from_bytes(&polar_edited.encode().unwrap(), None).unwrap();
+        assert_eq!(polar.grid_form[0], GridForm::Polar);
+        assert_eq!(
+            polar.objects[5].kind,
+            Kind::DistanceVerticalUnit(5, 80., true)
+        );
+        assert_eq!(
+            polar.graph_frame(8).unwrap().origin.y - polar.graph_frame(8).unwrap().y_unit.y,
+            80.
+        );
+
+        edited.set_grid_form(GridForm::Square).unwrap();
+        let mut square = Document::from_bytes(&edited.encode().unwrap(), None).unwrap();
+        assert_eq!(square.grid_form[0], GridForm::Square);
+        assert_eq!(
+            square.objects[5].kind,
+            Kind::DistanceVerticalUnit(5, 80., false)
+        );
+        assert_eq!(
+            square.graph_frame(8).unwrap().origin.y - square.graph_frame(8).unwrap().y_unit.y,
+            100.
+        );
+        square.set_grid_form(GridForm::Polar).unwrap();
+        let dependent_polar = Document::from_bytes(&square.encode().unwrap(), None).unwrap();
+        assert_eq!(dependent_polar.grid_form[0], GridForm::Polar);
+        assert_eq!(
+            dependent_polar.objects[5].kind,
+            Kind::DistanceVerticalUnit(5, 80., false)
+        );
+        assert_eq!(
+            dependent_polar.graph_frame(8).unwrap().origin.y
+                - dependent_polar.graph_frame(8).unwrap().y_unit.y,
+            100.
+        );
+    }
+
+    #[test]
+    fn two_distance_frame_can_switch_between_rectangular_and_polar() {
+        let native = include_bytes!("../tests/fixtures/graph_two_segments_polar_original.gsp");
+        let parsed = Document::from_bytes(native, None).unwrap();
+        assert!(!parsed.partial_view);
+        assert_eq!(parsed.grid_form[0], GridForm::Polar);
+        assert_eq!(parsed.encode().unwrap(), native);
+
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_segments_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(doc.set_grid_form(GridForm::Square).is_err());
+        doc.set_grid_form(GridForm::Polar).unwrap();
+        let saved = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.grid_form[0], GridForm::Polar);
+        assert_eq!(saved.graph_frame(10), doc.graph_frame(10));
+        doc.set_grid_form(GridForm::Rectangular).unwrap();
+        assert_eq!(doc.grid_form[0], GridForm::Rectangular);
+    }
+
+    #[test]
+    fn marking_another_frame_preserves_each_frames_grid_form() {
+        let source = include_bytes!("../tests/fixtures/graph_two_coordinate_systems_original.gsp");
+        let mut doc = Document::from_bytes(source, None).unwrap();
+        doc.set_grid_form(GridForm::Rectangular).unwrap();
+        assert_eq!(
+            doc.frame_styles.get(&14),
+            Some(&(GridForm::Rectangular, false))
+        );
+        doc.mark_coordinate_system(4).unwrap();
+        assert_eq!(doc.grid_form[0], GridForm::Square);
+        assert_eq!(doc.frame_styles.get(&9), Some(&(GridForm::Square, false)));
+        assert!(!doc.is_displayed(7));
+        assert!(doc.is_displayed(12));
+        let encoded = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.active_coordinate_system(), Some(9));
+        assert_eq!(
+            reopened.frame_styles.get(&9),
+            Some(&(GridForm::Square, false))
+        );
+        assert_eq!(
+            reopened.frame_styles.get(&14),
+            Some(&(GridForm::Rectangular, false))
+        );
+        assert!(!reopened.is_displayed(7));
+        assert!(reopened.is_displayed(12));
+        assert_eq!(reopened.objects[11].kind, doc.objects[11].kind);
+    }
+
+    #[test]
     fn dotted_grid_matches_original_and_survives_undo_and_save() {
         let original = fs::read("tests/fixtures/graph_dotted_grid_original.gsp").unwrap();
         let parsed = Document::from_bytes(&original, None).unwrap();
@@ -7028,7 +9901,7 @@ mod tests {
         let mut snapped = Document::from_bytes(&snapped, None).unwrap();
         assert!(!snapped.partial_view);
         assert!(snapped.grid_enabled());
-        assert!(!snapped.grid_visible());
+        assert!(snapped.grid_visible());
         assert_eq!(snapped.snap_points, vec![true]);
         assert_eq!(
             snapped.position(1),
@@ -7207,10 +10080,35 @@ mod tests {
                 include_bytes!("../tests/fixtures/function_plot_square.gsp").as_slice(),
                 SimpleFunction::Square,
             ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_x_plus_1.gsp").as_slice(),
+                SimpleFunction::parse("x+1").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_two_times_x_plus_1.gsp").as_slice(),
+                SimpleFunction::parse("2*(x+1)").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_x_plus_half.gsp").as_slice(),
+                SimpleFunction::parse("x+0.5").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_sin_original.gsp").as_slice(),
+                SimpleFunction::parse("sin(x)").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_cos_original.gsp").as_slice(),
+                SimpleFunction::parse("cos(x)").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_tan_original.gsp").as_slice(),
+                SimpleFunction::parse("tan(x)").unwrap(),
+            ),
         ] {
             let mut doc = Document::from_bytes(source, None).unwrap();
             assert!(!doc.partial_view);
             assert_eq!(doc.objects[6].kind, Kind::FunctionDefinition(expression));
+            assert_eq!(doc.angle_unit_radians, expression.uses_trigonometry());
             assert!(matches!(
                 doc.objects[7].kind,
                 Kind::FunctionPlot(7, 6, _, _, 750)
@@ -7225,6 +10123,232 @@ mod tests {
             assert!(!saved.partial_view);
             assert_eq!(saved.objects[7].kind, doc.objects[7].kind);
         }
+    }
+
+    #[test]
+    fn native_derivatives_roundtrip_and_source_edit_refreshes_cached_formula() {
+        for (source, expected_source, derivative) in [
+            (
+                include_bytes!("../tests/fixtures/function_derivative_identity_original.gsp")
+                    .as_slice(),
+                1,
+                SimpleFunction::parse("1").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_derivative_square_original.gsp")
+                    .as_slice(),
+                2,
+                SimpleFunction::parse("2*x").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_derivative_cubic_original.gsp")
+                    .as_slice(),
+                1,
+                SimpleFunction::parse("3*x^2").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_derivative_sine_original.gsp")
+                    .as_slice(),
+                7,
+                SimpleFunction::parse("cos(x)").unwrap(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_derivative_sine_degrees_original.gsp")
+                    .as_slice(),
+                7,
+                SimpleFunction::parse("cos(x)").unwrap(),
+            ),
+        ] {
+            let doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(
+                doc.objects.last().unwrap().kind,
+                Kind::DerivativeFunction(expected_source, derivative)
+            );
+            assert_eq!(doc.encode().unwrap(), source);
+        }
+
+        let native = include_bytes!("../tests/fixtures/function_derivative_square_original.gsp");
+        let mut doc = Document::from_bytes(native, None).unwrap();
+        doc.set_function_expression(2, SimpleFunction::parse("x^3").unwrap())
+            .unwrap();
+        assert_eq!(
+            doc.objects[2].kind,
+            Kind::DerivativeFunction(2, SimpleFunction::parse("3*x^2").unwrap())
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[2].kind, doc.objects[2].kind);
+        doc.undo();
+        assert_eq!(doc.encode().unwrap(), native);
+    }
+
+    #[test]
+    fn generated_derivative_can_be_plotted_and_reopened() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parametric_two_functions_moved_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let derivative = doc.add_derivative_function(2).unwrap();
+        assert_eq!(derivative, 3);
+        assert_eq!(
+            doc.objects[2].kind,
+            Kind::DerivativeFunction(2, SimpleFunction::parse("2*x").unwrap())
+        );
+        let plot = doc
+            .plot_function(derivative, Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(plot, 10);
+        let before = doc.function_plot_points(plot, 5).unwrap();
+        doc.set_function_expression(2, SimpleFunction::parse("x^3").unwrap())
+            .unwrap();
+        let after = doc.function_plot_points(plot, 5).unwrap();
+        assert_ne!(after, before);
+        assert_eq!(
+            doc.objects[2].kind,
+            Kind::DerivativeFunction(2, SimpleFunction::parse("3*x^2").unwrap())
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[2].kind, doc.objects[2].kind);
+        assert_eq!(reopened.objects[plot - 1].kind, doc.objects[plot - 1].kind);
+        assert_eq!(reopened.function_plot_points(plot, 5).unwrap(), after);
+
+        let mut parametric = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_derivative_square_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let curve = parametric
+            .plot_parametric_curve(
+                1,
+                3,
+                PlotPointsMode::Cartesian,
+                -2.,
+                2.,
+                Point { x: 199., y: 125. },
+            )
+            .unwrap();
+        assert_eq!(curve, 10);
+        let reopened = Document::from_bytes(&parametric.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.objects[curve - 1].kind,
+            parametric.objects[curve - 1].kind
+        );
+
+        let mut degrees = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_plot_sin_degrees_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let derivative = degrees
+            .add_derivative_function_with_angle_unit(7, false)
+            .unwrap();
+        assert!(!degrees.angle_unit_radians);
+        let reopened = Document::from_bytes(&degrees.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(!reopened.angle_unit_radians);
+        assert_eq!(
+            reopened.objects[derivative - 1].kind,
+            degrees.objects[derivative - 1].kind
+        );
+    }
+
+    #[test]
+    fn adding_trigonometric_function_sets_radians_and_undo_restores_units() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_base_frame.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!doc.angle_unit_radians);
+        let sine = SimpleFunction::parse("sin(x)").unwrap();
+        doc.plot_new_function(sine, Point { x: 199., y: 125. })
+            .unwrap();
+        assert!(doc.angle_unit_radians);
+        assert!(
+            (doc.function_plot_points(8, 3).unwrap()[1].y - doc.graph_frame(6).unwrap().origin.y)
+                .abs()
+                < 1e-9
+        );
+        let saved = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!saved.partial_view);
+        assert!(saved.angle_unit_radians);
+        assert_eq!(saved.objects[6].kind, Kind::FunctionDefinition(sine));
+        doc.undo();
+        assert!(!doc.angle_unit_radians);
+        doc.redo();
+        assert!(doc.angle_unit_radians);
+    }
+
+    #[test]
+    fn degree_based_trigonometric_plot_imports_and_reopens() {
+        let native = include_bytes!("../tests/fixtures/function_plot_sin_degrees_original.gsp");
+        let imported = Document::from_bytes(native, None).unwrap();
+        assert!(!imported.partial_view);
+        assert!(!imported.angle_unit_radians);
+        assert_eq!(imported.encode().unwrap(), native);
+        let sine = SimpleFunction::parse("sin(x)").unwrap();
+        assert_eq!(imported.objects[6].kind, Kind::FunctionDefinition(sine));
+
+        let mut generated = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_base_frame.gsp"),
+            None,
+        )
+        .unwrap();
+        generated
+            .plot_new_function_with_angle_unit(sine, Point { x: 199., y: 125. }, false)
+            .unwrap();
+        assert!(!generated.angle_unit_radians);
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(!reopened.angle_unit_radians);
+        assert_eq!(reopened.objects[6].kind, imported.objects[6].kind);
+        assert_eq!(
+            reopened.function_plot_points(8, 3),
+            imported.function_plot_points(8, 3)
+        );
+    }
+
+    #[test]
+    fn discontinuous_function_plots_leave_asymptote_gaps() {
+        for (source, poles) in [
+            (
+                include_bytes!("../tests/fixtures/function_plot_reciprocal_original.gsp")
+                    .as_slice(),
+                vec![0.0],
+            ),
+            (
+                include_bytes!("../tests/fixtures/function_plot_tan_original.gsp").as_slice(),
+                vec![
+                    -3.0 * std::f64::consts::FRAC_PI_2,
+                    -std::f64::consts::FRAC_PI_2,
+                    std::f64::consts::FRAC_PI_2,
+                    3.0 * std::f64::consts::FRAC_PI_2,
+                ],
+            ),
+        ] {
+            let doc = Document::from_bytes(source, None).unwrap();
+            assert!(!doc.partial_view);
+            let frame = doc.graph_frame(6).unwrap();
+            let segments = doc.function_plot_segments(8, 384).unwrap();
+            assert!(segments.len() < 383);
+            for (a, b) in segments {
+                let x0 = frame.coordinates(GraphPoint { x: a.x, y: a.y }).unwrap().x;
+                let x1 = frame.coordinates(GraphPoint { x: b.x, y: b.y }).unwrap().x;
+                for pole in &poles {
+                    assert!(!(x0 < *pole && x1 > *pole));
+                }
+            }
+        }
+        let smooth = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_plot_square.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(smooth.function_plot_segments(8, 384).unwrap().len(), 383);
     }
 
     #[test]
@@ -7264,6 +10388,314 @@ mod tests {
         assert_eq!(
             edited.function_plot_points(plot, 3).unwrap()[1],
             Point { x: 228., y: 140. }
+        );
+    }
+
+    #[test]
+    fn plot_existing_function_reuses_definition_and_reopens() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_definition_identity.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(doc.plot_function(6, Point { x: 199., y: 125. }).is_err());
+        let plot = doc.plot_function(7, Point { x: 199., y: 125. }).unwrap();
+        assert_eq!(plot, 8);
+        assert_eq!(doc.objects.len(), 8);
+        assert!(matches!(
+            doc.objects[7].kind,
+            Kind::FunctionPlot(7, 6, _, _, 750)
+        ));
+        let encoded = doc.encode().unwrap();
+        assert_eq!(
+            encoded,
+            include_bytes!("../tests/fixtures/function_plot_existing_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.objects[6].kind,
+            Kind::FunctionDefinition(SimpleFunction::Identity)
+        );
+        assert_eq!(reopened.objects[7].kind, doc.objects[7].kind);
+        doc.undo();
+        assert_eq!(doc.objects.len(), 7);
+        doc.redo();
+        assert_eq!(doc.objects.len(), 8);
+
+        let mut fresh = Document::new();
+        let definition = fresh
+            .add_function_definition(SimpleFunction::Square)
+            .unwrap();
+        assert_eq!(definition, 1);
+        let plot = fresh
+            .plot_function(definition, Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(plot, 8);
+        assert!(matches!(
+            fresh.objects[7].kind,
+            Kind::FunctionPlot(1, 7, _, _, 750)
+        ));
+        let reopened = Document::from_bytes(&fresh.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, fresh.objects[7].kind);
+    }
+
+    #[test]
+    fn editing_saved_function_updates_plot_and_survives_reopen() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_plot_square.gsp"),
+            None,
+        )
+        .unwrap();
+        let before = doc.function_plot_points(8, 3).unwrap()[1];
+        let expression = SimpleFunction::parse("x+1").unwrap();
+        assert!(doc.set_function_expression(8, expression).is_err());
+        doc.set_function_expression(7, expression).unwrap();
+        let after = doc.function_plot_points(8, 3).unwrap()[1];
+        assert!((after.x - before.x).abs() < 1e-9);
+        assert!((after.y - before.y + 37.79527559055118).abs() < 1e-9);
+        let saved = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.objects[6].kind,
+            Kind::FunctionDefinition(expression)
+        );
+        assert_eq!(reopened.function_plot_points(8, 3).unwrap()[1], after);
+        doc.undo();
+        assert_eq!(doc.function_plot_points(8, 3).unwrap()[1], before);
+        doc.redo();
+        assert_eq!(doc.function_plot_points(8, 3).unwrap()[1], after);
+
+        let compound = SimpleFunction::parse("2*(x+1)").unwrap();
+        doc.set_function_expression(7, compound).unwrap();
+        assert_eq!(
+            doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/function_plot_edited_compound_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[6].kind, Kind::FunctionDefinition(compound));
+        assert!(!reopened.partial_view);
+
+        let sine = SimpleFunction::parse("sin(x)").unwrap();
+        doc.set_function_expression_with_angle_unit(7, sine, true)
+            .unwrap();
+        assert!(doc.angle_unit_radians);
+        assert_eq!(
+            doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/function_plot_edited_sine_radians_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects[6].kind, Kind::FunctionDefinition(sine));
+        assert!(reopened.angle_unit_radians);
+        doc.undo();
+        assert_eq!(doc.objects[6].kind, Kind::FunctionDefinition(compound));
+        assert!(!doc.angle_unit_radians);
+    }
+
+    #[test]
+    fn parametric_plots_import_render_and_cross_open() {
+        for (mode, native, generated) in [
+            (
+                PlotPointsMode::Cartesian,
+                include_bytes!("../tests/fixtures/parametric_rectangular_original.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/parametric_rectangular_generated.gsp").as_slice(),
+            ),
+            (
+                PlotPointsMode::Polar,
+                include_bytes!("../tests/fixtures/parametric_polar_original.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/parametric_polar_generated.gsp").as_slice(),
+            ),
+        ] {
+            let original = Document::from_bytes(native, None).unwrap();
+            assert!(!original.partial_view);
+            assert_eq!(original.encode().unwrap(), native);
+            assert!(
+                matches!(original.objects[8].kind, Kind::ParametricPlot(1, 2, 8, 0., 1., 750, m) if m == mode)
+            );
+
+            let mut doc = Document::from_bytes(
+                include_bytes!("../tests/fixtures/parametric_two_functions_moved_original.gsp"),
+                None,
+            )
+            .unwrap();
+            assert!(!doc.partial_view);
+            let plot = doc
+                .plot_parametric_curve(1, 2, mode, 0., 1., Point { x: 199., y: 125. })
+                .unwrap();
+            assert_eq!(plot, 9);
+            assert_eq!(doc.encode().unwrap(), generated);
+            assert_eq!(
+                doc.grid_form[0] == GridForm::Polar,
+                mode == PlotPointsMode::Polar
+            );
+            let frame = doc.graph_frame(8).unwrap();
+            let segments = doc.parametric_plot_segments(plot, 101).unwrap();
+            assert!(!segments.is_empty());
+            assert_eq!(
+                segments[0].0,
+                Point {
+                    x: frame.origin.x,
+                    y: frame.origin.y
+                }
+            );
+            let (x, y) = match mode {
+                PlotPointsMode::Cartesian => (1., 1.),
+                PlotPointsMode::Polar => (1_f64.cos(), 1_f64.sin()),
+            };
+            let endpoint = frame.world(x, y).unwrap();
+            let actual = segments.last().unwrap().1;
+            assert!((actual.x - endpoint.x).abs() < 1e-9);
+            assert!((actual.y - endpoint.y).abs() < 1e-9);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.objects[8].kind, doc.objects[8].kind);
+        }
+
+        let mut custom = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parametric_two_functions_moved_original.gsp"),
+            None,
+        )
+        .unwrap();
+        custom
+            .plot_parametric_curve(
+                1,
+                2,
+                PlotPointsMode::Cartesian,
+                -1.,
+                2.,
+                Point { x: 199., y: 125. },
+            )
+            .unwrap();
+        assert_eq!(
+            custom.encode().unwrap(),
+            include_bytes!("../tests/fixtures/parametric_custom_domain_generated.gsp")
+        );
+
+        let mut native = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parametric_rectangular_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let before = native
+            .parametric_plot_segments(9, 101)
+            .unwrap()
+            .last()
+            .unwrap()
+            .1;
+        native
+            .set_function_expression(2, SimpleFunction::parse("x+1").unwrap())
+            .unwrap();
+        let after = native
+            .parametric_plot_segments(9, 101)
+            .unwrap()
+            .last()
+            .unwrap()
+            .1;
+        assert!((after.x - before.x).abs() < 1e-9);
+        assert!((after.y - before.y + 37.79527559055118).abs() < 1e-9);
+        let reopened = Document::from_bytes(&native.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened
+                .parametric_plot_segments(9, 101)
+                .unwrap()
+                .last()
+                .unwrap()
+                .1,
+            after
+        );
+    }
+
+    #[test]
+    fn plot_property_edits_reopen_and_limit_render_samples() {
+        let mut parametric = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parametric_rectangular_original.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(parametric.set_plot_range(1, -1., 2., 64).is_err());
+        parametric.set_plot_range(9, -1., 2., 64).unwrap();
+        assert_eq!(
+            parametric.parametric_plot_segments(9, 384).unwrap().len(),
+            63
+        );
+        assert_eq!(
+            parametric.encode().unwrap(),
+            include_bytes!("../tests/fixtures/parametric_range_edited_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&parametric.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[8].kind,
+            Kind::ParametricPlot(1, 2, 8, -1., 2., 64, PlotPointsMode::Cartesian)
+        ));
+        parametric.undo();
+        assert_eq!(
+            parametric.encode().unwrap(),
+            include_bytes!("../tests/fixtures/parametric_rectangular_original.gsp")
+        );
+        parametric.redo();
+        assert_eq!(
+            parametric.parametric_plot_segments(9, 384).unwrap().len(),
+            63
+        );
+
+        let mut function = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_plot_square.gsp"),
+            None,
+        )
+        .unwrap();
+        function.set_plot_range(8, -2., 2., 64).unwrap();
+        assert_eq!(function.function_plot_segments(8, 384).unwrap().len(), 63);
+        assert_eq!(
+            function.encode().unwrap(),
+            include_bytes!("../tests/fixtures/function_range_edited_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&function.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[7].kind,
+            Kind::FunctionPlot(7, 6, -2., 2., 64)
+        ));
+
+        let mut fresh_function = Document::new();
+        fresh_function
+            .plot_new_function(SimpleFunction::Square, Point { x: 199., y: 125. })
+            .unwrap();
+        fresh_function.set_plot_range(8, -2., 2., 64).unwrap();
+        assert_eq!(
+            fresh_function.encode().unwrap(),
+            include_bytes!("../tests/fixtures/function_new_range_generated.gsp")
+        );
+
+        let mut fresh_parametric = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parametric_two_functions_moved_original.gsp"),
+            None,
+        )
+        .unwrap();
+        fresh_parametric
+            .plot_parametric_curve(
+                1,
+                2,
+                PlotPointsMode::Polar,
+                0.,
+                1.,
+                Point { x: 199., y: 125. },
+            )
+            .unwrap();
+        fresh_parametric.set_plot_range(9, -1., 2., 64).unwrap();
+        assert_eq!(
+            fresh_parametric
+                .parametric_plot_segments(9, 384)
+                .unwrap()
+                .len(),
+            63
+        );
+        assert_eq!(
+            fresh_parametric.encode().unwrap(),
+            include_bytes!("../tests/fixtures/parametric_new_range_generated.gsp")
         );
     }
     #[test]
@@ -7567,6 +10999,353 @@ mod tests {
         assert_eq!(last(&saved), last(original));
         let reopened = Document::from_bytes(&saved, None).unwrap();
         assert_eq!(reopened.position(10), native.position(10));
+    }
+
+    #[test]
+    fn distinct_polar_table_rows_plot_and_round_trip() {
+        let original = include_bytes!("../tests/fixtures/plot_table_distinct_polar_original.gsp");
+        let native = Document::from_bytes(original, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), original);
+        for (id, radius) in [(10, 1.0), (11, 2.0)] {
+            assert!(matches!(
+                native.objects[id - 1].kind,
+                Kind::PlottedPoint(1, 9, PlotPointsMode::Polar, [r, angle])
+                    if r == radius && angle == plot_points_records::DEGREES_TO_RADIANS
+            ));
+        }
+        let base = include_bytes!("../tests/fixtures/plot_table_distinct_base_original.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(
+            generated.plot_pair_table_data(3, PlotPointsMode::Polar),
+            Ok(vec![10, 11])
+        );
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        for id in [10, 11] {
+            assert_eq!(reopened.objects[id - 1].kind, native.objects[id - 1].kind);
+            assert_eq!(reopened.position(id), native.position(id));
+        }
+    }
+
+    #[test]
+    fn three_row_pair_table_edits_live_row_and_plots_distinct_values() {
+        let original =
+            include_bytes!("../tests/fixtures/table_pair_three_rows_distinct_original.gsp");
+        let native = Document::from_bytes(original, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), original);
+        assert!(matches!(
+            &native.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [2., 1.]])
+        ));
+
+        let base = include_bytes!("../tests/fixtures/plot_table_distinct_base_original.gsp");
+        let mut doc = Document::from_bytes(base, None).unwrap();
+        doc.change_table_rows(3, true).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [2., 1.]])
+        ));
+        doc.set_parameter_value(2, 3.25).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [3.25, 1.]])
+        ));
+        assert_eq!(
+            doc.plot_pair_table_data(3, PlotPointsMode::Polar),
+            Ok(vec![10, 11, 12])
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[11].kind, doc.objects[11].kind);
+        assert_eq!(reopened.position(12), doc.position(12));
+    }
+
+    #[test]
+    fn five_distinct_pair_rows_plot_and_stay_fixed_after_parameter_edit() {
+        let native_four = include_bytes!("../tests/fixtures/table_pair_four_rows_original.gsp");
+        let imported = Document::from_bytes(native_four, None).unwrap();
+        assert!(!imported.partial_view);
+        assert_eq!(imported.encode().unwrap(), native_four);
+        let cross_opened =
+            include_bytes!("../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+        let imported = Document::from_bytes(cross_opened, None).unwrap();
+        assert!(!imported.partial_view);
+        assert_eq!(imported.encode().unwrap(), cross_opened);
+
+        let base = include_bytes!("../tests/fixtures/plot_table_distinct_base_original.gsp");
+        let mut doc = Document::from_bytes(base, None).unwrap();
+        for next in [3.25, 4.5, 5.75] {
+            doc.change_table_rows(3, true).unwrap();
+            doc.set_parameter_value(2, next).unwrap();
+        }
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [3.25, 1.], [4.5, 1.], [5.75, 1.]])
+        ));
+        assert_eq!(
+            doc.plot_pair_table_data(3, PlotPointsMode::Polar),
+            Ok(vec![10, 11, 12, 13, 14])
+        );
+        let plotted = (10..=14)
+            .map(|id| doc.position(id).unwrap())
+            .collect::<Vec<_>>();
+        doc.set_parameter_value(2, 6.0).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values().unwrap().last() == Some(&[6., 1.])
+        ));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            (10..=14)
+                .map(|id| reopened.position(id).unwrap())
+                .collect::<Vec<_>>(),
+            plotted
+        );
+    }
+
+    #[test]
+    fn removing_pair_rows_preserves_earlier_cached_values() {
+        let five = include_bytes!("../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+        let mut plotted_doc = Document::from_bytes(five, None).unwrap();
+        let positions = (10..=14)
+            .map(|id| plotted_doc.position(id).unwrap())
+            .collect::<Vec<_>>();
+        plotted_doc.change_table_rows(3, false).unwrap();
+        assert_eq!(
+            plotted_doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/table_pair_four_rows_after_remove_generated.gsp")
+        );
+        assert_eq!(
+            (10..=14)
+                .map(|id| plotted_doc.position(id).unwrap())
+                .collect::<Vec<_>>(),
+            positions
+        );
+
+        let base = include_bytes!("../tests/fixtures/plot_table_distinct_base_original.gsp");
+        let mut doc = Document::from_bytes(base, None).unwrap();
+        for next in [3.25, 4.5, 5.75] {
+            doc.change_table_rows(3, true).unwrap();
+            doc.set_parameter_value(2, next).unwrap();
+        }
+        doc.change_table_rows(3, false).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [3.25, 1.], [5.75, 1.]])
+        ));
+        doc.change_table_rows(3, false).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [5.75, 1.]])
+        ));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[2].kind, doc.objects[2].kind);
+
+        doc.change_table_rows(3, false).unwrap();
+        doc.change_table_rows(3, false).unwrap();
+        assert!(doc.change_table_rows(3, false).is_err());
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[5.75, 1.]])
+        ));
+    }
+
+    #[test]
+    fn pair_table_can_be_plotted_again_after_parameter_edit() {
+        let five = include_bytes!("../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+        let mut doc = Document::from_bytes(five, None).unwrap();
+        let first_positions = (10..=14)
+            .map(|id| doc.position(id).unwrap())
+            .collect::<Vec<_>>();
+        doc.set_parameter_value(2, 6.0).unwrap();
+        assert_eq!(
+            doc.plot_pair_table_data(3, PlotPointsMode::Polar),
+            Ok(vec![15, 16, 17, 18, 19])
+        );
+        assert_eq!(
+            (10..=14)
+                .map(|id| doc.position(id).unwrap())
+                .collect::<Vec<_>>(),
+            first_positions
+        );
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_pair_replotted_polar_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(19), doc.position(19));
+    }
+
+    #[test]
+    fn pair_table_uses_later_parameter_and_frame_ids() {
+        let mut doc = Document::new();
+        assert_eq!(doc.add(Kind::Free(Point { x: 300., y: 300. })), 1);
+        assert_eq!(doc.add_default_parameter((10, 5)).unwrap(), 2);
+        assert_eq!(doc.add_default_parameter((10, 38)).unwrap(), 3);
+        doc.set_parameter_value(3, 2.0).unwrap();
+        assert_eq!(doc.tabulate_default_pair((10, 71)).unwrap(), 4);
+        doc.change_table_rows(4, true).unwrap();
+        doc.set_parameter_value(3, 3.25).unwrap();
+        assert!(matches!(
+            &doc.objects[3].kind,
+            Kind::ValueTablePair(3, 2, group)
+                if group.pair_source_ids() == Some([3, 2])
+                    && group.pair_values() == Some(vec![[2., 1.], [3.25, 1.]])
+        ));
+        assert_eq!(
+            doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            doc.plot_pair_table_data(4, PlotPointsMode::Polar),
+            Ok(vec![11, 12])
+        );
+        let positions = [doc.position(11).unwrap(), doc.position(12).unwrap()];
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_pair_late_sources_polar_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(11), Some(positions[0]));
+        assert_eq!(reopened.position(12), Some(positions[1]));
+    }
+
+    #[test]
+    fn pair_table_caches_and_plots_both_parameter_values() {
+        let mut doc = Document::new();
+        doc.add_default_parameter((10, 5)).unwrap();
+        doc.add_default_parameter((10, 38)).unwrap();
+        doc.set_parameter_value(1, 2.5).unwrap();
+        doc.set_parameter_value(2, 3.25).unwrap();
+        doc.tabulate_default_pair((10, 71)).unwrap();
+        doc.change_table_rows(3, true).unwrap();
+        doc.set_parameter_value(1, 4.0).unwrap();
+        doc.set_parameter_value(2, 5.75).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[3.25, 2.5], [5.75, 4.0]])
+        ));
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(doc.plot_default_pair_table(3), Ok(vec![10, 11]));
+        let positions = [doc.position(10).unwrap(), doc.position(11).unwrap()];
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_pair_both_columns_cartesian_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(10), Some(positions[0]));
+        assert_eq!(reopened.position(11), Some(positions[1]));
+
+        doc.set_parameter_value(1, 4.5).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[3.25, 2.5], [5.75, 4.5]])
+        ));
+        assert_eq!(doc.position(10), Some(positions[0]));
+        assert_eq!(doc.position(11), Some(positions[1]));
+        doc.change_table_rows(3, false).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values() == Some(vec![[5.75, 4.5]])
+        ));
+    }
+
+    #[test]
+    fn pair_table_preserves_native_wide_cells_and_plots_mixed_rows() {
+        for (bytes, expected) in [
+            (
+                include_bytes!("../tests/fixtures/table_pair_negative_x_original.gsp").as_slice(),
+                [-2.5, 1.0],
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_pair_two_digit_y_original.gsp").as_slice(),
+                [1.0, 12.34],
+            ),
+        ] {
+            let imported = Document::from_bytes(bytes, None).unwrap();
+            assert!(!imported.partial_view);
+            assert!(matches!(
+                &imported.objects[2].kind,
+                Kind::ValueTablePair(2, 1, group)
+                    if group.pair_values() == Some(vec![expected])
+            ));
+            assert_eq!(imported.encode().unwrap(), bytes);
+        }
+
+        let mut doc = Document::new();
+        doc.add_default_parameter((10, 5)).unwrap();
+        doc.add_default_parameter((10, 38)).unwrap();
+        doc.set_parameter_value(1, 12.34).unwrap();
+        doc.set_parameter_value(2, -2.5).unwrap();
+        doc.tabulate_default_pair((10, 71)).unwrap();
+        doc.change_table_rows(3, true).unwrap();
+        doc.set_parameter_value(1, -3.25).unwrap();
+        doc.set_parameter_value(2, 12.34).unwrap();
+        doc.change_table_rows(3, true).unwrap();
+        doc.set_parameter_value(1, 2.5).unwrap();
+        doc.set_parameter_value(2, 3.25).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values()
+                    == Some(vec![[-2.5, 12.34], [12.34, -3.25], [3.25, 2.5]])
+        ));
+        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(doc.plot_default_pair_table(3), Ok(vec![10, 11, 12]));
+        let plotted = (10..=12)
+            .map(|id| doc.position(id).unwrap())
+            .collect::<Vec<_>>();
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_pair_mixed_width_plot_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            (10..=12)
+                .map(|id| reopened.position(id).unwrap())
+                .collect::<Vec<_>>(),
+            plotted
+        );
+
+        doc.set_parameter_value(2, -99.99).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTablePair(2, 1, group)
+                if group.pair_values()
+                    == Some(vec![[-2.5, 12.34], [12.34, -3.25], [-99.99, 2.5]])
+        ));
+        assert_eq!(
+            (10..=12)
+                .map(|id| doc.position(id).unwrap())
+                .collect::<Vec<_>>(),
+            plotted
+        );
     }
 
     #[test]
@@ -8048,6 +11827,142 @@ mod tests {
         let reopened = Document::from_bytes(&distinct.encode().unwrap(), None).unwrap();
         assert!(!reopened.partial_view);
         assert_eq!(reopened.position(11), distinct.position(11));
+    }
+
+    #[test]
+    fn default_table_keeps_fractional_snapshots_and_native_edit() {
+        let original = include_bytes!("../tests/fixtures/table_t1_tabulated_edited_original.gsp");
+        let imported = Document::from_bytes(original, None).unwrap();
+        assert!(!imported.partial_view);
+        assert!(matches!(
+            &imported.objects[1].kind,
+            Kind::ValueTable(1, group) if group.default_values() == Some(vec![2.5])
+        ));
+        assert_eq!(imported.encode().unwrap(), original);
+
+        let mut doc = Document::new();
+        doc.add_default_parameter((10, 5)).unwrap();
+        doc.set_parameter_value(1, 2.5).unwrap();
+        doc.tabulate_default_parameter(1, (10, 38)).unwrap();
+        doc.change_table_rows(2, true).unwrap();
+        doc.set_parameter_value(1, 3.25).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group) if group.default_values() == Some(vec![2.5, 3.25])
+        ));
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_t1_snapshots_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[1].kind, doc.objects[1].kind);
+
+        doc.set_parameter_value(1, 4.5).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group) if group.default_values() == Some(vec![2.5, 4.5])
+        ));
+        doc.change_table_rows(2, false).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group) if group.default_values() == Some(vec![4.5])
+        ));
+    }
+
+    #[test]
+    fn default_table_accepts_later_parameter_source() {
+        let mut doc = Document::new();
+        assert_eq!(doc.add(Kind::Free(Point { x: 300., y: 300. })), 1);
+        assert_eq!(doc.add_default_parameter((10, 5)).unwrap(), 2);
+        doc.set_parameter_value(2, 2.5).unwrap();
+        assert_eq!(doc.tabulate_default_parameter(2, (10, 38)).unwrap(), 3);
+        doc.change_table_rows(3, true).unwrap();
+        doc.set_parameter_value(2, 3.25).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTable(2, group)
+                if group.source_id() == 2 && group.default_values() == Some(vec![2.5, 3.25])
+        ));
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_t1_late_source_snapshots_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[2].kind, doc.objects[2].kind);
+
+        doc.set_parameter_value(2, 4.5).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTable(2, group) if group.default_values() == Some(vec![2.5, 4.5])
+        ));
+        doc.change_table_rows(3, false).unwrap();
+        assert!(matches!(
+            &doc.objects[2].kind,
+            Kind::ValueTable(2, group) if group.default_values() == Some(vec![4.5])
+        ));
+    }
+
+    #[test]
+    fn default_table_preserves_native_wide_values_and_mixed_snapshots() {
+        for (bytes, value) in [
+            (
+                include_bytes!("../tests/fixtures/table_t1_tabulated_negative_original.gsp")
+                    .as_slice(),
+                -2.5,
+            ),
+            (
+                include_bytes!("../tests/fixtures/table_t1_tabulated_two_digit_original.gsp")
+                    .as_slice(),
+                12.34,
+            ),
+        ] {
+            let imported = Document::from_bytes(bytes, None).unwrap();
+            assert!(!imported.partial_view);
+            assert!(matches!(
+                &imported.objects[1].kind,
+                Kind::ValueTable(1, group) if group.default_values() == Some(vec![value])
+            ));
+            assert_eq!(imported.encode().unwrap(), bytes);
+        }
+
+        let mut doc = Document::new();
+        doc.add_default_parameter((10, 5)).unwrap();
+        doc.set_parameter_value(1, -2.5).unwrap();
+        doc.tabulate_default_parameter(1, (10, 38)).unwrap();
+        doc.change_table_rows(2, true).unwrap();
+        doc.set_parameter_value(1, 12.34).unwrap();
+        doc.change_table_rows(2, true).unwrap();
+        doc.set_parameter_value(1, -99.99).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group)
+                if group.default_values() == Some(vec![-2.5, 12.34, -99.99])
+        ));
+        let bytes = doc.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/table_t1_mixed_width_snapshots_generated.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[1].kind, doc.objects[1].kind);
+
+        doc.set_parameter_value(1, 99.99).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group)
+                if group.default_values() == Some(vec![-2.5, 12.34, 99.99])
+        ));
+        doc.change_table_rows(2, false).unwrap();
+        assert!(matches!(
+            &doc.objects[1].kind,
+            Kind::ValueTable(1, group)
+                if group.default_values() == Some(vec![-2.5, 99.99])
+        ));
     }
 
     #[test]

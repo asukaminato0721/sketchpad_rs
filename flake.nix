@@ -29,6 +29,7 @@
               cargo
               rustc
               pkg-config
+              fontconfig
             ];
 
             shellHook = ''

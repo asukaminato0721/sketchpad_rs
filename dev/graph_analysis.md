@@ -1,5 +1,40 @@
 # Graph coordinate system and slope observations
 
+## Multiple coordinate systems and marking
+
+Sketchpad's [Define Coordinate System reference](https://referencecenter.dynamicgeometry.com/gsp-reference-center/menus_graph_definecoordsys.htm) says that selecting one point defines a frame at that point even when a frame already exists. Its [Mark Coordinate System reference](https://referencecenter.dynamicgeometry.com/gsp-reference-center/menus_graph_markcoordsystem.htm) says selecting a frame's origin, unit point, axis, or grid makes it active for future plots and measurements.
+
+In Wine, selecting point 1 of `graph_defined_coordinate_system.gsp` and using Graph > Define Origin created objects 10–14. They are a horizontal unit constrained to point 1, X axis, vertical unit, Y axis, and frame; there is no duplicate origin object. The native result is `tests/fixtures/graph_two_coordinate_systems_original.gsp`. Its page-link record `0x232d` points to frame 14. Selecting frame 9's origin and using Graph > Mark Coordinate System, then moving an unrelated point to make the document dirty, changed that link from 14 to 9. The native result is `graph_mark_coordinate_system_original.gsp`. Marking alone did not rewrite the saved file in the probe.
+
+The Rust writer now emits the five-object shared-origin construction and stores the marked frame from `0x232d`. `tests/graph_second_coordinate_system_replay.txt` creates frame 14; `tests/graph_mark_coordinate_system_replay.txt` marks frame 9 and plots a point at `(1, 2)` on that frame. Both generated files opened and saved byte-identically in Sketchpad 5. The native desktop capture shows both square grids and the new point relative to frame 9. Grid form and dotted state are retained per frame.
+
+`tests/graph_two_frames_mixed_grid_replay.txt` changes frame 14 to dotted Polar, then marks square frame 9. Sketchpad 5 opened the generated 14-object file with frame 9's straight grid and frame 14's polar dots, then saved it byte-identically. The native renderer and SVG exporter now collect geometry per visible frame, so both sets appear together and hiding frame 9 leaves frame 14's dots visible. The resulting file is `tests/fixtures/graph_two_frames_mixed_grid_generated.gsp`.
+
+Clicking the first frame's grid intersection at `(334, 270)` in the native two-frame sketch selected that grid. Graph > Mark Coordinate System then changed the page link from 14 to 9 after an unrelated edit forced a save. The Rust editor hit test now chooses a visible frame at nearby square or Polar grid intersections and highlights the selected grid. The original `graph_snap_points_original.gsp` also visibly retains its grid with Snap Points enabled; the Rust native canvas and SVG now do likewise.
+
+Selecting circle 3 in `circle.gsp` and choosing Graph > Define Unit Circle
+created two code 60 axes and a code 61 frame. Both axes refer directly to the
+circle; their `0x0905` payloads distinguish X (`1`) from Y (`0`). The frame
+refers to the axes and uses the usual square-grid `0x0904` record. The native
+file is `tests/fixtures/graph_unit_circle_original.gsp`; its circle radius
+sets both graph units, so dragging the radius point updates the frame. The
+port generates those three original groups from
+`assets/graph_unit_circle_groups.bin`. Sketchpad also writes a second page
+`0x04b3` style record with style ID 14. A generated file without that record
+opened with axes but no grid lines; adding the style made its native display
+match the original. `tests/graph_unit_circle_replay.txt` produces a six-object
+file that opened with grid lines and saved byte-identically in Sketchpad 5.
+The Rust canvas and SVG export draw the circle axes' radius-scaled ticks and
+numeric labels; dragging the radius point changes their spacing.
+
+The [native command reference](https://referencecenter.dynamicgeometry.com/gsp-reference-center/menus_graph_definecoordsys.htm) also permits one or two defining distances (a segment or distance value), with an optional origin point. Native one-distance files add a free origin when needed, then code 59 X axis (origin and distance references), code 56 Y-unit point, code 58 Y axis, and code 61 square frame. Two distances use a code 59 Y axis referencing the second distance and a rectangular code 61 frame; no code 56 point is needed. Selected-origin forms omit the new free point. The five native files `graph_unit_segment_original.gsp`, `graph_unit_segment_point_original.gsp`, `graph_two_segments_original.gsp`, `graph_two_segments_point_original.gsp`, and `graph_unit_distance_value_original.gsp` decode as editable frames. The source segment or measurement controls the unit length dynamically; `graph_unit_segment_dragged_by_wine.gsp` confirms that Sketchpad updates both scales after dragging the segment endpoint.
+
+The port writes the captured groups from `assets/graph_distance_square_groups.bin` and `assets/graph_distance_rectangular_groups.bin`, remapping origin, distance, and axis references. The four segment-based generated group sequences match their native counterparts byte for byte. Generated one- and two-distance files, both selected-origin forms, a point-distance value, and a segment-length value opened with their grids and saved byte-identically in Sketchpad 5. A one-distance Polar variant also opened with rings and saved unchanged. `tests/graph_defining_distances_replay.txt` reproduces these files. The native canvas and SVG draw tick marks at each axis's own scale.
+
+Grid Form > Rectangular on a one-distance frame changes the Y-unit object from code 56 to 57, clears its header's `0x00040000` flag, stores the current segment length as the independent vertical step in `0x07d3`, and sets frame `0x0904` to `2`. The native result is `graph_unit_segment_rectangular_original.gsp`. Switching back to Square changes code 57 back to 56 while retaining the stored step; the displayed Square Y unit again follows the defining segment's length. Switching from Rectangular to Polar preserves code 57 and the independent Y step, whereas switching from Square to Polar preserves code 56 and the dependent Y unit. The Rust writer made the same five frame groups as the native Rectangular conversion. A port edit changed the independent Y step to 80 pixels; Sketchpad displayed horizontal grid lines 80 pixels apart, then elliptical Polar rings after the form changed, and saved both files byte-identically. `tests/graph_distance_grid_forms_replay.txt` reproduces the conversions and edit.
+
+A two-distance frame can switch from Rectangular to Polar while retaining separate X and Y unit lengths, so its radial rings become ellipses. Native and generated four-group sequences match, and the generated file cross-opened unchanged. Selecting Square on a two-distance frame crashed Sketchpad under Wine on both native-created and generated files. A file with only the square flag changed opened but retained unequal axis spacing. The port therefore leaves that conversion unavailable until its native semantics can be established.
+
 ## Original application probes
 
 The source fixture `tests/fixtures/wine_segment_slope.gsp` has a horizontal

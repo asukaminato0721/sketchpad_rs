@@ -10,12 +10,15 @@ expression="$2"
 sketch_path="$(realpath "$3")"
 exe_path="$(realpath GSP5Chs.exe)"
 capture_prefix="${SKETCHPAD_FUNCTION_CAPTURE_PREFIX:-/tmp/sketchpad_function_probe}"
+wine_prefix="${SKETCHPAD_WINEPREFIX:-${HOME}/.cache/sketchpad_rs_wine}"
+image_capture="$(command -v import)"
+confirm_angle="${SKETCHPAD_FUNCTION_CONFIRM_ANGLE:-0}"
 exec 9>/tmp/sketchpad_rs_wine.lock
 flock 9
 
 xvfb-run -a bash -c '
   set -euo pipefail
-  export WINEPREFIX=/tmp/sketchpad_rs_wine
+  export WINEPREFIX="$6"
   wine "$1" "$2" > "${5}_runtime.log" 2>&1 &
   wine_pid=$!
   trap '\''kill "$wine_pid" 2>/dev/null || true'\'' EXIT
@@ -31,7 +34,7 @@ xvfb-run -a bash -c '
   sleep 3
   opened_name="$(xdotool getwindowname "$window_id")"
   [[ "$opened_name" == *"$(basename "$2")"* ]]
-  import -window root "${5}_opened.png"
+  "$7" -window root "${5}_opened.png"
   if [[ "$3" == plot ]]; then
     xdotool mousemove 400 40 click 1
     sleep 0.3
@@ -39,21 +42,30 @@ xvfb-run -a bash -c '
   elif [[ "$3" == define ]]; then
     xdotool mousemove 346 40 click 1
     sleep 0.4
-    import -window root "${5}_number_menu.png"
+    "$7" -window root "${5}_number_menu.png"
     xdotool mousemove 365 172 click 1
   else
     exit 2
   fi
   sleep 0.5
-  import -window root "${5}_dialog.png"
+  "$7" -window root "${5}_dialog.png"
   xdotool mousemove 120 180 click 1
-  xdotool type --clearmodifiers --delay 70 "$4"
+  printf %s "$4" | xdotool type --clearmodifiers --delay 70 --file -
   sleep 0.5
-  import -window root "${5}_typed.png"
+  "$7" -window root "${5}_typed.png"
   xdotool key Return
   sleep 1
-  import -window root "${5}_result.png"
+  if [[ "$8" == 1 ]]; then
+    "$7" -window root "${5}_angle_prompt.png"
+    xdotool key Return
+    sleep 1
+  elif [[ "$8" == no ]]; then
+    "$7" -window root "${5}_angle_prompt.png"
+    xdotool mousemove 355 295 click 1
+    sleep 1
+  fi
+  "$7" -window root "${5}_result.png"
   xdotool key --clearmodifiers ctrl+s
   sleep 2
   echo "Saved copy: $2 ($(stat -c %s "$2") bytes)"
-' _ "$exe_path" "$sketch_path" "$mode" "$expression" "$capture_prefix"
+' _ "$exe_path" "$sketch_path" "$mode" "$expression" "$capture_prefix" "$wine_prefix" "$image_capture" "$confirm_angle"

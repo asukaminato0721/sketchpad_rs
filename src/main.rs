@@ -1,7 +1,7 @@
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point};
+use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point, TextStyleCommand};
 use sketchpad_rs::function_records::SimpleFunction;
-use sketchpad_rs::graph::GridForm;
+use sketchpad_rs::graph::{GraphPoint, GridForm};
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{GeometryRenderer, Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, VisualStyle};
@@ -81,6 +81,30 @@ fn temporary_pdf_path(purpose: &str) -> PathBuf {
         std::process::id()
     ))
 }
+
+fn system_font_data(family: &str) -> Option<egui::FontData> {
+    let lookup = family.strip_prefix('@').unwrap_or(family);
+    let output = Command::new("fc-match")
+        .arg("-f")
+        .arg("%{file}\n%{index}\n")
+        .arg(lookup)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let result = std::str::from_utf8(&output.stdout).ok()?;
+    let mut lines = result.lines();
+    let path = lines.next()?;
+    let index = lines.next()?.parse::<u32>().ok()? & 0xffff;
+    if path.is_empty() {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let mut data = egui::FontData::from_owned(bytes);
+    data.index = index;
+    Some(data)
+}
 #[cfg(test)]
 mod pdf_tests {
     use super::*;
@@ -122,6 +146,12 @@ struct Editor {
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
+    font_definitions: egui::FontDefinitions,
+    font_definitions_applied: bool,
+    loaded_fonts: HashMap<String, bool>,
+    text_font_dialog: bool,
+    text_font_input: String,
+    text_selected_range: Option<(usize, usize, usize)>,
     inspected: Option<usize>,
     edit_buffer: String,
     scale: f32,
@@ -137,7 +167,20 @@ struct Editor {
     rotate_dialog: bool,
     rotation_angle: f64,
     function_dialog: Option<bool>,
+    function_edit_id: Option<usize>,
     function_draft: String,
+    function_angle_dialog: Option<(SimpleFunction, bool, Option<usize>)>,
+    derivative_angle_dialog: Option<usize>,
+    parametric_dialog: bool,
+    parametric_x: usize,
+    parametric_y: usize,
+    parametric_mode: PlotPointsMode,
+    parametric_min_draft: String,
+    parametric_max_draft: String,
+    plot_range_dialog: Option<usize>,
+    plot_min_draft: String,
+    plot_max_draft: String,
+    plot_samples_draft: String,
     parameter_value_dialog: Option<usize>,
     parameter_value_draft: String,
     named_parameter_dialog: bool,
@@ -166,6 +209,12 @@ impl Editor {
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
+            font_definitions: egui::FontDefinitions::default(),
+            font_definitions_applied: false,
+            loaded_fonts: HashMap::new(),
+            text_font_dialog: false,
+            text_font_input: "Tahoma".into(),
+            text_selected_range: None,
             inspected: None,
             edit_buffer: String::new(),
             scale: 1.,
@@ -181,7 +230,20 @@ impl Editor {
             rotate_dialog: false,
             rotation_angle: 60.,
             function_dialog: None,
+            function_edit_id: None,
             function_draft: "x".into(),
+            function_angle_dialog: None,
+            derivative_angle_dialog: None,
+            parametric_dialog: false,
+            parametric_x: 0,
+            parametric_y: 0,
+            parametric_mode: PlotPointsMode::Cartesian,
+            parametric_min_draft: "0".into(),
+            parametric_max_draft: "1".into(),
+            plot_range_dialog: None,
+            plot_min_draft: String::new(),
+            plot_max_draft: String::new(),
+            plot_samples_draft: String::new(),
             parameter_value_dialog: None,
             parameter_value_draft: "1".into(),
             named_parameter_dialog: false,
@@ -197,6 +259,56 @@ impl Editor {
         };
         e.fit();
         e
+    }
+
+    fn sync_document_fonts(&mut self, ctx: &egui::Context) {
+        let families = self
+            .doc
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .filter_map(|object| self.doc.text_font_state(object.id).map(|font| font.family))
+            .collect::<Vec<_>>();
+        let mut changed = !self.font_definitions_applied;
+        for family in families {
+            if self.loaded_fonts.contains_key(&family) {
+                continue;
+            }
+            let Some(data) = system_font_data(&family) else {
+                self.loaded_fonts.insert(family, false);
+                continue;
+            };
+            let key = format!("system:{family}");
+            self.font_definitions
+                .font_data
+                .insert(key.clone(), Arc::new(data));
+            let mut chain = vec![key];
+            if let Some(fallbacks) = self
+                .font_definitions
+                .families
+                .get(&egui::FontFamily::Proportional)
+            {
+                chain.extend(fallbacks.iter().cloned());
+            }
+            self.font_definitions
+                .families
+                .insert(egui::FontFamily::Name(family.clone().into()), chain);
+            self.loaded_fonts.insert(family, true);
+            changed = true;
+        }
+        if changed {
+            ctx.set_fonts(self.font_definitions.clone());
+            self.font_definitions_applied = true;
+        }
+    }
+
+    fn canvas_font_id(&self, family: Option<&str>, size: f32) -> egui::FontId {
+        let font_family = family
+            .filter(|family| self.loaded_fonts.get(*family) == Some(&true))
+            .map_or(egui::FontFamily::Proportional, |family| {
+                egui::FontFamily::Name(family.into())
+            });
+        egui::FontId::new(size, font_family)
     }
     fn fit(&mut self) {
         let mut pts: Vec<_> = self
@@ -410,6 +522,108 @@ impl Editor {
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|x| x.0)
     }
+    fn hit_grid(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
+        let world = v.world(p);
+        self.doc
+            .objects
+            .iter()
+            .rev()
+            .filter(|object| {
+                matches!(object.kind, Kind::CoordinateSystem(_, _))
+                    && self.doc.is_displayed(object.id)
+            })
+            .filter_map(|object| {
+                let frame = self.doc.graph_frame(object.id)?;
+                let coordinates = frame.coordinates(GraphPoint {
+                    x: world.x,
+                    y: world.y,
+                })?;
+                let form = self
+                    .doc
+                    .frame_styles
+                    .get(&object.id)
+                    .map_or(self.doc.grid_form[object.page], |style| style.0);
+                let (x, y) = if form == GridForm::Polar {
+                    let radius = coordinates.x.hypot(coordinates.y).round();
+                    let angle = (coordinates.y.atan2(coordinates.x)
+                        / (std::f64::consts::TAU / 24.))
+                        .round()
+                        * std::f64::consts::TAU
+                        / 24.;
+                    (radius * angle.cos(), radius * angle.sin())
+                } else {
+                    (coordinates.x.round(), coordinates.y.round())
+                };
+                let at = frame.world(x, y)?;
+                let distance = v.screen(Point { x: at.x, y: at.y }).distance(p);
+                (distance < 7.).then_some((object.id, distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+    fn overlay_rows(&self) -> Vec<(usize, String)> {
+        let mut rows = Vec::new();
+        for object in self.doc.objects.iter().filter(|object| {
+            object.page == self.doc.active_page && object.visible && !object.deleted
+        }) {
+            let id = object.id;
+            if let Some(value) = self.doc.segment_length_cm(id) {
+                rows.push((id, format!("Length = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.point_distance_cm(id) {
+                rows.push((id, format!("Distance = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.ratio_value(id) {
+                rows.push((id, format!("Ratio = {value:.2}")));
+            }
+            if let Some(value) = self.doc.perimeter_cm(id) {
+                rows.push((id, format!("Perimeter = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.circle_circumference_cm(id) {
+                rows.push((id, format!("Circumference = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.circle_radius_cm(id) {
+                rows.push((id, format!("Radius = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.circle_area_cm2(id) {
+                rows.push((id, format!("Area = {value:.2} cm²")));
+            }
+            if let Some(value) = self.doc.arc_angle_degrees(id) {
+                rows.push((id, format!("Arc Angle = {value:.2}°")));
+            }
+            if let Some(value) = self.doc.arc_length_cm(id) {
+                rows.push((id, format!("Arc Length = {value:.2} cm")));
+            }
+            if let Some(value) = self.doc.angle_degrees(id) {
+                rows.push((id, format!("Angle = {value:.2}°")));
+            }
+            if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
+                let value = self
+                    .doc
+                    .slope_value(id)
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "undefined".into());
+                rows.push((id, format!("Slope = {value}")));
+            }
+            if let Some(value) = self.doc.coordinate_measure_text(id) {
+                rows.push((id, value));
+            }
+            if let Some(value) = self.doc.value_equation_text(id) {
+                rows.push((id, value));
+            }
+            if let Kind::FunctionDefinition(expression) = object.kind {
+                rows.push((id, expression.display()));
+            }
+            if let Kind::DerivativeFunction(_, expression) = object.kind {
+                rows.push((id, expression.display().replacen("f(x)", "f′(x)", 1)));
+            }
+        }
+        rows
+    }
+    fn overlay_row_rect(v: &Viewport, row: usize, text: &str) -> egui::Rect {
+        let at = v.rect.min + egui::vec2(12., 12. + row as f32 * 20.);
+        egui::Rect::from_min_size(at, egui::vec2(text.chars().count() as f32 * 9., 19.))
+    }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
@@ -420,11 +634,64 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && matches!(&object.kind, Kind::PlainText { rect, .. }
-                    if egui::Rect::from_two_pos(
-                        v.screen(Point { x: rect.left.into(), y: rect.top.into() }),
-                        v.screen(Point { x: rect.right.into(), y: rect.bottom.into() })
-                    ).contains(p))
+                && matches!(&object.kind, Kind::PlainText { text, rect }
+                if {
+                    let top_left = v.screen(Point {
+                        x: rect.left.into(),
+                        y: rect.top.into(),
+                    });
+                    let saved_bottom_right = v.screen(Point {
+                        x: rect.right.into(),
+                        y: rect.bottom.into(),
+                    });
+                    let size = self
+                        .doc
+                        .text_font_state(object.id)
+                        .map_or(16., |style| style.size_code as f32);
+                    let (width, height) = if let Some(rows) = self.doc.text_rich_runs(object.id) {
+                        let width = rows
+                            .iter()
+                            .map(|row| {
+                                row.iter()
+                                    .map(|run| {
+                                        run.text.chars().count() as f32
+                                            * run.style.size_code.map_or(size, f32::from)
+                                            * 0.65
+                                    })
+                                    .sum::<f32>()
+                            })
+                            .fold(0., f32::max);
+                        let height = rows
+                            .iter()
+                            .map(|row| {
+                                row.iter()
+                                    .map(|run| run.style.size_code.map_or(size, f32::from))
+                                    .fold(size, f32::max)
+                            })
+                            .map(|line_size| (line_size * 1.1).max(19.))
+                            .sum();
+                        (width, height)
+                    } else {
+                        let width = text
+                            .split('\n')
+                            .map(|line| line.chars().count())
+                            .max()
+                            .unwrap_or(0) as f32
+                            * size
+                            * 0.65;
+                        let height = (text.lines().count().saturating_sub(1) as f32 * 19.)
+                            + size * 1.1;
+                        (width, height)
+                    };
+                    egui::Rect::from_min_max(
+                        top_left,
+                        egui::pos2(
+                            saved_bottom_right.x.max(top_left.x + width),
+                            saved_bottom_right.y.max(top_left.y + height),
+                        ),
+                    )
+                    .contains(p)
+                })
         }) {
             return Some(object.id);
         }
@@ -434,6 +701,16 @@ impl Editor {
                     .is_some_and(|rect| rect.contains(p))
         }) {
             return Some(object.id);
+        }
+        if let Some((id, _)) = self
+            .overlay_rows()
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(row, (_, text))| Self::overlay_row_rect(v, *row, text).contains(p))
+            .map(|(_, entry)| entry)
+        {
+            return Some(*id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
@@ -519,13 +796,17 @@ impl Editor {
                                     .min_by(f32::total_cmp)?
                             }
                         }
-                        Kind::FunctionPlot(_, _, _, _, _) => {
-                            let points = self.doc.function_plot_points(o.id, 256)?;
-                            points
-                                .windows(2)
-                                .map(|pair| {
-                                    let a = v.screen(pair[0]);
-                                    let b = v.screen(pair[1]);
+                        Kind::FunctionPlot(_, _, _, _, _)
+                        | Kind::ParametricPlot(_, _, _, _, _, _, _) => {
+                            let segments = self
+                                .doc
+                                .function_plot_segments(o.id, 256)
+                                .or_else(|| self.doc.parametric_plot_segments(o.id, 256))?;
+                            segments
+                                .iter()
+                                .map(|(start, end)| {
+                                    let a = v.screen(*start);
+                                    let b = v.screen(*end);
                                     let ab = b - a;
                                     let t = if ab.length_sq() < 1e-6 {
                                         0.
@@ -543,6 +824,7 @@ impl Editor {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|x| x.0)
+            .or_else(|| self.hit_grid(v, p))
     }
     fn point_at(&mut self, v: &Viewport, p: egui::Pos2) -> usize {
         if let Some(id) = self.hit_point(v, p) {
@@ -632,12 +914,84 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured segment {segment}");
     }
+    fn coordinate_selection(&self) -> (Option<usize>, Vec<usize>, bool) {
+        let mut selected_origin = None;
+        let mut selected_distances = Vec::new();
+        let mut valid_distance_selection = true;
+        for &id in &self.selection_order {
+            match self
+                .doc
+                .objects
+                .get(id.saturating_sub(1))
+                .map(|object| &object.kind)
+            {
+                Some(Kind::Segment(_, _) | Kind::SegmentLength(_) | Kind::PointDistance(_, _)) => {
+                    selected_distances.push(id);
+                }
+                Some(_) if selected_origin.is_none() && self.doc.position(id).is_some() => {
+                    selected_origin = Some(id);
+                }
+                _ => valid_distance_selection = false,
+            }
+        }
+        (
+            selected_origin,
+            selected_distances,
+            valid_distance_selection,
+        )
+    }
+    fn define_coordinate_system_label(&self) -> &'static str {
+        match self.selection_order.as_slice() {
+            [circle] if self.doc.circle_points(*circle).is_some() => "Define Unit Circle",
+            [origin] if self.doc.position(*origin).is_some() => "Define Origin",
+            _ => {
+                let (_, distances, valid) = self.coordinate_selection();
+                if valid {
+                    match distances.len() {
+                        1 => "Define Unit Distance",
+                        2 => "Define Unit Distances",
+                        _ => "Define Coordinate System",
+                    }
+                } else {
+                    "Define Coordinate System"
+                }
+            }
+        }
+    }
     fn define_coordinate_system(&mut self) {
-        match self.doc.add_default_coordinate_system(self.center) {
+        let (selected_origin, selected_distances, valid_distance_selection) =
+            self.coordinate_selection();
+        let result = match self.selection_order.as_slice() {
+            [circle] if self.doc.circle_points(*circle).is_some() => {
+                self.doc.add_coordinate_system_from_circle(*circle)
+            }
+            [origin] if self.doc.position(*origin).is_some() => {
+                self.doc.add_coordinate_system_at_point(*origin)
+            }
+            _ if valid_distance_selection && matches!(selected_distances.len(), 1 | 2) => {
+                self.doc.add_coordinate_system_from_distances(
+                    selected_origin,
+                    &selected_distances,
+                    self.center,
+                )
+            }
+            _ => self.doc.add_default_coordinate_system(self.center),
+        };
+        match result {
             Ok(frame) => {
                 self.select_only(frame);
-                self.status = format!("Defined Cartesian coordinate system {frame}");
+                self.status = format!("Defined coordinate system {frame}");
             }
+            Err(error) => self.status = error,
+        }
+    }
+    fn mark_coordinate_system(&mut self) {
+        let [selected] = self.selection_order.as_slice() else {
+            self.status = "Select one coordinate system axis, origin, or unit point".into();
+            return;
+        };
+        match self.doc.mark_coordinate_system(*selected) {
+            Ok(frame) => self.status = format!("Marked coordinate system {frame}"),
             Err(error) => self.status = error,
         }
     }
@@ -1830,8 +2184,16 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Tabulate Selected Parameter").clicked() {
+                        let pair_selected = self.doc.selected.len() == 2
+                            && ["t[1]", "t[2]"].iter().all(|name| {
+                                self.doc.selected.iter().any(|id| {
+                                    self.doc.objects.get(id - 1).is_some_and(|object| {
+                                        matches!(&object.kind, Kind::Parameter(group) if group.name() == *name)
+                                    })
+                                })
+                            });
                         let result =
-                            if self.doc.selected.contains(&1) && self.doc.selected.contains(&2) {
+                            if pair_selected {
                                 self.doc.tabulate_default_pair((10, 71))
                             } else {
                                 let source = self.doc.selected.iter().next().copied().unwrap_or(0);
@@ -1870,6 +2232,48 @@ impl Editor {
                     }
                     if ui.button("New Function…").clicked() {
                         self.function_dialog = Some(false);
+                        ui.close();
+                    }
+                    let selected_function = if self.doc.selected.len() == 1 {
+                        self.doc.selected.iter().copied().next().filter(|&id| {
+                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                                !object.deleted
+                                    && matches!(
+                                        object.kind,
+                                        Kind::FunctionDefinition(_)
+                                            | Kind::DerivativeFunction(_, _)
+                                    )
+                            })
+                        })
+                    } else {
+                        None
+                    };
+                    if ui
+                        .add_enabled(
+                            selected_function.is_some(),
+                            egui::Button::new("Define Derivative Function"),
+                        )
+                        .clicked()
+                    {
+                        let source = selected_function.unwrap();
+                        let uses_trigonometry = match self.doc.objects[source - 1].kind {
+                            Kind::FunctionDefinition(expression)
+                            | Kind::DerivativeFunction(_, expression) => {
+                                expression.uses_trigonometry()
+                            }
+                            _ => false,
+                        };
+                        if uses_trigonometry && !self.doc.angle_unit_radians {
+                            self.derivative_angle_dialog = Some(source);
+                        } else {
+                            match self.doc.add_derivative_function(source) {
+                                Ok(id) => {
+                                    self.select_only(id);
+                                    self.status = format!("Created derivative function {id}");
+                                }
+                                Err(error) => self.status = error,
+                            }
+                        }
                         ui.close();
                     }
                 });
@@ -1945,12 +2349,80 @@ impl Editor {
                         self.plot_table_mode = PlotPointsMode::Cartesian;
                         ui.close();
                     }
-                    if ui.button("Plot New Function…").clicked() {
-                        self.function_dialog = Some(true);
+                    let selected_function = self.doc.selected.iter().copied().find(|&id| {
+                        self.doc.objects.get(id - 1).is_some_and(|o| {
+                            !o.deleted
+                                && matches!(
+                                    o.kind,
+                                    Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                                )
+                        })
+                    });
+                    if ui
+                        .button(if selected_function.is_some() {
+                            "Plot Function"
+                        } else {
+                            "Plot New Function…"
+                        })
+                        .clicked()
+                    {
+                        if let Some(definition) = selected_function {
+                            match self.doc.plot_function(definition, self.center) {
+                                Ok(id) => {
+                                    self.select_only(id);
+                                    self.status = format!("Plotted function {id}");
+                                }
+                                Err(error) => self.status = error,
+                            }
+                        } else {
+                            self.function_dialog = Some(true);
+                        }
                         ui.close();
                     }
-                    if ui.button("Define Coordinate System").clicked() {
+                    if ui.button("Plot Parametric Curve…").clicked() {
+                        let functions = self
+                            .doc
+                            .objects
+                            .iter()
+                            .filter(|object| {
+                                object.page == self.doc.active_page
+                                    && !object.deleted
+                                    && matches!(
+                                        object.kind,
+                                        Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                                    )
+                            })
+                            .map(|object| object.id)
+                            .collect::<Vec<_>>();
+                        if functions.len() < 2 {
+                            self.status = "Define two functions before plotting a parametric curve".into();
+                        } else {
+                            let mut chosen = self
+                                .selection_order
+                                .iter()
+                                .copied()
+                                .filter(|id| functions.contains(id))
+                                .collect::<Vec<_>>();
+                            for id in functions {
+                                if !chosen.contains(&id) {
+                                    chosen.push(id);
+                                }
+                            }
+                            self.parametric_x = chosen[0];
+                            self.parametric_y = chosen[1];
+                            self.parametric_mode = PlotPointsMode::Cartesian;
+                            self.parametric_min_draft = "0".into();
+                            self.parametric_max_draft = "1".into();
+                            self.parametric_dialog = true;
+                        }
+                        ui.close();
+                    }
+                    if ui.button(self.define_coordinate_system_label()).clicked() {
                         self.define_coordinate_system();
+                        ui.close();
+                    }
+                    if ui.button("Mark Coordinate System").clicked() {
+                        self.mark_coordinate_system();
                         ui.close();
                     }
                     ui.add_enabled_ui(self.doc.active_coordinate_system().is_some(), |ui| {
@@ -2048,6 +2520,34 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Display", |ui| {
+                    ui.menu_button("Text", |ui| {
+                        if ui.button("Font Family…").clicked() {
+                            self.text_font_input = self
+                                .doc
+                                .selected
+                                .iter()
+                                .find_map(|id| self.doc.text_font_state(*id))
+                                .map(|style| style.family)
+                                .unwrap_or_else(|| "Tahoma".into());
+                            self.text_font_dialog = true;
+                            ui.close();
+                        }
+                        for (label, command) in [
+                            ("Bold", TextStyleCommand::Bold),
+                            ("Italic", TextStyleCommand::Italic),
+                            ("Underline", TextStyleCommand::Underline),
+                            ("Increase Size", TextStyleCommand::IncreaseSize),
+                            ("Decrease Size", TextStyleCommand::DecreaseSize),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.status = match self.doc.toggle_selected_text_style(command) {
+                                    Ok(count) => format!("Formatted {count} text object(s)"),
+                                    Err(error) => error,
+                                };
+                                ui.close();
+                            }
+                        }
+                    });
                     ui.menu_button("Point Style", |ui| {
                         for (label, style) in [
                             ("Dot", PointStyle::Dot),
@@ -2290,12 +2790,97 @@ impl Editor {
                 if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
                     ui.separator();
                     ui.label("Edit selected text");
-                    ui.text_edit_multiline(&mut self.edit_buffer);
+                    let edit = egui::TextEdit::multiline(&mut self.edit_buffer).show(ui);
+                    if let Some(range) = edit.cursor_range {
+                        if !range.is_empty() {
+                            let chars = range.as_sorted_char_range();
+                            self.text_selected_range = Some((id, chars.start.0, chars.end.0));
+                        } else if edit.response.has_focus() {
+                            self.text_selected_range = None;
+                        }
+                    }
+                    let selected_range = self
+                        .text_selected_range
+                        .and_then(|(target, start, end)| (target == id).then_some((start, end)));
                     if ui.button("Apply text").clicked() {
                         if let Err(error) = self.doc.edit_text(id, &self.edit_buffer) {
                             self.status = error;
                         }
                     }
+                    ui.horizontal(|ui| {
+                        for (label, command) in [
+                            ("Bold", TextStyleCommand::Bold),
+                            ("Italic", TextStyleCommand::Italic),
+                            ("Underline", TextStyleCommand::Underline),
+                        ] {
+                            if ui.button(label).clicked() {
+                                let current = match &self.doc.objects[id - 1].kind {
+                                    Kind::PlainText { text, .. } => text.as_str(),
+                                    _ => "",
+                                };
+                                self.status = if self.edit_buffer != current {
+                                    "Apply the text edit before formatting a selection".into()
+                                } else if let Some((start, end)) = selected_range {
+                                    match self.doc.format_text_range(id, start, end, command) {
+                                        Ok(()) => format!("Formatted characters {start}–{end}"),
+                                        Err(error) => error,
+                                    }
+                                } else {
+                                    "Select characters in the text field first".into()
+                                };
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        for (label, command) in [
+                            ("Larger", TextStyleCommand::IncreaseSize),
+                            ("Smaller", TextStyleCommand::DecreaseSize),
+                        ] {
+                            if ui.button(label).clicked() {
+                                let current = match &self.doc.objects[id - 1].kind {
+                                    Kind::PlainText { text, .. } => text.as_str(),
+                                    _ => "",
+                                };
+                                self.status = if self.edit_buffer != current {
+                                    "Apply the text edit before formatting a selection".into()
+                                } else if let Some((start, end)) = selected_range {
+                                    match self.doc.format_text_range(id, start, end, command) {
+                                        Ok(()) => format!("Formatted characters {start}–{end}"),
+                                        Err(error) => error,
+                                    }
+                                } else {
+                                    "Select characters in the text field first".into()
+                                };
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.text_font_input)
+                                .hint_text("Font family"),
+                        );
+                        if ui.button("Font for selection").clicked() {
+                            let current = match &self.doc.objects[id - 1].kind {
+                                Kind::PlainText { text, .. } => text.as_str(),
+                                _ => "",
+                            };
+                            self.status = if self.edit_buffer != current {
+                                "Apply the text edit before formatting a selection".into()
+                            } else if let Some((start, end)) = selected_range {
+                                match self.doc.format_text_range_family(
+                                    id,
+                                    start,
+                                    end,
+                                    self.text_font_input.trim(),
+                                ) {
+                                    Ok(()) => format!("Changed font on characters {start}–{end}"),
+                                    Err(error) => error,
+                                }
+                            } else {
+                                "Select characters in the text field first".into()
+                            };
+                        }
+                    });
                 } else if self.doc.position(id).is_some() {
                     ui.separator();
                     ui.label("Point label");
@@ -2450,6 +3035,30 @@ impl Editor {
                         self.click(&vp, p, multi);
                     }
                 }
+                if response.double_clicked()
+                    && let Some(p) = response.interact_pointer_pos()
+                    && let Some(id) = self.hit(&vp, p)
+                {
+                    match self.doc.objects[id - 1].kind {
+                        Kind::FunctionDefinition(expression) => {
+                            self.function_edit_id = Some(id);
+                            self.function_dialog = Some(false);
+                            self.function_draft = expression
+                                .display()
+                                .strip_prefix("f(x) = ")
+                                .unwrap_or("x")
+                                .into();
+                        }
+                        Kind::FunctionPlot(_, _, min, max, samples)
+                        | Kind::ParametricPlot(_, _, _, min, max, samples, _) => {
+                            self.plot_range_dialog = Some(id);
+                            self.plot_min_draft = min.to_string();
+                            self.plot_max_draft = max.to_string();
+                            self.plot_samples_draft = samples.to_string();
+                        }
+                        _ => {}
+                    }
+                }
                 for mark in &self.trace_marks {
                     match *mark {
                         TraceMark::Point(at, color) => {
@@ -2520,14 +3129,108 @@ impl Editor {
                             x: rect.left.into(),
                             y: rect.top.into(),
                         });
-                        for (line, content) in text.split('\n').enumerate() {
-                            ui.painter().text(
-                                at + egui::vec2(0., line as f32 * 19.),
-                                egui::Align2::LEFT_TOP,
-                                content,
-                                egui::FontId::proportional(16.),
-                                egui::Color32::from_gray(35),
-                            );
+                        let style = self.doc.text_font_state(object.id);
+                        let size = style.as_ref().map_or(16., |style| style.size_code as f32);
+                        let font_id = self.canvas_font_id(
+                            style.as_ref().map(|style| style.family.as_str()),
+                            size,
+                        );
+                        let rows = self.doc.text_rich_runs(object.id);
+                        let families = self.doc.text_font_families().unwrap_or_default();
+                        let has_mixed_runs = rows.as_ref().is_some_and(|rows| {
+                            rows.iter().flatten().any(|run| {
+                                run.style != sketchpad_rs::text_object::RichRunStyle::default()
+                            })
+                        });
+                        if has_mixed_runs {
+                            let mut line_y = at.y;
+                            for row in rows.unwrap().iter() {
+                                let line_size = row
+                                    .iter()
+                                    .map(|run| run.style.size_code.map_or(size, f32::from))
+                                    .fold(size, f32::max);
+                                let mut x = at.x;
+                                for run in row {
+                                    let run_size = run.style.size_code.map_or(size, f32::from);
+                                    let run_family = run
+                                        .style
+                                        .family_index
+                                        .and_then(|index| families.get(usize::from(index)))
+                                        .map(String::as_str)
+                                        .or_else(|| {
+                                            style.as_ref().map(|style| style.family.as_str())
+                                        });
+                                    let run_font_id = self.canvas_font_id(run_family, run_size);
+                                    let bold = run.style.bold.unwrap_or_else(|| {
+                                        style.as_ref().is_some_and(|style| style.bold)
+                                    });
+                                    let italic = run.style.italic.unwrap_or_else(|| {
+                                        style.as_ref().is_some_and(|style| style.italic)
+                                    });
+                                    let underline = run.style.underline.unwrap_or_else(|| {
+                                        style.as_ref().is_some_and(|style| style.underline)
+                                    });
+                                    let color = egui::Color32::from_gray(35);
+                                    let format = egui::text::TextFormat {
+                                        font_id: run_font_id,
+                                        color,
+                                        italics: italic,
+                                        underline: if underline {
+                                            egui::Stroke::new(1., color)
+                                        } else {
+                                            egui::Stroke::NONE
+                                        },
+                                        ..Default::default()
+                                    };
+                                    let galley = ui.painter().layout_job(
+                                        egui::text::LayoutJob::single_section(
+                                            run.text.clone(),
+                                            format,
+                                        ),
+                                    );
+                                    let width = galley.rect.width();
+                                    let position = egui::pos2(x, line_y + line_size - run_size);
+                                    ui.painter().galley(position, galley.clone(), color);
+                                    if bold {
+                                        ui.painter().galley(
+                                            position + egui::vec2(0.7, 0.),
+                                            galley,
+                                            color,
+                                        );
+                                    }
+                                    x += width;
+                                }
+                                line_y += (line_size * 1.1).max(19.);
+                            }
+                        } else {
+                            for (line, content) in text.split('\n').enumerate() {
+                                let position = at + egui::vec2(0., line as f32 * 19.);
+                                let bounds = ui.painter().text(
+                                    position,
+                                    egui::Align2::LEFT_TOP,
+                                    content,
+                                    font_id.clone(),
+                                    egui::Color32::from_gray(35),
+                                );
+                                if style.as_ref().is_some_and(|style| style.bold) {
+                                    ui.painter().text(
+                                        position + egui::vec2(0.7, 0.),
+                                        egui::Align2::LEFT_TOP,
+                                        content,
+                                        font_id.clone(),
+                                        egui::Color32::from_gray(35),
+                                    );
+                                }
+                                if style.as_ref().is_some_and(|style| style.underline) {
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(bounds.min.x, bounds.max.y - 1.),
+                                            egui::pos2(bounds.max.x, bounds.max.y - 1.),
+                                        ],
+                                        egui::Stroke::new(1., egui::Color32::from_gray(35)),
+                                    );
+                                }
+                            }
                         }
                     }
                     if let Some((_, lines)) =
@@ -2562,13 +3265,38 @@ impl Editor {
                     {
                         let at = vp.screen(point);
                         let offset = label.offset();
-                        ui.painter().text(
-                            at + egui::vec2(offset.0 as f32, offset.1 as f32),
+                        let position = at + egui::vec2(offset.0 as f32, offset.1 as f32);
+                        let style = self.doc.text_font_state(object.id);
+                        let size = style.as_ref().map_or(13., |style| style.size_code as f32);
+                        let font_id = self.canvas_font_id(
+                            style.as_ref().map(|style| style.family.as_str()),
+                            size,
+                        );
+                        let bounds = ui.painter().text(
+                            position,
                             egui::Align2::LEFT_TOP,
                             name,
-                            egui::FontId::proportional(13.),
+                            font_id.clone(),
                             egui::Color32::from_gray(35),
                         );
+                        if style.as_ref().is_some_and(|style| style.bold) {
+                            ui.painter().text(
+                                position + egui::vec2(0.7, 0.),
+                                egui::Align2::LEFT_TOP,
+                                name,
+                                font_id.clone(),
+                                egui::Color32::from_gray(35),
+                            );
+                        }
+                        if style.as_ref().is_some_and(|style| style.underline) {
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(bounds.min.x, bounds.max.y - 1.),
+                                    egui::pos2(bounds.max.x, bounds.max.y - 1.),
+                                ],
+                                egui::Stroke::new(1., egui::Color32::from_gray(35)),
+                            );
+                        }
                     }
                     if let Kind::HideShowButton { label, anchor, .. } = &object.kind {
                         let box_rect =
@@ -2623,155 +3351,34 @@ impl Editor {
                         egui::Color32::from_rgb(36, 48, 61),
                     );
                 }
-                let mut row = 0;
-                for object in self.doc.objects.iter().filter(|object| {
-                    object.page == self.doc.active_page && object.visible && !object.deleted
-                }) {
-                    if let Some(length) = self.doc.segment_length_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Length = {length:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
+                for (at, label, vertical) in
+                    sketchpad_rs::render::defined_axis_labels(&self.doc, &vp)
+                {
+                    ui.painter().text(
+                        at,
+                        if vertical {
+                            egui::Align2::RIGHT_CENTER
+                        } else {
+                            egui::Align2::CENTER_TOP
+                        },
+                        label,
+                        egui::FontId::proportional(11.),
+                        egui::Color32::from_rgb(36, 48, 61),
+                    );
+                }
+                for (row, (id, text)) in self.overlay_rows().into_iter().enumerate() {
+                    let rect = Self::overlay_row_rect(&vp, row, &text);
+                    if self.doc.selected.contains(&id) {
+                        ui.painter()
+                            .rect_filled(rect, 0., egui::Color32::from_rgb(255, 188, 230));
                     }
-                    if let Some(distance) = self.doc.point_distance_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Distance = {distance:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(ratio) = self.doc.ratio_value(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Ratio = {ratio:.2}"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(perimeter) = self.doc.perimeter_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Perimeter = {perimeter:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(circumference) = self.doc.circle_circumference_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Circumference = {circumference:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(radius) = self.doc.circle_radius_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Radius = {radius:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(area) = self.doc.circle_area_cm2(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Area = {area:.2} cm²"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(angle) = self.doc.arc_angle_degrees(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Arc Angle = {angle:.2}°"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(length) = self.doc.arc_length_cm(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Arc Length = {length:.2} cm"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(angle) = self.doc.angle_degrees(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Angle = {angle:.2}°"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
-                        let value = self
-                            .doc
-                            .slope_value(object.id)
-                            .map(|value| format!("{value:.2}"))
-                            .unwrap_or_else(|| "undefined".into());
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            format!("Slope = {value}"),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(value) = self.doc.coordinate_measure_text(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            value,
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Some(value) = self.doc.value_equation_text(object.id) {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            value,
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
-                    if let Kind::FunctionDefinition(expression) = object.kind {
-                        ui.painter().text(
-                            r.min + egui::vec2(12., 12. + row as f32 * 20.),
-                            egui::Align2::LEFT_TOP,
-                            expression.display(),
-                            egui::FontId::proportional(16.),
-                            egui::Color32::from_gray(35),
-                        );
-                        row += 1;
-                    }
+                    ui.painter().text(
+                        rect.min,
+                        egui::Align2::LEFT_TOP,
+                        text,
+                        egui::FontId::proportional(16.),
+                        egui::Color32::from_gray(35),
+                    );
                 }
             });
         if self.pending_action.is_some() {
@@ -2893,37 +3500,320 @@ impl Editor {
             }
         }
         if let Some(plot) = self.function_dialog {
+            let edit_id = self.function_edit_id;
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("new_function")).show(root.ctx(), |ui| {
-                ui.heading(if plot {
+                ui.heading(if edit_id.is_some() {
+                    "Edit function"
+                } else if plot {
                     "Plot new function"
                 } else {
                     "New function"
                 });
                 ui.label("f(x) =");
                 ui.text_edit_singleline(&mut self.function_draft);
-                ui.label("Supported: x, x^2");
+                ui.label("Supported: arithmetic in x, sin(x), cos(x), tan(x)");
                 ui.horizontal(|ui| {
-                    apply = ui.button(if plot { "Plot" } else { "Create" }).clicked();
+                    apply = ui
+                        .button(if edit_id.is_some() {
+                            "Update"
+                        } else if plot {
+                            "Plot"
+                        } else {
+                            "Create"
+                        })
+                        .clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });
             if cancel {
                 self.function_dialog = None;
+                self.function_edit_id = None;
             }
             if apply {
-                match SimpleFunction::parse(&self.function_draft).and_then(|expr| {
-                    if plot {
-                        self.doc.plot_new_function(expr, self.center)
-                    } else {
-                        self.doc.add_function_definition(expr)
-                    }
-                }) {
-                    Ok(id) => {
+                let result = SimpleFunction::parse(&self.function_draft).and_then(|expr| {
+                    if expr.uses_trigonometry() && !self.doc.angle_unit_radians {
                         self.function_dialog = None;
+                        self.function_angle_dialog = Some((expr, plot, edit_id));
+                        return Ok(None);
+                    }
+                    let id = if let Some(id) = edit_id {
+                        self.doc.set_function_expression(id, expr)?;
+                        id
+                    } else if plot {
+                        self.doc.plot_new_function(expr, self.center)?
+                    } else {
+                        self.doc.add_function_definition(expr)?
+                    };
+                    Ok(Some(id))
+                });
+                match result {
+                    Ok(None) => {}
+                    Ok(Some(id)) => {
+                        self.function_dialog = None;
+                        self.function_edit_id = None;
                         self.select_only(id);
-                        self.status = format!("Created function object {id}");
+                        self.status = if edit_id.is_some() {
+                            format!("Updated function object {id}")
+                        } else {
+                            format!("Created function object {id}")
+                        };
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some((expression, plot, edit_id)) = self.function_angle_dialog {
+            let mut choice = None;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("function_angle_unit")).show(root.ctx(), |ui| {
+                ui.heading("Angle unit for this function");
+                ui.label("The document currently uses degrees.");
+                ui.horizontal(|ui| {
+                    if ui.button("Switch to radians").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Keep degrees").clicked() {
+                        choice = Some(false);
+                    }
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.function_angle_dialog = None;
+                self.function_edit_id = None;
+            }
+            if let Some(radians) = choice {
+                let result = if let Some(id) = edit_id {
+                    self.doc
+                        .set_function_expression_with_angle_unit(id, expression, radians)
+                        .map(|()| id)
+                } else if plot {
+                    self.doc
+                        .plot_new_function_with_angle_unit(expression, self.center, radians)
+                } else {
+                    self.doc
+                        .add_function_definition_with_angle_unit(expression, radians)
+                };
+                match result {
+                    Ok(id) => {
+                        self.function_angle_dialog = None;
+                        self.function_edit_id = None;
+                        self.select_only(id);
+                        self.status = if edit_id.is_some() {
+                            format!("Updated function object {id}")
+                        } else {
+                            format!("Created function object {id}")
+                        };
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some(source) = self.derivative_angle_dialog {
+            let mut choice = None;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("derivative_angle_unit")).show(root.ctx(), |ui| {
+                ui.heading("Angle unit for this derivative");
+                ui.label("The document currently uses degrees.");
+                ui.horizontal(|ui| {
+                    if ui.button("Switch to radians").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Keep degrees").clicked() {
+                        choice = Some(false);
+                    }
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.derivative_angle_dialog = None;
+            }
+            if let Some(radians) = choice {
+                match self
+                    .doc
+                    .add_derivative_function_with_angle_unit(source, radians)
+                {
+                    Ok(id) => {
+                        self.derivative_angle_dialog = None;
+                        self.select_only(id);
+                        self.status = format!("Created derivative function {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if let Some(plot) = self.plot_range_dialog {
+            let variable = if matches!(
+                self.doc.objects.get(plot - 1).map(|o| &o.kind),
+                Some(Kind::FunctionPlot(_, _, _, _, _))
+            ) {
+                "x"
+            } else {
+                "t"
+            };
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("plot_range")).show(root.ctx(), |ui| {
+                ui.heading("Plot properties");
+                ui.horizontal(|ui| {
+                    ui.label("Domain");
+                    ui.add(egui::TextEdit::singleline(&mut self.plot_min_draft).desired_width(70.));
+                    ui.label(format!("≤ {variable} ≤"));
+                    ui.add(egui::TextEdit::singleline(&mut self.plot_max_draft).desired_width(70.));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Samples");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.plot_samples_draft).desired_width(70.),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Apply").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.plot_range_dialog = None;
+            }
+            if apply {
+                let result = (|| -> Result<(), String> {
+                    let min = self
+                        .plot_min_draft
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Invalid domain start")?;
+                    let max = self
+                        .plot_max_draft
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Invalid domain end")?;
+                    let samples = self
+                        .plot_samples_draft
+                        .trim()
+                        .parse::<u32>()
+                        .map_err(|_| "Invalid sample count")?;
+                    self.doc.set_plot_range(plot, min, max, samples)
+                })();
+                match result {
+                    Ok(()) => {
+                        self.plot_range_dialog = None;
+                        self.select_only(plot);
+                        self.status = format!("Updated plot {plot}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if self.parametric_dialog {
+            let functions = self
+                .doc
+                .objects
+                .iter()
+                .filter_map(|object| {
+                    if object.page != self.doc.active_page || object.deleted {
+                        return None;
+                    }
+                    let expression = match object.kind {
+                        Kind::FunctionDefinition(expression)
+                        | Kind::DerivativeFunction(_, expression) => expression,
+                        _ => return None,
+                    };
+                    Some((
+                        object.id,
+                        format!("{}: {}", object.id, expression.display()),
+                    ))
+                })
+                .collect::<Vec<_>>();
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("parametric_curve")).show(root.ctx(), |ui| {
+                ui.heading("Plot parametric curve");
+                ui.horizontal(|ui| {
+                    ui.label("x(t) or r(t)");
+                    egui::ComboBox::from_id_salt("parametric_x")
+                        .selected_text(
+                            functions
+                                .iter()
+                                .find(|(id, _)| *id == self.parametric_x)
+                                .map_or("Select function", |(_, label)| label.as_str()),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (id, label) in &functions {
+                                ui.selectable_value(&mut self.parametric_x, *id, label);
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("y(t) or θ(t)");
+                    egui::ComboBox::from_id_salt("parametric_y")
+                        .selected_text(
+                            functions
+                                .iter()
+                                .find(|(id, _)| *id == self.parametric_y)
+                                .map_or("Select function", |(_, label)| label.as_str()),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (id, label) in &functions {
+                                ui.selectable_value(&mut self.parametric_y, *id, label);
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    ui.radio_value(
+                        &mut self.parametric_mode,
+                        PlotPointsMode::Cartesian,
+                        "Rectangular",
+                    );
+                    ui.radio_value(&mut self.parametric_mode, PlotPointsMode::Polar, "Polar");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Domain");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parametric_min_draft)
+                            .desired_width(65.),
+                    );
+                    ui.label("≤ t ≤");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parametric_max_draft)
+                            .desired_width(65.),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Plot").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.parametric_dialog = false;
+            }
+            if apply {
+                let result = (|| -> Result<usize, String> {
+                    let min = self
+                        .parametric_min_draft
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Invalid domain start")?;
+                    let max = self
+                        .parametric_max_draft
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Invalid domain end")?;
+                    self.doc.plot_parametric_curve(
+                        self.parametric_x,
+                        self.parametric_y,
+                        self.parametric_mode,
+                        min,
+                        max,
+                        self.center,
+                    )
+                })();
+                match result {
+                    Ok(id) => {
+                        self.parametric_dialog = false;
+                        self.select_only(id);
+                        self.status = format!("Plotted parametric curve {id}");
                     }
                     Err(error) => self.status = error,
                 }
@@ -3084,6 +3974,30 @@ impl Editor {
                 }
             }
         }
+        if self.text_font_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("text_font_family")).show(root.ctx(), |ui| {
+                ui.heading("Font family");
+                ui.text_edit_singleline(&mut self.text_font_input);
+                ui.horizontal(|ui| {
+                    apply = ui.button("Apply").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if apply {
+                let family = self.text_font_input.trim();
+                match self.doc.set_selected_text_family(family) {
+                    Ok(count) => {
+                        self.status = format!("Changed font family on {count} text object(s)");
+                        self.text_font_dialog = false;
+                    }
+                    Err(error) => self.status = error,
+                }
+            } else if cancel {
+                self.text_font_dialog = false;
+            }
+        }
         if self.translate_dialog {
             let mut angle = self.translation_angle;
             let mut distance = self.translation_distance;
@@ -3173,6 +4087,128 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn define_coordinate_system_uses_selected_distances_in_order() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_segments_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        editor.selection_order = vec![1, 3, 6];
+        editor.doc.selected.extend([1, 3, 6]);
+        assert_eq!(
+            editor.define_coordinate_system_label(),
+            "Define Unit Distances"
+        );
+        editor.define_coordinate_system();
+        assert_eq!(editor.doc.active_coordinate_system(), Some(9));
+        assert_eq!(editor.doc.objects[6].kind, Kind::DistanceAxis(1, 3, 1));
+        assert_eq!(editor.doc.objects[7].kind, Kind::DistanceAxis(1, 6, 0));
+        assert_eq!(editor.doc.grid_form[0], GridForm::Rectangular);
+    }
+
+    #[test]
+    fn clicking_a_grid_intersection_selects_its_coordinate_system() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_coordinate_systems_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        for (frame_id, x, y) in [(9, 2., 2.), (14, 2., 3.)] {
+            let at = editor
+                .doc
+                .graph_frame(frame_id)
+                .unwrap()
+                .world(x, y)
+                .unwrap();
+            let click = viewport.screen(Point { x: at.x, y: at.y });
+            assert_eq!(editor.hit(&viewport, click), Some(frame_id));
+        }
+        editor.select_only(9);
+        editor.mark_coordinate_system();
+        assert_eq!(editor.doc.active_coordinate_system(), Some(9));
+        editor.doc.mark_coordinate_system(1).unwrap();
+        editor.doc.set_grid_visible(false);
+        let at = editor.doc.graph_frame(14).unwrap().world(2., 3.).unwrap();
+        assert_ne!(
+            editor.hit_grid(&viewport, viewport.screen(Point { x: at.x, y: at.y })),
+            Some(14)
+        );
+
+        let mixed = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/graph_two_frames_mixed_grid_generated.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        let radius = 3. / std::f64::consts::SQRT_2;
+        let at = mixed
+            .doc
+            .graph_frame(14)
+            .unwrap()
+            .world(radius, radius)
+            .unwrap();
+        assert_eq!(
+            mixed.hit_grid(&viewport, viewport.screen(Point { x: at.x, y: at.y })),
+            Some(14)
+        );
+    }
+
+    #[test]
+    fn clicking_function_label_selects_definition_for_plotting() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/function_definition_identity.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let label = viewport.rect.min + egui::vec2(20., 20.);
+        editor.click(&viewport, label, false);
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![7]
+        );
+        let plot = editor
+            .doc
+            .plot_function(7, Point { x: 199., y: 125. })
+            .unwrap();
+        assert_eq!(plot, 8);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+
+        let mut mixed = Document::new();
+        let a = mixed.add(Kind::Free(Point { x: 100., y: 100. }));
+        let b = mixed.add(Kind::Free(Point { x: 150., y: 100. }));
+        let segment = mixed.add(Kind::Segment(a, b));
+        mixed.add(Kind::SegmentLength(segment));
+        let definition = mixed
+            .add_function_definition(SimpleFunction::Square)
+            .unwrap();
+        let mut editor = Editor::new(mixed);
+        assert_eq!(editor.overlay_rows().len(), 2);
+        editor.click(&viewport, viewport.rect.min + egui::vec2(20., 40.), false);
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![definition]
+        );
+    }
 
     #[test]
     fn traced_point_and_segment_capture_motion_until_erased() {
@@ -3334,6 +4370,7 @@ fn main() {
                             return;
                         }
                         let input = egui_state.take_egui_input(&window);
+                        editor.sync_document_fonts(&ctx);
                         let mut viewport = None;
                         let mut output = ctx.run_ui(input, |ui| viewport = Some(editor.ui(ui)));
                         if editor.exit_requested {

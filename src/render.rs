@@ -1,4 +1,5 @@
 use crate::document::{Document, Kind, LineMode, Point};
+use crate::graph::GridForm;
 use crate::style_records::{
     LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
 };
@@ -107,7 +108,12 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
                 return Some((group.anchor(), lines));
             }
             let mut lines = vec!["t₁".into()];
-            lines.extend((0..group.rows()).map(|_| "1.00".into()));
+            lines.extend(
+                group
+                    .default_values()?
+                    .into_iter()
+                    .map(|value| format!("{value:.2}")),
+            );
             Some((group.anchor(), lines))
         }
         Kind::ValueTablePair(_, _, group) => {
@@ -259,103 +265,88 @@ fn clipped_line(a: Pos2, b: Pos2, mode: LineMode, rect: Rect) -> Option<(Pos2, P
     (lo <= hi && lo.is_finite() && hi.is_finite()).then_some((a + d * lo, a + d * hi))
 }
 
-fn grid_lines(doc: &Document, vp: &Viewport) -> Vec<(Pos2, Pos2)> {
-    if !doc.grid_visible() {
+fn grid_lines_for_frame(doc: &Document, vp: &Viewport, frame_id: usize) -> Vec<(Pos2, Pos2)> {
+    let Some(frame) = doc.graph_frame(frame_id) else {
         return Vec::new();
-    }
-    if doc.grid_form[doc.active_page] == crate::graph::GridForm::Polar {
-        return Vec::new();
-    }
+    };
     let mut lines = Vec::new();
-    for object in doc.objects.iter().filter(|object| {
-        object.page == doc.active_page
-            && object.visible
-            && !object.deleted
-            && matches!(object.kind, Kind::CoordinateSystem(_, _))
-    }) {
-        let Some(frame) = doc.graph_frame(object.id) else {
-            continue;
-        };
-        let corners = [
-            vp.rect.left_top(),
-            vp.rect.right_top(),
-            vp.rect.left_bottom(),
-            vp.rect.right_bottom(),
-        ];
-        let coordinates = corners
-            .into_iter()
-            .filter_map(|corner| {
-                let world = vp.world(corner);
-                frame.coordinates(crate::graph::GraphPoint {
-                    x: world.x,
-                    y: world.y,
-                })
+    let corners = [
+        vp.rect.left_top(),
+        vp.rect.right_top(),
+        vp.rect.left_bottom(),
+        vp.rect.right_bottom(),
+    ];
+    let coordinates = corners
+        .into_iter()
+        .filter_map(|corner| {
+            let world = vp.world(corner);
+            frame.coordinates(crate::graph::GraphPoint {
+                x: world.x,
+                y: world.y,
             })
-            .collect::<Vec<_>>();
-        if coordinates.len() != 4 {
+        })
+        .collect::<Vec<_>>();
+    if coordinates.len() != 4 {
+        return Vec::new();
+    }
+    let (xmin, xmax) = coordinates
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.x), hi.max(p.x))
+        });
+    let (ymin, ymax) = coordinates
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.y), hi.max(p.y))
+        });
+    let bounds = [
+        (xmin.floor() - 1., xmax.ceil() + 1.),
+        (ymin.floor() - 1., ymax.ceil() + 1.),
+    ];
+    for axis in 0..2 {
+        let (lo, hi) = bounds[axis];
+        if !lo.is_finite() || !hi.is_finite() {
             continue;
         }
-        let (xmin, xmax) = coordinates
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
-                (lo.min(p.x), hi.max(p.x))
-            });
-        let (ymin, ymax) = coordinates
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
-                (lo.min(p.y), hi.max(p.y))
-            });
-        let bounds = [
-            (xmin.floor() - 1., xmax.ceil() + 1.),
-            (ymin.floor() - 1., ymax.ceil() + 1.),
-        ];
-        for axis in 0..2 {
-            let (lo, hi) = bounds[axis];
-            if !lo.is_finite() || !hi.is_finite() {
-                continue;
+        let interval = ((hi - lo) / 200.).ceil().max(1.) as i64;
+        let mut value = lo as i64;
+        while value <= hi as i64 {
+            let pair = if axis == 0 {
+                (
+                    frame.world(value as f64, ymin - 1.),
+                    frame.world(value as f64, ymax + 1.),
+                )
+            } else {
+                (
+                    frame.world(xmin - 1., value as f64),
+                    frame.world(xmax + 1., value as f64),
+                )
+            };
+            if let (Some(a), Some(b)) = pair {
+                if let Some(line) = clipped_line(
+                    vp.screen(Point { x: a.x, y: a.y }),
+                    vp.screen(Point { x: b.x, y: b.y }),
+                    LineMode::Line,
+                    vp.rect,
+                ) {
+                    lines.push(line);
+                }
             }
-            let interval = ((hi - lo) / 200.).ceil().max(1.) as i64;
-            let mut value = lo as i64;
-            while value <= hi as i64 {
-                let pair = if axis == 0 {
-                    (
-                        frame.world(value as f64, ymin - 1.),
-                        frame.world(value as f64, ymax + 1.),
-                    )
-                } else {
-                    (
-                        frame.world(xmin - 1., value as f64),
-                        frame.world(xmax + 1., value as f64),
-                    )
-                };
-                if let (Some(a), Some(b)) = pair {
-                    if let Some(line) = clipped_line(
-                        vp.screen(Point { x: a.x, y: a.y }),
-                        vp.screen(Point { x: b.x, y: b.y }),
-                        LineMode::Line,
-                        vp.rect,
-                    ) {
-                        lines.push(line);
-                    }
-                }
-                value = value.saturating_add(interval);
-                if value == i64::MAX {
-                    break;
-                }
+            value = value.saturating_add(interval);
+            if value == i64::MAX {
+                break;
             }
         }
     }
     lines
 }
 
-fn polar_grid(doc: &Document, vp: &Viewport) -> (Vec<Vec<Pos2>>, Vec<Pos2>) {
-    if !doc.grid_visible() || doc.grid_form[doc.active_page] != crate::graph::GridForm::Polar {
-        return (Vec::new(), Vec::new());
-    }
-    let Some(frame) = doc
-        .active_coordinate_system()
-        .and_then(|id| doc.graph_frame(id))
-    else {
+fn polar_grid_for_frame(
+    doc: &Document,
+    vp: &Viewport,
+    frame_id: usize,
+) -> (Vec<Vec<Pos2>>, Vec<Pos2>) {
+    let Some(frame) = doc.graph_frame(frame_id) else {
         return (Vec::new(), Vec::new());
     };
     let mut radius: f64 = 0.0;
@@ -410,11 +401,7 @@ fn polar_grid(doc: &Document, vp: &Viewport) -> (Vec<Vec<Pos2>>, Vec<Pos2>) {
     (paths, dots)
 }
 
-fn grid_points(doc: &Document, vp: &Viewport) -> Vec<Pos2> {
-    if doc.grid_form[doc.active_page] == crate::graph::GridForm::Polar {
-        return polar_grid(doc, vp).1;
-    }
-    let lines = grid_lines(doc, vp);
+fn square_grid_points(lines: &[(Pos2, Pos2)], vp: &Viewport) -> Vec<Pos2> {
     let mut points = Vec::new();
     for (index, (a, b)) in lines.iter().enumerate() {
         let u = *b - *a;
@@ -436,6 +423,208 @@ fn grid_points(doc: &Document, vp: &Viewport) -> Vec<Pos2> {
         }
     }
     points
+}
+
+#[derive(Default)]
+struct GridGeometry {
+    lines: Vec<(Pos2, Pos2)>,
+    polar_paths: Vec<Vec<Pos2>>,
+    dots: Vec<Pos2>,
+    selected_lines: Vec<(Pos2, Pos2)>,
+    selected_polar_paths: Vec<Vec<Pos2>>,
+    selected_dots: Vec<Pos2>,
+}
+
+fn grid_geometry(doc: &Document, vp: &Viewport) -> GridGeometry {
+    let mut geometry = GridGeometry::default();
+    for object in doc.objects.iter().filter(|object| {
+        matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
+    }) {
+        let (form, dotted) = doc
+            .frame_styles
+            .get(&object.id)
+            .copied()
+            .unwrap_or((doc.grid_form[object.page], doc.grid_dotted[object.page]));
+        let selected = doc.selected.contains(&object.id);
+        if form == GridForm::Polar {
+            let (paths, dots) = polar_grid_for_frame(doc, vp, object.id);
+            if dotted {
+                if selected {
+                    geometry.selected_dots.extend(dots);
+                } else {
+                    geometry.dots.extend(dots);
+                }
+            } else {
+                if selected {
+                    geometry.selected_polar_paths.extend(paths);
+                } else {
+                    geometry.polar_paths.extend(paths);
+                }
+            }
+        } else {
+            let lines = grid_lines_for_frame(doc, vp, object.id);
+            if dotted {
+                let dots = square_grid_points(&lines, vp);
+                if selected {
+                    geometry.selected_dots.extend(dots);
+                } else {
+                    geometry.dots.extend(dots);
+                }
+            } else {
+                if selected {
+                    geometry.selected_lines.extend(lines);
+                } else {
+                    geometry.lines.extend(lines);
+                }
+            }
+        }
+    }
+    geometry
+}
+
+fn defined_axis_annotations(
+    doc: &Document,
+    vp: &Viewport,
+) -> (Vec<(Pos2, Pos2, bool)>, Vec<(Pos2, String, bool)>) {
+    let mut ticks = Vec::new();
+    let mut labels = Vec::new();
+    for object in doc.objects.iter().filter(|object| {
+        matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
+    }) {
+        let Kind::CoordinateSystem(x_axis, y_axis) = object.kind else {
+            continue;
+        };
+        let x_kind = x_axis
+            .checked_sub(1)
+            .and_then(|id| doc.objects.get(id))
+            .map(|axis| &axis.kind);
+        let circle_defined = matches!(x_kind, Some(Kind::CircleAxis(_, 1)));
+        let distance_defined = matches!(x_kind, Some(Kind::DistanceAxis(_, _, 1)));
+        if !circle_defined && !distance_defined {
+            continue;
+        }
+        let Some(frame) = doc.graph_frame(object.id) else {
+            continue;
+        };
+        let center = vp.screen(Point {
+            x: frame.origin.x,
+            y: frame.origin.y,
+        });
+        let x_unit = vp
+            .screen(Point {
+                x: frame.x_unit.x,
+                y: frame.x_unit.y,
+            })
+            .distance(center);
+        let y_unit = vp
+            .screen(Point {
+                x: frame.y_unit.x,
+                y: frame.y_unit.y,
+            })
+            .distance(center);
+        if !x_unit.is_finite() || x_unit < 1. || !y_unit.is_finite() || y_unit < 1. {
+            continue;
+        }
+        let divisions = |unit: f32| {
+            if unit >= 50. {
+                10
+            } else if unit >= 20. {
+                5
+            } else {
+                1
+            }
+        };
+        let x_divisions = divisions(x_unit);
+        let y_divisions = divisions(y_unit);
+        let x_spacing = x_unit / x_divisions as f32;
+        let y_spacing = y_unit / y_divisions as f32;
+        if !x_spacing.is_finite() || x_spacing < 1. || !y_spacing.is_finite() || y_spacing < 1. {
+            continue;
+        }
+        let selected_x = doc.selected.contains(&x_axis);
+        let selected_y = doc.selected.contains(&y_axis);
+        let first_x = (((vp.rect.min.x - center.x) / x_spacing).ceil() as i32).max(-1000);
+        let last_x = (((vp.rect.max.x - center.x) / x_spacing).floor() as i32).min(1000);
+        let first_y = (((center.y - vp.rect.max.y) / y_spacing).ceil() as i32).max(-1000);
+        let last_y = (((center.y - vp.rect.min.y) / y_spacing).floor() as i32).min(1000);
+        if doc.is_displayed(x_axis) && vp.rect.min.y <= center.y && center.y <= vp.rect.max.y {
+            for i in first_x..=last_x {
+                if i == 0 {
+                    continue;
+                }
+                let at = egui::pos2(center.x + i as f32 * x_spacing, center.y);
+                ticks.push((
+                    at + egui::vec2(0., -4.),
+                    at + egui::vec2(0., 4.),
+                    selected_x,
+                ));
+                let x_label_multiple = if circle_defined {
+                    2 * x_divisions
+                } else if x_unit >= 160. {
+                    x_divisions / 2
+                } else if x_unit >= 80. {
+                    x_divisions
+                } else {
+                    2 * x_divisions
+                };
+                if x_label_multiple > 0 && i % x_label_multiple == 0 && x_unit >= 30. {
+                    let label_at = at + egui::vec2(0., 8.);
+                    if vp.rect.contains(label_at) {
+                        let value = i as f32 / x_divisions as f32;
+                        labels.push((
+                            label_at,
+                            if i % x_divisions == 0 {
+                                format!("{}", i / x_divisions)
+                            } else {
+                                format!("{value:.1}")
+                            },
+                            false,
+                        ));
+                    }
+                }
+            }
+        }
+        if doc.is_displayed(y_axis) && vp.rect.min.x <= center.x && center.x <= vp.rect.max.x {
+            for i in first_y..=last_y {
+                if i == 0 {
+                    continue;
+                }
+                let at = egui::pos2(center.x, center.y - i as f32 * y_spacing);
+                ticks.push((
+                    at + egui::vec2(-4., 0.),
+                    at + egui::vec2(4., 0.),
+                    selected_y,
+                ));
+                if y_divisions % 2 == 0 && i % (y_divisions / 2) == 0 && y_unit >= 80. {
+                    let label_at = at + egui::vec2(-8., 0.);
+                    if vp.rect.contains(label_at) {
+                        let value = i as f32 / y_divisions as f32;
+                        labels.push((
+                            label_at,
+                            if i % y_divisions == 0 {
+                                format!("{}", i / y_divisions)
+                            } else {
+                                format!("{value:.1}")
+                            },
+                            true,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (ticks, labels)
+}
+
+pub fn defined_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, bool)> {
+    defined_axis_annotations(doc, vp).1
+}
+
+#[cfg(test)]
+fn grid_points(doc: &Document, vp: &Viewport) -> Vec<Pos2> {
+    let mut grid = grid_geometry(doc, vp);
+    grid.dots.append(&mut grid.selected_dots);
+    grid.dots
 }
 
 pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String)> {
@@ -538,34 +727,43 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         }
     }
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
-    if doc.grid_dotted[doc.active_page] {
-        for point in grid_points(doc, vp) {
-            writeln!(
-                svg,
-                "<circle cx=\"{}\" cy=\"{}\" r=\"1.2\" fill=\"#d4dbe1\" stroke=\"none\"/>",
-                point.x, point.y
-            )
-            .unwrap();
-        }
-    } else {
-        for (a, b) in grid_lines(doc, vp) {
-            writeln!(
-                svg,
-                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                a.x, a.y, b.x, b.y
-            )
-            .unwrap();
-        }
-        for path in polar_grid(doc, vp).0 {
-            let points = path
-                .iter()
-                .map(|point| format!("{},{}", point.x, point.y))
-                .collect::<Vec<_>>()
-                .join(" ");
-            writeln!(svg, "<polyline points=\"{points}\"/>").unwrap();
-        }
+    let mut grid = grid_geometry(doc, vp);
+    grid.dots.append(&mut grid.selected_dots);
+    grid.lines.append(&mut grid.selected_lines);
+    grid.polar_paths.append(&mut grid.selected_polar_paths);
+    for point in grid.dots {
+        writeln!(
+            svg,
+            "<circle cx=\"{}\" cy=\"{}\" r=\"1.2\" fill=\"#d4dbe1\" stroke=\"none\"/>",
+            point.x, point.y
+        )
+        .unwrap();
+    }
+    for (a, b) in grid.lines {
+        writeln!(
+            svg,
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+            a.x, a.y, b.x, b.y
+        )
+        .unwrap();
+    }
+    for path in grid.polar_paths {
+        let points = path
+            .iter()
+            .map(|point| format!("{},{}", point.x, point.y))
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(svg, "<polyline points=\"{points}\"/>").unwrap();
     }
     svg.push_str("</g>\n<g fill=\"none\" stroke=\"#24303d\" stroke-width=\"2\">\n");
+    for (a, b, _) in defined_axis_annotations(doc, vp).0 {
+        writeln!(
+            svg,
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"1\"/>",
+            a.x, a.y, b.x, b.y
+        )
+        .unwrap();
+    }
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
@@ -581,10 +779,13 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             )
             .unwrap();
         }
-        if let Some(points) = doc.function_plot_points(o.id, 384) {
-            for pair in points.windows(2) {
+        if let Some(segments) = doc
+            .function_plot_segments(o.id, 384)
+            .or_else(|| doc.parametric_plot_segments(o.id, 384))
+        {
+            for (start, end) in segments {
                 if let Some((a, b)) =
-                    clipped_line(vp.screen(pair[0]), vp.screen(pair[1]), LineMode::Segment, r)
+                    clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, r)
                 {
                     writeln!(
                         svg,
@@ -672,15 +873,109 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
                 x: rect.left.into(),
                 y: rect.top.into(),
             });
-            for (line, content) in text.split('\n').enumerate() {
-                writeln!(
+            let style = doc.text_font_state(object.id);
+            let size = style.as_ref().map_or(16, |style| style.size_code);
+            let family = style
+                .as_ref()
+                .map_or("sans-serif", |style| style.family.as_str())
+                .replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('<', "&lt;");
+            let weight = if style.as_ref().is_some_and(|style| style.bold) {
+                "bold"
+            } else {
+                "normal"
+            };
+            let italic = if style.as_ref().is_some_and(|style| style.italic) {
+                "italic"
+            } else {
+                "normal"
+            };
+            let decoration = if style.as_ref().is_some_and(|style| style.underline) {
+                "underline"
+            } else {
+                "none"
+            };
+            let runs = doc.text_rich_runs(object.id);
+            let families = doc.text_font_families().unwrap_or_default();
+            let has_mixed_runs = runs.as_ref().is_some_and(|rows| {
+                rows.iter()
+                    .flatten()
+                    .any(|run| run.style != crate::text_object::RichRunStyle::default())
+            });
+            if has_mixed_runs {
+                let mut line_y = at.y;
+                for row in runs.unwrap().iter() {
+                    let line_size = row
+                        .iter()
+                        .map(|run| run.style.size_code.unwrap_or(size) as f32)
+                        .fold(size as f32, f32::max);
+                    write!(
+                        svg,
+                        "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\">",
+                        at.x,
+                        line_y + line_size * 0.85,
+                        family,
+                        size
+                    )
+                    .unwrap();
+                    for run in row {
+                        let run_family = run
+                            .style
+                            .family_index
+                            .and_then(|index| families.get(usize::from(index)))
+                            .map(|name| {
+                                format!(
+                                    " font-family=\"{}\"",
+                                    name.replace('&', "&amp;")
+                                        .replace('"', "&quot;")
+                                        .replace('<', "&lt;")
+                                )
+                            })
+                            .unwrap_or_default();
+                        let bold = run
+                            .style
+                            .bold
+                            .unwrap_or_else(|| style.as_ref().is_some_and(|style| style.bold));
+                        let slanted = run
+                            .style
+                            .italic
+                            .unwrap_or_else(|| style.as_ref().is_some_and(|style| style.italic));
+                        let underlined = run
+                            .style
+                            .underline
+                            .unwrap_or_else(|| style.as_ref().is_some_and(|style| style.underline));
+                        write!(
+                            svg,
+                            "<tspan{} font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</tspan>",
+                            run_family,
+                            run.style.size_code.unwrap_or(size),
+                            if bold { "bold" } else { "normal" },
+                            if slanted { "italic" } else { "normal" },
+                            if underlined { "underline" } else { "none" },
+                            xml_text(&run.text)
+                        )
+                        .unwrap();
+                    }
+                    svg.push_str("</text>\n");
+                    line_y += (line_size * 1.1).max(19.);
+                }
+            } else {
+                for (line, content) in text.split('\n').enumerate() {
+                    writeln!(
                     svg,
-                    "<text x=\"{}\" y=\"{}\">{}</text>",
+                    "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
                     at.x,
-                    at.y + 16. + line as f32 * 19.,
+                    at.y + size as f32 * 0.85 + line as f32 * 19.,
+                    family,
+                    size,
+                    weight,
+                    italic,
+                    decoration,
                     xml_text(content)
                 )
                 .unwrap();
+                }
             }
         }
         if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
@@ -703,11 +998,24 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         {
             let at = vp.screen(point);
             let offset = label.offset();
+            let style = doc.text_font_state(object.id);
+            let size = style.as_ref().map_or(13, |style| style.size_code);
+            let family = style
+                .as_ref()
+                .map_or("sans-serif", |style| style.family.as_str())
+                .replace('&', "&amp;")
+                .replace('"', "&quot;")
+                .replace('<', "&lt;");
             writeln!(
                 svg,
-                "<text x=\"{}\" y=\"{}\">{}</text>",
+                "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
                 at.x + offset.0 as f32,
-                at.y + offset.1 as f32 + 13.,
+                at.y + offset.1 as f32 + size as f32 * 0.85,
+                family,
+                size,
+                if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" },
                 xml_text(name)
             )
             .unwrap();
@@ -877,6 +1185,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             .unwrap();
             row += 1;
         }
+        if let Kind::DerivativeFunction(_, expression) = object.kind {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">{}</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                expression.display().replacen("f(x)", "f′(x)", 1)
+            )
+            .unwrap();
+            row += 1;
+        }
     }
     svg.push_str("</g>\n");
     for object in doc
@@ -892,6 +1211,9 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
     }
     for (at, label) in trigonometric_axis_labels(doc, vp) {
         writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y + 11.).unwrap();
+    }
+    for (at, label, vertical) in defined_axis_labels(doc, vp) {
+        writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" dominant-baseline=\"{}\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y, if vertical { "end" } else { "middle" }, if vertical { "middle" } else { "hanging" }).unwrap();
     }
     svg.push_str("</svg>\n");
     Ok(svg)
@@ -1118,24 +1440,42 @@ impl GeometryRenderer {
         let dark = [0.14, 0.18, 0.24, 1.];
         let blue = [0.09, 0.42, 0.84, 1.];
         let selected = [0.94, 0.32, 0.10, 1.];
-        if doc.grid_dotted[doc.active_page] {
-            for point in grid_points(doc, vp) {
-                mesh.line(
-                    point + egui::vec2(-1., 0.),
-                    point + egui::vec2(1., 0.),
-                    2.,
-                    [0.78, 0.83, 0.88, 1.],
-                );
+        let grid = grid_geometry(doc, vp);
+        for point in grid.dots {
+            mesh.line(
+                point + egui::vec2(-1., 0.),
+                point + egui::vec2(1., 0.),
+                2.,
+                [0.78, 0.83, 0.88, 1.],
+            );
+        }
+        for (a, b) in grid.lines {
+            mesh.line(a, b, 1., [0.78, 0.83, 0.88, 1.]);
+        }
+        for path in grid.polar_paths {
+            for pair in path.windows(2) {
+                mesh.line(pair[0], pair[1], 1., [0.78, 0.83, 0.88, 1.]);
             }
-        } else {
-            for (a, b) in grid_lines(doc, vp) {
-                mesh.line(a, b, 1., [0.78, 0.83, 0.88, 1.]);
+        }
+        let selected_grid = [0.94, 0.12, 0.62, 1.];
+        for point in grid.selected_dots {
+            mesh.line(
+                point + egui::vec2(-1.5, 0.),
+                point + egui::vec2(1.5, 0.),
+                2.,
+                selected_grid,
+            );
+        }
+        for (a, b) in grid.selected_lines {
+            mesh.line(a, b, 1.5, selected_grid);
+        }
+        for path in grid.selected_polar_paths {
+            for pair in path.windows(2) {
+                mesh.line(pair[0], pair[1], 1.5, selected_grid);
             }
-            for path in polar_grid(doc, vp).0 {
-                for pair in path.windows(2) {
-                    mesh.line(pair[0], pair[1], 1., [0.78, 0.83, 0.88, 1.]);
-                }
-            }
+        }
+        for (a, b, is_selected) in defined_axis_annotations(doc, vp).0 {
+            mesh.line(a, b, 1., if is_selected { selected } else { dark });
         }
         // Draw paths first and points last.
         for o in &doc.objects {
@@ -1162,14 +1502,14 @@ impl GeometryRenderer {
                     mesh.styled_path(&[a, b], false, stroke, col);
                 }
             }
-            if let Some(points) = doc.function_plot_points(o.id, 384) {
-                for pair in points.windows(2) {
-                    if let Some((a, b)) = clipped_line(
-                        vp.screen(pair[0]),
-                        vp.screen(pair[1]),
-                        LineMode::Segment,
-                        vp.rect,
-                    ) {
+            if let Some(segments) = doc
+                .function_plot_segments(o.id, 384)
+                .or_else(|| doc.parametric_plot_segments(o.id, 384))
+            {
+                for (start, end) in segments {
+                    if let Some((a, b)) =
+                        clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, vp.rect)
+                    {
                         mesh.line(
                             a,
                             b,
@@ -1301,6 +1641,157 @@ impl GeometryRenderer {
 mod tests {
     use super::*;
     #[test]
+    fn styled_free_text_uses_each_objects_saved_font_in_svg() {
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        for (source, first_bold) in [
+            (
+                include_bytes!("../tests/fixtures/text_two_objects_first_bold_off_original.gsp")
+                    .as_slice(),
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/text_two_objects_second_bold_off_original.gsp")
+                    .as_slice(),
+                true,
+            ),
+        ] {
+            let doc = Document::from_bytes(source, None).unwrap();
+            let svg = svg_page(&doc, &vp).unwrap();
+            let hello = svg
+                .lines()
+                .find(|line| line.contains(">Hello</text>"))
+                .unwrap();
+            let world = svg
+                .lines()
+                .find(|line| line.contains(">World</text>"))
+                .unwrap();
+            assert!(hello.contains(if first_bold {
+                "font-weight=\"bold\""
+            } else {
+                "font-weight=\"normal\""
+            }));
+            assert!(world.contains(if first_bold {
+                "font-weight=\"normal\""
+            } else {
+                "font-weight=\"bold\""
+            }));
+        }
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_two_objects_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.selected.insert(2);
+        doc.toggle_selected_text_style(crate::document::TextStyleCommand::Italic)
+            .unwrap();
+        doc.toggle_selected_text_style(crate::document::TextStyleCommand::Underline)
+            .unwrap();
+        let svg = svg_page(&doc, &vp).unwrap();
+        let world = svg
+            .lines()
+            .find(|line| line.contains(">World</text>"))
+            .unwrap();
+        assert!(world.contains("font-style=\"italic\""));
+        assert!(world.contains("text-decoration=\"underline\""));
+        doc.selected.clear();
+        doc.selected.insert(1);
+        doc.set_selected_text_family("Arial").unwrap();
+        let svg = svg_page(&doc, &vp).unwrap();
+        let hello = svg
+            .lines()
+            .find(|line| line.contains(">Hello</text>"))
+            .unwrap();
+        assert!(hello.contains("font-family=\"Arial\""));
+    }
+    #[test]
+    fn point_labels_use_independent_saved_text_styles_in_svg() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_two_point_labels_first_bold_off_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        let first = svg.lines().find(|line| line.contains(">A</text>")).unwrap();
+        let second = svg.lines().find(|line| line.contains(">B</text>")).unwrap();
+        assert!(first.contains("font-weight=\"normal\""));
+        assert!(second.contains("font-weight=\"bold\""));
+        doc.selected.insert(1);
+        doc.toggle_selected_text_style(crate::document::TextStyleCommand::IncreaseSize)
+            .unwrap();
+        let svg = svg_page(&doc, &vp).unwrap();
+        let first = svg.lines().find(|line| line.contains(">A</text>")).unwrap();
+        let second = svg.lines().find(|line| line.contains(">B</text>")).unwrap();
+        assert!(first.contains("font-size=\"36\""));
+        assert!(second.contains("font-size=\"24\""));
+    }
+    #[test]
+    fn mixed_format_caption_exports_distinct_svg_spans() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_mixed_bold_italic_he_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        let line = svg
+            .lines()
+            .find(|line| line.contains("He</tspan>"))
+            .unwrap();
+        assert!(line.contains("font-weight=\"normal\" font-style=\"italic\""));
+        assert!(line.contains(
+            "<tspan font-size=\"24\" font-weight=\"bold\" font-style=\"normal\" text-decoration=\"none\">llo</tspan>"
+        ));
+    }
+    #[test]
+    fn mixed_size_caption_exports_distinct_svg_sizes() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_mixed_size36_he_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        let line = svg
+            .lines()
+            .find(|line| line.contains("He</tspan>"))
+            .unwrap();
+        assert!(line.contains("<tspan font-size=\"36\""));
+        assert!(line.contains("<tspan font-size=\"24\""));
+    }
+    #[test]
+    fn mixed_family_caption_exports_native_font_index() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/text_mixed_adventor_he_original.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!doc.partial_view);
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(svg.contains("<tspan font-family=\"TeX Gyre Adventor\""));
+    }
+    #[test]
     fn dotted_grid_exports_intersection_points() {
         let doc = Document::from_bytes(
             include_bytes!("../tests/fixtures/graph_dotted_grid_original.gsp"),
@@ -1316,6 +1807,105 @@ mod tests {
         let svg = svg_page(&doc, &vp).unwrap();
         assert!(svg.matches("r=\"1.2\"").count() > 40);
         assert_eq!(svg.matches("<line x1=").count(), 2);
+    }
+    #[test]
+    fn mixed_coordinate_systems_render_square_lines_and_polar_dots_independently() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_frames_mixed_grid_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.active_coordinate_system(), Some(9));
+        assert_eq!(doc.frame_styles.get(&9), Some(&(GridForm::Square, false)));
+        assert_eq!(doc.frame_styles.get(&14), Some(&(GridForm::Polar, true)));
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let grid = grid_geometry(&doc, &vp);
+        assert!(grid.lines.len() > 10);
+        assert!(grid.dots.len() > 30);
+        assert!(grid.polar_paths.is_empty());
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert!(svg.matches("r=\"1.2\"").count() > 30);
+        assert!(svg.matches("<line x1=").count() > 10);
+
+        doc.selected.insert(9);
+        let selected = grid_geometry(&doc, &vp);
+        assert!(selected.selected_lines.len() > 10);
+        assert!(selected.lines.is_empty());
+        assert!(selected.dots.len() > 30);
+        doc.selected.clear();
+
+        doc.set_grid_visible(false);
+        let hidden = grid_geometry(&doc, &vp);
+        assert!(hidden.lines.is_empty());
+        assert!(hidden.dots.len() > 30);
+    }
+    #[test]
+    fn snap_points_keeps_the_visible_grid() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_snap_points_original.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc.snap_points, vec![true]);
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        assert!(grid_geometry(&doc, &vp).lines.len() > 10);
+        assert!(svg_page(&doc, &vp).unwrap().matches("<line x1=").count() > 10);
+    }
+    #[test]
+    fn circle_frame_axis_ticks_and_labels_follow_its_radius() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_unit_circle_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(640., 480.)),
+            scale: 1.,
+            center: Point { x: 323., y: 217. },
+        };
+        let (ticks, labels) = defined_axis_annotations(&doc, &vp);
+        assert!(ticks.len() > 70);
+        assert!(
+            labels
+                .iter()
+                .any(|(_, label, _)| label == "−2" || label == "-2")
+        );
+        assert!(labels.iter().any(|(_, label, _)| label == "0.5"));
+        assert!(svg_page(&doc, &vp).unwrap().contains(">0.5</text>"));
+        doc.move_point(2, Point { x: 383., y: 217. });
+        let moved = defined_axis_annotations(&doc, &vp);
+        assert!(moved.0.len() > ticks.len());
+        doc.set_grid_visible(false);
+        assert!(defined_axis_annotations(&doc, &vp).0.is_empty());
+    }
+    #[test]
+    fn rectangular_distance_frame_uses_independent_axis_tick_spacing() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/graph_two_segments_generated.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(640., 480.)),
+            scale: 1.,
+            center: Point { x: 199., y: 125. },
+        };
+        let (ticks, labels) = defined_axis_annotations(&doc, &vp);
+        assert!(ticks.iter().any(|(a, b, _)| a.x == 330. && b.x == 330.));
+        assert!(ticks.iter().any(|(a, b, _)| a.y == 225. && b.y == 225.));
+        assert!(labels.iter().any(|(_, label, _)| label == "1"));
+        assert!(labels.iter().any(|(_, label, _)| label == "0.5"));
+        assert!(svg_page(&doc, &vp).unwrap().contains(">0.5</text>"));
+        doc.set_grid_visible(false);
+        assert!(defined_axis_annotations(&doc, &vp).0.is_empty());
     }
     #[test]
     fn hidden_coordinate_system_does_not_draw_its_axes_or_origin() {
