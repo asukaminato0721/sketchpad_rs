@@ -1,6 +1,8 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
-use sketchpad_rs::action_records::{AnimationDirection, AnimationSettings};
+use sketchpad_rs::action_records::{
+    AnimationDirection, MovementSpeed, PresentationMode, ScrollPlacement,
+};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, TextStyleCommand, records};
 use sketchpad_rs::graph::GridForm;
@@ -814,7 +816,9 @@ fn replay(path: &str) -> Result<(), String> {
                         return Err("expected target [forward|backward|bidirectional|random] [speed] [once|repeat]".into());
                     }
                     let target: usize = parts[0].parse().map_err(|_| "invalid button target ID")?;
-                    let mut settings = AnimationSettings::default();
+                    let mut settings = document
+                        .animation_button_default_settings(target)
+                        .ok_or("invalid animation target")?;
                     if let Some(direction) = parts.get(1) {
                         settings.direction = match *direction {
                             "forward" => AnimationDirection::Forward,
@@ -836,6 +840,108 @@ fn replay(path: &str) -> Result<(), String> {
                     }
                     let id = document.add_animation_button_with_settings(target, settings)?;
                     println!("line {}: animation_button -> object {id}", index + 1);
+                }
+                "animation_button_multi" => {
+                    let mut targets = Vec::new();
+                    for spec in rest.split_whitespace() {
+                        let parts = spec.split(':').collect::<Vec<_>>();
+                        if parts.len() > 4 {
+                            return Err("expected target[:direction[:speed[:once|repeat]]]".into());
+                        }
+                        let target: usize =
+                            parts[0].parse().map_err(|_| "invalid animation target")?;
+                        let mut settings = document
+                            .animation_button_default_settings(target)
+                            .ok_or("invalid animation target")?;
+                        if let Some(direction) = parts.get(1) {
+                            settings.direction = match *direction {
+                                "forward" => AnimationDirection::Forward,
+                                "backward" => AnimationDirection::Backward,
+                                "bidirectional" => AnimationDirection::Bidirectional,
+                                "random" => AnimationDirection::Random,
+                                _ => return Err("invalid animation direction".into()),
+                            };
+                        }
+                        if let Some(speed) = parts.get(2) {
+                            settings.speed =
+                                speed.parse().map_err(|_| "invalid animation speed")?;
+                        }
+                        if let Some(travel) = parts.get(3) {
+                            settings.once = match *travel {
+                                "once" => true,
+                                "repeat" => false,
+                                _ => return Err("expected once or repeat".into()),
+                            };
+                        }
+                        targets.push((target, settings));
+                    }
+                    let id = document.add_animation_button_for_targets_with_settings(&targets)?;
+                    println!("line {}: animation_button_multi -> object {id}", index + 1);
+                }
+                "movement_button" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [source, destination, speed, mode] = parts.as_slice() else {
+                        return Err(
+                            "expected source destination slow|medium|fast|instant follow|initial"
+                                .into(),
+                        );
+                    };
+                    let source = source.parse().map_err(|_| "invalid source point")?;
+                    let destination = destination
+                        .parse()
+                        .map_err(|_| "invalid destination point")?;
+                    let speed = match *speed {
+                        "slow" => MovementSpeed::Slow,
+                        "medium" => MovementSpeed::Medium,
+                        "fast" => MovementSpeed::Fast,
+                        "instant" => MovementSpeed::Instant,
+                        _ => return Err("invalid Movement speed".into()),
+                    };
+                    let follow = match *mode {
+                        "follow" => true,
+                        "initial" => false,
+                        _ => return Err("expected follow or initial".into()),
+                    };
+                    let id = document.add_movement_button(source, destination, speed, follow)?;
+                    println!("line {}: movement_button -> object {id}", index + 1);
+                }
+                "scroll_button" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [target, placement] = parts.as_slice() else {
+                        return Err("expected point_id upper_left|center".into());
+                    };
+                    let target = target.parse().map_err(|_| "invalid Scroll target")?;
+                    let placement = match *placement {
+                        "upper_left" => ScrollPlacement::UpperLeft,
+                        "center" => ScrollPlacement::Center,
+                        _ => return Err("expected upper_left or center".into()),
+                    };
+                    let id = document.add_scroll_button(target, placement)?;
+                    println!("line {}: scroll_button -> object {id}", index + 1);
+                }
+                "presentation_button" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() < 2 {
+                        return Err("expected simultaneous|sequential action_button_id...".into());
+                    }
+                    let mode = match parts[0] {
+                        "simultaneous" => PresentationMode::Simultaneous,
+                        "sequential" => PresentationMode::Sequential,
+                        _ => return Err("expected simultaneous or sequential".into()),
+                    };
+                    let targets = parts[1..]
+                        .iter()
+                        .map(|part| {
+                            part.parse::<usize>()
+                                .map_err(|_| "invalid action button ID")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let id = document.add_presentation_button_for_targets(&targets, mode)?;
+                    println!("line {}: presentation_button -> object {id}", index + 1);
+                }
+                "link_url_button" => {
+                    let id = document.add_link_url_button(rest)?;
+                    println!("line {}: link_url_button -> object {id}", index + 1);
                 }
                 "activate_button" => {
                     let id: usize = rest.parse().map_err(|_| "invalid button ID")?;

@@ -65,7 +65,7 @@ The document model now decodes code-62 buttons as a target dependency, Hide or
 Show action, label, and screen anchor. It preserves the original six-record
 group, updates source groups in place, and writes new groups from the original
 template. Edit > Action Buttons > Hide/Show creates a button for the selected
-object. The same viewport rectangle is used for drawing and click hit testing;
+objects. The same viewport rectangle is used for drawing and click hit testing;
 clicking toggles target visibility and the button's next action. SVG export
 also includes the button. `tests/replay_action.txt` covers creation, activation,
 save/reopen, and undo.
@@ -79,11 +79,17 @@ reopens it with `partial_view=false`; all action fixtures reencode byte for
 byte. The native window was launched in an isolated Xvfb display, but that
 environment did not expose a visible window for manual screenshot inspection.
 
+## Two-target Hide/Show buttons
+
+Sketchpad 5 created `tests/fixtures/action_hide_show_two_points_original.gsp` from two selected endpoints. Its `0x07d2` record contains count `2` followed by target IDs `1` and `2`. Clicking the button hid both points while their segment remained visible; `action_hide_show_two_points_clicked.gsp` contains the resulting Show action. Both native files import as editable and round-trip exactly.
+
+The Rust editor now uses all selected supported objects when creating a Hide/Show button. The desktop two-point selection and File > Save flow produced the same bytes as `tests/replay_hide_show_multi.txt`, which generates and activates a two-point button. The generated default and clicked files opened and saved byte-identically in Sketchpad 5. Clicking the generated default in Sketchpad 5 hid both points; the saved `action_hide_show_two_points_port_clicked_by_wine.gsp` imports with the native `显示点` label. Copying a native two-point button with its targets also generates a valid file that Sketchpad 5 resaves byte-identically. Odd-length native point labels use `assets/action_hide_show_two_points_group.bin` as their template.
+
 ## Scope and remaining work
 
 The parser intentionally recognizes only code-62 Hide/Show groups with the
 observed six-record layout and action subtype `(0 or 1, 7)`. Other Action
-Button commands, multiple targets, alternate label payloads, and insertion
+Button commands, broader target combinations, alternate label payloads, and insertion
 into arbitrary pages need their own probes. The writer currently refuses
 button insertion in a multipage document. A saved button's label may change
 only when its encoded byte length stays fixed, so opaque trailing bytes and

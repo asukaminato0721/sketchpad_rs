@@ -688,6 +688,14 @@ pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, St
 }
 
 pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
+    svg_page_with_button_offset(doc, vp, egui::Vec2::ZERO)
+}
+
+pub fn svg_page_with_button_offset(
+    doc: &Document,
+    vp: &Viewport,
+    button_offset: egui::Vec2,
+) -> Result<String, String> {
     if doc.partial_view {
         return Err("This document contains objects that cannot be exported yet".into());
     }
@@ -1247,9 +1255,13 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         .filter(|object| doc.is_displayed(object.id))
     {
         if let Kind::HideShowButton { label, anchor, .. }
-        | Kind::AnimationButton { label, anchor, .. } = &object.kind
+        | Kind::AnimationButton { label, anchor, .. }
+        | Kind::MovementButton { label, anchor, .. }
+        | Kind::ScrollButton { label, anchor, .. }
+        | Kind::PresentationButton { label, anchor, .. }
+        | Kind::LinkUrlButton { label, anchor, .. } = &object.kind
         {
-            let box_rect = action_button_rect(vp, *anchor, label);
+            let box_rect = action_button_rect(vp, *anchor, label).translate(button_offset);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
             writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
         }
@@ -2234,6 +2246,11 @@ mod tests {
             svg_page(&doc, &viewport)
                 .unwrap()
                 .contains("Hide Segment</text>")
+        );
+        assert!(
+            svg_page_with_button_offset(&doc, &viewport, egui::vec2(40., 10.))
+                .unwrap()
+                .contains("<rect x=\"100\" y=\"85\"")
         );
         doc.activate_hide_show_button(button).unwrap();
         assert!(

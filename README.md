@@ -36,10 +36,30 @@ their endpoints, and circle points loop. The Display menu and Motion Controller
 can change speed, pause, resume, and stop the motion. Motion keeps the point's
 current position when stopped and can be undone as one edit.
 
-Edit > Action Buttons > Animation creates a single-point button with direction,
-speed, and Once Only settings. Clicking the button starts or stops its motion.
+Edit > Action Buttons > Hide/Show creates one button for all selected supported
+objects. Clicking it hides or shows those objects together.
 
-The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, Hide/Show and single-point Animation action buttons, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
+Edit > Action Buttons > Animation creates one button for the selected animatable
+points. The dialog sets direction, speed, and Once Only for each point. Clicking
+the button starts or stops their motion together.
+
+Edit > Action Buttons > Movement takes a selected free point followed by a
+destination point. Its dialog sets Slow, Medium, Fast, or Instant speed and
+whether to follow a moving destination. Clicking the button moves the source
+point; clicking again stops an active movement.
+
+Edit > Action Buttons > Scroll takes one selected point. Its dialog places the
+point at the canvas corner or center when the button is clicked.
+
+Edit > Action Buttons > Presentation takes selected action buttons in selection
+order. Its dialog chooses simultaneous or sequential activation. Sequential
+presentations wait for a running action to finish before advancing.
+
+Edit > Action Buttons > Link creates a URL button. The editor opens HTTP(S) and
+file links with the system handler, and `sketchdoc://` links in the current
+document's folder within the editor.
+
+The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, Hide/Show, one- or two-point Animation, one-pair point Movement, one-point Scroll, Presentation, and URL Link action buttons, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
 
 Other Sketchpad features are incomplete. In particular, many transformations, graphing commands, advanced image and table workflows, custom tools, action button variants, other import formats, page setup, print preview, and full multi-page editing are still pending. See [COMMAND_PARITY.md](COMMAND_PARITY.md) for the command inventory. This build is not ready as a Sketchpad 5 replacement.
 

@@ -1,10 +1,12 @@
-use sketchpad_rs::action_records::{AnimationDirection, AnimationSettings};
+use sketchpad_rs::action_records::{
+    AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement,
+};
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point, TextStyleCommand};
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::graph::{GraphPoint, GridForm};
 use sketchpad_rs::plot_points_records::PlotPointsMode;
-use sketchpad_rs::render::{GeometryRenderer, TraceMark, Viewport, svg_page};
+use sketchpad_rs::render::{GeometryRenderer, TraceMark, Viewport, svg_page_with_button_offset};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, VisualStyle};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{
@@ -152,6 +154,45 @@ struct AnimationTrack {
     start_phase: f64,
     distance_travelled: f64,
 }
+#[derive(Clone)]
+struct AnimationButtonDraft {
+    targets: Vec<usize>,
+    settings: Vec<AnimationSettings>,
+    selected: usize,
+}
+#[derive(Clone, Copy)]
+struct MovementTrack {
+    button: usize,
+    source: usize,
+    destination: usize,
+    initial_destination: Option<Point>,
+    speed: MovementSpeed,
+}
+#[derive(Clone, Copy)]
+struct MovementButtonDraft {
+    source: usize,
+    destination: usize,
+    speed: MovementSpeed,
+    follow: bool,
+}
+#[derive(Clone, Copy)]
+struct ScrollButtonDraft {
+    target: usize,
+    placement: ScrollPlacement,
+}
+#[derive(Clone)]
+struct PresentationButtonDraft {
+    targets: Vec<usize>,
+    mode: PresentationMode,
+}
+#[derive(Clone)]
+struct PresentationTrack {
+    id: usize,
+    targets: Vec<usize>,
+    mode: PresentationMode,
+    next: usize,
+    active: Vec<usize>,
+}
 struct Editor {
     doc: Document,
     clipboard: Option<Clipboard>,
@@ -168,12 +209,19 @@ struct Editor {
     marked_ratio: Option<[usize; 3]>,
     trace_marks: Vec<TraceMark>,
     animations: Vec<AnimationTrack>,
+    movements: Vec<MovementTrack>,
+    presentations: Vec<PresentationTrack>,
     animation_speed: f64,
     animation_paused: bool,
     animation_last_tick: Instant,
     animation_bounds: Option<(Point, Point)>,
+    viewport_rect: Option<egui::Rect>,
     show_motion_controller: bool,
-    animation_button_dialog: Option<(usize, AnimationSettings)>,
+    animation_button_dialog: Option<AnimationButtonDraft>,
+    movement_button_dialog: Option<MovementButtonDraft>,
+    scroll_button_dialog: Option<ScrollButtonDraft>,
+    presentation_button_dialog: Option<PresentationButtonDraft>,
+    link_url_dialog: Option<String>,
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
@@ -187,6 +235,7 @@ struct Editor {
     edit_buffer: String,
     scale: f32,
     center: Point,
+    button_view_center: Point,
     status: String,
     pending_action: Option<PendingAction>,
     pending_output: Option<OutputAction>,
@@ -248,12 +297,19 @@ impl Editor {
             marked_ratio: None,
             trace_marks: Vec::new(),
             animations: Vec::new(),
+            movements: Vec::new(),
+            presentations: Vec::new(),
             animation_speed: 1.,
             animation_paused: false,
             animation_last_tick: Instant::now(),
             animation_bounds: None,
+            viewport_rect: None,
             show_motion_controller: false,
             animation_button_dialog: None,
+            movement_button_dialog: None,
+            scroll_button_dialog: None,
+            presentation_button_dialog: None,
+            link_url_dialog: None,
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
@@ -267,6 +323,7 @@ impl Editor {
             edit_buffer: String::new(),
             scale: 1.,
             center: Point { x: 400., y: 300. },
+            button_view_center: Point { x: 400., y: 300. },
             status: String::new(),
             pending_action: None,
             pending_output: None,
@@ -432,6 +489,7 @@ impl Editor {
             x: (minx + maxx) / 2.,
             y: (miny + maxy) / 2.,
         };
+        self.button_view_center = self.center;
         self.scale = (650. / (maxx - minx).max(100.) as f32)
             .min(480. / (maxy - miny).max(100.) as f32)
             .clamp(0.2, 3.);
@@ -492,13 +550,14 @@ impl Editor {
         }
     }
     fn output_page(&mut self, viewport: &Viewport, action: OutputAction) {
-        let svg = match svg_page(&self.doc, viewport) {
-            Ok(svg) => svg,
-            Err(error) => {
-                self.status = format!("Output refused: {error}");
-                return;
-            }
-        };
+        let svg =
+            match svg_page_with_button_offset(&self.doc, viewport, self.button_offset(viewport)) {
+                Ok(svg) => svg,
+                Err(error) => {
+                    self.status = format!("Output refused: {error}");
+                    return;
+                }
+            };
         if matches!(action, OutputAction::Svg) {
             let Some(path) = rfd::FileDialog::new()
                 .add_filter("SVG image", &["svg"])
@@ -680,6 +739,15 @@ impl Editor {
             .unwrap_or_else(|| v.rect.min + egui::vec2(12., 12. + row as f32 * 20.));
         egui::Rect::from_min_size(at, egui::vec2(text.chars().count() as f32 * 9., 19.))
     }
+    fn button_offset(&self, v: &Viewport) -> egui::Vec2 {
+        egui::vec2(
+            ((self.button_view_center.x - v.center.x) * f64::from(v.scale)) as f32,
+            ((self.button_view_center.y - v.center.y) * f64::from(v.scale)) as f32,
+        )
+    }
+    fn action_button_rect(&self, v: &Viewport, anchor: (i16, i16), label: &str) -> egui::Rect {
+        sketchpad_rs::render::action_button_rect(v, anchor, label).translate(self.button_offset(v))
+    }
     fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
@@ -772,7 +840,11 @@ impl Editor {
             self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
                     | Kind::AnimationButton { label, anchor, .. }
-                    if sketchpad_rs::render::action_button_rect(v, *anchor, label).contains(p))
+                    | Kind::MovementButton { label, anchor, .. }
+                    | Kind::ScrollButton { label, anchor, .. }
+                    | Kind::PresentationButton { label, anchor, .. }
+                    | Kind::LinkUrlButton { label, anchor, .. }
+                    if self.action_button_rect(v, *anchor, label).contains(p))
         }) {
             return Some(object.id);
         }
@@ -1463,10 +1535,56 @@ impl Editor {
                 if !multi
                     && let Some(id) = hit
                     && let Kind::AnimationButton {
-                        target, settings, ..
+                        targets, settings, ..
                     } = &self.doc.objects[id - 1].kind
                 {
-                    self.animate_button(*target, *settings);
+                    let targets = targets.clone();
+                    let settings = settings.clone();
+                    self.animate_button_targets(&targets, &settings);
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && matches!(self.doc.objects[id - 1].kind, Kind::MovementButton { .. })
+                {
+                    self.activate_movement_button(id);
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && let Kind::ScrollButton {
+                        target, placement, ..
+                    } = self.doc.objects[id - 1].kind
+                {
+                    if let Err(error) = self.scroll_to_button_target(target, placement, v) {
+                        self.status = error;
+                    }
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && matches!(
+                        self.doc.objects[id - 1].kind,
+                        Kind::PresentationButton { .. }
+                    )
+                {
+                    if let Err(error) = self.activate_presentation_button(id, v, 0) {
+                        self.status = error;
+                    }
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && let Kind::LinkUrlButton { url, .. } = &self.doc.objects[id - 1].kind
+                {
+                    let url = url.clone();
+                    if let Err(error) = self.activate_link_url(&url) {
+                        self.status = error;
+                    }
                     self.selection_order.clear();
                     return;
                 }
@@ -2573,24 +2691,380 @@ impl Editor {
         let selected = self.doc.selected.iter().copied().collect::<Vec<_>>();
         self.animate_targets(&selected, true);
     }
-    fn animate_button(&mut self, target: usize, settings: AnimationSettings) {
-        if self.animations.iter().any(|track| track.id == target) {
-            self.animations.retain(|track| track.id != target);
+    fn animate_button_targets(&mut self, targets: &[usize], settings: &[AnimationSettings]) {
+        if targets
+            .iter()
+            .any(|target| self.animations.iter().any(|track| track.id == *target))
+        {
+            self.animations.retain(|track| !targets.contains(&track.id));
             self.status = "Stopped animation".into();
             return;
         }
-        self.animate_targets(&[target], false);
-        if let Some(track) = self.animations.iter_mut().find(|track| track.id == target) {
-            track.button_settings = Some(settings);
-            track.direction = if settings.direction == AnimationDirection::Backward {
-                -1.
-            } else {
-                1.
-            };
+        self.animate_targets(targets, false);
+        for (&target, &setting) in targets.iter().zip(settings) {
+            if let Some(track) = self.animations.iter_mut().find(|track| track.id == target) {
+                track.button_settings = Some(setting);
+                track.direction = if setting.direction == AnimationDirection::Backward {
+                    -1.
+                } else {
+                    1.
+                };
+            }
         }
+    }
+    fn activate_movement_button(&mut self, id: usize) {
+        if self.movements.iter().any(|track| track.button == id) {
+            self.movements.retain(|track| track.button != id);
+            self.status = "Stopped movement".into();
+            return;
+        }
+        let Kind::MovementButton {
+            source,
+            destination,
+            speed,
+            follow,
+            ..
+        } = self.doc.objects[id - 1].kind
+        else {
+            return;
+        };
+        let Some(target) = self.doc.position(destination) else {
+            self.status = "Movement destination is unavailable".into();
+            return;
+        };
+        if !matches!(self.doc.objects[source - 1].kind, Kind::Free(_)) {
+            self.status = "Movement source is unavailable".into();
+            return;
+        }
+        self.doc.checkpoint();
+        if speed == MovementSpeed::Instant {
+            self.doc.move_point(source, target);
+            self.status = "Moved point to destination".into();
+        } else {
+            self.movements.push(MovementTrack {
+                button: id,
+                source,
+                destination,
+                initial_destination: (!follow).then_some(target),
+                speed,
+            });
+            self.animation_last_tick = Instant::now();
+            self.status = "Moving point to destination".into();
+        }
+    }
+    fn scroll_to_button_target(
+        &mut self,
+        target: usize,
+        placement: ScrollPlacement,
+        viewport: &Viewport,
+    ) -> Result<(), String> {
+        let point = self
+            .doc
+            .position(target)
+            .ok_or("Scroll target is unavailable")?;
+        self.center = match placement {
+            ScrollPlacement::Center => point,
+            ScrollPlacement::UpperLeft => Point {
+                x: point.x + f64::from(viewport.rect.width()) / (2. * f64::from(self.scale)),
+                y: point.y + f64::from(viewport.rect.height()) / (2. * f64::from(self.scale)),
+            },
+        };
+        self.status = format!("Scrolled to point {target}");
+        Ok(())
+    }
+
+    fn activate_link_url(&mut self, url: &str) -> Result<(), String> {
+        if let Some(relative) = url.strip_prefix("sketchdoc://") {
+            if relative.is_empty() || std::path::Path::new(relative).is_absolute() {
+                return Err("Invalid sketchdoc link path".into());
+            }
+            let base = self
+                .doc
+                .path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .ok_or("Save this sketch before following its document link")?;
+            let path = base.join(relative);
+            if self.doc.dirty {
+                self.pending_action = Some(PendingAction::Open(path));
+            } else {
+                self.open(path);
+            }
+            return Ok(());
+        }
+        if !["http://", "https://", "file://"]
+            .iter()
+            .any(|prefix| url.starts_with(prefix))
+        {
+            return Err("This Link URL scheme is not yet supported".into());
+        }
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut command = Command::new("rundll32");
+            command.arg("url.dll,FileProtocolHandler");
+            command
+        };
+        #[cfg(target_os = "macos")]
+        let mut command = Command::new("open");
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let mut command = Command::new("xdg-open");
+        command
+            .arg(url)
+            .spawn()
+            .map_err(|error| format!("Could not open link: {error}"))?;
+        self.status = format!("Opened link {url}");
+        Ok(())
+    }
+
+    fn action_is_running(&self, id: usize) -> bool {
+        match self
+            .doc
+            .objects
+            .get(id.saturating_sub(1))
+            .map(|object| &object.kind)
+        {
+            Some(Kind::AnimationButton { targets, .. }) => self
+                .animations
+                .iter()
+                .any(|track| targets.contains(&track.id)),
+            Some(Kind::MovementButton { .. }) => {
+                self.movements.iter().any(|track| track.button == id)
+            }
+            Some(Kind::PresentationButton { .. }) => {
+                self.presentations.iter().any(|track| track.id == id)
+            }
+            _ => false,
+        }
+    }
+
+    fn stop_child_action(&mut self, id: usize, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match self
+            .doc
+            .objects
+            .get(id.saturating_sub(1))
+            .map(|object| &object.kind)
+        {
+            Some(Kind::AnimationButton { targets, .. }) => {
+                let targets = targets.clone();
+                self.animations.retain(|track| !targets.contains(&track.id));
+            }
+            Some(Kind::MovementButton { .. }) => {
+                self.movements.retain(|track| track.button != id);
+            }
+            Some(Kind::PresentationButton { .. }) => {
+                if let Some(index) = self.presentations.iter().position(|track| track.id == id) {
+                    let track = self.presentations.remove(index);
+                    for child in track.active {
+                        self.stop_child_action(child, depth + 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn activate_child_action(
+        &mut self,
+        id: usize,
+        viewport: &Viewport,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > 32 {
+            return Err("Presentation buttons are nested too deeply".into());
+        }
+        let object = self
+            .doc
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid action button ID")?)
+            .ok_or("Invalid action button ID")?;
+        if object.deleted || !object.visible || object.page != self.doc.active_page {
+            return Err("A Presentation parent button is unavailable".into());
+        }
+        match object.kind.clone() {
+            Kind::HideShowButton { .. } => self.doc.activate_hide_show_button(id),
+            Kind::AnimationButton {
+                targets, settings, ..
+            } => {
+                self.animate_button_targets(&targets, &settings);
+                Ok(())
+            }
+            Kind::MovementButton { .. } => {
+                self.activate_movement_button(id);
+                Ok(())
+            }
+            Kind::ScrollButton {
+                target, placement, ..
+            } => self.scroll_to_button_target(target, placement, viewport),
+            Kind::LinkUrlButton { url, .. } => self.activate_link_url(&url),
+            Kind::PresentationButton { .. } => {
+                self.activate_presentation_button(id, viewport, depth + 1)
+            }
+            _ => Err("Object is not an action button".into()),
+        }
+    }
+
+    fn run_sequential_presentation(
+        &mut self,
+        mut track: PresentationTrack,
+        viewport: &Viewport,
+        depth: usize,
+    ) -> Result<(), String> {
+        while track.next < track.targets.len() {
+            let child = track.targets[track.next];
+            track.next += 1;
+            self.activate_child_action(child, viewport, depth + 1)?;
+            if self.action_is_running(child) {
+                track.active = vec![child];
+                self.presentations.push(track);
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    fn activate_presentation_button(
+        &mut self,
+        id: usize,
+        viewport: &Viewport,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > 32 {
+            return Err("Presentation buttons are nested too deeply".into());
+        }
+        if let Some(index) = self.presentations.iter().position(|track| track.id == id) {
+            let mut track = self.presentations.remove(index);
+            for child in track.active.drain(..) {
+                self.stop_child_action(child, depth + 1);
+            }
+            if track.mode == PresentationMode::Sequential {
+                self.run_sequential_presentation(track, viewport, depth + 1)?;
+            }
+            return Ok(());
+        }
+        let Some(object) = self
+            .doc
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+        else {
+            return Err("Invalid button ID".into());
+        };
+        if object.deleted || !object.visible || object.page != self.doc.active_page {
+            return Err("Presentation button is unavailable".into());
+        }
+        let Kind::PresentationButton { targets, mode, .. } = &object.kind else {
+            return Err("Object is not a Presentation button".into());
+        };
+        let targets = targets.clone();
+        let mode = *mode;
+        let mut track = PresentationTrack {
+            id,
+            targets,
+            mode,
+            next: 0,
+            active: Vec::new(),
+        };
+        match mode {
+            PresentationMode::Simultaneous => {
+                for &child in &track.targets {
+                    self.activate_child_action(child, viewport, depth + 1)?;
+                    if self.action_is_running(child) {
+                        track.active.push(child);
+                    }
+                }
+                if !track.active.is_empty() {
+                    self.presentations.push(track);
+                }
+            }
+            PresentationMode::Sequential => {
+                self.run_sequential_presentation(track, viewport, depth + 1)?
+            }
+        }
+        self.status = format!("Activated Presentation button {id}");
+        Ok(())
+    }
+
+    fn tick_presentations(&mut self) {
+        let Some(rect) = self.viewport_rect else {
+            return;
+        };
+        let tracks = std::mem::take(&mut self.presentations);
+        for mut track in tracks {
+            match track.mode {
+                PresentationMode::Simultaneous => {
+                    track.active.retain(|&id| self.action_is_running(id));
+                    if !track.active.is_empty() {
+                        self.presentations.push(track);
+                    }
+                }
+                PresentationMode::Sequential => {
+                    if track.active.iter().all(|&id| !self.action_is_running(id)) {
+                        track.active.clear();
+                        let viewport = Viewport {
+                            rect,
+                            scale: self.scale,
+                            center: self.center,
+                        };
+                        if let Err(error) = self.run_sequential_presentation(track, &viewport, 0) {
+                            self.status = error;
+                        }
+                    } else {
+                        self.presentations.push(track);
+                    }
+                }
+            }
+        }
+    }
+    fn tick_movement(&mut self, elapsed_seconds: f64) {
+        if self.movements.is_empty() || !elapsed_seconds.is_finite() {
+            return;
+        }
+        self.capture_traces();
+        let mut tracks = std::mem::take(&mut self.movements);
+        tracks.retain(|track| {
+            let Some(current) = self.doc.position(track.source) else {
+                return false;
+            };
+            let Some(target) = track
+                .initial_destination
+                .or_else(|| self.doc.position(track.destination))
+            else {
+                return false;
+            };
+            let delta_x = target.x - current.x;
+            let delta_y = target.y - current.y;
+            let distance = delta_x.hypot(delta_y);
+            if !distance.is_finite() {
+                return false;
+            }
+            let pixels_per_second = match track.speed {
+                MovementSpeed::Slow => 60.,
+                MovementSpeed::Medium => 150.,
+                MovementSpeed::Fast => 360.,
+                MovementSpeed::Instant => f64::INFINITY,
+            };
+            let step = pixels_per_second * elapsed_seconds.clamp(0., 0.1) / f64::from(self.scale);
+            let fraction = if distance <= step || distance < 1e-9 {
+                1.
+            } else {
+                step / distance
+            };
+            let moved = self.doc.move_point(
+                track.source,
+                Point {
+                    x: current.x + delta_x * fraction,
+                    y: current.y + delta_y * fraction,
+                },
+            );
+            moved && fraction < 1.
+        });
+        self.movements = tracks;
     }
     fn stop_animation(&mut self) {
         self.animations.clear();
+        self.movements.clear();
         self.animation_paused = false;
         self.status = "Stopped animation".into();
     }
@@ -2736,6 +3210,8 @@ impl Editor {
         let elapsed = now.duration_since(self.animation_last_tick).as_secs_f64();
         self.animation_last_tick = now;
         self.tick_animation(elapsed);
+        self.tick_movement(elapsed);
+        self.tick_presentations();
     }
     fn ui(&mut self, root: &mut egui::Ui) -> Viewport {
         if self.pending_action.is_none() {
@@ -2850,6 +3326,10 @@ impl Editor {
                                         object.kind,
                                         Kind::HideShowButton { .. }
                                             | Kind::AnimationButton { .. }
+                                            | Kind::MovementButton { .. }
+                                            | Kind::ScrollButton { .. }
+                                            | Kind::PresentationButton { .. }
+                                            | Kind::LinkUrlButton { .. }
                                             | Kind::Unsupported(_)
                                     )
                                 })
@@ -2868,24 +3348,81 @@ impl Editor {
                             }
                             ui.close();
                         }
-                        let animation_target = self
+                        let animation_targets = self
                             .selection_order
                             .iter()
                             .copied()
-                            .find(|id| self.animation_track(*id).is_some());
+                            .filter_map(|id| {
+                                self.animation_track(id)?;
+                                Some((id, self.doc.animation_button_default_settings(id)?))
+                            })
+                            .collect::<Vec<_>>();
                         if ui
                             .add_enabled(
-                                animation_target.is_some() && !self.doc.partial_view,
+                                !animation_targets.is_empty() && !self.doc.partial_view,
                                 egui::Button::new("Animation"),
                             )
                             .clicked()
                         {
-                            if let Some(target) = animation_target {
-                                self.animation_button_dialog = self
-                                    .doc
-                                    .animation_button_default_settings(target)
-                                    .map(|settings| (target, settings));
+                            self.animation_button_dialog = Some(AnimationButtonDraft {
+                                targets: animation_targets.iter().map(|(id, _)| *id).collect(),
+                                settings: animation_targets.iter().map(|(_, value)| *value).collect(),
+                                selected: 0,
+                            });
+                            ui.close();
+                        }
+                        let movement_pair = match self.selection_order.as_slice() {
+                            [source, destination]
+                                if matches!(self.doc.objects[*source - 1].kind, Kind::Free(_))
+                                    && self.doc.position(*destination).is_some() =>
+                            {
+                                Some((*source, *destination))
                             }
+                            _ => None,
+                        };
+                        if ui.add_enabled(movement_pair.is_some() && !self.doc.partial_view,
+                            egui::Button::new("Movement")).clicked()
+                        {
+                            let (source, destination) = movement_pair.unwrap();
+                            self.movement_button_dialog = Some(MovementButtonDraft {
+                                source, destination, speed: MovementSpeed::Medium, follow: true,
+                            });
+                            ui.close();
+                        }
+                        let presentation_targets = self.selection_order.iter().copied()
+                            .filter(|id| self.doc.objects.get(id - 1).is_some_and(|object| {
+                                object.visible && !object.deleted && object.page == self.doc.active_page
+                                    && object.kind.is_action_button()
+                            }))
+                            .collect::<Vec<_>>();
+                        if ui.add_enabled(!presentation_targets.is_empty()
+                            && presentation_targets.len() == self.selection_order.len()
+                            && !self.doc.partial_view,
+                            egui::Button::new("Presentation")).clicked()
+                        {
+                            self.presentation_button_dialog = Some(PresentationButtonDraft {
+                                targets: presentation_targets,
+                                mode: PresentationMode::Simultaneous,
+                            });
+                            ui.close();
+                        }
+                        if ui.add_enabled(!self.doc.partial_view && self.doc.page_count == 1,
+                            egui::Button::new("Link…")).clicked()
+                        {
+                            self.link_url_dialog = Some("https://".into());
+                            ui.close();
+                        }
+                        let scroll_target = match self.selection_order.as_slice() {
+                            [target] if self.doc.position(*target).is_some() => Some(*target),
+                            _ => None,
+                        };
+                        if ui.add_enabled(scroll_target.is_some() && !self.doc.partial_view,
+                            egui::Button::new("Scroll")).clicked()
+                        {
+                            self.scroll_button_dialog = Some(ScrollButtonDraft {
+                                target: scroll_target.unwrap(),
+                                placement: ScrollPlacement::UpperLeft,
+                            });
                             ui.close();
                         }
                     });
@@ -2894,6 +3431,8 @@ impl Editor {
                         .clicked()
                     {
                         self.animations.clear();
+                        self.movements.clear();
+                        self.presentations.clear();
                         self.doc.undo();
                         self.image_textures.clear();
                         ui.close();
@@ -2903,6 +3442,8 @@ impl Editor {
                         .clicked()
                     {
                         self.animations.clear();
+                        self.movements.clear();
+                        self.presentations.clear();
                         self.doc.redo();
                         self.image_textures.clear();
                         ui.close();
@@ -3679,7 +4220,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui
-                        .add_enabled(!self.animations.is_empty(), egui::Button::new("Stop Animation"))
+                        .add_enabled(!self.animations.is_empty() || !self.movements.is_empty(), egui::Button::new("Stop Animation"))
                         .clicked()
                     {
                         self.stop_animation();
@@ -3740,6 +4281,8 @@ impl Editor {
                         .clicked()
                     {
                         self.animations.clear();
+                        self.movements.clear();
+                        self.presentations.clear();
                         self.doc.active_page -= 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();
@@ -3758,6 +4301,8 @@ impl Editor {
                         .clicked()
                     {
                         self.animations.clear();
+                        self.movements.clear();
+                        self.presentations.clear();
                         self.doc.active_page += 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();
@@ -3974,6 +4519,7 @@ impl Editor {
                 let (r, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 rect = r;
+                self.viewport_rect = Some(r);
                 let vp = Viewport {
                     rect: r,
                     scale: self.scale,
@@ -4032,6 +4578,7 @@ impl Editor {
                                 };
                                 self.doc.checkpoint();
                                 self.animations.retain(|track| track.id != id);
+                                self.movements.retain(|track| track.source != id);
                                 self.dragging = Some(id);
                                 self.capture_traces();
                             }
@@ -4320,10 +4867,13 @@ impl Editor {
                         }
                     }
                     if let Kind::HideShowButton { label, anchor, .. }
-                    | Kind::AnimationButton { label, anchor, .. } = &object.kind
+                    | Kind::AnimationButton { label, anchor, .. }
+                    | Kind::MovementButton { label, anchor, .. }
+                    | Kind::ScrollButton { label, anchor, .. }
+                    | Kind::PresentationButton { label, anchor, .. }
+                    | Kind::LinkUrlButton { label, anchor, .. } = &object.kind
                     {
-                        let box_rect =
-                            sketchpad_rs::render::action_button_rect(&vp, *anchor, label);
+                        let box_rect = self.action_button_rect(&vp, *anchor, label);
                         ui.painter().rect_filled(
                             box_rect,
                             3.,
@@ -4433,16 +4983,25 @@ impl Editor {
                 _ => {}
             }
         }
-        if let Some((target, mut settings)) = self.animation_button_dialog {
+        if let Some(mut draft) = self.animation_button_dialog.clone() {
             let mut create = false;
             let mut cancel = false;
-            let free = matches!(self.doc.objects[target - 1].kind, Kind::Free(_));
-            let circle = matches!(
-                self.doc.objects[target - 1].kind,
-                Kind::PointOnCircle(_, _, _)
-            );
             egui::Modal::new(egui::Id::new("animation_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Animation Button");
+                if draft.targets.len() > 1 {
+                    ui.label("Choose a point to set its motion:");
+                    for (index, target) in draft.targets.iter().enumerate() {
+                        ui.selectable_value(&mut draft.selected, index, format!("Point {target}"));
+                    }
+                    ui.separator();
+                }
+                let target = draft.targets[draft.selected];
+                let settings = &mut draft.settings[draft.selected];
+                let free = matches!(self.doc.objects[target - 1].kind, Kind::Free(_));
+                let circle = matches!(
+                    self.doc.objects[target - 1].kind,
+                    Kind::PointOnCircle(_, _, _)
+                );
                 ui.label(format!("Animate point {target}"));
                 if free {
                     ui.label("Free points move at random");
@@ -4505,9 +5064,15 @@ impl Editor {
             if cancel {
                 self.animation_button_dialog = None;
             } else if create {
+                let values = draft
+                    .targets
+                    .iter()
+                    .copied()
+                    .zip(draft.settings.iter().copied())
+                    .collect::<Vec<_>>();
                 match self
                     .doc
-                    .add_animation_button_with_settings(target, settings)
+                    .add_animation_button_for_targets_with_settings(&values)
                 {
                     Ok(id) => {
                         self.select_only(id);
@@ -4515,11 +5080,170 @@ impl Editor {
                     }
                     Err(error) => {
                         self.status = error;
-                        self.animation_button_dialog = Some((target, settings));
+                        self.animation_button_dialog = Some(draft);
                     }
                 }
             } else {
-                self.animation_button_dialog = Some((target, settings));
+                self.animation_button_dialog = Some(draft);
+            }
+        }
+        if let Some(mut draft) = self.movement_button_dialog {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("movement_button_settings")).show(root.ctx(), |ui| {
+                ui.heading("Movement Button");
+                ui.label(format!(
+                    "Move point {} toward point {}",
+                    draft.source, draft.destination
+                ));
+                egui::ComboBox::from_label("Speed")
+                    .selected_text(match draft.speed {
+                        MovementSpeed::Slow => "Slow",
+                        MovementSpeed::Medium => "Medium",
+                        MovementSpeed::Fast => "Fast",
+                        MovementSpeed::Instant => "Instant",
+                    })
+                    .show_ui(ui, |ui| {
+                        for (speed, name) in [
+                            (MovementSpeed::Slow, "Slow"),
+                            (MovementSpeed::Medium, "Medium"),
+                            (MovementSpeed::Fast, "Fast"),
+                            (MovementSpeed::Instant, "Instant"),
+                        ] {
+                            ui.selectable_value(&mut draft.speed, speed, name);
+                        }
+                    });
+                ui.radio_value(&mut draft.follow, true, "Follow moving destination");
+                ui.radio_value(&mut draft.follow, false, "Move toward initial destination");
+                ui.horizontal(|ui| {
+                    create = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.movement_button_dialog = None;
+            } else if create {
+                match self.doc.add_movement_button(
+                    draft.source,
+                    draft.destination,
+                    draft.speed,
+                    draft.follow,
+                ) {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.movement_button_dialog = None;
+                    }
+                    Err(error) => self.status = error,
+                }
+            } else {
+                self.movement_button_dialog = Some(draft);
+            }
+        }
+        if let Some(mut draft) = self.scroll_button_dialog {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("scroll_button_settings")).show(root.ctx(), |ui| {
+                ui.heading("Scroll Button");
+                ui.label(format!(
+                    "Position point {} in the sketch window:",
+                    draft.target
+                ));
+                ui.radio_value(
+                    &mut draft.placement,
+                    ScrollPlacement::UpperLeft,
+                    "Upper left",
+                );
+                ui.radio_value(&mut draft.placement, ScrollPlacement::Center, "Center");
+                ui.horizontal(|ui| {
+                    create = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.scroll_button_dialog = None;
+            } else if create {
+                match self.doc.add_scroll_button(draft.target, draft.placement) {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.scroll_button_dialog = None;
+                    }
+                    Err(error) => self.status = error,
+                }
+            } else {
+                self.scroll_button_dialog = Some(draft);
+            }
+        }
+        if let Some(mut draft) = self.presentation_button_dialog.clone() {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("presentation_button_settings")).show(
+                root.ctx(),
+                |ui| {
+                    ui.heading("Presentation Button");
+                    ui.label(format!(
+                        "Present {} selected action button(s)",
+                        draft.targets.len()
+                    ));
+                    ui.radio_value(
+                        &mut draft.mode,
+                        PresentationMode::Simultaneous,
+                        "Simultaneously",
+                    );
+                    ui.radio_value(
+                        &mut draft.mode,
+                        PresentationMode::Sequential,
+                        "Sequentially",
+                    );
+                    ui.horizontal(|ui| {
+                        create = ui.button("Create").clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                },
+            );
+            if cancel {
+                self.presentation_button_dialog = None;
+            } else if create {
+                match self
+                    .doc
+                    .add_presentation_button_for_targets(&draft.targets, draft.mode)
+                {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.presentation_button_dialog = None;
+                    }
+                    Err(error) => self.status = error,
+                }
+            } else {
+                self.presentation_button_dialog = Some(draft);
+            }
+        }
+        if let Some(mut url) = self.link_url_dialog.clone() {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("link_url_button_settings")).show(root.ctx(), |ui| {
+                ui.heading("Link Button");
+                ui.label("URL");
+                ui.text_edit_singleline(&mut url);
+                ui.horizontal(|ui| {
+                    create = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.link_url_dialog = None;
+            } else if create {
+                match self.doc.add_link_url_button(&url) {
+                    Ok(id) => {
+                        self.select_only(id);
+                        self.link_url_dialog = None;
+                    }
+                    Err(error) => {
+                        self.status = error;
+                        self.link_url_dialog = Some(url);
+                    }
+                }
+            } else {
+                self.link_url_dialog = Some(url);
             }
         }
         if self.named_parameter_dialog {
@@ -5528,6 +6252,157 @@ mod tests {
     }
 
     #[test]
+    fn presentation_buttons_activate_parents_and_wait_for_motion() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/presentation_two_hide_show_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let presentation = doc
+            .add_presentation_button_for_targets(&[3, 4], PresentationMode::Simultaneous)
+            .unwrap();
+        let mut editor = Editor::new(doc);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: editor.center,
+        };
+        let Kind::PresentationButton { label, anchor, .. } =
+            &editor.doc.objects[presentation - 1].kind
+        else {
+            panic!()
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        editor.click(&viewport, click, false);
+        assert!(!editor.doc.objects[0].visible);
+        assert!(!editor.doc.objects[1].visible);
+        assert!(editor.presentations.is_empty());
+
+        let mut doc = Document::new();
+        let source = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let destination = doc.add(Kind::Free(Point { x: 120., y: 0. }));
+        let movement = doc
+            .add_movement_button(source, destination, MovementSpeed::Medium, true)
+            .unwrap();
+        let hide = doc.add_hide_show_button(destination).unwrap();
+        let presentation = doc
+            .add_presentation_button_for_targets(&[movement, hide], PresentationMode::Sequential)
+            .unwrap();
+        let mut editor = Editor::new(doc);
+        editor.scale = 1.;
+        editor.viewport_rect = Some(viewport.rect);
+        editor
+            .activate_presentation_button(presentation, &viewport, 0)
+            .unwrap();
+        assert_eq!(editor.presentations.len(), 1);
+        assert!(editor.doc.objects[destination - 1].visible);
+        for _ in 0..9 {
+            editor.tick_movement(0.1);
+            editor.tick_presentations();
+        }
+        assert_eq!(editor.doc.position(source), Some(Point { x: 120., y: 0. }));
+        assert!(!editor.doc.objects[destination - 1].visible);
+        assert!(editor.presentations.is_empty());
+    }
+
+    #[test]
+    fn sketchdoc_link_button_opens_sibling_document() {
+        let path = std::path::Path::new("tests/fixtures/action_link_url_port_sketchdoc.gsp");
+        let mut editor = Editor::new(Document::open(path).unwrap());
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: editor.scale,
+            center: editor.center,
+        };
+        let Kind::LinkUrlButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+            panic!();
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.doc.objects.len(), 1);
+        assert_eq!(
+            editor.doc.path.as_ref().unwrap().file_name().unwrap(),
+            "point.gsp"
+        );
+    }
+
+    #[test]
+    fn scroll_buttons_place_target_at_corner_or_center() {
+        let mut doc = Document::new();
+        let point = doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let corner = doc
+            .add_scroll_button(point, ScrollPlacement::UpperLeft)
+            .unwrap();
+        let centered = doc
+            .add_scroll_button(point, ScrollPlacement::Center)
+            .unwrap();
+        let mut editor = Editor::new(doc);
+        editor.scale = 2.;
+        let viewport = |center| Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 2.,
+            center,
+        };
+        let v = viewport(editor.center);
+        let Kind::ScrollButton { label, anchor, .. } = &editor.doc.objects[corner - 1].kind else {
+            panic!()
+        };
+        let click = sketchpad_rs::render::action_button_rect(&v, *anchor, label).center();
+        editor.click(&v, click, false);
+        assert_eq!(editor.center, Point { x: 250., y: 195. });
+        let scrolled = viewport(editor.center);
+        let Kind::ScrollButton { label, anchor, .. } = &editor.doc.objects[corner - 1].kind else {
+            panic!()
+        };
+        assert_eq!(
+            editor.action_button_rect(&scrolled, *anchor, label).min,
+            egui::pos2(-190., -145.)
+        );
+        editor.fit();
+        editor.scale = 2.;
+        let v = viewport(editor.center);
+        let Kind::ScrollButton { label, anchor, .. } = &editor.doc.objects[centered - 1].kind
+        else {
+            panic!()
+        };
+        let click = sketchpad_rs::render::action_button_rect(&v, *anchor, label).center();
+        editor.click(&v, click, false);
+        assert_eq!(editor.center, Point { x: 150., y: 120. });
+    }
+
+    #[test]
+    fn movement_button_reaches_instant_and_initial_destinations() {
+        let mut doc = Document::new();
+        let source = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let destination = doc.add(Kind::Free(Point { x: 120., y: 0. }));
+        let instant = doc
+            .add_movement_button(source, destination, MovementSpeed::Instant, true)
+            .unwrap();
+        let mut editor = Editor::new(doc);
+        editor.scale = 1.;
+        editor.activate_movement_button(instant);
+        assert_eq!(editor.doc.position(source), Some(Point { x: 120., y: 0. }));
+        assert!(editor.movements.is_empty());
+
+        editor.doc.move_point(source, Point { x: 0., y: 0. });
+        let initial = editor
+            .doc
+            .add_movement_button(source, destination, MovementSpeed::Medium, false)
+            .unwrap();
+        editor.activate_movement_button(initial);
+        editor.doc.move_point(destination, Point { x: 200., y: 0. });
+        for _ in 0..10 {
+            editor.tick_movement(0.1);
+        }
+        assert_eq!(editor.doc.position(source), Some(Point { x: 120., y: 0. }));
+        assert!(editor.movements.is_empty());
+    }
+
+    #[test]
     fn clicking_animation_button_starts_its_target_without_controller() {
         let doc = Document::from_bytes(
             include_bytes!("../tests/fixtures/animation_button_base.gsp"),
@@ -5573,10 +6448,10 @@ mod tests {
                 .doc
                 .add_animation_button_with_settings(4, settings)
                 .unwrap();
-            editor.animate_button(4, settings);
+            editor.animate_button_targets(&[4], &[settings]);
             editor.tick_animation(0.1);
             assert!((editor.animations[0].phase - expected_phase).abs() < 1e-9);
-            editor.animate_button(4, settings);
+            editor.animate_button_targets(&[4], &[settings]);
             assert!(editor.animations.is_empty());
         }
         let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
@@ -5585,12 +6460,51 @@ mod tests {
             speed: 80.,
             once: true,
         };
-        editor.animate_button(4, settings);
+        editor.animate_button_targets(&[4], &[settings]);
         for _ in 0..8 {
             editor.tick_animation(0.1);
         }
         assert!(editor.animations.is_empty());
         assert!((editor.doc.position(4).unwrap().x - 250.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_point_animation_button_starts_and_stops_both_tracks() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_button_two_points_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let settings = [
+            AnimationSettings::default(),
+            AnimationSettings {
+                direction: AnimationDirection::Backward,
+                ..AnimationSettings::default()
+            },
+        ];
+        let button = editor
+            .doc
+            .add_animation_button_for_targets_with_settings(&[(4, settings[0]), (5, settings[1])])
+            .unwrap();
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 250., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[button - 1].kind
+        else {
+            panic!("Expected Animation button")
+        };
+        let click = sketchpad_rs::render::action_button_rect(&viewport, *anchor, label).center();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 2);
+        assert!(!editor.show_motion_controller);
+        editor.tick_animation(0.1);
+        assert!((editor.doc.position(4).unwrap().x - 235.).abs() < 1e-9);
+        assert!((editor.doc.position(5).unwrap().x - 265.).abs() < 1e-9);
+        editor.click(&viewport, click, false);
+        assert!(editor.animations.is_empty());
     }
 
     #[test]
@@ -6727,7 +7641,10 @@ fn main() {
                 }
             }
             Event::AboutToWait => {
-                if !editor.animations.is_empty() && !editor.animation_paused {
+                if (!editor.animations.is_empty() && !editor.animation_paused)
+                    || !editor.movements.is_empty()
+                    || !editor.presentations.is_empty()
+                {
                     let now = Instant::now();
                     if now >= next_animation_frame {
                         window.request_redraw();

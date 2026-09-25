@@ -18,4 +18,10 @@ Native buttons for a circle point and a free point use direction code `0x00` at 
 
 The desktop Edit > Action Buttons > Animation flow was also exercised under Xvfb. Choosing Create added the fifth object, File > Save wrote a 2,240-byte sketch, and Sketchpad 5 opened and resaved that exact file byte-identically.
 
-Multiple targets, indirect animation of higher constructions, parameters, and exact native timing remain open. The parser preserves the other settings bytes and treats unrecognized layouts as unsupported source content.
+## Two-point buttons
+
+The native `action_animation_two_points_original.gsp` stores target IDs `4` and `5` in its `0x07d2` record. Its `0x07d3` settings payload is 68 bytes: a four-byte prefix followed by one 32-byte settings block per point. Selecting the second point in the native dialog and changing its direction to Backward changed only byte 39 of that payload, leaving the first point bidirectional. `action_animation_two_points_second_backward.gsp` captures this setting. Clicking the native default button moved both points; `action_animation_two_points_clicked.gsp` preserves the result.
+
+The port imports all three native files without partial view and round-trips them byte-identically. Its dialog lists the selected points and edits each point's settings separately. The desktop default and second-point-Backward saves matched `tests/replay_animation_button_two_points.txt` byte-for-byte. Both replay files opened and saved byte-identically in Sketchpad 5; clicking the port-generated default there moved both points, and `action_animation_two_points_port_clicked_by_wine.gsp` imports without partial view. In the port, one click starts both tracks and a second click stops both.
+
+More than two targets, mixed target types, indirect animation of higher constructions, parameters, and exact native timing remain open. The parser preserves the other settings bytes and treats unrecognized layouts as unsupported source content.

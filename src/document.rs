@@ -1,5 +1,7 @@
 use crate::action_records::{
-    AnimationButtonGroup, AnimationSettings, HideShowButtonGroup, VisibilityAction,
+    AnimationButtonGroup, AnimationSettings, HideShowButtonGroup, LinkUrlButtonGroup,
+    MovementButtonGroup, MovementSpeed, PresentationButtonGroup, PresentationMode,
+    ScrollButtonGroup, ScrollPlacement, VisibilityAction,
 };
 use crate::coordinate_measure_records::{
     self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
@@ -72,12 +74,37 @@ impl Kind {
                 | Kind::ArcLength(_)
         )
     }
+    pub fn is_action_button(&self) -> bool {
+        matches!(
+            self,
+            Kind::HideShowButton { .. }
+                | Kind::AnimationButton { .. }
+                | Kind::MovementButton { .. }
+                | Kind::ScrollButton { .. }
+                | Kind::PresentationButton { .. }
+                | Kind::LinkUrlButton { .. }
+        )
+    }
     pub fn dependencies(&self) -> Vec<usize> {
         if let Kind::HideShowButton { targets, .. } = self {
             return targets.clone();
         }
-        if let Kind::AnimationButton { target, .. } = self {
+        if let Kind::AnimationButton { targets, .. } = self {
+            return targets.clone();
+        }
+        if let Kind::MovementButton {
+            source,
+            destination,
+            ..
+        } = self
+        {
+            return vec![*source, *destination];
+        }
+        if let Kind::ScrollButton { target, .. } = self {
             return vec![*target];
+        }
+        if let Kind::PresentationButton { targets, .. } = self {
+            return targets.clone();
         }
         if let Kind::Polygon(vertices) = self {
             return vertices.clone();
@@ -212,7 +239,12 @@ impl Kind {
                 vec![source, center, origin, base, target]
             }
             Kind::Polygon(_) => unreachable!(),
-            Kind::HideShowButton { .. } | Kind::AnimationButton { .. } => unreachable!(),
+            Kind::HideShowButton { .. }
+            | Kind::AnimationButton { .. }
+            | Kind::MovementButton { .. }
+            | Kind::ScrollButton { .. }
+            | Kind::PresentationButton { .. } => unreachable!(),
+            Kind::LinkUrlButton { .. } => vec![],
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::ValueTablePair(_, _, _) => unreachable!(),
@@ -236,17 +268,70 @@ impl Kind {
             };
         }
         if let Kind::AnimationButton {
-            target,
+            targets,
             label,
             anchor,
             settings,
         } = self
         {
             return Kind::AnimationButton {
-                target: m(*target),
+                targets: targets.iter().map(|&target| m(target)).collect(),
                 label: label.clone(),
                 anchor: *anchor,
-                settings: *settings,
+                settings: settings.clone(),
+            };
+        }
+        if let Kind::MovementButton {
+            source,
+            destination,
+            speed,
+            follow,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::MovementButton {
+                source: m(*source),
+                destination: m(*destination),
+                speed: *speed,
+                follow: *follow,
+                label: label.clone(),
+                anchor: *anchor,
+            };
+        }
+        if let Kind::ScrollButton {
+            target,
+            placement,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::ScrollButton {
+                target: m(*target),
+                placement: *placement,
+                label: label.clone(),
+                anchor: *anchor,
+            };
+        }
+        if let Kind::PresentationButton {
+            targets,
+            mode,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::PresentationButton {
+                targets: targets.iter().map(|&target| m(target)).collect(),
+                mode: *mode,
+                label: label.clone(),
+                anchor: *anchor,
+            };
+        }
+        if let Kind::LinkUrlButton { url, label, anchor } = self {
+            return Kind::LinkUrlButton {
+                url: url.clone(),
+                label: label.clone(),
+                anchor: *anchor,
             };
         }
         if let Kind::Polygon(vertices) = self {
@@ -493,7 +578,12 @@ impl Kind {
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
             Kind::Polygon(_) => unreachable!(),
-            Kind::HideShowButton { .. } | Kind::AnimationButton { .. } => unreachable!(),
+            Kind::HideShowButton { .. }
+            | Kind::AnimationButton { .. }
+            | Kind::MovementButton { .. }
+            | Kind::ScrollButton { .. }
+            | Kind::PresentationButton { .. } => unreachable!(),
+            Kind::LinkUrlButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
         }
@@ -513,11 +603,36 @@ impl Kind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    AnimationButton {
-        target: usize,
+    PresentationButton {
+        targets: Vec<usize>,
+        mode: PresentationMode,
         label: String,
         anchor: (i16, i16),
-        settings: AnimationSettings,
+    },
+    LinkUrlButton {
+        url: String,
+        label: String,
+        anchor: (i16, i16),
+    },
+    ScrollButton {
+        target: usize,
+        placement: ScrollPlacement,
+        label: String,
+        anchor: (i16, i16),
+    },
+    MovementButton {
+        source: usize,
+        destination: usize,
+        speed: MovementSpeed,
+        follow: bool,
+        label: String,
+        anchor: (i16, i16),
+    },
+    AnimationButton {
+        targets: Vec<usize>,
+        label: String,
+        anchor: (i16, i16),
+        settings: Vec<AnimationSettings>,
     },
     HideShowButton {
         targets: Vec<usize>,
@@ -1651,7 +1766,8 @@ impl Document {
                     _ => {}
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
-                    && !(code == 0 && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898))
+                    && !(code == 0
+                        && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !(labeled_polygon && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
@@ -1680,7 +1796,31 @@ impl Document {
                 action_bytes.and_then(|bytes| HideShowButtonGroup::parse(bytes).ok());
             let animation_group =
                 action_bytes.and_then(|bytes| AnimationButtonGroup::parse(bytes).ok());
-            if code == 62 && action_group.is_none() && animation_group.is_none() {
+            let movement_group =
+                action_bytes.and_then(|bytes| MovementButtonGroup::parse(bytes).ok());
+            let scroll_group = action_bytes.and_then(|bytes| ScrollButtonGroup::parse(bytes).ok());
+            let presentation_group =
+                action_bytes.and_then(|bytes| PresentationButtonGroup::parse(bytes).ok());
+            let link_url_group = (code == 0)
+                .then_some(&b[group_start..rs[i].data.end])
+                .and_then(|bytes| LinkUrlButtonGroup::parse(bytes).ok());
+            if code == 0
+                && rs.iter().any(|record| {
+                    record.start >= group_start
+                        && record.start < rs[i].start
+                        && record.kind == 0x0906
+                })
+                && link_url_group.is_none()
+            {
+                safe = false;
+            }
+            if code == 62
+                && action_group.is_none()
+                && animation_group.is_none()
+                && movement_group.is_none()
+                && scroll_group.is_none()
+                && presentation_group.is_none()
+            {
                 safe = false;
             }
             let coordinate_group = matches!(code, 49 | 65 | 66 | 86)
@@ -1991,18 +2131,73 @@ impl Document {
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
-                    (62, _, [target]) if animation_group.as_ref().is_some_and(|group| {
-                        group.target_id() == (*target - page_base) as u32
+                    (62, _, targets) if !targets.is_empty() && animation_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == targets.iter().map(|target| (*target - page_base) as u32).collect::<Vec<_>>()
                     }) => {
                         let group = animation_group.as_ref().unwrap();
                         match group.label_utf8() {
                             Ok(label) => Kind::AnimationButton {
-                                target: *target,
+                                targets: targets.to_vec(),
                                 label: label.to_owned(),
                                 anchor: group.screen_anchor(),
-                                settings: group.settings().unwrap(),
+                                settings: group.settings_list().unwrap(),
                             },
                             Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (62, _, [source, destination]) if movement_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == [(*source - page_base) as u32, (*destination - page_base) as u32]
+                    }) => {
+                        let group = movement_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::MovementButton {
+                                source: *source,
+                                destination: *destination,
+                                speed: group.speed(),
+                                follow: group.follows_destination(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (62, _, [target]) if scroll_group.as_ref().is_some_and(|group| {
+                        group.target_id() == (*target - page_base) as u32
+                    }) => {
+                        let group = scroll_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::ScrollButton {
+                                target: *target,
+                                placement: group.placement(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (62, _, targets) if !targets.is_empty() && presentation_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == targets.iter().map(|target| (*target - page_base) as u32).collect::<Vec<_>>()
+                    }) => {
+                        let group = presentation_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::PresentationButton {
+                                targets: targets.to_vec(),
+                                mode: group.mode(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (0, None, []) if link_url_group.is_some() => {
+                        let group = link_url_group.as_ref().unwrap();
+                        match (group.url_utf8(), group.label_utf8()) {
+                            (Ok(url), Ok(label)) => Kind::LinkUrlButton {
+                                url: url.to_owned(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
+                            },
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
@@ -2414,7 +2609,10 @@ impl Document {
             } else {
                 None
             };
-            if matches!(kind, Kind::FunctionDefinition(_) | Kind::Parameter(_)) {
+            if matches!(
+                kind,
+                Kind::FunctionDefinition(_) | Kind::Parameter(_) | Kind::LinkUrlButton { .. }
+            ) {
                 label = None;
             }
             if label.is_some() && !is_point_kind(&kind) {
@@ -5235,6 +5433,9 @@ impl Document {
                     object.kind,
                     Kind::HideShowButton { .. }
                         | Kind::AnimationButton { .. }
+                        | Kind::MovementButton { .. }
+                        | Kind::ScrollButton { .. }
+                        | Kind::PresentationButton { .. }
                         | Kind::Unsupported(_)
                 )
             {
@@ -5252,7 +5453,11 @@ impl Document {
                     && !object.deleted
                     && matches!(
                         object.kind,
-                        Kind::HideShowButton { .. } | Kind::AnimationButton { .. }
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
                     )
             })
             .count();
@@ -5277,6 +5482,169 @@ impl Document {
             .ok_or("An Animation button needs an animatable point on this page")?;
         self.add_animation_button_with_settings(target, settings)
     }
+    pub fn add_movement_button(
+        &mut self,
+        source: usize,
+        destination: usize,
+        speed: MovementSpeed,
+        follow: bool,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || source == destination {
+            return Err("A Movement button needs two distinct points on this page".into());
+        }
+        let moving = self
+            .objects
+            .get(source.checked_sub(1).ok_or("Invalid source point")?)
+            .ok_or("Invalid source point")?;
+        let target = self
+            .objects
+            .get(
+                destination
+                    .checked_sub(1)
+                    .ok_or("Invalid destination point")?,
+            )
+            .ok_or("Invalid destination point")?;
+        if moving.deleted
+            || !moving.visible
+            || moving.page != self.active_page
+            || !matches!(moving.kind, Kind::Free(_))
+            || target.deleted
+            || !target.visible
+            || target.page != self.active_page
+            || self.position(destination).is_none()
+        {
+            return Err(
+                "A Movement button needs a free source point and a destination point".into(),
+            );
+        }
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
+                    )
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::MovementButton {
+            source,
+            destination,
+            speed,
+            follow,
+            label: "Move to Point".into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn add_scroll_button(
+        &mut self,
+        target: usize,
+        placement: ScrollPlacement,
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("A Scroll button needs a point on this page".into());
+        }
+        let object = self
+            .objects
+            .get(target.checked_sub(1).ok_or("Invalid Scroll target")?)
+            .ok_or("Invalid Scroll target")?;
+        if object.deleted
+            || !object.visible
+            || object.page != self.active_page
+            || !is_point_kind(&object.kind)
+            || self.position(target).is_none()
+        {
+            return Err("A Scroll button needs a visible point on this page".into());
+        }
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
+                    )
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::ScrollButton {
+            target,
+            placement,
+            label: "Scroll".into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn add_presentation_button_for_targets(
+        &mut self,
+        targets: &[usize],
+        mode: PresentationMode,
+    ) -> Result<usize, String> {
+        if targets.is_empty() || self.partial_view || self.page_count != 1 {
+            return Err("A Presentation button needs action buttons on this page".into());
+        }
+        for (index, &target) in targets.iter().enumerate() {
+            let object = self
+                .objects
+                .get(target.checked_sub(1).ok_or("Invalid button target")?)
+                .ok_or("Invalid button target")?;
+            if targets[..index].contains(&target)
+                || object.deleted
+                || !object.visible
+                || object.page != self.active_page
+                || !object.kind.is_action_button()
+            {
+                return Err("A Presentation button needs distinct visible action buttons".into());
+            }
+        }
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page && !object.deleted && object.kind.is_action_button()
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::PresentationButton {
+            targets: targets.to_vec(),
+            mode,
+            label: "Run Presentation".into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn add_link_url_button(&mut self, url: &str) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 {
+            return Err("A Link URL button needs an editable single-page document".into());
+        }
+        if url.is_empty() || url.len() > u16::MAX as usize || url.as_bytes().contains(&0) {
+            return Err("Link URL must be nonempty text of at most 65535 bytes".into());
+        }
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page && !object.deleted && object.kind.is_action_button()
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::LinkUrlButton {
+            url: url.into(),
+            label: url.into(),
+            anchor: (10, y),
+        }))
+    }
     pub fn animation_button_default_settings(&self, target: usize) -> Option<AnimationSettings> {
         let object = self.objects.get(target.checked_sub(1)?)?;
         let direction = match object.kind {
@@ -5298,30 +5666,44 @@ impl Document {
         target: usize,
         settings: AnimationSettings,
     ) -> Result<usize, String> {
-        settings.validate()?;
-        let object = self
-            .objects
-            .get(target.checked_sub(1).ok_or("Invalid button target")?)
-            .ok_or("Invalid button target")?;
-        if self.partial_view
-            || self.page_count != 1
-            || object.deleted
-            || !object.visible
-            || object.page != self.active_page
-            || !matches!(
-                object.kind,
-                Kind::Free(_)
-                    | Kind::PointOnSegment(_, _)
-                    | Kind::PointOnCircle(_, _, _)
-                    | Kind::PointOnArc(_, _)
-            )
-        {
-            return Err("An Animation button needs an animatable point on this page".into());
+        self.add_animation_button_for_targets_with_settings(&[(target, settings)])
+    }
+    pub fn add_animation_button_for_targets_with_settings(
+        &mut self,
+        targets_and_settings: &[(usize, AnimationSettings)],
+    ) -> Result<usize, String> {
+        if targets_and_settings.is_empty() || self.partial_view || self.page_count != 1 {
+            return Err("An Animation button needs animatable points on this page".into());
         }
-        if matches!(object.kind, Kind::Free(_))
-            && settings.direction != crate::action_records::AnimationDirection::Forward
-        {
-            return Err("A free-point Animation button has no direction setting".into());
+        for (index, &(target, settings)) in targets_and_settings.iter().enumerate() {
+            settings.validate()?;
+            let object = self
+                .objects
+                .get(target.checked_sub(1).ok_or("Invalid button target")?)
+                .ok_or("Invalid button target")?;
+            if targets_and_settings[..index]
+                .iter()
+                .any(|(id, _)| *id == target)
+                || object.deleted
+                || !object.visible
+                || object.page != self.active_page
+                || !matches!(
+                    object.kind,
+                    Kind::Free(_)
+                        | Kind::PointOnSegment(_, _)
+                        | Kind::PointOnCircle(_, _, _)
+                        | Kind::PointOnArc(_, _)
+                )
+            {
+                return Err(
+                    "An Animation button needs distinct animatable points on this page".into(),
+                );
+            }
+            if matches!(object.kind, Kind::Free(_))
+                && settings.direction != crate::action_records::AnimationDirection::Forward
+            {
+                return Err("A free-point Animation button has no direction setting".into());
+            }
         }
         let row = self
             .objects
@@ -5331,16 +5713,26 @@ impl Document {
                     && !object.deleted
                     && matches!(
                         object.kind,
-                        Kind::HideShowButton { .. } | Kind::AnimationButton { .. }
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
                     )
             })
             .count();
         let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
         Ok(self.add(Kind::AnimationButton {
-            target,
+            targets: targets_and_settings
+                .iter()
+                .map(|(target, _)| *target)
+                .collect(),
             label: "Animate Point".into(),
             anchor: (10, y),
-            settings,
+            settings: targets_and_settings
+                .iter()
+                .map(|(_, settings)| *settings)
+                .collect(),
         }))
     }
     pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
@@ -5358,11 +5750,15 @@ impl Document {
             return Err("Object is not a Hide/Show button".into());
         };
         let (targets, action) = (targets.clone(), *action);
-        if targets.iter().any(|&target| {
-            self.objects
-                .get(target - 1)
-                .is_none_or(|object| object.deleted || object.page != self.active_page)
-        }) {
+        if targets.is_empty()
+            || targets.iter().any(|&target| {
+                target == 0
+                    || self
+                        .objects
+                        .get(target - 1)
+                        .is_none_or(|object| object.deleted || object.page != self.active_page)
+            })
+        {
             return Err("Button target is unavailable".into());
         }
         self.checkpoint();
@@ -6980,18 +7376,90 @@ impl Document {
                     return Err(format!("Invalid Hide/Show button {}", o.id));
                 }
             }
-            if let Kind::AnimationButton { target, label, .. } = &o.kind {
+            if let Kind::AnimationButton {
+                targets,
+                settings,
+                label,
+                ..
+            } = &o.kind
+            {
                 if self.page_count != 1
-                    || self.objects[*target - 1].page != o.page
+                    || targets.is_empty()
+                    || targets.len() != settings.len()
+                    || targets
+                        .iter()
+                        .any(|&target| self.objects[target - 1].page != o.page)
                     || label.len() > u16::MAX as usize
                 {
                     return Err(format!("Invalid Animation button {}", o.id));
                 }
             }
-            if let Kind::AnimationButton { settings, .. } = o.kind {
-                settings
-                    .validate()
-                    .map_err(|error| format!("Invalid Animation button {}: {error}", o.id))?;
+            if let Kind::AnimationButton { settings, .. } = &o.kind {
+                for setting in settings {
+                    setting
+                        .validate()
+                        .map_err(|error| format!("Invalid Animation button {}: {error}", o.id))?;
+                }
+            }
+            if let Kind::MovementButton {
+                source,
+                destination,
+                label,
+                ..
+            } = &o.kind
+            {
+                if self.page_count != 1
+                    || *source == *destination
+                    || *source == 0
+                    || *destination == 0
+                    || *source > self.objects.len()
+                    || *destination > self.objects.len()
+                    || self.objects[*source - 1].page != o.page
+                    || self.objects[*destination - 1].page != o.page
+                    || !matches!(self.objects[*source - 1].kind, Kind::Free(_))
+                    || self.position(*destination).is_none()
+                    || label.len() > u16::MAX as usize
+                {
+                    return Err(format!("Invalid Movement button {}", o.id));
+                }
+            }
+            if let Kind::ScrollButton { target, label, .. } = &o.kind {
+                if self.page_count != 1
+                    || *target == 0
+                    || *target > self.objects.len()
+                    || self.objects[*target - 1].page != o.page
+                    || !is_point_kind(&self.objects[*target - 1].kind)
+                    || self.position(*target).is_none()
+                    || label.len() > u16::MAX as usize
+                {
+                    return Err(format!("Invalid Scroll button {}", o.id));
+                }
+            }
+            if let Kind::PresentationButton { targets, label, .. } = &o.kind {
+                if self.page_count != 1
+                    || targets.is_empty()
+                    || targets.iter().enumerate().any(|(index, &target)| {
+                        target == 0
+                            || target >= o.id
+                            || targets[..index].contains(&target)
+                            || self.objects[target - 1].page != o.page
+                            || !self.objects[target - 1].kind.is_action_button()
+                    })
+                    || label.len() > u16::MAX as usize
+                {
+                    return Err(format!("Invalid Presentation button {}", o.id));
+                }
+            }
+            if let Kind::LinkUrlButton { url, label, .. } = &o.kind {
+                if self.page_count != 1
+                    || url.is_empty()
+                    || url.len() > u16::MAX as usize
+                    || label.len() > u16::MAX as usize
+                    || url.as_bytes().contains(&0)
+                    || label.as_bytes().contains(&0)
+                {
+                    return Err(format!("Invalid Link URL button {}", o.id));
+                }
             }
             if let Kind::Midpoint(a, b) = o.kind {
                 let Some(host) = o.midpoint_host else {
@@ -8355,10 +8823,10 @@ impl Document {
             }
             if let (
                 Kind::AnimationButton {
+                    targets,
                     label,
                     anchor,
                     settings,
-                    ..
                 },
                 Some(i),
             ) = (&o.kind, o.header_offset)
@@ -8375,15 +8843,163 @@ impl Document {
                 let start = rs[start_record].start;
                 let end = rs[end_record].data.end;
                 let mut group = AnimationButtonGroup::parse(&out[start..end])?;
+                group.set_targets(
+                    &targets
+                        .iter()
+                        .map(|&target| target as u32)
+                        .collect::<Vec<_>>(),
+                )?;
                 group.set_label(label)?;
                 group.set_screen_anchor(*anchor);
-                group.set_settings(*settings)?;
+                group.set_settings_list(settings)?;
                 group.set_hidden(!o.visible);
                 let encoded = group.encode();
                 if encoded.len() != end - start {
                     return Err(
                         "Editing a saved animation button label cannot change its byte length"
                             .into(),
+                    );
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
+            if let (
+                Kind::MovementButton {
+                    source,
+                    destination,
+                    speed,
+                    follow,
+                    label,
+                    anchor,
+                },
+                Some(i),
+            ) = (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved Movement button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Movement button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = MovementButtonGroup::parse(&out[start..end])?;
+                group.set_targets(*source as u32, *destination as u32)?;
+                group.set_speed(*speed);
+                group.set_follows_destination(*follow);
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err(
+                        "Editing a saved Movement button label cannot change its byte length"
+                            .into(),
+                    );
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
+            if let (
+                Kind::ScrollButton {
+                    target,
+                    placement,
+                    label,
+                    anchor,
+                },
+                Some(i),
+            ) = (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved Scroll button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Scroll button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = ScrollButtonGroup::parse(&out[start..end])?;
+                group.set_target(*target as u32)?;
+                group.set_placement(*placement);
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err(
+                        "Editing a saved Scroll button label cannot change its byte length".into(),
+                    );
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
+            if let (
+                Kind::PresentationButton {
+                    targets,
+                    mode,
+                    label,
+                    anchor,
+                },
+                Some(i),
+            ) = (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved Presentation button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Presentation button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = PresentationButtonGroup::parse(&out[start..end])?;
+                group.set_targets(
+                    &targets
+                        .iter()
+                        .map(|&target| target as u32)
+                        .collect::<Vec<_>>(),
+                )?;
+                group.set_mode(*mode);
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err(
+                        "Editing a saved Presentation button label cannot change its byte length"
+                            .into(),
+                    );
+                }
+                out[start..end].copy_from_slice(&encoded);
+            }
+            if let (Kind::LinkUrlButton { url, label, anchor }, Some(i)) =
+                (&o.kind, o.header_offset)
+            {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
+                    .ok_or("Missing saved Link URL button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x7d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Link URL button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = LinkUrlButtonGroup::parse(&out[start..end])?;
+                group.set_url(url)?;
+                group.set_label(label)?;
+                group.set_screen_anchor(*anchor);
+                group.set_hidden(!o.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err(
+                        "Editing a saved Link URL button cannot change its byte length".into(),
                     );
                 }
                 out[start..end].copy_from_slice(&encoded);
@@ -8586,16 +9202,79 @@ impl Document {
                 continue;
             }
             if let Kind::AnimationButton {
-                target,
+                targets,
                 label,
                 anchor,
                 settings,
             } = &o.kind
             {
+                let ids = targets
+                    .iter()
+                    .map(|&target| target as u32)
+                    .collect::<Vec<_>>();
                 let mut group =
-                    AnimationButtonGroup::from_original_template(*target as u32, label, *anchor)?;
+                    AnimationButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
                 group.set_hidden(!o.visible);
-                group.set_settings(*settings)?;
+                group.set_settings_list(settings)?;
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
+            if let Kind::MovementButton {
+                source,
+                destination,
+                speed,
+                follow,
+                label,
+                anchor,
+            } = &o.kind
+            {
+                let mut group = MovementButtonGroup::from_original_template(
+                    *source as u32,
+                    *destination as u32,
+                    label,
+                    *anchor,
+                )?;
+                group.set_speed(*speed);
+                group.set_follows_destination(*follow);
+                group.set_hidden(!o.visible);
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
+            if let Kind::ScrollButton {
+                target,
+                placement,
+                label,
+                anchor,
+            } = &o.kind
+            {
+                let mut group =
+                    ScrollButtonGroup::from_original_template(*target as u32, label, *anchor)?;
+                group.set_placement(*placement);
+                group.set_hidden(!o.visible);
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
+            if let Kind::PresentationButton {
+                targets,
+                mode,
+                label,
+                anchor,
+            } = &o.kind
+            {
+                let ids = targets
+                    .iter()
+                    .map(|&target| target as u32)
+                    .collect::<Vec<_>>();
+                let mut group =
+                    PresentationButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
+                group.set_mode(*mode);
+                group.set_hidden(!o.visible);
+                added.extend_from_slice(&group.encode());
+                continue;
+            }
+            if let Kind::LinkUrlButton { url, label, anchor } = &o.kind {
+                let mut group = LinkUrlButtonGroup::from_original_template(url, label, *anchor)?;
+                group.set_hidden(!o.visible);
                 added.extend_from_slice(&group.encode());
                 continue;
             }
@@ -10598,6 +11277,10 @@ mod tests {
         for bytes in [
             include_bytes!("../tests/fixtures/action_hide_show_two_points_original.gsp").as_slice(),
             include_bytes!("../tests/fixtures/action_hide_show_two_points_clicked.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_hide_show_two_points_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
         ] {
             let doc = Document::from_bytes(bytes, None).unwrap();
             assert!(!doc.partial_view);
@@ -10672,8 +11355,8 @@ mod tests {
             assert!(!doc.partial_view);
             assert!(matches!(
                 &doc.objects[4].kind,
-                Kind::AnimationButton { target: 4, label, anchor: (10, 5), .. }
-                    if label == "动画点"
+                Kind::AnimationButton { targets, label, anchor: (10, 5), .. }
+                    if targets == &[4] && label == "动画点"
             ));
             assert_eq!(doc.objects[4].kind.dependencies(), vec![4]);
             assert_eq!(doc.encode().unwrap(), bytes);
@@ -10688,7 +11371,7 @@ mod tests {
         assert_eq!(reopened.encode().unwrap(), generated);
         assert!(matches!(
             &reopened.objects[4].kind,
-            Kind::AnimationButton { target: 4, label, .. } if label == "Animate Point"
+            Kind::AnimationButton { targets, label, .. } if targets == &[4] && label == "Animate Point"
         ));
         let clicked = include_bytes!("../tests/fixtures/action_animation_port_clicked_by_wine.gsp");
         let clicked_doc = Document::from_bytes(clicked, None).unwrap();
@@ -10701,7 +11384,7 @@ mod tests {
         let pasted_button = *pasted.last().unwrap();
         assert!(matches!(
             doc.objects[pasted_button - 1].kind,
-            Kind::AnimationButton { target, .. } if target != 4 && target < pasted_button
+            Kind::AnimationButton { ref targets, .. } if targets.len() == 1 && targets[0] != 4 && targets[0] < pasted_button
         ));
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert!(!reopened.partial_view);
@@ -10709,6 +11392,212 @@ mod tests {
             reopened.objects[pasted_button - 1].kind,
             Kind::AnimationButton { .. }
         ));
+    }
+
+    #[test]
+    fn movement_button_imports_and_generates_editable_file() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_movement_default_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_movement_slow_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_movement_fast_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_movement_instant_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_movement_initial_original.gsp").as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(matches!(
+                document.objects[3].kind,
+                Kind::MovementButton {
+                    source: 1,
+                    destination: 2,
+                    ..
+                }
+            ));
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut document = Document::new();
+        let source = document.add(Kind::Free(Point { x: 150., y: 120. }));
+        let destination = document.add(Kind::Free(Point { x: 270., y: 120. }));
+        let id = document
+            .add_movement_button(source, destination, MovementSpeed::Fast, false)
+            .unwrap();
+        let bytes = document.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[id - 1].kind,
+            Kind::MovementButton {
+                source: 1,
+                destination: 2,
+                speed: MovementSpeed::Fast,
+                follow: false,
+                ..
+            }
+        ));
+        assert_eq!(reopened.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn scroll_button_imports_and_generates_editable_file() {
+        for (bytes, expected) in [
+            (
+                include_bytes!("../tests/fixtures/action_scroll_top_left_original.gsp").as_slice(),
+                ScrollPlacement::UpperLeft,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_scroll_center_original.gsp").as_slice(),
+                ScrollPlacement::Center,
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(
+                matches!(document.objects[3].kind, Kind::ScrollButton { target: 1, placement, .. } if placement == expected)
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut document = Document::new();
+        let target = document.add(Kind::Free(Point { x: 150., y: 120. }));
+        let button = document
+            .add_scroll_button(target, ScrollPlacement::Center)
+            .unwrap();
+        let bytes = document.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            reopened.objects[button - 1].kind,
+            Kind::ScrollButton {
+                target: 1,
+                placement: ScrollPlacement::Center,
+                ..
+            }
+        ));
+        assert_eq!(reopened.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn presentation_button_imports_and_generates_editable_file() {
+        for (bytes, expected, targets) in [
+            (
+                include_bytes!("../tests/fixtures/action_presentation_default_original.gsp")
+                    .as_slice(),
+                PresentationMode::Simultaneous,
+                vec![3, 4],
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_presentation_sequential_scroll_original.gsp"
+                )
+                .as_slice(),
+                PresentationMode::Sequential,
+                vec![4, 5],
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let last = document.objects.last().unwrap();
+            assert!(
+                matches!(&last.kind, Kind::PresentationButton { targets: actual, mode, .. }
+                if actual == &targets && *mode == expected)
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let base = include_bytes!("../tests/fixtures/presentation_two_hide_show_base.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        let button = document
+            .add_presentation_button_for_targets(&[3, 4], PresentationMode::Sequential)
+            .unwrap();
+        let bytes = document.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(
+            matches!(&reopened.objects[button - 1].kind, Kind::PresentationButton { targets, mode: PresentationMode::Sequential, .. }
+            if targets == &[3, 4])
+        );
+        assert_eq!(reopened.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn presentation_button_clicks_in_native_and_desktop_match() {
+        for (bytes, mode) in [
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_presentation_port_simultaneous_clicked_by_wine.gsp"
+                )
+                .as_slice(),
+                PresentationMode::Simultaneous,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_presentation_port_sequential_clicked_by_wine.gsp"
+                )
+                .as_slice(),
+                PresentationMode::Sequential,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_presentation_port_desktop_clicked.gsp")
+                    .as_slice(),
+                PresentationMode::Simultaneous,
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(!document.objects[0].visible);
+            assert!(!document.objects[1].visible);
+            for button in &document.objects[2..4] {
+                assert!(matches!(
+                    button.kind,
+                    Kind::HideShowButton {
+                        action: VisibilityAction::Show,
+                        ..
+                    }
+                ));
+            }
+            assert!(matches!(
+                document.objects[4].kind,
+                Kind::PresentationButton { mode: actual, .. } if actual == mode
+            ));
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn link_url_buttons_import_and_generate_editable_files() {
+        for (bytes, url) in [
+            (
+                include_bytes!("../tests/fixtures/action_link_url_default_original.gsp").as_slice(),
+                "http://kejianyuan.com",
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_url_custom_original.gsp").as_slice(),
+                "https://example.invalid/sketchpad",
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_url_even_original.gsp").as_slice(),
+                "https://example.org/",
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(matches!(&document.objects[1].kind,
+                Kind::LinkUrlButton { url: actual, label, anchor }
+                if actual == url && label == url && *anchor == (10, 5)
+            ));
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let base = include_bytes!("../tests/fixtures/point.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        let button = document
+            .add_link_url_button("https://example.org/")
+            .unwrap();
+        let bytes = document.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(&reopened.objects[button - 1].kind,
+            Kind::LinkUrlButton { url, label, .. }
+            if url == "https://example.org/" && label == url
+        ));
+        assert_eq!(reopened.encode().unwrap(), bytes);
     }
     #[test]
     fn animation_button_variants_import_and_preserve_settings() {
@@ -10758,8 +11647,8 @@ mod tests {
             assert!(!doc.partial_view);
             assert!(matches!(
                 doc.objects[4].kind,
-                Kind::AnimationButton { settings: AnimationSettings { direction: value, speed: rate, once: one }, .. }
-                    if value == direction && rate == speed && one == once
+                Kind::AnimationButton { ref settings, .. }
+                    if settings.len() == 1 && settings[0] == AnimationSettings { direction, speed, once }
             ));
             assert_eq!(doc.encode().unwrap(), bytes);
         }
@@ -10778,7 +11667,7 @@ mod tests {
         let reopened = Document::from_bytes(&encoded, None).unwrap();
         assert!(!reopened.partial_view);
         assert!(
-            matches!(reopened.objects[id-1].kind, Kind::AnimationButton { settings: actual, .. } if actual == settings)
+            matches!(reopened.objects[id-1].kind, Kind::AnimationButton { settings: ref actual, .. } if actual == &[settings])
         );
         assert_eq!(reopened.encode().unwrap(), encoded);
         for (bytes, target, button) in [
@@ -10796,7 +11685,7 @@ mod tests {
             let native = Document::from_bytes(bytes, None).unwrap();
             assert!(!native.partial_view);
             assert!(
-                matches!(native.objects[button-1].kind, Kind::AnimationButton { target: actual_target, settings: AnimationSettings { direction: AnimationDirection::Forward, speed: 24., once: false }, .. } if actual_target == target)
+                matches!(native.objects[button-1].kind, Kind::AnimationButton { ref targets, ref settings, .. } if targets == &[target] && settings == &[AnimationSettings { direction: AnimationDirection::Forward, speed: 24., once: false }])
             );
             assert_eq!(native.encode().unwrap(), bytes);
         }
@@ -10808,13 +11697,8 @@ mod tests {
         let circle_id = circle_doc.add_animation_button(4).unwrap();
         assert!(matches!(
             circle_doc.objects[circle_id - 1].kind,
-            Kind::AnimationButton {
-                settings: AnimationSettings {
-                    direction: AnimationDirection::Forward,
-                    ..
-                },
-                ..
-            }
+            Kind::AnimationButton { ref settings, .. }
+                if settings.len() == 1 && settings[0].direction == AnimationDirection::Forward
         ));
         let mut free_doc = Document::from_bytes(
             include_bytes!("../tests/fixtures/animation_free_point_base.gsp"),
@@ -10824,14 +11708,83 @@ mod tests {
         let free_id = free_doc.add_animation_button(1).unwrap();
         assert!(matches!(
             free_doc.objects[free_id - 1].kind,
-            Kind::AnimationButton {
-                settings: AnimationSettings {
-                    direction: AnimationDirection::Forward,
-                    ..
-                },
-                ..
-            }
+            Kind::AnimationButton { ref settings, .. }
+                if settings.len() == 1 && settings[0].direction == AnimationDirection::Forward
         ));
+    }
+
+    #[test]
+    fn two_point_animation_button_imports_creates_and_copies() {
+        use crate::action_records::AnimationDirection;
+        let mut native = Document::open(Path::new(
+            "tests/fixtures/action_animation_two_points_second_backward.gsp",
+        ))
+        .unwrap();
+        let expected_settings = vec![
+            AnimationSettings::default(),
+            AnimationSettings {
+                direction: AnimationDirection::Backward,
+                ..AnimationSettings::default()
+            },
+        ];
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_two_points_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_two_points_second_backward.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_two_points_clicked.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_animation_two_points_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[5].kind.dependencies(), vec![4, 5]);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        assert!(
+            matches!(&native.objects[5].kind, Kind::AnimationButton { settings, .. } if settings == &expected_settings)
+        );
+        native.selected.insert(6);
+        let clipboard = native.copy_selected().unwrap();
+        let mut destination = Document::new();
+        let pasted = destination.paste(&clipboard).unwrap();
+        assert_eq!(
+            destination.objects[pasted.last().unwrap() - 1]
+                .kind
+                .dependencies(),
+            vec![4, 5]
+        );
+        assert!(
+            !Document::from_bytes(&destination.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+
+        let mut generated = Document::open(Path::new(
+            "tests/fixtures/animation_button_two_points_base.gsp",
+        ))
+        .unwrap();
+        let button = generated
+            .add_animation_button_for_targets_with_settings(&[
+                (4, expected_settings[0]),
+                (5, expected_settings[1]),
+            ])
+            .unwrap();
+        assert_eq!(button, 6);
+        assert!(
+            generated
+                .add_animation_button_for_targets_with_settings(&[
+                    (4, expected_settings[0]),
+                    (4, expected_settings[1])
+                ])
+                .is_err()
+        );
+        let encoded = generated.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(
+            matches!(&reopened.objects[5].kind, Kind::AnimationButton { settings, .. } if settings == &expected_settings)
+        );
     }
     #[test]
     fn polygon_perimeter_matches_original_and_updates_after_drag() {

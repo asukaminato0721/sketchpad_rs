@@ -71,6 +71,199 @@ pub struct AnimationButtonGroup {
     records: [Record; 7],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MovementSpeed {
+    Slow,
+    Medium,
+    Fast,
+    Instant,
+}
+
+impl MovementSpeed {
+    fn code(self) -> u16 {
+        match self {
+            Self::Slow => 0,
+            Self::Medium => 1,
+            Self::Fast => 2,
+            Self::Instant => 3,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovementButtonGroup {
+    records: [Record; 6],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollPlacement {
+    UpperLeft,
+    Center,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScrollButtonGroup {
+    records: [Record; 6],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationMode {
+    Simultaneous,
+    Sequential,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PresentationButtonGroup {
+    records: [Record; 6],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkUrlButtonGroup {
+    records: [Record; 6],
+}
+
+impl LinkUrlButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = parse_records(
+            bytes,
+            [
+                OBJECT_HEADER,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                0x08a2,
+                OBJECT_END,
+            ],
+        )?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template(
+        url: &str,
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut group = Self::parse(include_bytes!("../assets/action_link_url_group.bin"))?;
+        group.set_url(url)?;
+        group.set_label(label)?;
+        group.set_screen_anchor(anchor);
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records[0].payload;
+        let action = &self.records[1].payload;
+        let label = &self.records[2].payload;
+        if header.len() != 28 || u16_at(header, 0) != 0 {
+            return Err("Link URL button needs an object code 0 header".into());
+        }
+        if action.len() < 28
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) as usize != action.len()
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 6
+            || u16_at(action, 14) != 0
+            || u32_at(action, 16) != 0
+            || !valid_zero_terminated_text(action, 24)
+        {
+            return Err("Unsupported Link URL action".into());
+        }
+        if label.len() < 26 || !valid_zero_terminated_text(label, 22) {
+            return Err("Link URL label is truncated".into());
+        }
+        if self.records[3].payload.len() != 2
+            || self.records[4].payload.len() != 8
+            || !self.records[5].payload.is_empty()
+        {
+            return Err("Link URL auxiliary records are invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn url_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[1].payload;
+        let len = u16_at(payload, 24) as usize;
+        std::str::from_utf8(&payload[26..26 + len]).map_err(|_| "Link URL is not UTF-8".into())
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[2].payload;
+        let len = u16_at(payload, 22) as usize;
+        std::str::from_utf8(&payload[24..24 + len])
+            .map_err(|_| "Link URL label is not UTF-8".into())
+    }
+
+    pub fn set_url(&mut self, url: &str) -> Result<(), String> {
+        set_zero_terminated_text(&mut self.records[1], 24, url)?;
+        let payload_len = self.records[1].payload.len() as u32;
+        self.records[1].payload[4..8].copy_from_slice(&payload_len.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        set_zero_terminated_text(&mut self.records[2], 22, label)
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records[1].payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records[1].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
+        self.records[1].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records[0].payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records)
+    }
+}
+
+fn valid_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
+    if payload.len() < length_offset + 4 {
+        return false;
+    }
+    let length = u16_at(payload, length_offset) as usize;
+    let start = length_offset + 2;
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    end < payload.len()
+        && payload[end] == 0
+        && payload[end + 1..].iter().all(|&byte| byte == 0)
+        && payload.len() == (end + 2) & !1
+}
+
+fn set_zero_terminated_text(
+    record: &mut Record,
+    length_offset: usize,
+    text: &str,
+) -> Result<(), String> {
+    let bytes = text.as_bytes();
+    let length = u16::try_from(bytes.len()).map_err(|_| "Link URL text is too long")?;
+    if bytes.contains(&0) {
+        return Err("Link URL text cannot contain a NUL byte".into());
+    }
+    record.payload.truncate(length_offset);
+    record.payload.extend_from_slice(&length.to_le_bytes());
+    record.payload.extend_from_slice(bytes);
+    record.payload.push(0);
+    if record.payload.len() % 2 != 0 {
+        record.payload.push(0);
+    }
+    record.padding = None;
+    Ok(())
+}
+
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
 }
@@ -312,6 +505,435 @@ impl HideShowButtonGroup {
     }
 }
 
+impl PresentationButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = parse_records(
+            bytes,
+            [
+                OBJECT_HEADER,
+                OBJECT_REFS,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                OBJECT_END,
+            ],
+        )?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template_targets(
+        targets: &[u32],
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut group = Self::parse(include_bytes!("../assets/action_presentation_group.bin"))?;
+        group.set_targets(targets)?;
+        group.set_label(label)?;
+        group.set_screen_anchor(anchor);
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records[0].payload;
+        let refs = &self.records[1].payload;
+        let action = &self.records[2].payload;
+        let label = &self.records[3].payload;
+        if header.len() != 28 || u16_at(header, 0) != 62 {
+            return Err("Presentation button needs an object code 62 header".into());
+        }
+        if refs.len() < 8
+            || (refs.len() - 4) % 4 != 0
+            || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
+            || self.target_ids().contains(&0)
+        {
+            return Err("Presentation button needs nonzero parent button IDs".into());
+        }
+        if action.len() != 24
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) != 24
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 7
+            || !matches!((u16_at(action, 14), u32_at(action, 16)), (0, 600) | (1, 0))
+        {
+            return Err("Unsupported Presentation button action".into());
+        }
+        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
+            return Err("Presentation button label is truncated".into());
+        }
+        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+            return Err("Presentation button auxiliary records are invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn target_ids(&self) -> Vec<u32> {
+        self.records[1].payload[4..]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
+    pub fn set_targets(&mut self, targets: &[u32]) -> Result<(), String> {
+        let count = u32::try_from(targets.len()).map_err(|_| "Too many Presentation targets")?;
+        if count == 0 || targets.contains(&0) {
+            return Err("Presentation button needs nonzero targets".into());
+        }
+        let refs = &mut self.records[1].payload;
+        refs.clear();
+        refs.extend_from_slice(&count.to_le_bytes());
+        for target in targets {
+            refs.extend_from_slice(&target.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    pub fn mode(&self) -> PresentationMode {
+        if u16_at(&self.records[2].payload, 14) == 0 {
+            PresentationMode::Simultaneous
+        } else {
+            PresentationMode::Sequential
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: PresentationMode) {
+        let (code, delay): (u16, u32) = match mode {
+            PresentationMode::Simultaneous => (0, 600),
+            PresentationMode::Sequential => (1, 0),
+        };
+        self.records[2].payload[14..16].copy_from_slice(&code.to_le_bytes());
+        self.records[2].payload[16..20].copy_from_slice(&delay.to_le_bytes());
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records[2].payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
+        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[3].payload;
+        let len = u16_at(payload, 22) as usize;
+        std::str::from_utf8(&payload[24..24 + len])
+            .map_err(|_| "Presentation button label is not UTF-8".into())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        let bytes = label.as_bytes();
+        let len =
+            u16::try_from(bytes.len()).map_err(|_| "Presentation button label is too long")?;
+        let payload = &mut self.records[3].payload;
+        let old_len = u16_at(payload, 22) as usize;
+        if old_len % 2 != bytes.len() % 2 {
+            return Err("Presentation button label byte parity differs".into());
+        }
+        let suffix = payload[24 + old_len..].to_vec();
+        payload.truncate(22);
+        payload.extend_from_slice(&len.to_le_bytes());
+        payload.extend_from_slice(bytes);
+        payload.extend_from_slice(&suffix);
+        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
+        Ok(())
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records[0].payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records)
+    }
+}
+
+impl ScrollButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = parse_records(
+            bytes,
+            [
+                OBJECT_HEADER,
+                OBJECT_REFS,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                OBJECT_END,
+            ],
+        )?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template(
+        target: u32,
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut group = Self::parse(include_bytes!("../assets/action_scroll_group.bin"))?;
+        group.set_target(target)?;
+        group.set_label(label)?;
+        group.set_screen_anchor(anchor);
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records[0].payload;
+        let refs = &self.records[1].payload;
+        let action = &self.records[2].payload;
+        let label = &self.records[3].payload;
+        if header.len() != 28 || u16_at(header, 0) != 62 {
+            return Err("Scroll button needs an object code 62 header".into());
+        }
+        if refs.len() != 8 || u32_at(refs, 0) != 1 || u32_at(refs, 4) == 0 {
+            return Err("Scroll button needs one point target".into());
+        }
+        if action.len() != 24
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) != 24
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 4
+            || u16_at(action, 14) > 1
+            || u32_at(action, 16) != 0
+        {
+            return Err("Unsupported Scroll button action".into());
+        }
+        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
+            return Err("Scroll button label is truncated".into());
+        }
+        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+            return Err("Scroll button auxiliary records are invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn target_id(&self) -> u32 {
+        u32_at(&self.records[1].payload, 4)
+    }
+
+    pub fn set_target(&mut self, target: u32) -> Result<(), String> {
+        if target == 0 {
+            return Err("Scroll target must be nonzero".into());
+        }
+        self.records[1].payload[4..8].copy_from_slice(&target.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn placement(&self) -> ScrollPlacement {
+        if u16_at(&self.records[2].payload, 14) == 0 {
+            ScrollPlacement::UpperLeft
+        } else {
+            ScrollPlacement::Center
+        }
+    }
+
+    pub fn set_placement(&mut self, placement: ScrollPlacement) {
+        let code: u16 = match placement {
+            ScrollPlacement::UpperLeft => 0,
+            ScrollPlacement::Center => 1,
+        };
+        self.records[2].payload[14..16].copy_from_slice(&code.to_le_bytes());
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records[2].payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
+        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[3].payload;
+        let len = u16_at(payload, 22) as usize;
+        std::str::from_utf8(&payload[24..24 + len])
+            .map_err(|_| "Scroll button label is not UTF-8".into())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        let bytes = label.as_bytes();
+        let len = u16::try_from(bytes.len()).map_err(|_| "Scroll button label is too long")?;
+        let payload = &mut self.records[3].payload;
+        let old_len = u16_at(payload, 22) as usize;
+        if old_len % 2 != bytes.len() % 2 {
+            return Err("Scroll button label byte parity differs".into());
+        }
+        let suffix = payload[24 + old_len..].to_vec();
+        payload.truncate(22);
+        payload.extend_from_slice(&len.to_le_bytes());
+        payload.extend_from_slice(bytes);
+        payload.extend_from_slice(&suffix);
+        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
+        Ok(())
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records[0].payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records)
+    }
+}
+
+impl MovementButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = parse_records(
+            bytes,
+            [
+                OBJECT_HEADER,
+                OBJECT_REFS,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                OBJECT_END,
+            ],
+        )?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template(
+        source: u32,
+        destination: u32,
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut group = Self::parse(include_bytes!("../assets/action_movement_group.bin"))?;
+        group.set_targets(source, destination)?;
+        group.set_label(label)?;
+        group.set_screen_anchor(anchor);
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records[0].payload;
+        let refs = &self.records[1].payload;
+        let action = &self.records[2].payload;
+        let label = &self.records[3].payload;
+        if header.len() != 28 || u16_at(header, 0) != 62 {
+            return Err("Movement button needs an object code 62 header".into());
+        }
+        if refs.len() != 12 || u32_at(refs, 0) != 2 || u32_at(refs, 4) == 0 || u32_at(refs, 8) == 0
+        {
+            return Err("Movement button needs a source and destination".into());
+        }
+        if action.len() != 24
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) != 24
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 3
+            || u16_at(action, 14) > 3
+            || u16_at(action, 16) > 1
+            || u16_at(action, 18) != 0
+        {
+            return Err("Unsupported Movement button action".into());
+        }
+        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
+            return Err("Movement button label is truncated".into());
+        }
+        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+            return Err("Movement button auxiliary records are invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn target_ids(&self) -> [u32; 2] {
+        [
+            u32_at(&self.records[1].payload, 4),
+            u32_at(&self.records[1].payload, 8),
+        ]
+    }
+
+    pub fn set_targets(&mut self, source: u32, destination: u32) -> Result<(), String> {
+        if source == 0 || destination == 0 {
+            return Err("Movement targets must be nonzero".into());
+        }
+        self.records[1].payload[4..8].copy_from_slice(&source.to_le_bytes());
+        self.records[1].payload[8..12].copy_from_slice(&destination.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn speed(&self) -> MovementSpeed {
+        match u16_at(&self.records[2].payload, 14) {
+            0 => MovementSpeed::Slow,
+            1 => MovementSpeed::Medium,
+            2 => MovementSpeed::Fast,
+            _ => MovementSpeed::Instant,
+        }
+    }
+
+    pub fn set_speed(&mut self, speed: MovementSpeed) {
+        self.records[2].payload[14..16].copy_from_slice(&speed.code().to_le_bytes());
+    }
+
+    pub fn follows_destination(&self) -> bool {
+        u16_at(&self.records[2].payload, 16) == 0
+    }
+
+    pub fn set_follows_destination(&mut self, follow: bool) {
+        let code: u16 = if follow { 0 } else { 1 };
+        self.records[2].payload[16..18].copy_from_slice(&code.to_le_bytes());
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records[2].payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
+        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[3].payload;
+        let len = u16_at(payload, 22) as usize;
+        std::str::from_utf8(&payload[24..24 + len])
+            .map_err(|_| "Movement button label is not UTF-8".into())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        let bytes = label.as_bytes();
+        let len = u16::try_from(bytes.len()).map_err(|_| "Movement button label is too long")?;
+        let payload = &mut self.records[3].payload;
+        let old_len = u16_at(payload, 22) as usize;
+        if old_len % 2 != bytes.len() % 2 {
+            return Err("Movement button label byte parity differs".into());
+        }
+        let suffix = payload[24 + old_len..].to_vec();
+        payload.truncate(22);
+        payload.extend_from_slice(&len.to_le_bytes());
+        payload.extend_from_slice(bytes);
+        payload.extend_from_slice(&suffix);
+        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
+        Ok(())
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records[0].payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records)
+    }
+}
+
 impl AnimationButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let records = parse_records(
@@ -336,8 +958,16 @@ impl AnimationButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        Self::from_original_template_targets(&[target], label, anchor)
+    }
+
+    pub fn from_original_template_targets(
+        targets: &[u32],
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
         let mut group = Self::parse(include_bytes!("../assets/action_animation_group.bin"))?;
-        group.set_single_target(target)?;
+        group.set_targets(targets)?;
         group.set_label(label)?;
         group.set_screen_anchor(anchor);
         Ok(group)
@@ -349,18 +979,25 @@ impl AnimationButtonGroup {
             return Err("Animation button needs a 28-byte object code 62 header".into());
         }
         let refs = &self.records[1].payload;
-        if refs.len() != 8 || u32_at(refs, 0) != 1 || u32_at(refs, 4) == 0 {
-            return Err("Animation button needs one nonzero target".into());
+        if refs.len() < 8
+            || (refs.len() - 4) % 4 != 0
+            || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
+            || self.target_ids().contains(&0)
+        {
+            return Err("Animation button needs nonzero targets".into());
         }
         let settings = &self.records[2].payload;
         // The settings payload starts after the 36-byte header group,
         // 16-byte target record, and its own 8-byte record header.
         let default_settings = &include_bytes!("../assets/action_animation_group.bin")[60..96];
-        if settings.len() != 36
-            || settings.iter().zip(default_settings).enumerate().any(
-                |(index, (actual, expected))| !matches!(index, 7 | 8..=11) && actual != expected,
-            )
-            || self.settings().is_err()
+        if settings.len() != 4 + 32 * self.target_ids().len()
+            || settings[..4] != default_settings[..4]
+            || settings[4..].chunks_exact(32).any(|block| {
+                block.iter().zip(&default_settings[4..]).enumerate().any(
+                    |(index, (actual, expected))| !matches!(index, 3 | 4..=7) && actual != expected,
+                )
+            })
+            || self.settings_list().is_err()
         {
             return Err("Unsupported Animation button settings".into());
         }
@@ -387,33 +1024,79 @@ impl AnimationButtonGroup {
         u32_at(&self.records[1].payload, 4)
     }
 
+    pub fn target_ids(&self) -> Vec<u32> {
+        self.records[1].payload[4..]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
     pub fn settings(&self) -> Result<AnimationSettings, String> {
+        if self.target_ids().len() != 1 {
+            return Err("Animation button has multiple target settings".into());
+        }
+        self.settings_list()?
+            .into_iter()
+            .next()
+            .ok_or("Animation button has no target".into())
+    }
+
+    pub fn settings_list(&self) -> Result<Vec<AnimationSettings>, String> {
         let bytes = &self.records[2].payload;
-        if bytes.len() != 36 {
+        if bytes.len() < 36 || (bytes.len() - 4) % 32 != 0 {
             return Err("Animation settings are truncated".into());
         }
-        let flags = bytes[7];
-        if flags & !0xb0 != 0 {
-            return Err("Unsupported animation direction flags".into());
-        }
-        let direction = match flags & 0x30 {
-            0x00 => AnimationDirection::Forward,
-            0x10 => AnimationDirection::Backward,
-            0x20 => AnimationDirection::Bidirectional,
-            0x30 => AnimationDirection::Random,
-            _ => unreachable!(),
-        };
-        let settings = AnimationSettings {
-            direction,
-            speed: f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
-            once: flags & 0x80 != 0,
-        };
-        settings.validate()?;
-        Ok(settings)
+        bytes[4..]
+            .chunks_exact(32)
+            .map(|block| {
+                let flags = block[3];
+                if flags & !0xb0 != 0 {
+                    return Err("Unsupported animation direction flags".into());
+                }
+                let direction = match flags & 0x30 {
+                    0x00 => AnimationDirection::Forward,
+                    0x10 => AnimationDirection::Backward,
+                    0x20 => AnimationDirection::Bidirectional,
+                    0x30 => AnimationDirection::Random,
+                    _ => unreachable!(),
+                };
+                let settings = AnimationSettings {
+                    direction,
+                    speed: f32::from_le_bytes(block[4..8].try_into().unwrap()),
+                    once: flags & 0x80 != 0,
+                };
+                settings.validate()?;
+                Ok(settings)
+            })
+            .collect()
     }
 
     pub fn set_settings(&mut self, settings: AnimationSettings) -> Result<(), String> {
+        if self.target_ids().len() != 1 {
+            return Err("Animation button has multiple target settings".into());
+        }
+        self.set_settings_at(0, settings)
+    }
+
+    pub fn set_settings_list(&mut self, settings: &[AnimationSettings]) -> Result<(), String> {
+        if settings.len() != self.target_ids().len() {
+            return Err("Animation settings count differs from targets".into());
+        }
+        for (index, &value) in settings.iter().enumerate() {
+            self.set_settings_at(index, value)?;
+        }
+        Ok(())
+    }
+
+    pub fn set_settings_at(
+        &mut self,
+        index: usize,
+        settings: AnimationSettings,
+    ) -> Result<(), String> {
         settings.validate()?;
+        if index >= self.target_ids().len() {
+            return Err("Animation target index is out of range".into());
+        }
         let direction = match settings.direction {
             AnimationDirection::Forward => 0x00,
             AnimationDirection::Backward => 0x10,
@@ -421,16 +1104,40 @@ impl AnimationButtonGroup {
             AnimationDirection::Random => 0x30,
         };
         let bytes = &mut self.records[2].payload;
-        bytes[7] = direction | if settings.once { 0x80 } else { 0 };
-        bytes[8..12].copy_from_slice(&settings.speed.to_le_bytes());
+        let start = 4 + 32 * index;
+        bytes[start + 3] = direction | if settings.once { 0x80 } else { 0 };
+        bytes[start + 4..start + 8].copy_from_slice(&settings.speed.to_le_bytes());
         Ok(())
     }
 
     pub fn set_single_target(&mut self, target: u32) -> Result<(), String> {
-        if target == 0 {
-            return Err("Animation button target must be nonzero".into());
+        if self.target_ids().len() != 1 {
+            return Err("A single-target Animation button needs one target".into());
         }
-        self.records[1].payload[4..8].copy_from_slice(&target.to_le_bytes());
+        self.set_targets(&[target])?;
+        Ok(())
+    }
+
+    pub fn set_targets(&mut self, targets: &[u32]) -> Result<(), String> {
+        let count = u32::try_from(targets.len()).map_err(|_| "Too many Animation targets")?;
+        if count == 0 || targets.contains(&0) {
+            return Err("Animation button needs nonzero targets".into());
+        }
+        let old_count = self.target_ids().len();
+        let refs = &mut self.records[1].payload;
+        refs.clear();
+        refs.extend_from_slice(&count.to_le_bytes());
+        for target in targets {
+            refs.extend_from_slice(&target.to_le_bytes());
+        }
+        if targets.len() != old_count {
+            let default = &include_bytes!("../assets/action_animation_group.bin")[60..96];
+            let settings = &mut self.records[2].payload;
+            settings.truncate(4);
+            for _ in targets {
+                settings.extend_from_slice(&default[4..36]);
+            }
+        }
         Ok(())
     }
 
@@ -485,6 +1192,157 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_presentation_modes_round_trip() {
+        for (file, expected, targets) in [
+            (
+                include_bytes!("../tests/fixtures/action_presentation_default_original.gsp")
+                    .as_slice(),
+                PresentationMode::Simultaneous,
+                vec![3, 4],
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_presentation_sequential_scroll_original.gsp"
+                )
+                .as_slice(),
+                PresentationMode::Sequential,
+                vec![4, 5],
+            ),
+        ] {
+            let bytes = presentation_group(file);
+            let group = PresentationButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.target_ids(), targets);
+            assert_eq!(group.mode(), expected);
+            assert_eq!(group.encode(), bytes);
+        }
+        let mut generated = PresentationButtonGroup::from_original_template_targets(
+            &[3, 4],
+            "Run Presentation",
+            (10, 65),
+        )
+        .unwrap();
+        generated.set_mode(PresentationMode::Sequential);
+        let reopened = PresentationButtonGroup::parse(&generated.encode()).unwrap();
+        assert_eq!(reopened.target_ids(), vec![3, 4]);
+        assert_eq!(reopened.mode(), PresentationMode::Sequential);
+        assert_eq!(reopened.label_utf8().unwrap(), "Run Presentation");
+    }
+
+    #[test]
+    fn native_link_url_lengths_round_trip() {
+        for (file, url) in [
+            (
+                include_bytes!("../tests/fixtures/action_link_url_default_original.gsp").as_slice(),
+                "http://kejianyuan.com",
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_url_custom_original.gsp").as_slice(),
+                "https://example.invalid/sketchpad",
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_url_even_original.gsp").as_slice(),
+                "https://example.org/",
+            ),
+        ] {
+            let bytes = link_url_group(file);
+            let group = LinkUrlButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.url_utf8().unwrap(), url);
+            assert_eq!(group.label_utf8().unwrap(), url);
+            assert_eq!(group.screen_anchor(), (10, 5));
+            assert_eq!(group.encode(), bytes);
+        }
+        let generated = LinkUrlButtonGroup::from_original_template(
+            "https://example.org/",
+            "Open page",
+            (10, 35),
+        )
+        .unwrap();
+        let reopened = LinkUrlButtonGroup::parse(&generated.encode()).unwrap();
+        assert_eq!(reopened.url_utf8().unwrap(), "https://example.org/");
+        assert_eq!(reopened.label_utf8().unwrap(), "Open page");
+        assert_eq!(reopened.screen_anchor(), (10, 35));
+    }
+
+    #[test]
+    fn native_scroll_button_modes_round_trip() {
+        for (file, expected) in [
+            (
+                include_bytes!("../tests/fixtures/action_scroll_top_left_original.gsp").as_slice(),
+                ScrollPlacement::UpperLeft,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_scroll_center_original.gsp").as_slice(),
+                ScrollPlacement::Center,
+            ),
+        ] {
+            let bytes = action_group(file);
+            let group = ScrollButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.target_id(), 1);
+            assert_eq!(group.placement(), expected);
+            assert_eq!(group.label_utf8().unwrap(), "滚动");
+            assert_eq!(group.screen_anchor(), (10, 5));
+            assert_eq!(group.encode(), bytes);
+        }
+        let mut generated =
+            ScrollButtonGroup::from_original_template(2, "Scroll", (10, 35)).unwrap();
+        generated.set_placement(ScrollPlacement::Center);
+        let reopened = ScrollButtonGroup::parse(&generated.encode()).unwrap();
+        assert_eq!(reopened.target_id(), 2);
+        assert_eq!(reopened.placement(), ScrollPlacement::Center);
+        assert_eq!(reopened.label_utf8().unwrap(), "Scroll");
+        assert_eq!(reopened.screen_anchor(), (10, 35));
+    }
+
+    #[test]
+    fn native_movement_settings_round_trip() {
+        for (file, speed, follow) in [
+            (
+                include_bytes!("../tests/fixtures/action_movement_default_original.gsp").as_slice(),
+                MovementSpeed::Medium,
+                true,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_movement_slow_original.gsp").as_slice(),
+                MovementSpeed::Slow,
+                true,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_movement_fast_original.gsp").as_slice(),
+                MovementSpeed::Fast,
+                true,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_movement_instant_original.gsp").as_slice(),
+                MovementSpeed::Instant,
+                true,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_movement_initial_original.gsp").as_slice(),
+                MovementSpeed::Medium,
+                false,
+            ),
+        ] {
+            let bytes = action_group(file);
+            let group = MovementButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.target_ids(), [1, 2]);
+            assert_eq!(group.speed(), speed);
+            assert_eq!(group.follows_destination(), follow);
+            assert_eq!(group.label_utf8().unwrap(), "移动点");
+            assert_eq!(group.screen_anchor(), (10, 5));
+            assert_eq!(group.encode(), bytes);
+        }
+        let mut generated =
+            MovementButtonGroup::from_original_template(3, 4, "Move to Point", (20, 35)).unwrap();
+        generated.set_speed(MovementSpeed::Instant);
+        generated.set_follows_destination(false);
+        let reopened = MovementButtonGroup::parse(&generated.encode()).unwrap();
+        assert_eq!(reopened.target_ids(), [3, 4]);
+        assert_eq!(reopened.speed(), MovementSpeed::Instant);
+        assert!(!reopened.follows_destination());
+        assert_eq!(reopened.screen_anchor(), (20, 35));
+    }
+
+    #[test]
     fn native_animation_button_round_trips_and_template_remaps_target() {
         let native = include_bytes!("../tests/fixtures/action_animation_original.gsp");
         let bytes = action_group(native);
@@ -500,6 +1358,55 @@ mod tests {
         assert_eq!(reopened.screen_anchor(), (30, 40));
         assert_eq!(reopened.label_utf8().unwrap(), "Animate Point");
         assert_eq!(reopened.settings().unwrap(), AnimationSettings::default());
+    }
+
+    #[test]
+    fn two_point_animation_settings_are_independent() {
+        let default = include_bytes!("../tests/fixtures/action_animation_two_points_original.gsp");
+        let asymmetric =
+            include_bytes!("../tests/fixtures/action_animation_two_points_second_backward.gsp");
+        let clicked = include_bytes!("../tests/fixtures/action_animation_two_points_clicked.gsp");
+        for file in [
+            default.as_slice(),
+            asymmetric.as_slice(),
+            clicked.as_slice(),
+        ] {
+            let bytes = action_group(file);
+            let group = AnimationButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.target_ids(), vec![4, 5]);
+            assert_eq!(group.encode(), bytes);
+        }
+        let second = AnimationButtonGroup::parse(&action_group(asymmetric)).unwrap();
+        assert!(second.settings().is_err());
+        assert_eq!(
+            second.settings_list().unwrap(),
+            vec![
+                AnimationSettings::default(),
+                AnimationSettings {
+                    direction: AnimationDirection::Backward,
+                    ..AnimationSettings::default()
+                },
+            ]
+        );
+        let mut generated =
+            AnimationButtonGroup::from_original_template_targets(&[4, 5], "Animate Point", (10, 5))
+                .unwrap();
+        generated
+            .set_settings_at(
+                1,
+                AnimationSettings {
+                    direction: AnimationDirection::Backward,
+                    ..AnimationSettings::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            AnimationButtonGroup::parse(&generated.encode())
+                .unwrap()
+                .settings_list()
+                .unwrap(),
+            second.settings_list().unwrap()
+        );
     }
 
     #[test]
@@ -590,6 +1497,64 @@ mod tests {
             }
         }
         panic!("action group not found");
+    }
+
+    fn presentation_group(file: &[u8]) -> Vec<u8> {
+        let mut offset = 4;
+        let mut start = None;
+        let mut is_presentation = false;
+        while offset < file.len() {
+            let len = u32_at(file, offset) as usize;
+            let kind = u32_at(file, offset + 4);
+            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 62 {
+                start = Some(offset);
+                is_presentation = false;
+            }
+            if start.is_some()
+                && kind == ACTION_PAYLOAD
+                && len == 24
+                && u16_at(file, offset + 8 + 12) == 7
+            {
+                is_presentation = true;
+            }
+            offset += 8 + len + len % 2;
+            if kind == OBJECT_END && start.is_some() {
+                if is_presentation {
+                    return file[start.unwrap()..offset].to_vec();
+                }
+                start = None;
+            }
+        }
+        panic!("Presentation group not found");
+    }
+
+    fn link_url_group(file: &[u8]) -> Vec<u8> {
+        let mut offset = 4;
+        let mut start = None;
+        let mut is_link = false;
+        while offset < file.len() {
+            let len = u32_at(file, offset) as usize;
+            let kind = u32_at(file, offset + 4);
+            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 0 {
+                start = Some(offset);
+                is_link = false;
+            }
+            if start.is_some()
+                && kind == ACTION_PAYLOAD
+                && len >= 28
+                && u16_at(file, offset + 20) == 6
+            {
+                is_link = true;
+            }
+            offset += 8 + len + len % 2;
+            if kind == OBJECT_END && start.is_some() {
+                if is_link {
+                    return file[start.unwrap()..offset].to_vec();
+                }
+                start = None;
+            }
+        }
+        panic!("Link URL group not found");
     }
 
     fn object_hidden(file: &[u8], target: usize) -> bool {
