@@ -27,7 +27,7 @@ xvfb-run -a bash -c '
   xdotool key Return
   sleep 3
   [[ "$(xdotool getwindowname "$window_id")" == *"$(basename "$2")"* ]]
-  xdotool mousemove 159 279 click 1
+  xdotool mousemove "${SKETCHPAD_RECT_FIXED_SOURCE_X:-159}" "${SKETCHPAD_RECT_FIXED_SOURCE_Y:-279}" click 1
   xdotool mousemove 220 40 click 1
   sleep 0.3
   xdotool mousemove 275 171 click 1

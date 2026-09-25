@@ -119,8 +119,10 @@ xvfb-run -a bash -c '
       xdotool mousemove "${SKETCHPAD_WINE_CLEAR_X:-450}" "${SKETCHPAD_WINE_CLEAR_Y:-280}" click 1
       sleep 0.2
     fi
-    xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-259}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-249}" click 1
-    sleep 0.3
+    if [[ "${SKETCHPAD_WINE_KEEP_SELECTION:-}" != "1" ]]; then
+      xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-259}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-249}" click 1
+      sleep 0.3
+    fi
     "$4" -window root "${capture_prefix}_after_select.png"
     if [[ -n "${SKETCHPAD_WINE_ACTION_SHIFT_CLICK_X:-}" ]]; then
       xdotool keydown Shift

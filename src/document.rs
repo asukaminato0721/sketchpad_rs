@@ -900,12 +900,11 @@ fn expected_locus_refs(objects: &[Object], driver: usize, target: usize) -> Opti
                 return None;
             }
             vec![host]
-        } else if matches!(
-            object.kind,
-            Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-        ) || is_point_kind(&object.kind)
+        } else if is_locus_straight_kind(&object.kind)
+            || is_point_kind(&object.kind)
             || is_circle_kind(&object.kind)
             || is_arc_kind(&object.kind)
+            || is_locus_polygon_kind(&object.kind)
         {
             object.kind.dependencies()
         } else {
@@ -935,12 +934,10 @@ fn expected_locus_refs(objects: &[Object], driver: usize, target: usize) -> Opti
         || traced.deleted
         || moving.page != traced.page
         || !(is_point_kind(&traced.kind)
-            || matches!(
-                traced.kind,
-                Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-            )
+            || is_locus_straight_kind(&traced.kind)
             || is_circle_kind(&traced.kind)
-            || is_arc_kind(&traced.kind))
+            || is_arc_kind(&traced.kind)
+            || is_locus_polygon_kind(&traced.kind))
     {
         return None;
     }
@@ -1004,6 +1001,25 @@ fn is_arc_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _)
+    )
+}
+
+fn is_locus_polygon_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Polygon(_) | Kind::VectorTranslatedPolygon(_, _, _)
+    )
+}
+
+fn is_locus_straight_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(_, _)
+            | Kind::Ray(_, _)
+            | Kind::Line(_, _)
+            | Kind::Parallel(_, _)
+            | Kind::Perpendicular(_, _)
+            | Kind::Bisector(_, _, _)
     )
 }
 
@@ -1790,7 +1806,7 @@ impl Document {
                 match (code, point, refs.as_slice()) {
                     (35, None, _)
                         if refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
-                            if matches!(o.kind, Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)) || is_circle_kind(&o.kind) || is_arc_kind(&o.kind) {
+                            if is_locus_straight_kind(&o.kind) || is_circle_kind(&o.kind) || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
                                 h[6..10] == [6, 0, 43, 0]
                             } else {
                                 h[6..10] == [6, 0, 42, 0]
@@ -1810,7 +1826,7 @@ impl Document {
                                     })
                                     && f64_at(data, 24).is_finite()
                                     && refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
-                                        data[32..] == if matches!(o.kind, Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)) || is_circle_kind(&o.kind) || is_arc_kind(&o.kind) {
+                                        data[32..] == if is_locus_straight_kind(&o.kind) || is_circle_kind(&o.kind) || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
                                             [0, 0, 0, 0, 0, 0, 0, 0]
                                         } else {
                                             [1, 0, 0, 0, 0, 0, 0, 0]
@@ -2548,10 +2564,10 @@ impl Document {
         }
         let refs = expected_locus_refs(&self.objects, driver, target)
             .ok_or("Select a constrained point and a dependent object")?;
-        let samples = if matches!(
-            self.objects[target - 1].kind,
-            Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-        ) || is_circle_kind(&self.objects[target - 1].kind)
+        let samples = if is_locus_polygon_kind(&self.objects[target - 1].kind) {
+            125
+        } else if is_locus_straight_kind(&self.objects[target - 1].kind)
+            || is_circle_kind(&self.objects[target - 1].kind)
             || is_arc_kind(&self.objects[target - 1].kind)
         {
             250
@@ -6292,16 +6308,23 @@ impl Document {
         };
         let (&target, &driver) = (refs.first()?, refs.get(2)?);
         let driver_kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
-        let straight_target = matches!(
-            self.objects.get(target.checked_sub(1)?)?.kind,
-            Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-        );
+        let straight_target =
+            is_locus_straight_kind(&self.objects.get(target.checked_sub(1)?)?.kind);
         let circle_target = is_circle_kind(&self.objects.get(target - 1)?.kind);
         let arc_target = is_arc_kind(&self.objects.get(target - 1)?.kind);
+        let polygon_target = is_locus_polygon_kind(&self.objects.get(target - 1)?.kind);
         let mut sample = self.clone();
         let steps = subdivisions.clamp(2, 1000).min(samples as usize);
-        let mut segments =
-            Vec::with_capacity((steps + 1) * if circle_target || arc_target { 64 } else { 1 });
+        let mut segments = Vec::with_capacity(
+            (steps + 1)
+                * if circle_target || arc_target {
+                    64
+                } else if polygon_target {
+                    3
+                } else {
+                    1
+                },
+        );
         let mut previous = None;
         let circle_units = circle_target.then(|| {
             (0..=64)
@@ -6342,6 +6365,15 @@ impl Document {
                 for pair in sample.arc_points(target, 64)?.windows(2) {
                     segments.push((pair[0], pair[1], LineMode::Segment));
                 }
+            } else if polygon_target {
+                let points = sample.polygon_points(target)?;
+                for index in 0..points.len() {
+                    segments.push((
+                        points[index],
+                        points[(index + 1) % points.len()],
+                        LineMode::Segment,
+                    ));
+                }
             } else {
                 let current = sample.position(target)?;
                 if let Some(start) = previous {
@@ -6351,6 +6383,54 @@ impl Document {
             }
         }
         Some(segments)
+    }
+
+    pub fn locus_polygons(&self, id: usize, subdivisions: usize) -> Option<Vec<Vec<Point>>> {
+        let Kind::Locus(ref refs, samples) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let (&target, &driver) = (refs.first()?, refs.get(2)?);
+        if !is_locus_polygon_kind(&self.objects.get(target.checked_sub(1)?)?.kind) {
+            return None;
+        }
+        let driver_kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
+        let steps = subdivisions.clamp(2, 1000).min(samples as usize);
+        let mut sample = self.clone();
+        let mut polygons = Vec::with_capacity(steps + 1);
+        for step in 0..=steps {
+            let fraction = step as f64 / steps as f64;
+            sample.objects.get_mut(driver - 1)?.kind = match driver_kind {
+                Kind::PointOnSegment(_, _) => Kind::PointOnSegment(refs[1], fraction),
+                Kind::PointOnCircle(_, _, _) => {
+                    let angle = fraction * std::f64::consts::TAU;
+                    Kind::PointOnCircle(refs[1], angle.cos(), angle.sin())
+                }
+                Kind::PointOnArc(_, _) => Kind::PointOnArc(refs[1], fraction),
+                _ => return None,
+            };
+            polygons.push(sample.polygon_points(target)?);
+        }
+        Some(polygons)
+    }
+
+    pub fn locus_polygon_surfaces(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<Vec<Point>>> {
+        let polygons = self.locus_polygons(id, subdivisions)?;
+        let mut surfaces = polygons.clone();
+        for pair in polygons.windows(2) {
+            let (before, after) = (&pair[0], &pair[1]);
+            if before.len() != after.len() {
+                return None;
+            }
+            for index in 0..before.len() {
+                let next = (index + 1) % before.len();
+                surfaces.push(vec![before[index], before[next], after[next], after[index]]);
+            }
+        }
+        Some(surfaces)
     }
 
     pub fn locus_segments(&self, id: usize, subdivisions: usize) -> Option<Vec<(Point, Point)>> {
@@ -8016,6 +8096,14 @@ impl Document {
                     class |= 0x1_0000;
                 }
                 out[i..i + 4].copy_from_slice(&class.to_le_bytes());
+                if matches!(o.kind, Kind::VectorTranslatedPolygon(_, _, _))
+                    && self.objects.iter().any(|candidate| {
+                        !candidate.deleted
+                            && matches!(&candidate.kind, Kind::Locus(refs, _) if refs.first() == Some(&o.id))
+                    })
+                {
+                    out[i + 18..i + 20].copy_from_slice(&[0x39, 0x20]);
+                }
             }
             if let (Kind::Free(p), Some(i)) = (&o.kind, o.point_offset) {
                 out[i..i + 8].copy_from_slice(&p.x.to_le_bytes());
@@ -8377,12 +8465,23 @@ impl Document {
                     .get(target.saturating_sub(1))
                     .ok_or("Missing locus target")?
                     .kind;
-                let straight_target = matches!(
-                    target_kind,
-                    Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-                );
+                let straight_target = is_locus_straight_kind(target_kind);
                 let curved_target = is_circle_kind(target_kind) || is_arc_kind(target_kind);
-                if straight_target || curved_target {
+                let polygon_target = is_locus_polygon_kind(target_kind);
+                if polygon_target {
+                    h[8] = 43;
+                    h[10] = 0x21;
+                    h[12..16].copy_from_slice(&[0xff, 0xb2, 0x66, 0]);
+                    h[17] = 0x7f;
+                    h[20..24].copy_from_slice(
+                        &if matches!(target_kind, Kind::VectorTranslatedPolygon(_, _, _)) {
+                            2u32
+                        } else {
+                            1u32
+                        }
+                        .to_le_bytes(),
+                    );
+                } else if straight_target || curved_target {
                     h[8] = 43;
                     h[12..16].copy_from_slice(if curved_target {
                         &[0x66, 0xb2, 0x66, 0]
@@ -8431,7 +8530,7 @@ impl Document {
                     0,
                     0,
                     0,
-                    if straight_target || curved_target {
+                    if straight_target || curved_target || polygon_target {
                         0
                     } else {
                         1
@@ -8714,6 +8813,13 @@ impl Document {
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
+            if let Kind::Polygon(ref vertices) = o.kind {
+                h[8..10].copy_from_slice(
+                    &polygon_subtype(vertices.len())
+                        .ok_or("Polygon has too many vertices")?
+                        .to_le_bytes(),
+                );
+            }
             if matches!(
                 o.kind,
                 Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)
@@ -8826,6 +8932,14 @@ impl Document {
                     h[18] = 0x51;
                     h[19] = 0x5c;
                 }
+            }
+            if matches!(o.kind, Kind::VectorTranslatedPolygon(_, _, _))
+                && self.objects.iter().any(|candidate| {
+                    !candidate.deleted
+                        && matches!(&candidate.kind, Kind::Locus(refs, _) if refs.first() == Some(&o.id))
+                })
+            {
+                h[18..20].copy_from_slice(&[0x39, 0x20]);
             }
             if !o.visible {
                 h[2] = 1;
@@ -16232,6 +16346,7 @@ mod tests {
         assert_eq!(family.len(), 251 * 64);
         assert!(family[0].0.distance(Point { x: 330., y: 180. }) < 1e-9);
         assert!(family[250 * 64].0.distance(Point { x: 330., y: 180. }) < 1e-9);
+        let first = family[0].0;
 
         let base = include_bytes!("../tests/fixtures/locus_arc_on_circle_target_base.gsp");
         let mut generated = Document::from_bytes(base, None).unwrap();
@@ -16245,7 +16360,208 @@ mod tests {
         let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
         let changed = moved.locus_strokes(7, 384).unwrap();
         assert!(changed[0].0.distance(moved.position(4).unwrap()) < 1e-9);
-        assert!(changed[0].0.distance(family[0].0) > 1.);
+        assert!(changed[0].0.distance(first) > 1.);
         assert!(changed[250 * 64].0.distance(changed[0].0) < 1e-9);
+    }
+    #[test]
+    fn parallel_line_target_locus_import_generation_and_parent_edit() {
+        let native_bytes = include_bytes!("../tests/fixtures/locus_parallel_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[8].kind, Kind::Locus(vec![8, 3, 4, 8], 250));
+        let family = native.locus_strokes(9, 384).unwrap();
+        assert_eq!(family.len(), 251);
+        assert_eq!(
+            family[0],
+            (
+                Point { x: 120., y: 180. },
+                Point { x: 220., y: 210. },
+                LineMode::Line
+            )
+        );
+        assert_eq!(family[250].0, Point { x: 300., y: 180. });
+        assert_eq!(family[250].1, Point { x: 400., y: 210. });
+
+        let base = include_bytes!("../tests/fixtures/locus_parallel_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 8), Ok(9));
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[8].kind, native.objects[8].kind);
+        assert_eq!(reopened.locus_strokes(9, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_strokes(9, 384).unwrap();
+        assert_eq!(changed[0].0, Point { x: 100., y: 220. });
+        assert_eq!(changed[0].1, Point { x: 200., y: 250. });
+        assert_eq!(changed[250].0, Point { x: 300., y: 180. });
+    }
+    #[test]
+    fn perpendicular_line_target_locus_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/locus_perpendicular_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[8].kind, Kind::Locus(vec![8, 3, 4, 8], 250));
+        let family = native.locus_strokes(9, 384).unwrap();
+        assert_eq!(family.len(), 251);
+        assert_eq!(
+            family[0],
+            (
+                Point { x: 120., y: 180. },
+                Point { x: 90., y: 280. },
+                LineMode::Line
+            )
+        );
+        assert_eq!(family[250].0, Point { x: 300., y: 180. });
+        assert_eq!(family[250].1, Point { x: 270., y: 280. });
+
+        let base = include_bytes!("../tests/fixtures/locus_perpendicular_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 8), Ok(9));
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[8].kind, native.objects[8].kind);
+        assert_eq!(reopened.locus_strokes(9, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_strokes(9, 384).unwrap();
+        assert_eq!(changed[0].0, Point { x: 100., y: 220. });
+        assert_eq!(changed[0].1, Point { x: 70., y: 320. });
+        assert_eq!(changed[250].0, Point { x: 300., y: 180. });
+    }
+    #[test]
+    fn bisector_target_locus_import_generation_and_parent_edit() {
+        let native_bytes = include_bytes!("../tests/fixtures/locus_bisector_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[7].kind, Kind::Locus(vec![7, 3, 4, 7], 250));
+        let family = native.locus_strokes(8, 384).unwrap();
+        assert_eq!(family.len(), 251);
+        assert_eq!(family[0].0, Point { x: 120., y: 180. });
+        assert_eq!(family[250].0, Point { x: 300., y: 180. });
+        assert!(family.iter().all(|stroke| stroke.2 == LineMode::Ray));
+        assert!(family[0].1.y < family[0].0.y);
+
+        let base = include_bytes!("../tests/fixtures/locus_bisector_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 7), Ok(8));
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, native.objects[7].kind);
+        assert_eq!(reopened.locus_strokes(8, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_strokes(8, 384).unwrap();
+        assert_eq!(changed[0].0, Point { x: 100., y: 220. });
+        assert_eq!(changed[250].0, Point { x: 300., y: 180. });
+        assert!(changed.iter().all(|stroke| stroke.2 == LineMode::Ray));
+    }
+    #[test]
+    fn polygon_target_locus_import_generation_and_parent_edit() {
+        let native_bytes = include_bytes!("../tests/fixtures/locus_polygon_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[7].kind, Kind::Locus(vec![7, 3, 4, 7], 125));
+        let family = native.locus_polygons(8, 384).unwrap();
+        assert_eq!(family.len(), 126);
+        assert_eq!(
+            family[0],
+            vec![
+                Point { x: 120., y: 180. },
+                Point { x: 150., y: 100. },
+                Point { x: 250., y: 100. }
+            ]
+        );
+        assert_eq!(family[125][0], Point { x: 300., y: 180. });
+        assert_eq!(native.locus_strokes(8, 384).unwrap().len(), 126 * 3);
+
+        let base = include_bytes!("../tests/fixtures/locus_polygon_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 7), Ok(8));
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[7].kind, native.objects[7].kind);
+        assert_eq!(reopened.locus_polygons(8, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_polygons(8, 384).unwrap();
+        assert_eq!(changed[0][0], Point { x: 100., y: 220. });
+        assert_eq!(changed[125][0], Point { x: 300., y: 180. });
+    }
+    #[test]
+    fn new_triangle_uses_native_polygon_subtype() {
+        let mut document = Document::new();
+        for point in [
+            Point { x: 120., y: 180. },
+            Point { x: 150., y: 100. },
+            Point { x: 250., y: 100. },
+        ] {
+            document.add(Kind::Free(point));
+        }
+        document.add(Kind::Polygon(vec![1, 2, 3]));
+        let bytes = document.encode().unwrap();
+        let polygon_header = records(&bytes)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x07d0 && bytes[record.data.start] == 8)
+            .unwrap();
+        assert_eq!(
+            u16::from_le_bytes(
+                bytes[polygon_header.data.start + 8..polygon_header.data.start + 10]
+                    .try_into()
+                    .unwrap()
+            ),
+            52
+        );
+    }
+    #[test]
+    fn vector_translated_polygon_locus_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/locus_vector_polygon_target_original.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(
+            native.objects[10].kind,
+            Kind::Locus(vec![10, 3, 4, 7, 10], 125)
+        );
+        let family = native.locus_polygons(11, 384).unwrap();
+        assert_eq!(family.len(), 126);
+        assert_eq!(family[0][0], Point { x: 220., y: 180. });
+        assert_eq!(family[125][0], Point { x: 400., y: 180. });
+        assert_eq!(family[0][1], Point { x: 250., y: 100. });
+
+        let base = include_bytes!("../tests/fixtures/locus_vector_polygon_target_base.gsp");
+        let mut generated = Document::from_bytes(base, None).unwrap();
+        assert_eq!(generated.construct_locus(4, 10), Ok(11));
+        let encoded = generated.encode().unwrap();
+        let target_header = records(&encoded)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x07d0 && encoded[record.data.start] == 16)
+            .unwrap();
+        assert_eq!(
+            &encoded[target_header.data.start + 18..target_header.data.start + 20],
+            &[0x39, 0x20]
+        );
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects[10].kind, native.objects[10].kind);
+        assert_eq!(reopened.locus_polygons(11, 384), Some(family));
+
+        assert!(generated.move_point(1, Point { x: 100., y: 220. }));
+        let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        let changed = moved.locus_polygons(11, 384).unwrap();
+        assert_eq!(changed[0][0], Point { x: 200., y: 220. });
+        assert_eq!(changed[125][0], Point { x: 400., y: 180. });
     }
 }

@@ -22,9 +22,12 @@ For a small interoperability sample, run `cargo run --bin gsp_probe -- demo /tmp
 ## Current scope
 
 Construct > Locus accepts a selected point constrained to a segment, circle,
-or arc and a dependent point, segment, ray, line, circle, or arc. Point loci
-follow supported dependency graphs; segment, ray, line, circle, and arc loci
-draw sampled object families.
+or arc and a dependent point, segment, ray, line, circle, arc, or polygon
+interior, including an interior translated by a marked vector. Point loci
+follow supported dependency graphs; other loci draw sampled object families.
+The line targets include lines constructed
+parallel or perpendicular to another line; angle bisectors produce ray
+families.
 
 The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, Hide/Show action buttons, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
 

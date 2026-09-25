@@ -17,8 +17,13 @@ xvfb-run -a bash -c '
   wine "$1" "$2" > "${3}_runtime.log" 2>&1 &
   wine_pid=$!
   trap '\''kill "$wine_pid" 2>/dev/null || true'\'' EXIT
-  sleep 6
-  window_id="$(xdotool search --onlyvisible --name "Sketchpad|几何" | tail -1)"
+  window_id=""
+  for _ in $(seq 1 20); do
+    window_id="$(xdotool search --onlyvisible --name "Sketchpad|几何" 2>/dev/null | tail -1 || true)"
+    [[ -n "$window_id" ]] && break
+    sleep 1
+  done
+  test -n "$window_id"
   xdotool windowfocus "$window_id"
   xdotool key --clearmodifiers ctrl+o
   sleep 1
@@ -42,7 +47,7 @@ xvfb-run -a bash -c '
   sleep 1
   cp "$2" "${3}_marked_only.gsp"
   xdotool key Escape
-  xdotool mousemove 159 279 click 1
+  xdotool mousemove "${SKETCHPAD_RECT_SOURCE_X:-159}" "${SKETCHPAD_RECT_SOURCE_Y:-279}" click 1
   xdotool mousemove 220 40 click 1
   sleep 0.3
   xdotool mousemove 275 171 click 1

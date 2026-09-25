@@ -838,6 +838,25 @@ impl Editor {
                         Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _) => {
+                            if let Some(polygons) = self.doc.locus_polygon_surfaces(o.id, 125)
+                                && polygons.iter().any(|points| {
+                                    points
+                                        .iter()
+                                        .zip(points.iter().cycle().skip(1))
+                                        .take(points.len())
+                                        .fold(false, |inside, (a, b)| {
+                                            let a = v.screen(*a);
+                                            let b = v.screen(*b);
+                                            inside
+                                                ^ ((a.y > p.y) != (b.y > p.y)
+                                                    && p.x
+                                                        < (b.x - a.x) * (p.y - a.y) / (b.y - a.y)
+                                                            + a.x)
+                                        })
+                                })
+                            {
+                                return Some((o.id, 0.));
+                            }
                             let segments = self
                                 .doc
                                 .function_plot_segments(o.id, 256)
@@ -5490,6 +5509,33 @@ mod tests {
         assert_eq!(
             editor.hit(&viewport, viewport.screen(Point { x: 120., y: 20. })),
             Some(rotated)
+        );
+    }
+
+    #[test]
+    fn polygon_locus_interior_is_selectable_on_canvas() {
+        let base = include_bytes!("../tests/fixtures/locus_polygon_target_base.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        let locus = document.construct_locus(4, 7).unwrap();
+        let editor = Editor::new(document);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 210., y: 140. },
+        };
+        assert_eq!(
+            editor.hit(&viewport, viewport.screen(Point { x: 140., y: 150. })),
+            Some(locus)
+        );
+        assert_eq!(
+            editor.hit(
+                &viewport,
+                viewport.screen(Point {
+                    x: 180.72,
+                    y: 179.9
+                })
+            ),
+            Some(locus)
         );
     }
 

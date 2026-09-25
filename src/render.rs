@@ -779,7 +779,24 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             )
             .unwrap();
         }
-        if let Some(segments) = doc
+        if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
+            for points in polygons {
+                let vertices = points
+                    .into_iter()
+                    .map(|point| {
+                        let at = vp.screen(point);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    svg,
+                    "<polygon points=\"{}\" fill=\"#ffb165\" stroke=\"none\"/>",
+                    vertices
+                )
+                .unwrap();
+            }
+        } else if let Some(segments) = doc
             .function_plot_segments(o.id, 384)
             .or_else(|| doc.parametric_plot_segments(o.id, 384))
             .map(|segments| {
@@ -1528,7 +1545,20 @@ impl GeometryRenderer {
                     mesh.styled_path(&[a, b], false, stroke, col);
                 }
             }
-            if let Some(segments) = doc
+            if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
+                let fill = if doc.selected.contains(&o.id) {
+                    [1., 0., 1., 0.18]
+                } else {
+                    [1., 177. / 255., 101. / 255., 1.]
+                };
+                for points in polygons {
+                    let screen = points
+                        .into_iter()
+                        .map(|point| vp.screen(point))
+                        .collect::<Vec<_>>();
+                    mesh.polygon(&screen, fill);
+                }
+            } else if let Some(segments) = doc
                 .function_plot_segments(o.id, 384)
                 .or_else(|| doc.parametric_plot_segments(o.id, 384))
                 .map(|segments| {
