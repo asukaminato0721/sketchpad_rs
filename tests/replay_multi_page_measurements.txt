@@ -1,0 +1,18 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 120 180
+point 200 80
+point 300 180
+polygon 2 3 4
+segment 2 4
+circle 2 4
+arc3 2 3 4
+length 6
+perimeter 5
+circumference 7
+radius 7
+area 7
+area 5
+arc_angle 8
+arc_length 8
+save tests/fixtures/two_page_one_host_measurements_port.gsp

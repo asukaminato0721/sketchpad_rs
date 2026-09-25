@@ -1,0 +1,18 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 120 180
+point 200 80
+point 300 180
+polygon 2 3 4
+save tests/fixtures/two_page_polygon_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 1
+point 170 170
+point 220 90
+polygon 1 2 3
+page 2
+point 120 180
+point 200 80
+point 300 180
+polygon 5 6 7
+save tests/fixtures/two_page_polygons_both_pages_port.gsp

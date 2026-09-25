@@ -901,6 +901,21 @@ fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::Intersection(_, _)
             | Kind::LineCircleIntersection(_, _, _)
             | Kind::CircleCircleIntersection(_, _, _)
+            | Kind::Bisector(_, _, _)
+            | Kind::ThreePointArc(_, _, _)
+            | Kind::ArcOnCircle(_, _, _)
+            | Kind::Polygon(_)
+            | Kind::SegmentLength(_)
+            | Kind::PolygonPerimeter(_)
+            | Kind::CircleCircumference(_)
+            | Kind::CircleRadius(_)
+            | Kind::CircleArea(_)
+            | Kind::PolygonArea(_)
+            | Kind::ArcAngle(_)
+            | Kind::ArcLength(_)
+            | Kind::PointDistance(_, _)
+            | Kind::AngleMeasurement(_, _, _)
+            | Kind::PointRatio(_, _, _)
             | Kind::LinkPageButton { .. }
             | Kind::LinkUrlButton { .. }
     )
@@ -8896,6 +8911,13 @@ impl Document {
         if let Some(style) = object.visual_style {
             style_records::set_visual_style(&mut object_header, style)?;
         }
+        if let Kind::Polygon(vertices) = &object.kind {
+            object_header[8..10].copy_from_slice(
+                &polygon_subtype(vertices.len())
+                    .ok_or("Polygon has too many vertices")?
+                    .to_le_bytes(),
+            );
+        }
         put_record(groups, 0x07d0, &object_header);
         if is_point_kind(&object.kind) {
             if let Some(label) = &object.label {
@@ -8988,6 +9010,11 @@ impl Document {
                 .map(|record| record.start)
                 .unwrap_or(trailer);
             let mut groups = Vec::new();
+            let mut measurement_row = original
+                .objects
+                .iter()
+                .filter(|object| object.page == page && object.kind.is_measurement())
+                .count();
             for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
                     Kind::Free(point) => {
@@ -9283,6 +9310,177 @@ impl Document {
                             code,
                             &[local_a, local_b],
                         )?;
+                    }
+                    Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) => {
+                        if [*a, *b, *c].iter().any(|id| {
+                            !self
+                                .objects
+                                .get(id.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                        }) {
+                            return Err("Construction needs three points".into());
+                        }
+                        let code = if matches!(object.kind, Kind::Bisector(_, _, _)) {
+                            if self.line_points(object.id).is_none() {
+                                return Err("Angle bisector has no finite direction".into());
+                            }
+                            7
+                        } else {
+                            if self.arc_geometry(object.id).is_none() {
+                                return Err("Three-point arc has no finite geometry".into());
+                            }
+                            81
+                        };
+                        let refs = [
+                            self.multi_page_local_reference(page, object.id, *a)?,
+                            self.multi_page_local_reference(page, object.id, *b)?,
+                            self.multi_page_local_reference(page, object.id, *c)?,
+                        ];
+                        Self::append_multi_page_reference_group(&mut groups, object, code, &refs)?;
+                    }
+                    Kind::ArcOnCircle(circle, start, end) => {
+                        if self.arc_geometry(object.id).is_none()
+                            || [*start, *end].iter().any(|id| {
+                                !matches!(
+                                    self.objects.get(id.saturating_sub(1)).map(|parent| &parent.kind),
+                                    Some(Kind::PointOnCircle(host, _, _)) if *host == *circle
+                                )
+                            })
+                        {
+                            return Err("Arc needs a circle and two points on it".into());
+                        }
+                        let refs = [
+                            self.multi_page_local_reference(page, object.id, *circle)?,
+                            self.multi_page_local_reference(page, object.id, *start)?,
+                            self.multi_page_local_reference(page, object.id, *end)?,
+                        ];
+                        Self::append_multi_page_reference_group(&mut groups, object, 79, &refs)?;
+                    }
+                    Kind::Polygon(vertices) => {
+                        if vertices.len() < 3
+                            || vertices.iter().collect::<BTreeSet<_>>().len() != vertices.len()
+                            || vertices.iter().any(|id| {
+                                !self
+                                    .objects
+                                    .get(id.saturating_sub(1))
+                                    .is_some_and(|parent| is_point_kind(&parent.kind))
+                            })
+                            || self.polygon_points(object.id).is_none()
+                        {
+                            return Err("Polygon needs at least three distinct points".into());
+                        }
+                        let refs = vertices
+                            .iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, *id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 8, &refs)?;
+                    }
+                    Kind::SegmentLength(host)
+                    | Kind::PolygonPerimeter(host)
+                    | Kind::CircleCircumference(host)
+                    | Kind::CircleRadius(host)
+                    | Kind::CircleArea(host)
+                    | Kind::PolygonArea(host)
+                    | Kind::ArcAngle(host)
+                    | Kind::ArcLength(host) => {
+                        let host_kind = &self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing measurement host")?
+                            .kind;
+                        let template: &[u8] = match &object.kind {
+                            Kind::SegmentLength(_) if matches!(host_kind, Kind::Segment(_, _)) => {
+                                include_bytes!("../assets/length_measurement_group.bin")
+                            }
+                            Kind::PolygonPerimeter(_) if host_kind.is_polygon() => {
+                                include_bytes!("../assets/perimeter_measurement_group.bin")
+                            }
+                            Kind::CircleCircumference(_)
+                                if matches!(
+                                    host_kind,
+                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+                                ) =>
+                            {
+                                include_bytes!("../assets/circumference_measurement_group.bin")
+                            }
+                            Kind::CircleRadius(_)
+                                if matches!(
+                                    host_kind,
+                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+                                ) =>
+                            {
+                                include_bytes!("../assets/radius_measurement_group.bin")
+                            }
+                            Kind::CircleArea(_)
+                                if matches!(
+                                    host_kind,
+                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
+                                ) =>
+                            {
+                                include_bytes!("../assets/area_measurement_group.bin")
+                            }
+                            Kind::PolygonArea(_) if host_kind.is_polygon() => {
+                                include_bytes!("../assets/area_measurement_group.bin")
+                            }
+                            Kind::ArcAngle(_) if is_arc_kind(host_kind) => {
+                                include_bytes!("../assets/arc_angle_measurement_group.bin")
+                            }
+                            Kind::ArcLength(_) if is_arc_kind(host_kind) => {
+                                include_bytes!("../assets/arc_length_measurement_group.bin")
+                            }
+                            _ => return Err("Measurement needs a compatible host".into()),
+                        };
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut group = template.to_vec();
+                        group[48..52].copy_from_slice(&local_host.to_le_bytes());
+                        Self::place_measurement(&mut group, 60, &mut measurement_row)?;
+                        if !object.visible {
+                            group[10] = 1;
+                        }
+                        groups.extend_from_slice(&group);
+                    }
+                    Kind::PointDistance(a, b)
+                    | Kind::AngleMeasurement(a, b, _)
+                    | Kind::PointRatio(a, b, _) => {
+                        let (parents, template, format_offset): (Vec<usize>, &[u8], usize) =
+                            match &object.kind {
+                                Kind::PointDistance(_, _) => (
+                                    vec![*a, *b],
+                                    include_bytes!("../assets/distance_measurement_group.bin"),
+                                    64,
+                                ),
+                                Kind::AngleMeasurement(_, _, c) => (
+                                    vec![*a, *b, *c],
+                                    include_bytes!("../assets/angle_measurement_group.bin"),
+                                    68,
+                                ),
+                                Kind::PointRatio(_, _, c) => (
+                                    vec![*a, *b, *c],
+                                    include_bytes!("../assets/ratio_measurement_group.bin"),
+                                    68,
+                                ),
+                                _ => unreachable!(),
+                            };
+                        if parents.iter().any(|id| {
+                            !self
+                                .objects
+                                .get(id.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                        }) {
+                            return Err("Measurement needs point parents".into());
+                        }
+                        let mut group = template.to_vec();
+                        for (index, parent) in parents.iter().enumerate() {
+                            let local =
+                                self.multi_page_local_reference(page, object.id, *parent)?;
+                            group[48 + index * 4..52 + index * 4]
+                                .copy_from_slice(&local.to_le_bytes());
+                        }
+                        Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
+                        if !object.visible {
+                            group[10] = 1;
+                        }
+                        groups.extend_from_slice(&group);
                     }
                     Kind::LinkPageButton {
                         target_page,
@@ -13403,6 +13601,169 @@ mod tests {
         let point = document.add(Kind::Free(Point { x: 201., y: 211. }));
         let parallel = document.add(Kind::Parallel(point, 4));
         document.add(Kind::Intersection(4, parallel));
+        assert!(document.can_save().is_err());
+    }
+    #[test]
+    fn multi_page_bisector_and_arcs_save() {
+        fn saved(mut document: Document, expected: &[u8], name: &str) {
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_{}_{}.gsp",
+                name,
+                std::process::id()
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            std::fs::remove_file(path).unwrap();
+        }
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 160., y: 160. }));
+        let b = document.add(Kind::Free(Point { x: 210., y: 100. }));
+        let c = document.add(Kind::Free(Point { x: 260., y: 160. }));
+        let bisector = document.add(Kind::Bisector(a, b, c));
+        let arc = document.add(Kind::ThreePointArc(a, b, c));
+        assert!(document.line_points(bisector).is_some());
+        assert!(document.point_on_arc(arc, 0.5).is_some());
+        saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_bisector_arc_port.gsp"),
+            "bisector_arc",
+        );
+
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let center = document.add(Kind::Free(Point { x: 160., y: 160. }));
+        let radius = document.add(Kind::Free(Point { x: 260., y: 160. }));
+        let circle = document.add(Kind::Circle(center, radius));
+        let start = document.add(
+            document
+                .constrained_point(circle, Point { x: 260., y: 160. })
+                .unwrap(),
+        );
+        let end = document.add(
+            document
+                .constrained_point(circle, Point { x: 160., y: 60. })
+                .unwrap(),
+        );
+        let arc = document.add(Kind::ArcOnCircle(circle, start, end));
+        assert!(document.point_on_arc(arc, 0.5).is_some());
+        saved(
+            document,
+            include_bytes!("../tests/fixtures/two_page_arc_on_circle_port.gsp"),
+            "arc_on_circle",
+        );
+    }
+    #[test]
+    fn multi_page_polygon_interiors_save_on_both_pages() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = document.add(Kind::Free(Point { x: 200., y: 80. }));
+        let c = document.add(Kind::Free(Point { x: 300., y: 180. }));
+        let polygon = document.add(Kind::Polygon(vec![a, b, c]));
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_polygon_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        let expected = include_bytes!("../tests/fixtures/two_page_polygon_port.gsp");
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        assert_eq!(
+            document.objects[polygon - 1].kind,
+            Kind::Polygon(vec![a, b, c])
+        );
+        std::fs::remove_file(&path).unwrap();
+
+        let mut document = Document::from_bytes(base, None).unwrap();
+        let a = document.add(Kind::Free(Point { x: 170., y: 170. }));
+        let b = document.add(Kind::Free(Point { x: 220., y: 90. }));
+        document.add(Kind::Polygon(vec![1, a, b]));
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = document.add(Kind::Free(Point { x: 200., y: 80. }));
+        let c = document.add(Kind::Free(Point { x: 300., y: 180. }));
+        document.add(Kind::Polygon(vec![a, b, c]));
+        document.save_to(&path).unwrap();
+        let expected = include_bytes!("../tests/fixtures/two_page_polygons_both_pages_port.gsp");
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        let reopened = Document::from_bytes(expected, None).unwrap();
+        assert_eq!(reopened.objects[3].kind, Kind::Polygon(vec![1, 2, 3]));
+        assert_eq!(reopened.objects[7].kind, Kind::Polygon(vec![5, 6, 7]));
+        std::fs::remove_file(path).unwrap();
+
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = document.add(Kind::Free(Point { x: 200., y: 80. }));
+        document.add(Kind::Polygon(vec![1, a, b]));
+        assert!(document.can_save().is_err());
+    }
+    #[test]
+    fn multi_page_one_host_measurements_save() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let a = document.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = document.add(Kind::Free(Point { x: 200., y: 80. }));
+        let c = document.add(Kind::Free(Point { x: 300., y: 180. }));
+        let polygon = document.add(Kind::Polygon(vec![a, b, c]));
+        let segment = document.add(Kind::Segment(a, c));
+        let circle = document.add(Kind::Circle(a, c));
+        let arc = document.add(Kind::ThreePointArc(a, b, c));
+        for kind in [
+            Kind::SegmentLength(segment),
+            Kind::PolygonPerimeter(polygon),
+            Kind::CircleCircumference(circle),
+            Kind::CircleRadius(circle),
+            Kind::CircleArea(circle),
+            Kind::PolygonArea(polygon),
+            Kind::ArcAngle(arc),
+            Kind::ArcLength(arc),
+        ] {
+            document.add(kind);
+        }
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_measurements_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        let expected = include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp");
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        let reopened = Document::from_bytes(expected, None).unwrap();
+        assert!(
+            reopened.objects[8..]
+                .iter()
+                .all(|object| object.kind.is_measurement())
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn multi_page_point_measurements_append_after_existing_labels() {
+        let base = include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        let target = document.add(Kind::Free(Point { x: 210., y: 180. }));
+        document.add(Kind::PointDistance(2, 4));
+        document.add(Kind::AngleMeasurement(2, 3, 4));
+        document.add(Kind::PointRatio(2, 4, target));
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_point_measures_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        let expected = include_bytes!("../tests/fixtures/two_page_point_measurements_port.gsp");
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        let reopened = Document::from_bytes(expected, None).unwrap();
+        assert_eq!(reopened.objects[17].kind, Kind::PointDistance(2, 4));
+        assert_eq!(reopened.objects[18].kind, Kind::AngleMeasurement(2, 3, 4));
+        assert_eq!(reopened.objects[19].kind, Kind::PointRatio(2, 4, target));
+        std::fs::remove_file(path).unwrap();
+
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 1;
+        document.add(Kind::PointDistance(1, 2));
         assert!(document.can_save().is_err());
     }
     #[test]

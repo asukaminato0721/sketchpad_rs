@@ -1,0 +1,7 @@
+open tests/fixtures/two_page_one_host_measurements_port.gsp
+page 2
+point 210 180
+distance 2 4
+angle 2 3 4
+ratio 2 4 17
+save tests/fixtures/two_page_point_measurements_port.gsp

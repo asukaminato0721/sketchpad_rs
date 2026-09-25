@@ -1090,7 +1090,7 @@ impl Editor {
         }
     }
     fn measure_length(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1107,6 +1107,10 @@ impl Editor {
             Some(Kind::Segment(_, _))
         ) {
             self.status = "Select one segment to measure".into();
+            return;
+        }
+        if self.doc.objects[segment - 1].page != self.doc.active_page {
+            self.status = "Select a segment on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::SegmentLength(segment));
@@ -1287,7 +1291,7 @@ impl Editor {
         self.status = format!("Measured {kind:?} of object {first}");
     }
     fn measure_distance(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1298,6 +1302,13 @@ impl Editor {
         let (a, b) = (*a, *b);
         if self.doc.position(a).is_none() || self.doc.position(b).is_none() {
             self.status = "Select two points to measure".into();
+            return;
+        }
+        if [a, b]
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::PointDistance(a, b));
@@ -1354,7 +1365,7 @@ impl Editor {
         self.status = format!("Measured {kind:?} for point {first}");
     }
     fn measure_ratio(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1380,12 +1391,19 @@ impl Editor {
                 "Ratio construction needs three collinear points and a nonzero base".into();
             return;
         }
+        if [a, b, c]
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
         let id = self.doc.add(Kind::PointRatio(a, b, c));
         self.select_only(id);
         self.status = format!("Measured ratio from points {a}, {b}, {c}");
     }
     fn measure_perimeter(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1398,12 +1416,16 @@ impl Editor {
             self.status = "Select one polygon interior to measure".into();
             return;
         }
+        if self.doc.objects[polygon - 1].page != self.doc.active_page {
+            self.status = "Select a polygon on the current page".into();
+            return;
+        }
         let id = self.doc.add(Kind::PolygonPerimeter(polygon));
         self.select_only(id);
         self.status = format!("Measured perimeter of polygon {polygon}");
     }
     fn measure_angle(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1416,12 +1438,19 @@ impl Editor {
             self.status = "The angle needs two nonzero rays".into();
             return;
         }
+        if [a, b, c]
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
         let id = self.doc.add(Kind::AngleMeasurement(a, b, c));
         self.select_only(id);
         self.status = format!("Measured angle {a}-{b}-{c}");
     }
     fn measure_circle(&mut self, measurement: CircleMeasure) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1430,6 +1459,15 @@ impl Editor {
             return;
         };
         let host = *host;
+        if self
+            .doc
+            .objects
+            .get(host.saturating_sub(1))
+            .is_none_or(|object| object.page != self.doc.active_page)
+        {
+            self.status = "Select an object on the current page".into();
+            return;
+        }
         let source = self
             .doc
             .objects
@@ -1459,7 +1497,7 @@ impl Editor {
         self.status = format!("Measured {name} of object {host}");
     }
     fn measure_arc_angle(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1473,6 +1511,10 @@ impl Editor {
             Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
         ) {
             self.status = "Select one arc to measure".into();
+            return;
+        }
+        if self.doc.objects[arc - 1].page != self.doc.active_page {
+            self.status = "Select an arc on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::ArcAngle(arc));
@@ -1480,7 +1522,7 @@ impl Editor {
         self.status = format!("Measured angle of arc {arc}");
     }
     fn measure_arc_length(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
@@ -1494,6 +1536,10 @@ impl Editor {
             Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
         ) {
             self.status = "Select one arc to measure".into();
+            return;
+        }
+        if self.doc.objects[arc - 1].page != self.doc.active_page {
+            self.status = "Select an arc on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::ArcLength(arc));
@@ -1799,13 +1845,20 @@ impl Editor {
         self.select_only(id);
     }
     fn polygon_interior(&mut self) {
-        if self.doc.partial_view || self.doc.page_count != 1 {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
         let vertices = self.selection_order.clone();
         if vertices.len() < 3 || vertices.iter().any(|&id| self.doc.position(id).is_none()) {
             self.status = "Select at least three points in polygon order".into();
+            return;
+        }
+        if vertices
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::Polygon(vertices));
@@ -1953,7 +2006,7 @@ impl Editor {
         }
     }
     fn angle_bisector(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1962,11 +2015,18 @@ impl Editor {
             self.status = "Select three points in order, with the vertex second".into();
             return;
         }
+        if ids
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
         let id = self.doc.add(Kind::Bisector(ids[0], ids[1], ids[2]));
         self.select_only(id);
     }
     fn three_point_arc(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1975,11 +2035,18 @@ impl Editor {
             self.status = "Select the arc start, a point on the arc, then its end".into();
             return;
         }
+        if ids
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
         let id = self.doc.add(Kind::ThreePointArc(ids[0], ids[1], ids[2]));
         self.select_only(id);
     }
     fn arc_on_circle(&mut self) {
-        if self.doc.partial_view {
+        if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
             return;
         }
@@ -1989,6 +2056,13 @@ impl Editor {
             return;
         }
         let (circle, start, end) = (ids[0], ids[1], ids[2]);
+        if [circle, start, end]
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
         let valid = [start,end].iter().all(|id| matches!(self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle));
         if !valid || self.doc.circle_points(circle).is_none() {
             self.status = "Select a circle and two points constrained to it".into();
@@ -6726,6 +6800,130 @@ mod tests {
         );
         let saved = editor.doc.encode().unwrap();
         assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 9);
+    }
+
+    #[test]
+    fn bisector_and_arcs_work_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        let a = editor.doc.add(Kind::Free(Point { x: 160., y: 160. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 210., y: 100. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 260., y: 160. }));
+        editor.selection_order = vec![a, b, c];
+        editor.angle_bisector();
+        assert_eq!(editor.doc.objects[4].kind, Kind::Bisector(a, b, c));
+        editor.selection_order = vec![a, b, c];
+        editor.three_point_arc();
+        assert_eq!(editor.doc.objects[5].kind, Kind::ThreePointArc(a, b, c));
+        assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
+
+        let circle = editor.doc.add(Kind::Circle(a, c));
+        let start = editor.doc.add(
+            editor
+                .doc
+                .constrained_point(circle, Point { x: 260., y: 160. })
+                .unwrap(),
+        );
+        let end = editor.doc.add(
+            editor
+                .doc
+                .constrained_point(circle, Point { x: 160., y: 60. })
+                .unwrap(),
+        );
+        editor.selection_order = vec![circle, start, end];
+        editor.arc_on_circle();
+        assert_eq!(
+            editor.doc.objects[9].kind,
+            Kind::ArcOnCircle(circle, start, end)
+        );
+        assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
+    }
+
+    #[test]
+    fn polygon_interior_works_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        let a = editor.doc.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 200., y: 80. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 300., y: 180. }));
+        editor.selection_order = vec![a, b, c];
+        editor.polygon_interior();
+        assert_eq!(editor.doc.objects[4].kind, Kind::Polygon(vec![a, b, c]));
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_polygon_port.gsp")
+        );
+    }
+
+    #[test]
+    fn one_host_measurements_work_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        let a = editor.doc.add(Kind::Free(Point { x: 120., y: 180. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 200., y: 80. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 300., y: 180. }));
+        let polygon = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        let segment = editor.doc.add(Kind::Segment(a, c));
+        let circle = editor.doc.add(Kind::Circle(a, c));
+        let arc = editor.doc.add(Kind::ThreePointArc(a, b, c));
+
+        editor.selection_order = vec![segment];
+        editor.measure_length();
+        editor.selection_order = vec![polygon];
+        editor.measure_perimeter();
+        editor.selection_order = vec![circle];
+        editor.measure_circle(CircleMeasure::Circumference);
+        editor.selection_order = vec![circle];
+        editor.measure_circle(CircleMeasure::Radius);
+        editor.selection_order = vec![circle];
+        editor.measure_circle(CircleMeasure::Area);
+        editor.selection_order = vec![polygon];
+        editor.measure_circle(CircleMeasure::Area);
+        editor.selection_order = vec![arc];
+        editor.measure_arc_angle();
+        editor.selection_order = vec![arc];
+        editor.measure_arc_length();
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp")
+        );
+    }
+
+    #[test]
+    fn point_measurements_work_on_multi_page_sketch() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        let target = editor.doc.add(Kind::Free(Point { x: 210., y: 180. }));
+        editor.selection_order = vec![2, 4];
+        editor.measure_distance();
+        editor.selection_order = vec![2, 3, 4];
+        editor.measure_angle();
+        editor.selection_order = vec![2, 4, target];
+        editor.measure_ratio();
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_point_measurements_port.gsp")
+        );
     }
 
     #[test]

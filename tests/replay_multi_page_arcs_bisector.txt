@@ -1,0 +1,17 @@
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 160 160
+point 210 100
+point 260 160
+bisector 2 3 4
+arc3 2 3 4
+save tests/fixtures/two_page_bisector_arc_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 160 160
+point 260 160
+circle 2 3
+point_on 4 260 160
+point_on 4 160 60
+arc_on_circle 4 5 6
+save tests/fixtures/two_page_arc_on_circle_port.gsp

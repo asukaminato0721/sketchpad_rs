@@ -76,11 +76,11 @@ The release gate is every sketch and document command verified after editing, sa
 | Parallel Line | Partial: supported multi-page point and straight-path parents; generated group matches a native construction byte for byte and cross-opens |
 | Perpendicular Line | Partial: supported multi-page point and straight-path parents; generated group matches a native construction byte for byte and cross-opens |
 | Circle by Center+Point | Partial |
-| Angle Bisector | Partial: original fixture and generated ray cross-opened |
+| Angle Bisector | Partial: works on supported multi-page pages; generated page 2 file opened and saved byte-identically in native Sketchpad |
 | Circle by Center+Radius | Partial: segment radius variant on supported multi-page pages; generated object group matches native Sketchpad byte for byte and cross-opens |
-| Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
-| Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
-| Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, SVG, generated file opened in Sketchpad 5 |
+| Arc on Circle | Partial: constrained endpoints work on supported multi-page pages; generated page 2 file opened and saved byte-identically in native Sketchpad |
+| Arc through 3 Points | Partial: works on supported multi-page pages; generated page 2 file opened and saved byte-identically in native Sketchpad |
+| Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, and SVG; works on supported multi-page pages, including an interior on each page in one file. Generated multi-page files opened and saved byte-identically in Sketchpad 5 |
 | Locus | Partial: segment-, circle-, or arc-constrained points can drive a dependent point, segment, ray, line, circle, arc, or polygon interior through supported constructions. Native code 35 point curves and segment, ray, line, circle, arc, and polygon families import as editable objects, render in the desktop and SVG views, and can be constructed from the selected pair. Native midpoint, translated-point, circle-driver, arc-driver, two-step, two-branch, segment-family, direct-ray-family, bisector-ray-family, direct-line-family, parallel-line-family, perpendicular-line-family, circle-family, three-point-arc-family, circle-arc-family, base-polygon-family, vector-translated-polygon-family, polar-translated-polygon-family, and rectangular-translated-polygon-family examples were reproduced; generated files opened and saved byte-identically in Sketchpad 5. Other traced object kinds and locus options pending |
 
 ## Transform
@@ -102,6 +102,8 @@ The release gate is every sketch and document command verified after editing, sa
 | Edit Custom Transforms | Pending |
 
 ## Measure
+
+Length, distance, perimeter, circumference, angle, circle and polygon area, arc angle, arc length, radius, and signed point ratio can now be added on supported multi-page pages. Generated files containing all of these measurements opened and saved byte-identically in native Sketchpad 5; broader measurement formatting and source variants remain pending.
 
 | Command | Status |
 | --- | --- |
