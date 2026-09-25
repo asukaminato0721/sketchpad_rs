@@ -81,7 +81,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Arc on Circle | Partial: constrained endpoints and generated arc cross-opened |
 | Arc through 3 Points | Partial: original fixture and generated arc cross-opened |
 | Interior | Partial: polygon from selected vertices, fill and outline, native hit testing, SVG, generated file opened in Sketchpad 5 |
-| Locus | Pending |
+| Locus | Partial: segment-, circle-, or arc-constrained points can drive a dependent point, segment, ray, line, circle, or arc through supported constructions. Native code 35 point curves and segment, ray, line, circle, and arc families import as editable objects, render in the desktop and SVG views, and can be constructed from the selected pair. Native midpoint, translated-point, circle-driver, arc-driver, two-step, two-branch, segment-family, ray-family, line-family, circle-family, and arc-family examples were reproduced; generated and parent-edited files opened and saved byte-identically in Sketchpad 5. Other traced object kinds and locus options pending |
 
 ## Transform
 
@@ -93,7 +93,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Mark Ratio | Partial: three collinear points define a signed dynamic ratio for point, segment, circle, and polygon dilation; a marked-only native save is byte-identical to its unmarked source |
 | Mark Vector | Partial: the last two selected points define a dynamic vector for later translation; a marked-only native file is byte-identical to its unmarked source |
 | Mark Distance | Partial: one selected distance measurement supplies a dynamic polar distance; two selected measurements supply horizontal and vertical distances in selection order; marked-only native saves are byte-identical to their unmarked sources |
-| Translate | Partial: points by fixed polar angle and distance, fixed signed rectangular distances, marked dynamic polar distance, marked rectangular distances, either mixed fixed/marked rectangular mode, or marked dynamic vector; segments and circles by fixed polar, fixed rectangular, marked polar distance, or marked vector. Generated files for these modes opened and saved byte-identically in Sketchpad 5 after moving their dependencies; other shapes and modes pending |
+| Translate | Partial: points and polygon interiors by fixed polar distance, fixed rectangular distances, marked polar distance, marked rectangular distances, either mixed fixed/marked rectangular mode, or marked vector; segments and circles by fixed polar, fixed rectangular, marked polar distance, or marked vector. Generated files for these modes opened and saved byte-identically in Sketchpad 5 after moving their dependencies; a generated 180° polar point translation also cross-opened after its angle cache was corrected. Other shapes and modes pending |
 | Rotate | Partial: points, segments, circles, and polygon interiors around a selected or marked center by a fixed or three-point marked angle; generated shape and polygon files opened and saved byte-identically in Sketchpad 5 after moving a dependency; other shapes and angle sources pending |
 | Dilate | Partial: points, segments, circles, and polygon interiors by fixed or three-point marked ratio around a center point; generated shape and polygon files opened and saved byte-identically in Sketchpad 5 after moving a dependency; other shapes and ratio sources pending |
 | Reflect | Partial: points, segments, circles, and polygon interiors across a selected segment or line. A generated polygon file with a moved source vertex displayed both interiors in Sketchpad 5 and saved byte-identically; the native reflected polygon fixtures import without partial view. Other shapes pending |
@@ -107,10 +107,10 @@ The release gate is every sketch and document command verified after editing, sa
 | --- | --- |
 | Length | Partial: segment length, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Distance | Partial: two-point distance, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Perimeter | Partial: polygon interior perimeter, dynamic value, SVG, generated file edited in Sketchpad 5 |
+| Perimeter | Partial: base and transformed polygon interior perimeter, dynamic value, SVG, generated files edited in Sketchpad 5 |
 | Circumference | Partial: circle circumference, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Angle | Partial: three-point angle, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Area | Partial: circle area, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
+| Area | Partial: circle plus base and transformed polygon interior area, dynamic value, SVG, generated files opened and edited in Sketchpad 5; other area sources pending |
 | Arc Angle | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Arc Length | Partial: three-point arc edited; circle-based arc opened; dynamic value and SVG |
 | Radius | Partial: circle radius, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |

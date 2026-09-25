@@ -618,6 +618,9 @@ impl Editor {
             if let Some(value) = self.doc.circle_area_cm2(id) {
                 rows.push((id, format!("Area = {value:.2} cm²")));
             }
+            if let Some(value) = self.doc.polygon_area_cm2(id) {
+                rows.push((id, format!("Area = {value:.2} cm²")));
+            }
             if let Some(value) = self.doc.arc_angle_degrees(id) {
                 rows.push((id, format!("Arc Angle = {value:.2}°")));
             }
@@ -791,6 +794,12 @@ impl Editor {
                         }
                         Kind::Polygon(_)
                         | Kind::ReflectedPolygon(_, _)
+                        | Kind::VectorTranslatedPolygon(_, _, _)
+                        | Kind::PolarTranslatedPolygon(_, _, _, _)
+                        | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
+                        | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
+                        | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
+                        | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                         | Kind::RotatedPolygon(_, _, _)
                         | Kind::AngleRotatedPolygon(_, _, _, _, _)
                         | Kind::ScaledPolygon(_, _, _)
@@ -827,21 +836,34 @@ impl Editor {
                             }
                         }
                         Kind::FunctionPlot(_, _, _, _, _)
-                        | Kind::ParametricPlot(_, _, _, _, _, _, _) => {
+                        | Kind::ParametricPlot(_, _, _, _, _, _, _)
+                        | Kind::Locus(_, _) => {
                             let segments = self
                                 .doc
                                 .function_plot_segments(o.id, 256)
-                                .or_else(|| self.doc.parametric_plot_segments(o.id, 256))?;
+                                .or_else(|| self.doc.parametric_plot_segments(o.id, 256))
+                                .map(|segments| {
+                                    segments
+                                        .into_iter()
+                                        .map(|(start, end)| (start, end, LineMode::Segment))
+                                        .collect::<Vec<_>>()
+                                })
+                                .or_else(|| self.doc.locus_strokes(o.id, 256))?;
                             segments
                                 .iter()
-                                .map(|(start, end)| {
+                                .map(|(start, end, mode)| {
                                     let a = v.screen(*start);
                                     let b = v.screen(*end);
                                     let ab = b - a;
                                     let t = if ab.length_sq() < 1e-6 {
                                         0.
                                     } else {
-                                        ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.)
+                                        let raw = (p - a).dot(ab) / ab.length_sq();
+                                        match mode {
+                                            LineMode::Segment => raw.clamp(0., 1.),
+                                            LineMode::Ray => raw.max(0.),
+                                            LineMode::Line => raw,
+                                        }
                                     };
                                     (p - (a + ab * t)).length()
                                 })
@@ -1256,29 +1278,38 @@ impl Editor {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
-        let [circle] = self.selection_order.as_slice() else {
-            self.status = "Select one circle to measure".into();
+        let [host] = self.selection_order.as_slice() else {
+            self.status = "Select one circle or polygon interior to measure".into();
             return;
         };
-        let circle = *circle;
-        if !matches!(
-            self.doc
-                .objects
-                .get(circle.saturating_sub(1))
-                .map(|o| &o.kind),
-            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
-        ) {
-            self.status = "Select one circle to measure".into();
-            return;
-        }
-        let (kind, name) = match measurement {
-            CircleMeasure::Circumference => (Kind::CircleCircumference(circle), "circumference"),
-            CircleMeasure::Radius => (Kind::CircleRadius(circle), "radius"),
-            CircleMeasure::Area => (Kind::CircleArea(circle), "area"),
+        let host = *host;
+        let source = self
+            .doc
+            .objects
+            .get(host.saturating_sub(1))
+            .map(|o| &o.kind);
+        let (kind, name) = match (measurement, source) {
+            (
+                CircleMeasure::Circumference,
+                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)),
+            ) => (Kind::CircleCircumference(host), "circumference"),
+            (CircleMeasure::Radius, Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) => {
+                (Kind::CircleRadius(host), "radius")
+            }
+            (CircleMeasure::Area, Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) => {
+                (Kind::CircleArea(host), "area")
+            }
+            (CircleMeasure::Area, Some(kind)) if kind.is_polygon() => {
+                (Kind::PolygonArea(host), "area")
+            }
+            _ => {
+                self.status = "Select one circle or polygon interior to measure".into();
+                return;
+            }
         };
         let id = self.doc.add(kind);
         self.select_only(id);
-        self.status = format!("Measured {name} of circle {circle}");
+        self.status = format!("Measured {name} of object {host}");
     }
     fn measure_arc_angle(&mut self) {
         if self.doc.partial_view || self.doc.page_count != 1 {
@@ -1533,6 +1564,28 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Constructed polygon interior {id}");
     }
+    fn construct_locus(&mut self) {
+        let ids = self.selection_order.clone();
+        if ids.len() != 2 {
+            self.status = "Select a moving point and a dependent object".into();
+            return;
+        }
+        let (driver, target) = if matches!(
+            self.doc.objects[ids[0] - 1].kind,
+            Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _)
+        ) {
+            (ids[0], ids[1])
+        } else {
+            (ids[1], ids[0])
+        };
+        match self.doc.construct_locus(driver, target) {
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Constructed locus {id}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
     fn point_on_object(&mut self) {
         if self.doc.partial_view {
             self.status = "Construction on this document cannot be saved safely".into();
@@ -1700,7 +1753,28 @@ impl Editor {
                 .map(|object| &object.kind),
             Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
         );
-        if self.doc.position(source).is_none() && !source_is_segment && !source_is_circle {
+        let source_is_polygon = matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|object| &object.kind),
+            Some(Kind::Polygon(_))
+        );
+        if self.doc.position(source).is_none()
+            && !source_is_segment
+            && !source_is_circle
+            && !(source_is_polygon
+                && matches!(
+                    self.translation_mode,
+                    TranslationMode::FixedPolar
+                        | TranslationMode::FixedRectangular
+                        | TranslationMode::MarkedVector
+                        | TranslationMode::MarkedDistance
+                        | TranslationMode::RectangularMarked
+                        | TranslationMode::RectangularHorizontalFixed
+                        | TranslationMode::RectangularVerticalFixed
+                ))
+        {
             self.status = "Select one point, segment, or circle to translate".into();
             return;
         }
@@ -1744,6 +1818,13 @@ impl Editor {
                         37.79527559055118,
                         self.translation_distance,
                     )
+                } else if source_is_polygon {
+                    Kind::PolarTranslatedPolygon(
+                        source,
+                        self.translation_angle,
+                        37.79527559055118,
+                        self.translation_distance,
+                    )
                 } else {
                     Kind::PolarTranslatedPoint(
                         source,
@@ -1770,6 +1851,14 @@ impl Editor {
                     )
                 } else if source_is_circle {
                     Kind::FixedRectangularTranslatedCircle(
+                        source,
+                        37.79527559055118,
+                        self.translation_horizontal,
+                        37.79527559055118,
+                        self.translation_vertical,
+                    )
+                } else if source_is_polygon {
+                    Kind::FixedRectangularTranslatedPolygon(
                         source,
                         37.79527559055118,
                         self.translation_horizontal,
@@ -1806,6 +1895,8 @@ impl Editor {
                     Kind::MarkedDistanceTranslatedSegment(source, distance, self.translation_angle)
                 } else if source_is_circle {
                     Kind::MarkedDistanceTranslatedCircle(source, distance, self.translation_angle)
+                } else if source_is_polygon {
+                    Kind::MarkedDistanceTranslatedPolygon(source, distance, self.translation_angle)
                 } else {
                     Kind::MarkedDistanceTranslatedPoint(source, distance, self.translation_angle)
                 }
@@ -1825,7 +1916,11 @@ impl Editor {
                     self.status = "Marked distances are unavailable".into();
                     return;
                 }
-                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+                if source_is_polygon {
+                    Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical)
+                } else {
+                    Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+                }
             }
             TranslationMode::RectangularHorizontalFixed
             | TranslationMode::RectangularVerticalFixed => {
@@ -1856,7 +1951,21 @@ impl Editor {
                     self.status = "Mixed rectangular translation values are unavailable".into();
                     return;
                 }
-                Kind::MixedRectangularTranslatedPoint(source, distance, fixed_cm, fixed_horizontal)
+                if source_is_polygon {
+                    Kind::MixedRectangularTranslatedPolygon(
+                        source,
+                        distance,
+                        fixed_cm,
+                        fixed_horizontal,
+                    )
+                } else {
+                    Kind::MixedRectangularTranslatedPoint(
+                        source,
+                        distance,
+                        fixed_cm,
+                        fixed_horizontal,
+                    )
+                }
             }
             TranslationMode::MarkedVector => {
                 let Some((start, end)) = self.marked_vector else {
@@ -1877,6 +1986,8 @@ impl Editor {
                     Kind::VectorTranslatedSegment(source, start, end)
                 } else if source_is_circle {
                     Kind::VectorTranslatedCircle(source, start, end)
+                } else if source_is_polygon {
+                    Kind::VectorTranslatedPolygon(source, start, end)
                 } else {
                     Kind::VectorTranslatedPoint(source, start, end)
                 }
@@ -2531,6 +2642,10 @@ impl Editor {
                     }
                     if ui.button("Polygon Interior").clicked() {
                         self.polygon_interior();
+                        ui.close();
+                    }
+                    if ui.button("Locus").clicked() {
+                        self.construct_locus();
                         ui.close();
                     }
                     if ui.button("Parallel Line").clicked() {
@@ -5431,6 +5546,192 @@ mod tests {
         let before = editor.doc.polygon_points(image).unwrap();
         assert!(editor.doc.move_point(target, Point { x: 255., y: 100. }));
         assert_ne!(editor.doc.polygon_points(image).unwrap(), before);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn marked_vector_translates_selected_polygon() {
+        let mut editor = Editor::new(Document::new());
+        let start = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let end = editor.doc.add(Kind::Free(Point { x: 220., y: 130. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 200. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 140., y: 200. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 120., y: 240. }));
+        let source = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        editor.marked_vector = Some((start, end));
+        editor.translation_mode = TranslationMode::MarkedVector;
+        editor.select_only(source);
+        editor.translate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::VectorTranslatedPolygon(source, start, end)
+        );
+        assert_eq!(
+            editor.doc.polygon_points(image).unwrap()[0],
+            Point { x: 170., y: 210. }
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+
+        editor.translation_mode = TranslationMode::FixedPolar;
+        editor.translation_angle = 90.;
+        editor.translation_distance = 1.;
+        editor.select_only(source);
+        editor.translate_selected();
+        let polar = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::PolarTranslatedPolygon(source, 90., 37.79527559055118, 1.)
+        );
+        assert!(
+            (editor.doc.polygon_points(polar).unwrap()[0].y - (200. - 37.79527559055118)).abs()
+                < 1e-9
+        );
+
+        editor.translation_mode = TranslationMode::FixedRectangular;
+        editor.translation_horizontal = 2.;
+        editor.translation_vertical = -0.5;
+        editor.select_only(source);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::FixedRectangularTranslatedPolygon(
+                source,
+                37.79527559055118,
+                2.,
+                37.79527559055118,
+                -0.5
+            )
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn marked_distance_translates_selected_polygon() {
+        let mut editor = Editor::new(Document::new());
+        let first = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let last = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 190. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 140., y: 190. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 120., y: 230. }));
+        let distance = editor.doc.add(Kind::PointDistance(first, last));
+        let source = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        editor.marked_distance = Some(distance);
+        editor.translation_mode = TranslationMode::MarkedDistance;
+        editor.translation_angle = 90.;
+        editor.select_only(source);
+        editor.translate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::MarkedDistanceTranslatedPolygon(source, distance, 90.)
+        );
+        assert!((editor.doc.polygon_points(image).unwrap()[0].y - 90.).abs() < 1e-9);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn area_command_measures_selected_polygon() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 210., y: 190. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 190., y: 230. }));
+        let polygon = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        editor.select_only(polygon);
+        editor.measure_circle(CircleMeasure::Area);
+        let area = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[area - 1].kind,
+            Kind::PolygonArea(polygon)
+        );
+        assert!(
+            editor
+                .overlay_rows()
+                .iter()
+                .any(|(_, text)| text == "Area = 0.56 cm²")
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+
+        let rotated = editor.doc.add(Kind::RotatedPolygon(polygon, a, 90.));
+        editor.select_only(rotated);
+        editor.measure_perimeter();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::PolygonPerimeter(rotated)
+        );
+        editor.select_only(rotated);
+        editor.measure_circle(CircleMeasure::Area);
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::PolygonArea(rotated)
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn rectangular_marked_and_mixed_translate_selected_polygon() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 150., y: 180. }));
+        let d = editor.doc.add(Kind::Free(Point { x: 150., y: 230. }));
+        let horizontal = editor.doc.add(Kind::PointDistance(a, b));
+        let vertical = editor.doc.add(Kind::PointDistance(c, d));
+        let p = editor.doc.add(Kind::Free(Point { x: 100., y: 190. }));
+        let q = editor.doc.add(Kind::Free(Point { x: 140., y: 190. }));
+        let r = editor.doc.add(Kind::Free(Point { x: 120., y: 230. }));
+        let source = editor.doc.add(Kind::Polygon(vec![p, q, r]));
+        editor.marked_rectangular_distances = Some((horizontal, vertical));
+
+        editor.translation_mode = TranslationMode::RectangularMarked;
+        editor.select_only(source);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical)
+        );
+
+        editor.translation_horizontal = 2.;
+        editor.translation_mode = TranslationMode::RectangularHorizontalFixed;
+        editor.select_only(source);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::MixedRectangularTranslatedPolygon(source, vertical, 2., true)
+        );
+
+        editor.translation_vertical = 2.;
+        editor.translation_mode = TranslationMode::RectangularVerticalFixed;
+        editor.select_only(source);
+        editor.translate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::MixedRectangularTranslatedPolygon(source, horizontal, 2., false)
+        );
         assert!(
             !Document::from_bytes(&editor.doc.encode().unwrap(), None)
                 .unwrap()

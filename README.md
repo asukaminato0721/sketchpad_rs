@@ -15,9 +15,16 @@ Selecting a point before Graph > Define Coordinate System uses it as the origin,
 When a sketch has multiple frames, the editor and SVG export draw each visible frame using its own Square, Rectangular, or Polar grid form and dotted setting.
 The Number menu can create t₁ and t₂ parameters or multiple named ASCII parameters in a supported single-page sketch, and edit values from −99.99 to 99.99 with up to two decimal places. Named parameters increase their display precision when a value needs a second decimal place and can be tabulated into tables with snapshot row controls. The default one-column t₁ table caches values from −99.99 to 99.99; fractional, negative, two-digit, and later-source snapshot files cross-opened in Sketchpad 5. The supported two-column table uses t₁ and t₂ values from −99.99 to 99.99 with up to 256 rows; generated five-row and mixed-width files opened and saved byte-identically in Sketchpad 5. Graph > Plot Table Data plots its Cartesian or polar rows, including distinct and fractional values.
 Select a caption and highlight characters in the sidebar text field to apply Bold, Italic, Underline, Larger, Smaller, or a font family to that range. These mixed-format captions render in the editor and SVG, and survive word edits, move, and copy/paste. Text insertions inherit the neighboring style, and replaced text inherits the first replaced character's style.
+Polygon interiors can be reflected, rotated by a fixed or marked angle, dilated by a fixed or marked ratio, translated by fixed or marked polar and rectangular distances or a marked vector, and measured for live area. These results update when their source vertices or defining points move, and the generated files have been opened and resaved in Sketchpad 5.
+
 For a small interoperability sample, run `cargo run --bin gsp_probe -- demo /tmp/sketch.gsp`.
 
 ## Current scope
+
+Construct > Locus accepts a selected point constrained to a segment, circle,
+or arc and a dependent point, segment, ray, line, circle, or arc. Point loci
+follow supported dependency graphs; segment, ray, line, circle, and arc loci
+draw sampled object families.
 
 The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, Hide/Show action buttons, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
 

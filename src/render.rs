@@ -782,11 +782,16 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
         if let Some(segments) = doc
             .function_plot_segments(o.id, 384)
             .or_else(|| doc.parametric_plot_segments(o.id, 384))
+            .map(|segments| {
+                segments
+                    .into_iter()
+                    .map(|(start, end)| (start, end, LineMode::Segment))
+                    .collect::<Vec<_>>()
+            })
+            .or_else(|| doc.locus_strokes(o.id, 384))
         {
-            for (start, end) in segments {
-                if let Some((a, b)) =
-                    clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, r)
-                {
+            for (start, end, mode) in segments {
+                if let Some((a, b)) = clipped_line(vp.screen(start), vp.screen(end), mode, r) {
                     writeln!(
                         svg,
                         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",
@@ -1094,6 +1099,17 @@ pub fn svg_page(doc: &Document, vp: &Viewport) -> Result<String, String> {
             row += 1;
         }
         if let Some(area) = doc.circle_area_cm2(object.id) {
+            writeln!(
+                svg,
+                "<text x=\"{}\" y=\"{}\">Area = {:.2} cm²</text>",
+                r.min.x + 12.,
+                r.min.y + 28. + row as f32 * 20.,
+                area
+            )
+            .unwrap();
+            row += 1;
+        }
+        if let Some(area) = doc.polygon_area_cm2(object.id) {
             writeln!(
                 svg,
                 "<text x=\"{}\" y=\"{}\">Area = {:.2} cm²</text>",
@@ -1515,10 +1531,17 @@ impl GeometryRenderer {
             if let Some(segments) = doc
                 .function_plot_segments(o.id, 384)
                 .or_else(|| doc.parametric_plot_segments(o.id, 384))
+                .map(|segments| {
+                    segments
+                        .into_iter()
+                        .map(|(start, end)| (start, end, LineMode::Segment))
+                        .collect::<Vec<_>>()
+                })
+                .or_else(|| doc.locus_strokes(o.id, 384))
             {
-                for (start, end) in segments {
+                for (start, end, mode) in segments {
                     if let Some((a, b)) =
-                        clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, vp.rect)
+                        clipped_line(vp.screen(start), vp.screen(end), mode, vp.rect)
                     {
                         mesh.line(
                             a,
@@ -1571,6 +1594,12 @@ impl GeometryRenderer {
                 }
                 Kind::Polygon(_)
                 | Kind::ReflectedPolygon(_, _)
+                | Kind::VectorTranslatedPolygon(_, _, _)
+                | Kind::PolarTranslatedPolygon(_, _, _, _)
+                | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
+                | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
+                | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
+                | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                 | Kind::RotatedPolygon(_, _, _)
                 | Kind::AngleRotatedPolygon(_, _, _, _, _)
                 | Kind::ScaledPolygon(_, _, _)

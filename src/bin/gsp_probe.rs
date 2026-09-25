@@ -767,8 +767,17 @@ fn replay(path: &str) -> Result<(), String> {
                     println!("line {}: radius -> object {id}", index + 1);
                 }
                 "area" => {
-                    let circle: usize = rest.parse().map_err(|_| "invalid circle ID")?;
-                    let id = document.add(Kind::CircleArea(circle));
+                    let host: usize = rest.parse().map_err(|_| "invalid object ID")?;
+                    let kind = if document
+                        .objects
+                        .get(host.saturating_sub(1))
+                        .is_some_and(|o| o.kind.is_polygon())
+                    {
+                        Kind::PolygonArea(host)
+                    } else {
+                        Kind::CircleArea(host)
+                    };
+                    let id = document.add(kind);
                     println!("line {}: area -> object {id}", index + 1);
                 }
                 "polygon" => {
@@ -1015,8 +1024,61 @@ fn replay(path: &str) -> Result<(), String> {
                         .iter()
                         .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let id = document.add(Kind::VectorTranslatedPoint(ids[0], ids[1], ids[2]));
+                    let kind = if matches!(
+                        document
+                            .objects
+                            .get(ids[0].saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Polygon(_))
+                    ) {
+                        Kind::VectorTranslatedPolygon(ids[0], ids[1], ids[2])
+                    } else {
+                        Kind::VectorTranslatedPoint(ids[0], ids[1], ids[2])
+                    };
+                    let id = document.add(kind);
                     println!("line {}: translate_vector -> object {id}", index + 1);
+                }
+                "translate_polygon" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected polygon ID, angle, and distance in centimeters".into()
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid polygon ID")?;
+                    let angle = parts[1].parse().map_err(|_| "invalid angle")?;
+                    let distance = parts[2].parse().map_err(|_| "invalid distance")?;
+                    let id = document.add(Kind::PolarTranslatedPolygon(
+                        source,
+                        angle,
+                        37.79527559055118,
+                        distance,
+                    ));
+                    println!("line {}: translate_polygon -> object {id}", index + 1);
+                }
+                "translate_polygon_rectangular" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err(
+                            "expected polygon ID, horizontal and vertical centimeters".into()
+                        );
+                    }
+                    let source = parts[0].parse().map_err(|_| "invalid polygon ID")?;
+                    let horizontal = parts[1]
+                        .parse()
+                        .map_err(|_| "invalid horizontal distance")?;
+                    let vertical = parts[2].parse().map_err(|_| "invalid vertical distance")?;
+                    let id = document.add(Kind::FixedRectangularTranslatedPolygon(
+                        source,
+                        37.79527559055118,
+                        horizontal,
+                        37.79527559055118,
+                        vertical,
+                    ));
+                    println!(
+                        "line {}: translate_polygon_rectangular -> object {id}",
+                        index + 1
+                    );
                 }
                 "translate_segment" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
@@ -1137,6 +1199,9 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::MarkedDistanceTranslatedCircle(source, distance, angle)
                         }
+                        Some(Kind::Polygon(_)) => {
+                            Kind::MarkedDistanceTranslatedPolygon(source, distance, angle)
+                        }
                         _ => Kind::MarkedDistanceTranslatedPoint(source, distance, angle),
                     };
                     let id = document.add(kind);
@@ -1179,9 +1244,18 @@ fn replay(path: &str) -> Result<(), String> {
                         .iter()
                         .map(|part| part.parse::<usize>().map_err(|_| "invalid object ID"))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let id = document.add(Kind::RectangularMarkedTranslatedPoint(
-                        ids[0], ids[1], ids[2],
-                    ));
+                    let kind = if matches!(
+                        document
+                            .objects
+                            .get(ids[0].saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Polygon(_))
+                    ) {
+                        Kind::RectangularMarkedTranslatedPolygon(ids[0], ids[1], ids[2])
+                    } else {
+                        Kind::RectangularMarkedTranslatedPoint(ids[0], ids[1], ids[2])
+                    };
+                    let id = document.add(kind);
                     println!(
                         "line {}: translate_rectangular_marked -> object {id}",
                         index + 1
@@ -1192,7 +1266,7 @@ fn replay(path: &str) -> Result<(), String> {
                     if parts.len() != 4 {
                         return Err("expected source ID, marked distance ID, fixed centimeters, and horizontal_fixed|vertical_fixed".into());
                     }
-                    let source = parts[0].parse().map_err(|_| "invalid source ID")?;
+                    let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
                     let distance = parts[1].parse().map_err(|_| "invalid distance ID")?;
                     let fixed_cm = parts[2].parse().map_err(|_| "invalid fixed distance")?;
                     let fixed_horizontal = match parts[3] {
@@ -1200,12 +1274,28 @@ fn replay(path: &str) -> Result<(), String> {
                         "vertical_fixed" => false,
                         _ => return Err("expected horizontal_fixed or vertical_fixed".into()),
                     };
-                    let id = document.add(Kind::MixedRectangularTranslatedPoint(
-                        source,
-                        distance,
-                        fixed_cm,
-                        fixed_horizontal,
-                    ));
+                    let kind = if matches!(
+                        document
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Polygon(_))
+                    ) {
+                        Kind::MixedRectangularTranslatedPolygon(
+                            source,
+                            distance,
+                            fixed_cm,
+                            fixed_horizontal,
+                        )
+                    } else {
+                        Kind::MixedRectangularTranslatedPoint(
+                            source,
+                            distance,
+                            fixed_cm,
+                            fixed_horizontal,
+                        )
+                    };
+                    let id = document.add(kind);
                     println!(
                         "line {}: translate_rectangular_mixed -> object {id}",
                         index + 1
@@ -1367,6 +1457,11 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     let id = document.add(kind);
                     println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "locus" => {
+                    let (driver, target) = two_ids(rest)?;
+                    let id = document.construct_locus(driver, target)?;
+                    println!("line {}: locus -> object {id}", index + 1);
                 }
                 "bisector" | "arc3" | "arc_on_circle" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
@@ -1602,6 +1697,16 @@ fn svg(input: &str, output: &str) -> Result<(), String> {
                 bounds.1 = bounds.1.min(point.y);
                 bounds.2 = bounds.2.max(point.x);
                 bounds.3 = bounds.3.max(point.y);
+            }
+        }
+        if let Some(segments) = document.locus_segments(object.id, 128) {
+            for (start, end) in segments {
+                for point in [start, end] {
+                    bounds.0 = bounds.0.min(point.x);
+                    bounds.1 = bounds.1.min(point.y);
+                    bounds.2 = bounds.2.max(point.x);
+                    bounds.3 = bounds.3.max(point.y);
+                }
             }
         }
     }
