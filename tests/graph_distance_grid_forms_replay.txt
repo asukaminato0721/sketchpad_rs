@@ -1,0 +1,24 @@
+open tests/fixtures/graph_unit_segment_generated.gsp
+grid_form rectangular
+check
+save /tmp/sketchpad_graph_unit_segment_rectangular_generated.gsp
+open tests/fixtures/graph_unit_segment_rectangular_original.gsp
+move 6 199 45
+check
+save /tmp/sketchpad_graph_unit_segment_rectangular_dragged_generated.gsp
+open tests/fixtures/graph_unit_segment_rectangular_original.gsp
+grid_form square
+check
+save /tmp/sketchpad_graph_unit_segment_rectangular_to_square_generated.gsp
+open tests/fixtures/graph_two_segments_generated.gsp
+grid_form polar
+check
+save /tmp/sketchpad_graph_two_segments_polar_generated.gsp
+open tests/fixtures/graph_unit_segment_rectangular_original.gsp
+grid_form polar
+check
+save /tmp/sketchpad_graph_unit_segment_rectangular_to_polar_generated.gsp
+open tests/fixtures/graph_unit_segment_rectangular_dragged_generated.gsp
+grid_form polar
+check
+save /tmp/sketchpad_graph_unit_segment_rectangular_dragged_polar_generated.gsp

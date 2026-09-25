@@ -1,0 +1,12 @@
+new
+point 130 150
+point 230 160
+point 230 220
+point 290 220
+point 170 150
+save /tmp/sketchpad_marked_angle_base.gsp
+open /tmp/sketchpad_marked_angle_base.gsp
+rotate_marked_angle 5 1 2 3 4
+save /tmp/sketchpad_marked_angle_generated.gsp
+move 4 290 190
+save /tmp/sketchpad_marked_angle_moved_generated.gsp

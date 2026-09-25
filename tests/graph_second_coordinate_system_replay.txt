@@ -1,0 +1,4 @@
+open tests/fixtures/graph_defined_coordinate_system.gsp
+coordinate_system_at_point 1
+check
+save /tmp/sketchpad_graph_second_coordinate_system.gsp

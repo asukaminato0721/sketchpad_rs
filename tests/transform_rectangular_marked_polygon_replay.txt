@@ -1,0 +1,6 @@
+open /tmp/sketchpad_rectangular_marked_polygon_base.gsp
+translate_rectangular_marked 11 6 7
+save tests/fixtures/rectangular_marked_polygon_generated.gsp
+move 2 300 120
+move 4 150 250
+save tests/fixtures/rectangular_marked_polygon_moved_generated.gsp

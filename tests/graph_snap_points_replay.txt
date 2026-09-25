@@ -1,0 +1,7 @@
+new
+point 210 140
+coordinate_system 199 125
+snap_points on
+move 1 250 170
+check
+save tests/fixtures/graph_snap_points_generated.gsp

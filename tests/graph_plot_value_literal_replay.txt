@@ -1,0 +1,14 @@
+new
+coordinate_system 199 125
+plot_axis_value 2.5
+check
+save tests/fixtures/graph_plot_value_literal_generated.gsp
+open tests/fixtures/graph_plot_value_literal_generated.gsp
+check
+new
+coordinate_system 199 125
+plot_axis_value -1.25 5
+check
+save tests/fixtures/graph_plot_value_literal_y_generated.gsp
+open tests/fixtures/graph_plot_value_literal_y_generated.gsp
+check

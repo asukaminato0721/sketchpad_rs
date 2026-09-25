@@ -1,0 +1,6 @@
+open tests/fixtures/table_pair_five_distinct_polar_generated.gsp
+table_remove 3
+check
+save tests/fixtures/table_pair_four_rows_after_remove_generated.gsp
+open tests/fixtures/table_pair_four_rows_after_remove_generated.gsp
+check

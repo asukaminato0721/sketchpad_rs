@@ -1,0 +1,8 @@
+new
+coordinate_system 199 125
+plot_points cartesian 1 1
+plot_points polar 2 30
+check
+save /tmp/sketchpad_plot_frame_only.gsp
+open /tmp/sketchpad_plot_frame_only.gsp
+check

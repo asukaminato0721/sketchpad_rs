@@ -1,0 +1,7 @@
+new
+point 200 180
+point 260 180
+circle 1 2
+point_on 3 242 138
+translate 4 90 1
+save /tmp/sketchpad_locus_circle_driver_base.gsp

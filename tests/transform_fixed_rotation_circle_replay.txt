@@ -1,0 +1,5 @@
+open /tmp/sketchpad_fixed_rotation_circle_base.gsp
+rotate 4 1 90
+save /tmp/sketchpad_fixed_rotation_circle_generated.gsp
+move 1 140 150
+save /tmp/sketchpad_fixed_rotation_circle_moved.gsp

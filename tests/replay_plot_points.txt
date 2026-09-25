@@ -1,0 +1,18 @@
+new
+parameter 10 5
+tabulate 1
+coordinate_system 199 125
+plot_points cartesian
+check
+save /tmp/sketchpad_plot_points_cartesian.gsp
+open /tmp/sketchpad_plot_points_cartesian.gsp
+check
+new
+parameter 10 5
+tabulate 1
+coordinate_system 199 125
+plot_points polar
+check
+save /tmp/sketchpad_plot_points_polar.gsp
+open /tmp/sketchpad_plot_points_polar.gsp
+check

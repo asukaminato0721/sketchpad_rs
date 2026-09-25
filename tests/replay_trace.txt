@@ -1,0 +1,16 @@
+new
+point 200 150
+trace 1 on
+check
+save /tmp/sketchpad_trace_port_point.gsp
+open /tmp/sketchpad_trace_port_point.gsp
+check
+new
+point 200 150
+point 300 150
+segment 1 2
+trace 3 on
+check
+save /tmp/sketchpad_trace_port_segment.gsp
+open /tmp/sketchpad_trace_port_segment.gsp
+check

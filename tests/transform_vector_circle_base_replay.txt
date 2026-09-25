@@ -1,0 +1,8 @@
+new
+point 150 120
+point 220 130
+segment 1 2
+point 100 200
+point 150 200
+circle 4 5
+save /tmp/sketchpad_vector_circle_base.gsp

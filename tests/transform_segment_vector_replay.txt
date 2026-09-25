@@ -1,0 +1,5 @@
+open /tmp/sketchpad_vector_base.gsp
+translate_segment_vector 3 1 2
+save /tmp/sketchpad_segment_vector_port.gsp
+move 2 250 140
+save /tmp/sketchpad_segment_vector_moved.gsp

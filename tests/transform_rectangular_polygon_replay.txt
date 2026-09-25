@@ -1,0 +1,5 @@
+open /tmp/sketchpad_vector_polygon_base.gsp
+translate_polygon_rectangular 7 2 -0.5
+save tests/fixtures/rectangular_translation_polygon_generated.gsp
+move 5 160 200
+save tests/fixtures/rectangular_translation_polygon_moved_generated.gsp

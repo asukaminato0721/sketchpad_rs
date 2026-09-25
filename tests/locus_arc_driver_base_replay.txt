@@ -1,0 +1,8 @@
+new
+point 100 200
+point 150 150
+point 200 200
+arc3 1 2 3
+point_on 4 130 160
+translate 5 90 1
+save /tmp/sketchpad_locus_arc_driver_base.gsp

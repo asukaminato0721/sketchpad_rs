@@ -1,0 +1,8 @@
+open tests/fixtures/locus_circle_driver_base.gsp
+locus 4 5
+check
+save /tmp/sketchpad_locus_circle_driver_generated.gsp
+open /tmp/sketchpad_locus_circle_driver_generated.gsp
+check
+move 1 220 190
+save /tmp/sketchpad_locus_circle_driver_moved_generated.gsp

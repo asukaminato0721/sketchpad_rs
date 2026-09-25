@@ -1,0 +1,17 @@
+new
+named_parameter speed 2.5 10 5
+check
+save tests/fixtures/table_parameter_named_generated.gsp
+open tests/fixtures/table_parameter_named_generated.gsp
+check
+parameter_value 1 3.25
+check
+save tests/fixtures/table_parameter_named_changed_generated.gsp
+open tests/fixtures/table_parameter_named_changed_generated.gsp
+check
+new
+named_parameter test 2.5 10 5
+check
+save tests/fixtures/table_parameter_test_generated.gsp
+open tests/fixtures/table_parameter_test_generated.gsp
+check

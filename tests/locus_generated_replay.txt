@@ -1,0 +1,6 @@
+open /tmp/sketchpad_locus_base.gsp
+locus 4 7
+check
+save /tmp/sketchpad_locus_generated.gsp
+open /tmp/sketchpad_locus_generated.gsp
+check

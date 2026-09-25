@@ -1,0 +1,9 @@
+new
+point 130 150
+point 230 160
+point 230 220
+point 290 220
+point 170 190
+point 210 190
+circle 5 6
+save /tmp/sketchpad_marked_angle_circle_base.gsp

@@ -1,0 +1,35 @@
+new
+plot_function x^2
+save /tmp/sketchpad_copy_plot_base.gsp
+open /tmp/sketchpad_copy_plot_base.gsp
+copy 8
+paste
+save /tmp/sketchpad_copy_plot_generated.gsp
+
+open /tmp/sketchpad_copy_plot_base.gsp
+copy 7
+paste
+save /tmp/sketchpad_copy_selected_function_generated.gsp
+
+new
+function x^2
+differentiate 1
+save /tmp/sketchpad_copy_derivative_base.gsp
+open /tmp/sketchpad_copy_derivative_base.gsp
+copy 2
+paste
+save /tmp/sketchpad_copy_derivative_generated.gsp
+
+open tests/fixtures/parametric_rectangular_original.gsp
+copy 1
+paste
+save /tmp/sketchpad_parametric_function_copied_generated.gsp
+
+open tests/fixtures/parametric_rectangular_original.gsp
+copy 2
+paste
+save /tmp/sketchpad_parametric_second_function_copied_generated.gsp
+
+open tests/fixtures/function_plot_copied_native.gsp
+move 9 239 145
+save /tmp/sketchpad_native_copy_plot_moved.gsp

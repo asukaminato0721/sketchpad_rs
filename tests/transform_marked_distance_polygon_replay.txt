@@ -1,0 +1,5 @@
+open /tmp/sketchpad_marked_distance_polygon_base.gsp
+translate_marked_distance 7 6 90
+save tests/fixtures/marked_distance_polygon_translation_generated.gsp
+move 2 300 120
+save tests/fixtures/marked_distance_polygon_translation_moved_generated.gsp

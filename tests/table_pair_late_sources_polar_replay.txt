@@ -1,0 +1,14 @@
+new
+point 300 300
+parameter 10 5
+parameter 10 38
+parameter_value 3 2
+tabulate_pair
+table_add 4
+parameter_value 3 3.25
+coordinate_system 199 125
+plot_table_data 4 polar
+check
+save tests/fixtures/table_pair_late_sources_polar_generated.gsp
+open tests/fixtures/table_pair_late_sources_polar_generated.gsp
+check

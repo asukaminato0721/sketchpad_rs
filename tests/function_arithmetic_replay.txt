@@ -1,0 +1,16 @@
+open tests/fixtures/function_base_frame.gsp
+plot_function x+1
+check
+save /tmp/sketchpad_function_x_plus_1_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function x^3
+check
+save /tmp/sketchpad_function_x_cubed_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function 2*(x+1)
+check
+save /tmp/sketchpad_function_two_times_x_plus_1_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function x+0.5
+check
+save /tmp/sketchpad_function_x_plus_half_generated.gsp

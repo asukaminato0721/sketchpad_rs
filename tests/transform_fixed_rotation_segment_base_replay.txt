@@ -1,0 +1,6 @@
+new
+point 130 150
+point 170 190
+point 210 190
+segment 2 3
+save /tmp/sketchpad_fixed_rotation_segment_base.gsp

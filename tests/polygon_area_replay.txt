@@ -1,0 +1,5 @@
+open /tmp/sketchpad_fixed_rotation_polygon_base.gsp
+area 5
+save tests/fixtures/polygon_area_generated.gsp
+move 4 190 250
+save tests/fixtures/polygon_area_moved_generated.gsp

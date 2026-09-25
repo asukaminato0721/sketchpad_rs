@@ -1,0 +1,6 @@
+open tests/fixtures/plot_table_distinct_base_original.gsp
+plot_table_data 3 polar
+check
+save /tmp/sketchpad_plot_table_distinct_polar.gsp
+open /tmp/sketchpad_plot_table_distinct_polar.gsp
+check

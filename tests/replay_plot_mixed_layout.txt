@@ -1,0 +1,9 @@
+new
+text 10 5 hello
+point 100 100
+coordinate_system 199 125
+plot_points cartesian 2.5 -1.25
+check
+save /tmp/sketchpad_plot_mixed_layout.gsp
+open /tmp/sketchpad_plot_mixed_layout.gsp
+check

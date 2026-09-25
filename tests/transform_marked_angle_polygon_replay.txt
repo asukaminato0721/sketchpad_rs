@@ -1,0 +1,5 @@
+open /tmp/sketchpad_marked_angle_polygon_base.gsp
+rotate_marked_angle 8 1 2 3 4
+save tests/fixtures/angle_rotation_polygon_generated.gsp
+move 4 290 190
+save tests/fixtures/angle_rotation_polygon_moved_generated.gsp

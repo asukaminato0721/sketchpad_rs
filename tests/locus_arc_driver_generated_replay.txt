@@ -1,0 +1,8 @@
+open tests/fixtures/locus_arc_driver_base.gsp
+locus 5 6
+check
+save /tmp/sketchpad_locus_arc_driver_generated.gsp
+open /tmp/sketchpad_locus_arc_driver_generated.gsp
+check
+move 2 150 130
+save /tmp/sketchpad_locus_arc_driver_moved_generated.gsp

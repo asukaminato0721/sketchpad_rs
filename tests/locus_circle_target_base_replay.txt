@@ -1,0 +1,10 @@
+new
+point 120 180
+point 300 180
+segment 1 2
+point_on 3 200 180
+point 200 100
+point 230 100
+segment 5 6
+circle_segment 4 7
+save /tmp/sketchpad_locus_circle_target_base.gsp

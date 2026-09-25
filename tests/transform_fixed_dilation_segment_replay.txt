@@ -1,0 +1,5 @@
+open /tmp/sketchpad_fixed_dilation_segment_base.gsp
+dilate 4 1 0.5
+save /tmp/sketchpad_fixed_dilation_segment_generated.gsp
+move 1 110 120
+save /tmp/sketchpad_fixed_dilation_segment_moved.gsp

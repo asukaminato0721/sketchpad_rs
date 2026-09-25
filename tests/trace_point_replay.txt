@@ -1,0 +1,3 @@
+new
+point 200 150
+save /tmp/sketchpad_trace_point_base.gsp

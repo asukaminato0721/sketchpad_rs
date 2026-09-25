@@ -1,0 +1,14 @@
+new
+point 150 120
+point 250 120
+point 100 220
+distance 1 2
+save /tmp/sketchpad_marked_distance_base.gsp
+open /tmp/sketchpad_marked_distance_base.gsp
+translate_marked_distance 3 4 90
+save /tmp/sketchpad_marked_distance_generated.gsp
+move 2 300 120
+save /tmp/sketchpad_marked_distance_moved_generated.gsp
+open /tmp/sketchpad_marked_distance_base.gsp
+translate_marked_distance 3 4 30
+save /tmp/sketchpad_marked_distance_angle30_generated.gsp

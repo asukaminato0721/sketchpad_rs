@@ -1,0 +1,19 @@
+new
+named_parameter speed 2.5 10 5
+tabulate 1 50 95
+table_add 2
+check
+save tests/fixtures/table_named_speed_two_rows_generated.gsp
+open tests/fixtures/table_named_speed_two_rows_generated.gsp
+check
+parameter_value 1 3.25
+table_add 2
+check
+save tests/fixtures/table_named_speed_three_rows_distinct_generated.gsp
+open tests/fixtures/table_named_speed_three_rows_distinct_generated.gsp
+check
+table_remove 2
+check
+save tests/fixtures/table_named_speed_row_removed_generated.gsp
+open tests/fixtures/table_named_speed_row_removed_generated.gsp
+check

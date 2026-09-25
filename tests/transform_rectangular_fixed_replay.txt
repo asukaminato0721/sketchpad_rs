@@ -1,0 +1,5 @@
+open /tmp/sketchpad_rectangular_distances_base.gsp
+translate_rectangular_fixed 5 2 -0.5
+save /tmp/sketchpad_rectangular_fixed_port.gsp
+move 5 120 200
+save /tmp/sketchpad_rectangular_fixed_moved.gsp

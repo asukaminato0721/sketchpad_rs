@@ -1,0 +1,11 @@
+open tests/fixtures/plot_table_distinct_base_original.gsp
+table_add 3
+check
+save /tmp/sketchpad_table_pair_three_rows.gsp
+open /tmp/sketchpad_table_pair_three_rows.gsp
+check
+plot_table_data 3 polar
+check
+save /tmp/sketchpad_table_pair_three_rows_polar.gsp
+open /tmp/sketchpad_table_pair_three_rows_polar.gsp
+check

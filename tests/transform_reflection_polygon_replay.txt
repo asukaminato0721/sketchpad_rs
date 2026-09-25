@@ -1,0 +1,5 @@
+open /tmp/sketchpad_reflection_polygon_base.gsp
+reflect 7 3
+save /tmp/sketchpad_reflection_polygon_generated.gsp
+move 5 230 180
+save /tmp/sketchpad_reflection_polygon_moved.gsp

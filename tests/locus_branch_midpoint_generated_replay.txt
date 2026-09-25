@@ -1,0 +1,8 @@
+open tests/fixtures/locus_branch_midpoint_base.gsp
+locus 4 8
+check
+save /tmp/sketchpad_locus_branch_midpoint_generated.gsp
+open /tmp/sketchpad_locus_branch_midpoint_generated.gsp
+check
+move 1 100 220
+save /tmp/sketchpad_locus_branch_midpoint_moved_generated.gsp

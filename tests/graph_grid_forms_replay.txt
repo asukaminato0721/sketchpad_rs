@@ -1,0 +1,16 @@
+new
+coordinate_system 199 125
+grid_form polar
+check
+save tests/fixtures/graph_polar_grid_generated.gsp
+new
+coordinate_system 199 125
+grid_form rectangular
+check
+save tests/fixtures/graph_rectangular_grid_generated.gsp
+new
+coordinate_system 199 125
+grid_form polar
+dotted_grid on
+check
+save tests/fixtures/graph_polar_dotted_generated.gsp

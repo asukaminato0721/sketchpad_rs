@@ -1,0 +1,10 @@
+new
+point 120 180
+point 300 180
+segment 1 2
+point_on 3 200 180
+translate 4 90 1
+translate 4 180 1
+segment 5 6
+midpoint 5 6
+save /tmp/sketchpad_locus_branch_midpoint_base.gsp

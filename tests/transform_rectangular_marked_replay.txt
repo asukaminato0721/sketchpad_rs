@@ -1,0 +1,6 @@
+open /tmp/sketchpad_rectangular_distances_base.gsp
+translate_rectangular_marked 5 6 7
+save /tmp/sketchpad_rectangular_marked_port.gsp
+move 2 300 120
+move 4 150 250
+save /tmp/sketchpad_rectangular_marked_moved.gsp

@@ -1,0 +1,3 @@
+open tests/fixtures/reflection_polygon_original.gsp
+move 2 170 230
+save /tmp/sketchpad_reflection_polygon_native_moved.gsp

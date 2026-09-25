@@ -1,0 +1,70 @@
+new
+point 100 100
+plot_function x^2
+save /tmp/sketchpad_function_prepoint_base.gsp
+open /tmp/sketchpad_function_prepoint_base.gsp
+clear 1
+save /tmp/sketchpad_function_prepoint_cleared.gsp
+
+new
+point 100 100
+function x
+function x^2
+plot_parametric 2 3 rectangular 0 1
+save /tmp/sketchpad_parametric_prepoint_base.gsp
+open /tmp/sketchpad_parametric_prepoint_base.gsp
+clear 1
+save /tmp/sketchpad_parametric_prepoint_cleared.gsp
+
+new
+text 10 5 hello
+point 100 100
+coordinate_system 199 125
+plot_points cartesian 2.5 -1.25
+save /tmp/sketchpad_plotted_prepoint_base.gsp
+open /tmp/sketchpad_plotted_prepoint_base.gsp
+clear 2
+save /tmp/sketchpad_plotted_prepoint_cleared.gsp
+
+new
+text 10 5 hello
+plot_function x^2
+save /tmp/sketchpad_function_pretext_base.gsp
+open /tmp/sketchpad_function_pretext_base.gsp
+clear 1
+save /tmp/sketchpad_function_pretext_cleared.gsp
+
+new
+point 100 100
+parameter 10 5
+tabulate 2
+coordinate_system 199 125
+plot_axis 2
+save /tmp/sketchpad_table_path_prepoint_base.gsp
+open /tmp/sketchpad_table_path_prepoint_base.gsp
+clear 1
+save /tmp/sketchpad_table_path_prepoint_cleared.gsp
+
+open /tmp/sketchpad_table_path_prepoint_base.gsp
+clear 2
+save /tmp/sketchpad_table_source_cleared.gsp
+
+new
+point 100 100
+parameter 10 5
+parameter 10 38
+tabulate_pair
+save /tmp/sketchpad_pair_table_prepoint_base.gsp
+open /tmp/sketchpad_pair_table_prepoint_base.gsp
+clear 1
+save /tmp/sketchpad_pair_table_prepoint_cleared.gsp
+
+open /tmp/sketchpad_table_path_prepoint_base.gsp
+copy 3
+paste
+save /tmp/sketchpad_table_copied.gsp
+
+open /tmp/sketchpad_pair_table_prepoint_base.gsp
+copy 4
+paste
+save /tmp/sketchpad_pair_table_copied.gsp

@@ -1,0 +1,6 @@
+open /tmp/sketchpad_circle_translation_base.gsp
+translate_circle 3 90 1
+save /tmp/sketchpad_circle_polar_port.gsp
+move 2 160 200
+move 1 120 210
+save /tmp/sketchpad_circle_polar_moved.gsp

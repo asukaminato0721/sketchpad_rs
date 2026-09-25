@@ -1,0 +1,16 @@
+new
+named_parameter speed 2.5 10 5
+point 150 120
+point 180 130
+line 2 3
+named_parameter test 0.25 10 38
+plot_path 5 4
+check
+save tests/fixtures/graph_plot_multiple_named_parameters_generated.gsp
+open tests/fixtures/graph_plot_multiple_named_parameters_generated.gsp
+check
+parameter_value 5 0.5
+check
+save tests/fixtures/graph_plot_multiple_named_parameters_changed_generated.gsp
+open tests/fixtures/graph_plot_multiple_named_parameters_changed_generated.gsp
+check

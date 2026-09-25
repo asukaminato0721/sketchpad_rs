@@ -1,0 +1,8 @@
+new
+point 100 100
+point 100 220
+segment 1 2
+point 160 160
+point 200 160
+segment 4 5
+save /tmp/sketchpad_reflection_segment_base.gsp

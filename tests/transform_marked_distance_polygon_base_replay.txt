@@ -1,0 +1,9 @@
+new
+point 150 120
+point 250 120
+point 100 190
+point 140 190
+point 120 230
+distance 1 2
+polygon 3 4 5
+save /tmp/sketchpad_marked_distance_polygon_base.gsp

@@ -1,0 +1,37 @@
+new
+point 199 125
+point 236 125
+circle 1 2
+plot_path_value 0.25 3
+check
+save tests/fixtures/graph_plot_circle_literal_generated.gsp
+open tests/fixtures/graph_plot_circle_literal_generated.gsp
+check
+new
+point 150 120
+point 250 170
+line 1 2
+plot_path_value -0.5 3
+check
+save tests/fixtures/graph_plot_line_literal_generated.gsp
+open tests/fixtures/graph_plot_line_literal_generated.gsp
+check
+new
+point 150 120
+point 250 170
+ray 1 2
+plot_path_value 2 3
+check
+save tests/fixtures/graph_plot_ray_literal_generated.gsp
+open tests/fixtures/graph_plot_ray_literal_generated.gsp
+check
+new
+parameter 10 5
+point 199 125
+point 236 125
+circle 2 3
+plot_path 1 4
+check
+save tests/fixtures/graph_plot_circle_parameter_generated.gsp
+open tests/fixtures/graph_plot_circle_parameter_generated.gsp
+check

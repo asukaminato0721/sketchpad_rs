@@ -1,0 +1,7 @@
+open /tmp/sketchpad_rectangular_distances_base.gsp
+translate_rectangular_mixed 5 7 2 horizontal_fixed
+translate_rectangular_mixed 5 6 -0.5 vertical_fixed
+save /tmp/sketchpad_rectangular_mixed_port.gsp
+move 2 300 120
+move 4 150 250
+save /tmp/sketchpad_rectangular_mixed_moved.gsp

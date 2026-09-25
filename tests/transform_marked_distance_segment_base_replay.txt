@@ -1,0 +1,8 @@
+new
+point 150 120
+point 250 120
+point 100 220
+point 200 220
+distance 1 2
+segment 3 4
+save /tmp/sketchpad_marked_distance_segment_base.gsp

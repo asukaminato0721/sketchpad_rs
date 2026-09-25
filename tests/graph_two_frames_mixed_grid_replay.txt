@@ -1,0 +1,6 @@
+open tests/fixtures/graph_two_coordinate_systems_original.gsp
+grid_form polar
+dotted_grid on
+mark_coordinate_system 4
+check
+save /tmp/sketchpad_graph_two_frames_mixed_grid.gsp

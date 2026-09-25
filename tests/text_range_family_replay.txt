@@ -1,0 +1,5 @@
+open tests/fixtures/text_object_generated_Hello.gsp
+format_range_family 1 0 2 TeX Gyre Adventor
+save /tmp/sketchpad_text_range_family_generated.gsp
+open /tmp/sketchpad_text_range_family_generated.gsp
+save /tmp/sketchpad_text_range_family_reopened.gsp

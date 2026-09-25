@@ -1,0 +1,9 @@
+new
+point 150 120
+point 220 130
+segment 1 2
+point 100 200
+point 140 200
+point 120 240
+polygon 4 5 6
+save /tmp/sketchpad_vector_polygon_base.gsp

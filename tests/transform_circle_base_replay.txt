@@ -1,0 +1,5 @@
+new
+point 100 200
+point 150 200
+circle 1 2
+save /tmp/sketchpad_circle_translation_base.gsp

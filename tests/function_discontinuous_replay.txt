@@ -1,0 +1,8 @@
+open tests/fixtures/function_base_frame.gsp
+plot_function tan(x)
+check
+save /tmp/sketchpad_function_tan_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function 1/x
+check
+save /tmp/sketchpad_function_reciprocal_generated.gsp

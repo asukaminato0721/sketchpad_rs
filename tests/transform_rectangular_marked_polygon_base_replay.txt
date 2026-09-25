@@ -1,0 +1,13 @@
+new
+point 150 120
+point 250 120
+point 150 180
+point 150 230
+point 100 210
+distance 1 2
+distance 3 4
+point 100 190
+point 140 190
+point 120 230
+polygon 8 9 10
+save /tmp/sketchpad_rectangular_marked_polygon_base.gsp

@@ -1,0 +1,5 @@
+open /tmp/sketchpad_marked_ratio_polygon_base.gsp
+dilate_marked_ratio 8 1 2 3 4
+save tests/fixtures/ratio_dilation_polygon_generated.gsp
+move 4 255 100
+save tests/fixtures/ratio_dilation_polygon_moved_generated.gsp

@@ -1,0 +1,8 @@
+open tests/fixtures/locus_two_translations_base.gsp
+locus 4 6
+check
+save /tmp/sketchpad_locus_two_translations_generated.gsp
+open /tmp/sketchpad_locus_two_translations_generated.gsp
+check
+move 1 100 220
+save /tmp/sketchpad_locus_two_translations_moved_generated.gsp

@@ -1,0 +1,5 @@
+open /tmp/sketchpad_fixed_dilation_polygon_base.gsp
+dilate 5 1 0.5
+save tests/fixtures/fixed_dilation_polygon_generated.gsp
+move 1 110 120
+save tests/fixtures/fixed_dilation_polygon_moved_generated.gsp

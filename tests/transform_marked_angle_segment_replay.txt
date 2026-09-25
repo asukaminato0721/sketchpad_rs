@@ -1,0 +1,5 @@
+open /tmp/sketchpad_marked_angle_segment_base.gsp
+rotate_marked_angle 7 1 2 3 4
+save /tmp/sketchpad_marked_angle_segment_generated.gsp
+move 4 290 190
+save /tmp/sketchpad_marked_angle_segment_moved.gsp

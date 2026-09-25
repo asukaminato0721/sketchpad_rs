@@ -1,0 +1,5 @@
+new
+coordinate_system 199 125
+dotted_grid on
+check
+save tests/fixtures/graph_dotted_grid_generated.gsp

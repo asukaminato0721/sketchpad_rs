@@ -1,0 +1,7 @@
+new
+point 130 150
+point 170 190
+point 210 190
+point 190 230
+polygon 2 3 4
+save /tmp/sketchpad_fixed_rotation_polygon_base.gsp

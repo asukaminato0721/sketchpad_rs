@@ -1,0 +1,8 @@
+open tests/fixtures/locus_bisector_target_base.gsp
+locus 4 7
+check
+save /tmp/sketchpad_locus_bisector_target_generated.gsp
+open /tmp/sketchpad_locus_bisector_target_generated.gsp
+check
+move 1 100 220
+save /tmp/sketchpad_locus_bisector_target_moved_generated.gsp

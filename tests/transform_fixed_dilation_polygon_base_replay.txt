@@ -1,0 +1,7 @@
+new
+point 100 120
+point 140 120
+point 180 120
+point 160 160
+polygon 2 3 4
+save /tmp/sketchpad_fixed_dilation_polygon_base.gsp

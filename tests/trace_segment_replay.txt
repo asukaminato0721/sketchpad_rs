@@ -1,0 +1,5 @@
+new
+point 200 150
+point 300 150
+segment 1 2
+save /tmp/sketchpad_trace_segment_base.gsp

@@ -1,0 +1,16 @@
+open tests/fixtures/function_base_frame.gsp
+plot_function sin(x)
+check
+save /tmp/sketchpad_function_sin_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function cos(x)
+check
+save /tmp/sketchpad_function_cos_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function sin(x)+cos(x)
+check
+save /tmp/sketchpad_function_sin_plus_cos_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function_degrees sin(x)
+check
+save /tmp/sketchpad_function_sin_degrees_generated.gsp

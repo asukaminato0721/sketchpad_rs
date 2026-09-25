@@ -1,0 +1,19 @@
+open tests/fixtures/function_plot_square.gsp
+clear 8
+save /tmp/sketchpad_function_plot_cleared.gsp
+open tests/fixtures/function_plot_square.gsp
+clear 7
+save /tmp/sketchpad_function_definition_cleared.gsp
+open tests/fixtures/parametric_rectangular_original.gsp
+clear 9
+save /tmp/sketchpad_parametric_cleared.gsp
+open tests/fixtures/plot_points_generated_cartesian.gsp
+clear 9
+save /tmp/sketchpad_plotted_point_cleared.gsp
+open tests/fixtures/function_plot_square.gsp
+point 310 190
+point 340 210
+save /tmp/sketchpad_function_plot_with_tail_points.gsp
+open /tmp/sketchpad_function_plot_with_tail_points.gsp
+clear 9
+save /tmp/sketchpad_function_tail_point_cleared.gsp

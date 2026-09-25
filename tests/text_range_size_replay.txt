@@ -1,0 +1,5 @@
+open tests/fixtures/text_mixed_size36_he_original.gsp
+format_range 1 0 2 larger
+save /tmp/sketchpad_text_range_size48.gsp
+open /tmp/sketchpad_text_range_size48.gsp
+save /tmp/sketchpad_text_range_size48_reopened.gsp

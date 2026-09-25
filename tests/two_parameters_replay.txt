@@ -1,0 +1,7 @@
+new
+parameter 10 5
+parameter 10 38
+check
+save tests/fixtures/table_two_parameters_generated.gsp
+open tests/fixtures/table_two_parameters_generated.gsp
+check

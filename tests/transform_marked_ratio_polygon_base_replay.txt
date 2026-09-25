@@ -1,0 +1,10 @@
+new
+point 100 120
+point 180 100
+point 230 100
+point 205 100
+point 140 150
+point 180 150
+point 160 190
+polygon 5 6 7
+save /tmp/sketchpad_marked_ratio_polygon_base.gsp

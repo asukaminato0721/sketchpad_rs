@@ -1,0 +1,8 @@
+new
+point 120 180
+point 300 180
+segment 1 2
+point_on 3 200 180
+point 200 100
+line 4 5
+save /tmp/sketchpad_locus_line_target_base.gsp

@@ -1,0 +1,12 @@
+new
+point 120 180
+point 300 180
+segment 1 2
+point_on 3 200 180
+point 150 100
+point 250 100
+polygon 4 5 6
+point 100 50
+point 200 50
+translate_vector 7 8 9
+save /tmp/sketchpad_locus_vector_polygon_target_base.gsp

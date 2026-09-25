@@ -1,0 +1,25 @@
+new
+parameter 10 5
+coordinate_system 199 125
+plot_axis 1
+check
+save tests/fixtures/graph_plot_value_axis_no_table_generated.gsp
+open tests/fixtures/graph_plot_value_axis_no_table_generated.gsp
+check
+new
+parameter 10 5
+tabulate 1
+coordinate_system 199 125
+plot_axis 1
+check
+save tests/fixtures/graph_plot_value_axis_generated.gsp
+open tests/fixtures/graph_plot_value_axis_generated.gsp
+check
+new
+parameter 10 5
+coordinate_system 199 125
+plot_axis 1 6
+check
+save tests/fixtures/graph_plot_value_y_generated.gsp
+open tests/fixtures/graph_plot_value_y_generated.gsp
+check

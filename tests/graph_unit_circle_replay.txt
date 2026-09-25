@@ -1,0 +1,4 @@
+open tests/fixtures/circle.gsp
+coordinate_system_from_circle 3
+check
+save /tmp/sketchpad_graph_unit_circle_generated.gsp

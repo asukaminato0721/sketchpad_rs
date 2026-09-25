@@ -1,0 +1,28 @@
+open tests/fixtures/segment.gsp
+coordinate_system_from_distances 3
+check
+save /tmp/sketchpad_graph_unit_segment_generated.gsp
+open tests/fixtures/segment.gsp
+coordinate_system_from_distances 3 origin=2
+check
+save /tmp/sketchpad_graph_unit_segment_point_generated.gsp
+open tests/fixtures/graph_two_segments_base.gsp
+coordinate_system_from_distances 3 6
+check
+save /tmp/sketchpad_graph_two_segments_generated.gsp
+open tests/fixtures/graph_two_segments_base.gsp
+coordinate_system_from_distances 3 6 origin=1
+check
+save /tmp/sketchpad_graph_two_segments_point_generated.gsp
+open tests/fixtures/wine_point_distance.gsp
+coordinate_system_from_distances 6
+check
+save /tmp/sketchpad_graph_unit_distance_value_generated.gsp
+open tests/fixtures/graph_unit_segment_generated.gsp
+grid_form polar
+check
+save /tmp/sketchpad_graph_unit_segment_polar_generated.gsp
+open tests/fixtures/wine_segment_length.gsp
+coordinate_system_from_distances 4
+check
+save /tmp/sketchpad_graph_unit_segment_length_generated.gsp

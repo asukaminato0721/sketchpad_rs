@@ -1,0 +1,5 @@
+open /tmp/sketchpad_marked_distance_circle_base.gsp
+translate_marked_distance 6 5 90
+save /tmp/sketchpad_marked_distance_circle_port.gsp
+move 2 300 120
+save /tmp/sketchpad_marked_distance_circle_moved.gsp

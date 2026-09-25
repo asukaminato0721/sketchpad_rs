@@ -1,0 +1,8 @@
+open tests/fixtures/locus_parallel_target_base.gsp
+locus 4 8
+check
+save /tmp/sketchpad_locus_parallel_target_generated.gsp
+open /tmp/sketchpad_locus_parallel_target_generated.gsp
+check
+move 1 100 220
+save /tmp/sketchpad_locus_parallel_target_moved_generated.gsp

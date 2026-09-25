@@ -1,0 +1,5 @@
+new
+point 100 200
+point 200 200
+segment 1 2
+save /tmp/sketchpad_segment_translation_base.gsp

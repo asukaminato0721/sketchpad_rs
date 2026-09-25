@@ -1,0 +1,12 @@
+new
+parameter 10 5
+parameter 10 38
+tabulate_pair
+table_add 3
+parameter2_value 2
+coordinate_system 199 125
+plot_table_data 3
+check
+save tests/fixtures/plot_table_distinct_generated.gsp
+open tests/fixtures/plot_table_distinct_generated.gsp
+check

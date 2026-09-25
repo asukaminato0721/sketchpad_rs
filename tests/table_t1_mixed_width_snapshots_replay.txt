@@ -1,0 +1,12 @@
+new
+parameter 10 5
+parameter_value 1 -2.5
+tabulate 1 10 38
+table_add 2
+parameter_value 1 12.34
+table_add 2
+parameter_value 1 -99.99
+check
+save tests/fixtures/table_t1_mixed_width_snapshots_generated.gsp
+open tests/fixtures/table_t1_mixed_width_snapshots_generated.gsp
+check

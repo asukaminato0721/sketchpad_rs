@@ -1,0 +1,5 @@
+open tests/fixtures/graph_two_coordinate_systems_original.gsp
+mark_coordinate_system 4
+plot_points cartesian 1 2
+check
+save /tmp/sketchpad_graph_mark_coordinate_system.gsp

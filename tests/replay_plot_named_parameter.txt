@@ -1,0 +1,9 @@
+new
+named_parameter speed 2.5 10 5
+tabulate 1 10 45
+coordinate_system 199 125
+plot_points cartesian
+check
+save /tmp/sketchpad_plot_named_parameter.gsp
+open /tmp/sketchpad_plot_named_parameter.gsp
+check

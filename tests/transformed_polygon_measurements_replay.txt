@@ -1,0 +1,6 @@
+open tests/fixtures/fixed_rotation_polygon_original.gsp
+perimeter 6
+area 6
+save tests/fixtures/transformed_polygon_measurements_generated.gsp
+move 4 190 250
+save tests/fixtures/transformed_polygon_measurements_moved_generated.gsp

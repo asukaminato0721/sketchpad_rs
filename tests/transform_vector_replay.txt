@@ -1,0 +1,11 @@
+new
+point 150 120
+point 220 130
+segment 1 2
+point 100 200
+save /tmp/sketchpad_vector_base.gsp
+open /tmp/sketchpad_vector_base.gsp
+translate_vector 4 1 2
+save /tmp/sketchpad_vector_generated.gsp
+move 2 250 130
+save /tmp/sketchpad_vector_moved_generated.gsp

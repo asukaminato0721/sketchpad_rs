@@ -1,0 +1,12 @@
+new
+parameter 10 5
+parameter 10 38
+tabulate_pair
+parameter_value 2 2.5
+coordinate_system 199 125
+plot_table_data 3
+parameter_value 2 3.25
+check
+save tests/fixtures/plot_table_fraction_changed_generated.gsp
+open tests/fixtures/plot_table_fraction_changed_generated.gsp
+check

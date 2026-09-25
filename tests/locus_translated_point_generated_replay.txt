@@ -1,0 +1,8 @@
+open tests/fixtures/locus_translated_point_base.gsp
+locus 4 5
+check
+save /tmp/sketchpad_locus_translated_point_generated.gsp
+open /tmp/sketchpad_locus_translated_point_generated.gsp
+check
+move 1 100 220
+save /tmp/sketchpad_locus_translated_point_moved_generated.gsp

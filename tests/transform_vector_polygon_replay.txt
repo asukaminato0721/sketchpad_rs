@@ -1,0 +1,5 @@
+open /tmp/sketchpad_vector_polygon_base.gsp
+translate_vector 7 1 2
+save tests/fixtures/vector_translation_polygon_generated.gsp
+move 2 250 130
+save tests/fixtures/vector_translation_polygon_moved_generated.gsp

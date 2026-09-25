@@ -1,0 +1,5 @@
+open /tmp/sketchpad_reflection_segment_base.gsp
+reflect 6 3
+save /tmp/sketchpad_reflection_segment_generated.gsp
+move 2 120 220
+save /tmp/sketchpad_reflection_segment_moved.gsp

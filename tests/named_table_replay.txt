@@ -1,0 +1,20 @@
+new
+named_parameter speed 2.5 10 5
+tabulate 1 10 45
+check
+save tests/fixtures/table_named_speed_snapshot_generated.gsp
+open tests/fixtures/table_named_speed_snapshot_generated.gsp
+check
+new
+named_parameter speed 3.25 10 5
+tabulate 1 10 45
+check
+save tests/fixtures/table_named_speed_precision2_snapshot_generated.gsp
+open tests/fixtures/table_named_speed_precision2_snapshot_generated.gsp
+check
+open tests/fixtures/graph_plot_multiple_named_parameters_generated.gsp
+tabulate 5 10 78
+check
+save tests/fixtures/table_named_test_late_source_generated.gsp
+open tests/fixtures/table_named_test_late_source_generated.gsp
+check

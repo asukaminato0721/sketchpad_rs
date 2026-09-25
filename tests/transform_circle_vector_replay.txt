@@ -1,0 +1,6 @@
+open /tmp/sketchpad_vector_circle_base.gsp
+translate_circle_vector 6 1 2
+save /tmp/sketchpad_circle_vector_port.gsp
+move 2 250 140
+move 5 160 200
+save /tmp/sketchpad_circle_vector_moved.gsp

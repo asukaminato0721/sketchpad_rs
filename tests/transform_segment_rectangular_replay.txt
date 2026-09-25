@@ -1,0 +1,5 @@
+open /tmp/sketchpad_segment_translation_base.gsp
+translate_segment_rectangular 3 2 -0.5
+save /tmp/sketchpad_segment_rectangular_port.gsp
+move 2 230 220
+save /tmp/sketchpad_segment_rectangular_moved.gsp
