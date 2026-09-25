@@ -943,6 +943,21 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_link_url_button(rest)?;
                     println!("line {}: link_url_button -> object {id}", index + 1);
                 }
+                "page" => {
+                    let page: usize = rest.parse().map_err(|_| "invalid page number")?;
+                    if page == 0 || page > document.page_count {
+                        return Err("page number is outside this document".into());
+                    }
+                    document.active_page = page - 1;
+                }
+                "link_page_button" => {
+                    let page: usize = rest.parse().map_err(|_| "invalid destination page")?;
+                    if page == 0 {
+                        return Err("destination pages start at 1".into());
+                    }
+                    let id = document.add_link_page_button(page - 1)?;
+                    println!("line {}: link_page_button -> object {id}", index + 1);
+                }
                 "activate_button" => {
                     let id: usize = rest.parse().map_err(|_| "invalid button ID")?;
                     document.activate_hide_show_button(id)?;

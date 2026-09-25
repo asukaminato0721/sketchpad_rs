@@ -1,6 +1,6 @@
-# Link Action Button: URL variant
+# Link Action Button
 
-The [Sketchpad 5 Reference Center](https://referencecenter.dynamicgeometry.com/gsp-reference-center/objects_btns_linkprops.htm) describes Link buttons for pages and URLs, including `sketchdoc://` documents next to the current sketch. This pass covers the URL variant. Page destinations and activation on the linked page remain to be analyzed.
+The [Sketchpad 5 Reference Center](https://referencecenter.dynamicgeometry.com/gsp-reference-center/objects_btns_linkprops.htm) describes Link buttons for pages and URLs, including `sketchdoc://` documents next to the current sketch and optional button activation on a destination page.
 
 ## Native records
 
@@ -12,4 +12,10 @@ The three native URL fixtures import as editable with `partial_view=false` and p
 
 `tests/replay_link_url_button.txt` creates a web URL button and a `sketchdoc://point.gsp` button. The web URL file opened and saved byte-identically in native Sketchpad 5. The Rust editor exposes URL Link creation from Edit > Action Buttons, draws the button in desktop and SVG output, and uses the system opener for HTTP(S) and file URLs. A `sketchdoc://` link opens a sibling sketch in the editor; a runtime test clicks that generated button and verifies the target document is loaded.
 
-The native `sketchdoc://` click under Wine changed the visible sketch, but the capture did not identify the destination clearly enough to treat it as verified behavior. Page Links, other special URL schemes, and direct native click comparison remain pending.
+The native `sketchdoc://` click under Wine changed the visible sketch, but the capture did not identify the destination clearly enough to treat it as verified behavior. Other special URL schemes and direct native URL click comparison remain pending.
+
+## Page destinations
+
+`two_page_blank_native.gsp` has a free point on page 1 and an empty page 2. Native Sketchpad created `action_link_page_default_original.gsp` on page 2, targeting page 1, and `action_link_page_two_original.gsp` on page 1, targeting page 2. Both use object code 0 and the same six record kinds as URL Links. Their `0x0906` payload is 24 bytes with action code 5 at offset 12, a zero-based destination page index at offset 14, and zero at offset 16 when no button on the destination page is chosen. The native label is `链接` (Link). `assets/action_link_page_group.bin` preserves the 142-byte native group. The two files import losslessly, and clicking either in native Sketchpad navigated to the page indicated by the record.
+
+The Rust editor renders and activates imported Page Links. `tests/replay_link_page_button.txt` appends a Page Link or a URL Link to the last page of the native two-page base. Both port-generated files opened and saved byte-identically in native Sketchpad, and clicking the generated Page Link there navigated to page 1. The writer updates each edited page's object count, inserts Link groups before its trailer, and validates reordered global object IDs after save. `two_page_two_points_native.gsp` exercises an earlier-page insertion that shifts a later-page point ID. `replay_link_earlier_page.txt` generated first-page Page and URL Links; native Sketchpad opened and saved both byte-identically. Clicking the generated first-page Page Link there navigated to page 2. General multi-page structural editing and destination-button activation remain pending.

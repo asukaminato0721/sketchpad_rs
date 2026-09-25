@@ -122,6 +122,111 @@ pub struct LinkUrlButtonGroup {
     records: [Record; 6],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkPageButtonGroup {
+    records: [Record; 6],
+}
+
+impl LinkPageButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = parse_records(
+            bytes,
+            [
+                OBJECT_HEADER,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                0x08a2,
+                OBJECT_END,
+            ],
+        )?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template(
+        target_page: usize,
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut group = Self::parse(include_bytes!("../assets/action_link_page_group.bin"))?;
+        group.set_target_page(target_page)?;
+        group.set_label(label)?;
+        group.set_screen_anchor(anchor);
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records[0].payload;
+        let action = &self.records[1].payload;
+        let label = &self.records[2].payload;
+        if header.len() != 28 || u16_at(header, 0) != 0 {
+            return Err("Page Link needs an object code 0 header".into());
+        }
+        if action.len() != 24
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) != 24
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 5
+            || u32_at(action, 16) != 0
+        {
+            return Err("Unsupported Page Link action".into());
+        }
+        if label.len() < 26
+            || !valid_zero_terminated_text(label, 22)
+            || self.records[3].payload.len() != 2
+            || self.records[4].payload.len() != 8
+            || !self.records[5].payload.is_empty()
+        {
+            return Err("Page Link label or auxiliary records are invalid".into());
+        }
+        Ok(())
+    }
+
+    pub fn target_page(&self) -> usize {
+        u16_at(&self.records[1].payload, 14) as usize
+    }
+
+    pub fn set_target_page(&mut self, target_page: usize) -> Result<(), String> {
+        let page = u16::try_from(target_page).map_err(|_| "Page Link target exceeds 65535")?;
+        self.records[1].payload[14..16].copy_from_slice(&page.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        let payload = &self.records[2].payload;
+        let len = u16_at(payload, 22) as usize;
+        std::str::from_utf8(&payload[24..24 + len])
+            .map_err(|_| "Page Link label is not UTF-8".into())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        set_zero_terminated_text(&mut self.records[2], 22, label)
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records[1].payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records[1].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
+        self.records[1].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records[0].payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records)
+    }
+}
+
 impl LinkUrlButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let records = parse_records(
@@ -1264,6 +1369,28 @@ mod tests {
     }
 
     #[test]
+    fn native_page_link_destinations_round_trip() {
+        for (file, destination) in [
+            (
+                include_bytes!("../tests/fixtures/action_link_page_default_original.gsp")
+                    .as_slice(),
+                0,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_page_two_original.gsp").as_slice(),
+                1,
+            ),
+        ] {
+            let bytes = link_page_group(file);
+            let group = LinkPageButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.target_page(), destination);
+            assert_eq!(group.label_utf8().unwrap(), "链接");
+            assert_eq!(group.screen_anchor(), (10, 5));
+            assert_eq!(group.encode(), bytes);
+        }
+    }
+
+    #[test]
     fn native_scroll_button_modes_round_trip() {
         for (file, expected) in [
             (
@@ -1555,6 +1682,35 @@ mod tests {
             }
         }
         panic!("Link URL group not found");
+    }
+
+    fn link_page_group(file: &[u8]) -> Vec<u8> {
+        let mut offset = 4;
+        let mut start = None;
+        let mut is_link = false;
+        while offset < file.len() {
+            let len = u32_at(file, offset) as usize;
+            let kind = u32_at(file, offset + 4);
+            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 0 {
+                start = Some(offset);
+                is_link = false;
+            }
+            if start.is_some()
+                && kind == ACTION_PAYLOAD
+                && len == 24
+                && u16_at(file, offset + 20) == 5
+            {
+                is_link = true;
+            }
+            offset += 8 + len + len % 2;
+            if kind == OBJECT_END && start.is_some() {
+                if is_link {
+                    return file[start.unwrap()..offset].to_vec();
+                }
+                start = None;
+            }
+        }
+        panic!("Page Link group not found");
     }
 
     fn object_hidden(file: &[u8], target: usize) -> bool {

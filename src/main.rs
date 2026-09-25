@@ -186,6 +186,12 @@ struct PresentationButtonDraft {
     mode: PresentationMode,
 }
 #[derive(Clone)]
+struct LinkButtonDraft {
+    use_page: bool,
+    target_page: usize,
+    url: String,
+}
+#[derive(Clone)]
 struct PresentationTrack {
     id: usize,
     targets: Vec<usize>,
@@ -221,7 +227,7 @@ struct Editor {
     movement_button_dialog: Option<MovementButtonDraft>,
     scroll_button_dialog: Option<ScrollButtonDraft>,
     presentation_button_dialog: Option<PresentationButtonDraft>,
-    link_url_dialog: Option<String>,
+    link_dialog: Option<LinkButtonDraft>,
     dragging: Option<usize>,
     drag_offset: egui::Vec2,
     text_draft: String,
@@ -309,7 +315,7 @@ impl Editor {
             movement_button_dialog: None,
             scroll_button_dialog: None,
             presentation_button_dialog: None,
-            link_url_dialog: None,
+            link_dialog: None,
             dragging: None,
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
@@ -538,8 +544,12 @@ impl Editor {
             self.doc.path.clone()
         };
         let Some(path) = path else { return false };
+        let inserted_multi_page_links = self.doc.has_pending_multi_page_links();
         match self.doc.save_to(&path) {
             Ok(()) => {
+                if inserted_multi_page_links {
+                    self.selection_order.clear();
+                }
                 self.status = format!("Saved {}", path.display());
                 true
             }
@@ -844,6 +854,7 @@ impl Editor {
                     | Kind::ScrollButton { label, anchor, .. }
                     | Kind::PresentationButton { label, anchor, .. }
                     | Kind::LinkUrlButton { label, anchor, .. }
+                    | Kind::LinkPageButton { label, anchor, .. }
                     if self.action_button_rect(v, *anchor, label).contains(p))
         }) {
             return Some(object.id);
@@ -1586,6 +1597,15 @@ impl Editor {
                         self.status = error;
                     }
                     self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && let Kind::LinkPageButton { target_page, .. } = self.doc.objects[id - 1].kind
+                {
+                    if let Err(error) = self.activate_link_page(target_page) {
+                        self.status = error;
+                    }
                     return;
                 }
                 if !multi {
@@ -2816,6 +2836,21 @@ impl Editor {
         Ok(())
     }
 
+    fn activate_link_page(&mut self, target_page: usize) -> Result<(), String> {
+        if target_page >= self.doc.page_count {
+            return Err("Link destination page is unavailable".into());
+        }
+        self.animations.clear();
+        self.movements.clear();
+        self.presentations.clear();
+        self.doc.active_page = target_page;
+        self.doc.selected.clear();
+        self.selection_order.clear();
+        self.fit();
+        self.status = format!("Opened page {}", target_page + 1);
+        Ok(())
+    }
+
     fn action_is_running(&self, id: usize) -> bool {
         match self
             .doc
@@ -2899,6 +2934,7 @@ impl Editor {
                 target, placement, ..
             } => self.scroll_to_button_target(target, placement, viewport),
             Kind::LinkUrlButton { url, .. } => self.activate_link_url(&url),
+            Kind::LinkPageButton { target_page, .. } => self.activate_link_page(target_page),
             Kind::PresentationButton { .. } => {
                 self.activate_presentation_button(id, viewport, depth + 1)
             }
@@ -3330,6 +3366,7 @@ impl Editor {
                                             | Kind::ScrollButton { .. }
                                             | Kind::PresentationButton { .. }
                                             | Kind::LinkUrlButton { .. }
+                                            | Kind::LinkPageButton { .. }
                                             | Kind::Unsupported(_)
                                     )
                                 })
@@ -3406,10 +3443,17 @@ impl Editor {
                             });
                             ui.close();
                         }
-                        if ui.add_enabled(!self.doc.partial_view && self.doc.page_count == 1,
+                        if ui.add_enabled(
+                            (!self.doc.partial_view && self.doc.page_count == 1)
+                                || (self.doc.page_count > 1
+                                    && !self.doc.objects.iter().any(|object| matches!(object.kind, Kind::Unsupported(_)))),
                             egui::Button::new("Link…")).clicked()
                         {
-                            self.link_url_dialog = Some("https://".into());
+                            self.link_dialog = Some(LinkButtonDraft {
+                                use_page: self.doc.page_count > 1,
+                                target_page: usize::from(self.doc.active_page == 0),
+                                url: "https://".into(),
+                            });
                             ui.close();
                         }
                         let scroll_target = match self.selection_order.as_slice() {
@@ -4499,7 +4543,18 @@ impl Editor {
             ui.separator();
             ui.label(format!("{} objects", self.doc.objects.len()));
             if self.doc.partial_view {
-                ui.colored_label(egui::Color32::DARK_RED, "Partial view: unsupported objects");
+                let reason = if self.doc.page_count > 1
+                    && self
+                        .doc
+                        .objects
+                        .iter()
+                        .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
+                {
+                    "Multi-page editing is limited"
+                } else {
+                    "Partial view: unsupported objects"
+                };
+                ui.colored_label(egui::Color32::DARK_RED, reason);
             }
             if self.doc.dirty {
                 ui.label("Unsaved changes");
@@ -4871,7 +4926,8 @@ impl Editor {
                     | Kind::MovementButton { label, anchor, .. }
                     | Kind::ScrollButton { label, anchor, .. }
                     | Kind::PresentationButton { label, anchor, .. }
-                    | Kind::LinkUrlButton { label, anchor, .. } = &object.kind
+                    | Kind::LinkUrlButton { label, anchor, .. }
+                    | Kind::LinkPageButton { label, anchor, .. } = &object.kind
                     {
                         let box_rect = self.action_button_rect(&vp, *anchor, label);
                         ui.painter().rect_filled(
@@ -5217,33 +5273,59 @@ impl Editor {
                 self.presentation_button_dialog = Some(draft);
             }
         }
-        if let Some(mut url) = self.link_url_dialog.clone() {
+        if let Some(mut draft) = self.link_dialog.clone() {
             let mut create = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::new("link_url_button_settings")).show(root.ctx(), |ui| {
+            egui::Modal::new(egui::Id::new("link_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Link Button");
-                ui.label("URL");
-                ui.text_edit_singleline(&mut url);
+                if self.doc.page_count > 1 {
+                    ui.radio_value(&mut draft.use_page, true, "Page");
+                    if draft.use_page {
+                        egui::ComboBox::from_id_salt("link_target_page")
+                            .selected_text(format!("Page {}", draft.target_page + 1))
+                            .show_ui(ui, |ui| {
+                                for page in 0..self.doc.page_count {
+                                    if page != self.doc.active_page {
+                                        ui.selectable_value(
+                                            &mut draft.target_page,
+                                            page,
+                                            format!("Page {}", page + 1),
+                                        );
+                                    }
+                                }
+                            });
+                    }
+                    ui.radio_value(&mut draft.use_page, false, "URL");
+                }
+                if !draft.use_page {
+                    ui.label("URL");
+                    ui.text_edit_singleline(&mut draft.url);
+                }
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });
             if cancel {
-                self.link_url_dialog = None;
+                self.link_dialog = None;
             } else if create {
-                match self.doc.add_link_url_button(&url) {
+                let result = if draft.use_page {
+                    self.doc.add_link_page_button(draft.target_page)
+                } else {
+                    self.doc.add_link_url_button(&draft.url)
+                };
+                match result {
                     Ok(id) => {
                         self.select_only(id);
-                        self.link_url_dialog = None;
+                        self.link_dialog = None;
                     }
                     Err(error) => {
                         self.status = error;
-                        self.link_url_dialog = Some(url);
+                        self.link_dialog = Some(draft);
                     }
                 }
             } else {
-                self.link_url_dialog = Some(url);
+                self.link_dialog = Some(draft);
             }
         }
         if self.named_parameter_dialog {
@@ -6328,6 +6410,45 @@ mod tests {
             editor.doc.path.as_ref().unwrap().file_name().unwrap(),
             "point.gsp"
         );
+    }
+
+    #[test]
+    fn page_link_buttons_switch_pages() {
+        for (bytes, source_page, destination_page) in [
+            (
+                include_bytes!("../tests/fixtures/action_link_page_default_original.gsp")
+                    .as_slice(),
+                1,
+                0,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_page_two_original.gsp").as_slice(),
+                0,
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_link_page_port_generated.gsp").as_slice(),
+                1,
+                0,
+            ),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            editor.doc.active_page = source_page;
+            editor.fit();
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: editor.scale,
+                center: editor.center,
+            };
+            let Kind::LinkPageButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+                panic!();
+            };
+            let click = editor
+                .action_button_rect(&viewport, *anchor, label)
+                .center();
+            editor.click(&viewport, click, false);
+            assert_eq!(editor.doc.active_page, destination_page);
+        }
     }
 
     #[test]

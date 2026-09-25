@@ -114,6 +114,11 @@ xvfb-run -a bash -c '
     "$4" -window root "${capture_prefix}_after_action.png"
   fi
   if [[ "${SKETCHPAD_WINE_ACTION_CLICK_ONLY:-}" == "1" ]]; then
+    if [[ -n "${SKETCHPAD_WINE_PRE_ACTION_KEY:-}" ]]; then
+      xdotool key --clearmodifiers "$SKETCHPAD_WINE_PRE_ACTION_KEY"
+      sleep 0.5
+      "$4" -window root "${capture_prefix}_before_action_click.png"
+    fi
     xdotool mousemove "${SKETCHPAD_WINE_ACTION_CLICK_X:-105}" "${SKETCHPAD_WINE_ACTION_CLICK_Y:-85}" click 1
     sleep "${SKETCHPAD_WINE_ACTION_WAIT_SECONDS:-1}"
     "$4" -window root "${capture_prefix}_after_action_click.png"
@@ -238,6 +243,11 @@ xvfb-run -a bash -c '
     xdotool mousemove "$SKETCHPAD_WINE_DIALOG_FINAL_X" "${SKETCHPAD_WINE_DIALOG_FINAL_Y:-348}" click 1
     sleep 0.5
     "$4" -window root "${capture_prefix}_after_dialog_final.png"
+  fi
+  if [[ -n "${SKETCHPAD_WINE_DIALOG_FINAL_CONFIRM_KEY:-}" ]]; then
+    xdotool key --clearmodifiers "$SKETCHPAD_WINE_DIALOG_FINAL_CONFIRM_KEY"
+    sleep 0.5
+    "$4" -window root "${capture_prefix}_after_dialog_final_confirm.png"
   fi
   if [[ "${SKETCHPAD_WINE_DRAG_AFTER_MENU:-}" == "1" ]]; then
     xdotool mousemove "${SKETCHPAD_WINE_DRAG_FROM_X:-279}" "${SKETCHPAD_WINE_DRAG_FROM_Y:-299}" mousedown 1

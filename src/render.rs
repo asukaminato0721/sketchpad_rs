@@ -1259,7 +1259,8 @@ pub fn svg_page_with_button_offset(
         | Kind::MovementButton { label, anchor, .. }
         | Kind::ScrollButton { label, anchor, .. }
         | Kind::PresentationButton { label, anchor, .. }
-        | Kind::LinkUrlButton { label, anchor, .. } = &object.kind
+        | Kind::LinkUrlButton { label, anchor, .. }
+        | Kind::LinkPageButton { label, anchor, .. } = &object.kind
         {
             let box_rect = action_button_rect(vp, *anchor, label).translate(button_offset);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
