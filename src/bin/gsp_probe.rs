@@ -801,8 +801,11 @@ fn replay(path: &str) -> Result<(), String> {
                     println!("line {}: perimeter -> object {id}", index + 1);
                 }
                 "hide_show_button" => {
-                    let target: usize = rest.parse().map_err(|_| "invalid button target ID")?;
-                    let id = document.add_hide_show_button(target)?;
+                    let targets = rest
+                        .split_whitespace()
+                        .map(|part| part.parse().map_err(|_| "invalid button target ID"))
+                        .collect::<Result<Vec<usize>, &str>>()?;
+                    let id = document.add_hide_show_button_for_targets(&targets)?;
                     println!("line {}: hide_show_button -> object {id}", index + 1);
                 }
                 "animation_button" => {

@@ -163,7 +163,12 @@ impl HideShowButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
-        let mut group = Self::parse(include_bytes!("../assets/action_hide_show_group.bin"))?;
+        let template: &[u8] = if label.len() % 2 == 0 {
+            include_bytes!("../assets/action_hide_show_group.bin")
+        } else {
+            include_bytes!("../assets/action_hide_show_two_points_group.bin")
+        };
+        let mut group = Self::parse(template)?;
         group.set_targets(targets)?;
         group.set_label(label)?;
         group.set_screen_anchor(anchor);
@@ -628,6 +633,41 @@ mod tests {
         assert!(!object_hidden(fixtures[0], 3));
         assert!(object_hidden(fixtures[1], 3));
         assert!(!object_hidden(fixtures[2], 3));
+    }
+
+    #[test]
+    fn two_target_hide_show_groups_preserve_both_references() {
+        let before = include_bytes!("../tests/fixtures/action_hide_show_two_points_original.gsp");
+        let after = include_bytes!("../tests/fixtures/action_hide_show_two_points_clicked.gsp");
+        let before_group = action_group(before);
+        let after_group = action_group(after);
+        let hide = HideShowButtonGroup::parse(&before_group).unwrap();
+        let show = HideShowButtonGroup::parse(&after_group).unwrap();
+        assert_eq!(hide.encode(), before_group);
+        assert_eq!(show.encode(), after_group);
+        assert_eq!(hide.target_ids(), vec![1, 2]);
+        assert_eq!(show.target_ids(), vec![1, 2]);
+        assert_eq!(hide.action(), VisibilityAction::Hide);
+        assert_eq!(show.action(), VisibilityAction::Show);
+        assert_eq!(hide.label_utf8().unwrap(), "隐藏点");
+        assert_eq!(show.label_utf8().unwrap(), "显示点");
+        assert!(!object_hidden(before, 1));
+        assert!(!object_hidden(before, 2));
+        assert!(object_hidden(after, 1));
+        assert!(object_hidden(after, 2));
+        assert!(!object_hidden(after, 3));
+
+        let generated =
+            HideShowButtonGroup::from_original_template_targets(&[1, 2], "Hide Objects", (10, 5))
+                .unwrap();
+        assert_eq!(generated.target_ids(), vec![1, 2]);
+        assert_eq!(
+            HideShowButtonGroup::parse(&generated.encode())
+                .unwrap()
+                .label_utf8()
+                .unwrap(),
+            "Hide Objects"
+        );
     }
 
     #[test]

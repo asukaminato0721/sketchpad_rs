@@ -10592,6 +10592,76 @@ mod tests {
         ));
         fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn two_target_hide_show_button_import_create_and_toggle() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_hide_show_two_points_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_hide_show_two_points_clicked.gsp").as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[3].kind.dependencies(), vec![1, 2]);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let mut native = Document::open(Path::new(
+            "tests/fixtures/action_hide_show_two_points_original.gsp",
+        ))
+        .unwrap();
+        native.activate_hide_show_button(4).unwrap();
+        assert!(!native.objects[0].visible);
+        assert!(!native.objects[1].visible);
+        assert!(native.objects[2].visible);
+        let hidden = Document::from_bytes(&native.encode().unwrap(), None).unwrap();
+        assert_eq!(hidden.objects[3].kind.dependencies(), vec![1, 2]);
+        assert!(matches!(
+            hidden.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+        native.undo();
+        assert!(native.objects[0].visible && native.objects[1].visible);
+
+        let mut generated = Document::new();
+        let first = generated.add(Kind::Free(Point { x: 150., y: 120. }));
+        let second = generated.add(Kind::Free(Point { x: 270., y: 120. }));
+        generated.add(Kind::Segment(first, second));
+        let button = generated
+            .add_hide_show_button_for_targets(&[first, second])
+            .unwrap();
+        assert!(generated.add_hide_show_button_for_targets(&[]).is_err());
+        assert!(
+            generated
+                .add_hide_show_button_for_targets(&[first, first])
+                .is_err()
+        );
+        let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
+        assert_eq!(
+            reopened.objects[button - 1].kind.dependencies(),
+            vec![first, second]
+        );
+
+        let mut source = Document::open(Path::new(
+            "tests/fixtures/action_hide_show_two_points_original.gsp",
+        ))
+        .unwrap();
+        source.selected.insert(4);
+        let clipboard = source.copy_selected().unwrap();
+        let mut destination = Document::new();
+        let pasted = destination.paste(&clipboard).unwrap();
+        let pasted_button = *pasted.last().unwrap();
+        assert_eq!(
+            destination.objects[pasted_button - 1].kind.dependencies(),
+            vec![1, 2]
+        );
+        assert!(
+            !Document::from_bytes(&destination.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
     #[test]
     fn animation_button_imports_click_state_and_generated_file_round_trips() {
         for bytes in [
