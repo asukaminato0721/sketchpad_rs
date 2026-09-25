@@ -128,7 +128,8 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
-    code == 8 || (code == 34 && subtype >= 52 && payload[6..8] == [4, 0])
+    code == 8
+        || (matches!(code, 27 | 28 | 30 | 32 | 34) && subtype >= 52 && payload[6..8] == [4, 0])
 }
 
 pub fn polygon_color(payload: &[u8]) -> Option<RgbColor> {

@@ -789,7 +789,12 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
-                        Kind::Polygon(_) | Kind::ReflectedPolygon(_, _) => {
+                        Kind::Polygon(_)
+                        | Kind::ReflectedPolygon(_, _)
+                        | Kind::RotatedPolygon(_, _, _)
+                        | Kind::AngleRotatedPolygon(_, _, _, _, _)
+                        | Kind::ScaledPolygon(_, _, _)
+                        | Kind::RatioScaledPolygon(_, _, _, _, _) => {
                             let points = self.doc.polygon_points(o.id)?;
                             let points: Vec<_> =
                                 points.into_iter().map(|point| v.screen(point)).collect();
@@ -2156,6 +2161,14 @@ impl Editor {
                 Some(Kind::Segment(_, _))
             ) {
                 Kind::RatioScaledSegment(source, center, origin, base, target)
+            } else if matches!(
+                self.doc
+                    .objects
+                    .get(source.saturating_sub(1))
+                    .map(|o| &o.kind),
+                Some(Kind::Polygon(_))
+            ) {
+                Kind::RatioScaledPolygon(source, center, origin, base, target)
             } else {
                 self.status =
                     "Select a point, segment, or circle to dilate by the marked ratio".into();
@@ -2173,6 +2186,14 @@ impl Editor {
             Some(Kind::Segment(_, _))
         ) {
             Kind::ScaledSegment(source, center, self.dilation_factor)
+        } else if matches!(
+            self.doc
+                .objects
+                .get(source.saturating_sub(1))
+                .map(|o| &o.kind),
+            Some(Kind::Polygon(_))
+        ) {
+            Kind::ScaledPolygon(source, center, self.dilation_factor)
         } else {
             self.status = "Select a point, segment, or circle, then a center point".into();
             return;
@@ -2224,7 +2245,10 @@ impl Editor {
             source_kind,
             Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
         ) && self.doc.circle_points(source).is_some();
-        if !(source_point || source_segment || source_circle) || self.doc.position(center).is_none()
+        let source_polygon = matches!(source_kind, Some(Kind::Polygon(_)))
+            && self.doc.polygon_points(source).is_some();
+        if !(source_point || source_segment || source_circle || source_polygon)
+            || self.doc.position(center).is_none()
         {
             self.status = "Select a point, segment, or circle and a center point".into();
             return;
@@ -2249,6 +2273,8 @@ impl Editor {
                 Kind::AngleRotatedPoint(source, center, first, vertex, last)
             } else if source_segment {
                 Kind::AngleRotatedSegment(source, center, first, vertex, last)
+            } else if source_polygon {
+                Kind::AngleRotatedPolygon(source, center, first, vertex, last)
             } else {
                 Kind::AngleRotatedCircle(source, center, first, vertex, last)
             }
@@ -2257,6 +2283,8 @@ impl Editor {
                 Kind::RotatedPoint(source, center, self.rotation_angle)
             } else if source_segment {
                 Kind::RotatedSegment(source, center, self.rotation_angle)
+            } else if source_polygon {
+                Kind::RotatedPolygon(source, center, self.rotation_angle)
             } else {
                 Kind::RotatedCircle(source, center, self.rotation_angle)
             }
@@ -5347,6 +5375,66 @@ mod tests {
         assert_eq!(
             editor.hit(&viewport, viewport.screen(Point { x: 120., y: 20. })),
             Some(rotated)
+        );
+    }
+
+    #[test]
+    fn polygon_rotation_and_dilation_commands_use_live_interiors() {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 100., y: 120. }));
+        let first = editor.doc.add(Kind::Free(Point { x: 230., y: 160. }));
+        let vertex = editor.doc.add(Kind::Free(Point { x: 230., y: 220. }));
+        let last = editor.doc.add(Kind::Free(Point { x: 290., y: 220. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 140., y: 150. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 180., y: 150. }));
+        let c = editor.doc.add(Kind::Free(Point { x: 160., y: 190. }));
+        let polygon = editor.doc.add(Kind::Polygon(vec![a, b, c]));
+        let origin = editor.doc.add(Kind::Free(Point { x: 180., y: 100. }));
+        let base = editor.doc.add(Kind::Free(Point { x: 230., y: 100. }));
+        let target = editor.doc.add(Kind::Free(Point { x: 205., y: 100. }));
+        editor.marked_center = Some(center);
+        editor.marked_angle = Some([first, vertex, last]);
+        editor.marked_ratio = Some([origin, base, target]);
+
+        editor.rotation_angle = 90.;
+        editor.select_only(polygon);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RotatedPolygon(polygon, center, 90.)
+        );
+
+        editor.rotation_use_marked = true;
+        editor.select_only(polygon);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::AngleRotatedPolygon(polygon, center, first, vertex, last)
+        );
+
+        editor.dilation_factor = 0.5;
+        editor.select_only(polygon);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::ScaledPolygon(polygon, center, 0.5)
+        );
+
+        editor.dilation_use_marked = true;
+        editor.select_only(polygon);
+        editor.dilate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects.last().unwrap().kind,
+            Kind::RatioScaledPolygon(polygon, center, origin, base, target)
+        );
+        let before = editor.doc.polygon_points(image).unwrap();
+        assert!(editor.doc.move_point(target, Point { x: 255., y: 100. }));
+        assert_ne!(editor.doc.polygon_points(image).unwrap(), before);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
         );
     }
 

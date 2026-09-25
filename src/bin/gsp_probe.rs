@@ -1229,6 +1229,14 @@ fn replay(path: &str) -> Result<(), String> {
                         Kind::ScaledSegment(source, center, factor)
                     } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
+                    } else if matches!(
+                        document
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Polygon(_))
+                    ) {
+                        Kind::ScaledPolygon(source, center, factor)
                     } else {
                         Kind::ScaledPoint(source, center, factor)
                     };
@@ -1255,6 +1263,14 @@ fn replay(path: &str) -> Result<(), String> {
                         Kind::RatioScaledSegment(ids[0], ids[1], ids[2], ids[3], ids[4])
                     } else if document.circle_points(ids[0]).is_some() {
                         Kind::RatioScaledCircle(ids[0], ids[1], ids[2], ids[3], ids[4])
+                    } else if matches!(
+                        document
+                            .objects
+                            .get(ids[0].saturating_sub(1))
+                            .map(|o| &o.kind),
+                        Some(Kind::Polygon(_))
+                    ) {
+                        Kind::RatioScaledPolygon(ids[0], ids[1], ids[2], ids[3], ids[4])
                     } else {
                         Kind::RatioScaledPoint(ids[0], ids[1], ids[2], ids[3], ids[4])
                     };
@@ -1278,6 +1294,7 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::RotatedCircle(source, center, angle)
                         }
+                        Some(Kind::Polygon(_)) => Kind::RotatedPolygon(source, center, angle),
                         _ => Kind::RotatedPoint(source, center, angle),
                     };
                     let id = document.add(kind);
@@ -1306,6 +1323,9 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::AngleRotatedCircle(source, parts[1], parts[2], parts[3], parts[4])
                         }
+                        Some(Kind::Polygon(_)) => Kind::AngleRotatedPolygon(
+                            source, parts[1], parts[2], parts[3], parts[4],
+                        ),
                         _ => {
                             Kind::AngleRotatedPoint(source, parts[1], parts[2], parts[3], parts[4])
                         }

@@ -934,7 +934,12 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::RatioScaledCircle(_, _, _, _, _)
         | Kind::ThreePointArc(_, _, _)
         | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
-        Kind::Polygon(_) | Kind::ReflectedPolygon(_, _) => Some(VisualStyle::Polygon {
+        Kind::Polygon(_)
+        | Kind::ReflectedPolygon(_, _)
+        | Kind::RotatedPolygon(_, _, _)
+        | Kind::AngleRotatedPolygon(_, _, _, _, _)
+        | Kind::ScaledPolygon(_, _, _)
+        | Kind::RatioScaledPolygon(_, _, _, _, _) => Some(VisualStyle::Polygon {
             color: RgbColor {
                 red: 255,
                 green: 128,
@@ -1932,6 +1937,8 @@ impl Document {
                             (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::AngleRotatedPoint(*source, *center, *first, *vertex, *last),
                             (Some(Kind::Segment(_, _)), [14, 0]) => Kind::AngleRotatedSegment(*source, *center, *first, *vertex, *last),
                             (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::AngleRotatedCircle(*source, *center, *first, *vertex, *last),
+                            (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
+                                && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::AngleRotatedPolygon(*source, *center, *first, *vertex, *last),
                             _ => Kind::Unsupported(code),
                         },
                     (32, _, [source, center, origin, base, target])
@@ -1948,6 +1955,10 @@ impl Document {
                             && [center, origin, base, target].iter().all(|&&id| {
                                 objects.get(id.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
                             }) && h[8..10] == [14, 0] => Kind::RatioScaledSegment(*source, *center, *origin, *base, *target),
+                    (32, _, [source, center, origin, base, target])
+                        if objects.get(source.saturating_sub(1)).is_some_and(|object| matches!(&object.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
+                            && [center, origin, base, target].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind)))
+                            && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::RatioScaledPolygon(*source, *center, *origin, *base, *target),
                     (34, _, [source, mirror])
                         if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
                             && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
@@ -1978,6 +1989,8 @@ impl Document {
                                     Some(kind) if is_point_kind(kind) => Kind::ScaledPoint(*source, *center, factor),
                                     Some(kind) if is_circle_kind(kind) => Kind::ScaledCircle(*source, *center, factor),
                                     Some(Kind::Segment(_, _)) if h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
+                                    Some(Kind::Polygon(vertices)) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
+                                        && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::ScaledPolygon(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1996,6 +2009,8 @@ impl Document {
                                     (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Segment(_, _)), [14, 0]) => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
+                                    (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
+                                        && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -2740,7 +2755,12 @@ impl Document {
     fn append_object(&mut self, kind: Kind) -> usize {
         self.last_moved_object = None;
         let id = self.objects.len() + 1;
-        let visual_style = if let Kind::ReflectedPolygon(source, _) = kind {
+        let visual_style = if let Kind::ReflectedPolygon(source, _)
+        | Kind::RotatedPolygon(source, _, _)
+        | Kind::AngleRotatedPolygon(source, _, _, _, _)
+        | Kind::ScaledPolygon(source, _, _)
+        | Kind::RatioScaledPolygon(source, _, _, _, _) = kind
+        {
             self.objects
                 .get(source.saturating_sub(1))
                 .and_then(|object| object.visual_style)
@@ -5261,6 +5281,49 @@ impl Document {
                     .map(|point| reflect_point(point, a, b))
                     .collect()
             }
+            Kind::RotatedPolygon(source, center, angle) => {
+                let center = self.position(*center)?;
+                let theta = angle.to_radians();
+                self.polygon_points(*source)?
+                    .into_iter()
+                    .map(|point| rotate_point_about(point, center, theta))
+                    .collect()
+            }
+            Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
+                let center = self.position(*center)?;
+                let theta = marked_rotation_theta(
+                    self.position(*first)?,
+                    self.position(*vertex)?,
+                    self.position(*last)?,
+                )?;
+                self.polygon_points(*source)?
+                    .into_iter()
+                    .map(|point| rotate_point_about(point, center, theta))
+                    .collect()
+            }
+            Kind::ScaledPolygon(source, center, factor) => {
+                let center = self.position(*center)?;
+                self.polygon_points(*source)?
+                    .into_iter()
+                    .map(|point| {
+                        let x = center.x + factor * (point.x - center.x);
+                        let y = center.y + factor * (point.y - center.y);
+                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
+                    })
+                    .collect()
+            }
+            Kind::RatioScaledPolygon(source, center, origin, base, target) => {
+                let center = self.position(*center)?;
+                let factor = self.ratio_for_points(*origin, *base, *target)?;
+                self.polygon_points(*source)?
+                    .into_iter()
+                    .map(|point| {
+                        let x = center.x + factor * (point.x - center.x);
+                        let y = center.y + factor * (point.y - center.y);
+                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
+                    })
+                    .collect()
+            }
             _ => None,
         }
     }
@@ -6179,8 +6242,8 @@ impl Document {
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedPoint(_, _, angle) if !angle.is_finite())
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(_, _, angle) | Kind::MarkedDistanceTranslatedCircle(_, _, angle) if !angle.is_finite())
                 || matches!(o.kind, Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, _) if !fixed_cm.is_finite())
-                || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) | Kind::ScaledSegment(_, _, factor) if !factor.is_finite() || factor == 0.)
-                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedCircle(_, _, angle) if !angle.is_finite())
+                || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) | Kind::ScaledSegment(_, _, factor) | Kind::ScaledPolygon(_, _, factor) if !factor.is_finite() || factor == 0.)
+                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedCircle(_, _, angle) | Kind::RotatedPolygon(_, _, angle) if !angle.is_finite())
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -6655,6 +6718,35 @@ impl Document {
                     || self.line_points(mirror).is_none() || self.polygon_points(o.id).is_none())
             {
                 return Err(format!("Invalid interior or mirror in reflection {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RotatedPolygon(source, center, _) | Kind::ScaledPolygon(source, center, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
+                    || self.position(center).is_none() || self.polygon_points(o.id).is_none())
+            {
+                return Err(format!("Invalid interior or center in transform {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::AngleRotatedPolygon(source, center, first, vertex, last)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
+                    || [center, first, vertex, last].iter().any(|&id| self.position(id).is_none())
+                    || self.polygon_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid interior in marked-angle rotation {}",
+                    o.id
+                ));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RatioScaledPolygon(source, center, origin, base, target)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
+                    || [center, origin, base, target].iter().any(|&id| self.position(id).is_none())
+                    || self.polygon_points(o.id).is_none())
+            {
+                return Err(format!(
+                    "Invalid interior in marked-ratio dilation {}",
+                    o.id
+                ));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::ScaledPoint(source, center, _)
@@ -7914,20 +8006,24 @@ impl Document {
                 | Kind::ReflectedPolygon(source, mirror) => (34, vec![source, mirror]),
                 Kind::ScaledPoint(source, center, _)
                 | Kind::ScaledCircle(source, center, _)
-                | Kind::ScaledSegment(source, center, _) => (30, vec![source, center]),
+                | Kind::ScaledSegment(source, center, _)
+                | Kind::ScaledPolygon(source, center, _) => (30, vec![source, center]),
                 Kind::RotatedPoint(source, center, _)
                 | Kind::RotatedSegment(source, center, _)
-                | Kind::RotatedCircle(source, center, _) => (27, vec![source, center]),
+                | Kind::RotatedCircle(source, center, _)
+                | Kind::RotatedPolygon(source, center, _) => (27, vec![source, center]),
                 Kind::AngleRotatedPoint(source, center, first, vertex, last)
                 | Kind::AngleRotatedSegment(source, center, first, vertex, last)
-                | Kind::AngleRotatedCircle(source, center, first, vertex, last) => {
+                | Kind::AngleRotatedCircle(source, center, first, vertex, last)
+                | Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
                     (28, vec![source, center, first, vertex, last])
                 }
                 Kind::RatioScaledPoint(source, center, origin, base, target) => {
                     (32, vec![source, center, origin, base, target])
                 }
                 Kind::RatioScaledCircle(source, center, origin, base, target)
-                | Kind::RatioScaledSegment(source, center, origin, base, target) => {
+                | Kind::RatioScaledSegment(source, center, origin, base, target)
+                | Kind::RatioScaledPolygon(source, center, origin, base, target) => {
                     (32, vec![source, center, origin, base, target])
                 }
                 Kind::Midpoint(_, _) => (
@@ -8022,10 +8118,22 @@ impl Document {
                 h[18] = 0x51;
                 h[19] = 0x5c;
             }
-            if matches!(o.kind, Kind::ReflectedPolygon(_, _)) {
+            if matches!(
+                o.kind,
+                Kind::ReflectedPolygon(_, _)
+                    | Kind::RotatedPolygon(_, _, _)
+                    | Kind::AngleRotatedPolygon(_, _, _, _, _)
+                    | Kind::ScaledPolygon(_, _, _)
+                    | Kind::RatioScaledPolygon(_, _, _, _, _)
+            ) {
                 h = header(8);
                 h[0] = code as u8;
-                if let Kind::ReflectedPolygon(source, _) = o.kind {
+                if let Kind::ReflectedPolygon(source, _)
+                | Kind::RotatedPolygon(source, _, _)
+                | Kind::AngleRotatedPolygon(source, _, _, _, _)
+                | Kind::ScaledPolygon(source, _, _)
+                | Kind::RatioScaledPolygon(source, _, _, _, _) = o.kind
+                {
                     let vertex_count = match &self.objects[source - 1].kind {
                         Kind::Polygon(vertices) => vertices.len(),
                         _ => return Err("Reflected interior requires a polygon".into()),
@@ -8037,6 +8145,10 @@ impl Document {
                     );
                 }
                 h[20..24].copy_from_slice(&1u32.to_le_bytes());
+                if !matches!(o.kind, Kind::ReflectedPolygon(_, _)) {
+                    h[18] = 0x51;
+                    h[19] = 0x5c;
+                }
             }
             if !o.visible {
                 h[2] = 1;
@@ -8138,14 +8250,16 @@ impl Document {
                     }
                     Kind::ScaledPoint(_, _, factor)
                     | Kind::ScaledCircle(_, _, factor)
-                    | Kind::ScaledSegment(_, _, factor) => {
+                    | Kind::ScaledSegment(_, _, factor)
+                    | Kind::ScaledPolygon(_, _, factor) => {
                         let mut payload = vec![30, 0, 0, 0];
                         payload.extend_from_slice(&factor.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::RotatedPoint(_, _, angle)
                     | Kind::RotatedSegment(_, _, angle)
-                    | Kind::RotatedCircle(_, _, angle) => {
+                    | Kind::RotatedCircle(_, _, angle)
+                    | Kind::RotatedPolygon(_, _, angle) => {
                         let mut payload = *include_bytes!("../assets/rotation_payload.bin");
                         payload[4..12].copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
                         payload[12..20].copy_from_slice(&angle.to_radians().cos().to_le_bytes());
@@ -8174,6 +8288,10 @@ impl Document {
                         | Kind::PlottedPoint(_, _, _, _)
                         | Kind::CoordinateMeasurement { .. }
                         | Kind::ReflectedPolygon(_, _)
+                        | Kind::RotatedPolygon(_, _, _)
+                        | Kind::AngleRotatedPolygon(_, _, _, _, _)
+                        | Kind::ScaledPolygon(_, _, _)
+                        | Kind::RatioScaledPolygon(_, _, _, _, _)
                 )
             })
             .map(|o| o.id);
@@ -8213,11 +8331,16 @@ impl Document {
         let Some(id) = self.last_moved_object else {
             return Ok(bytes);
         };
-        if !self
-            .objects
-            .iter()
-            .any(|object| matches!(object.kind, Kind::ReflectedPolygon(_, _)))
-        {
+        if !self.objects.iter().any(|object| {
+            matches!(
+                object.kind,
+                Kind::ReflectedPolygon(_, _)
+                    | Kind::RotatedPolygon(_, _, _)
+                    | Kind::AngleRotatedPolygon(_, _, _, _, _)
+                    | Kind::ScaledPolygon(_, _, _)
+                    | Kind::RatioScaledPolygon(_, _, _, _, _)
+            )
+        }) {
             return Ok(bytes);
         }
         if let Some(marker) = records(&bytes)?
@@ -11685,6 +11808,51 @@ mod tests {
             reopened.polygon_points(image),
             created.polygon_points(image)
         );
+    }
+    #[test]
+    fn transformed_polygon_fixtures_import_and_track_sources() {
+        for (path, image, expected) in [
+            (
+                "tests/fixtures/fixed_rotation_polygon_original.gsp",
+                6,
+                Kind::RotatedPolygon(5, 1, 90.),
+            ),
+            (
+                "tests/fixtures/angle_rotation_polygon_original.gsp",
+                9,
+                Kind::AngleRotatedPolygon(8, 1, 2, 3, 4),
+            ),
+            (
+                "tests/fixtures/fixed_dilation_polygon_original.gsp",
+                6,
+                Kind::ScaledPolygon(5, 1, 0.5),
+            ),
+            (
+                "tests/fixtures/ratio_dilation_polygon_original.gsp",
+                9,
+                Kind::RatioScaledPolygon(8, 1, 2, 3, 4),
+            ),
+        ] {
+            let bytes = fs::read(path).unwrap();
+            let mut document = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!document.partial_view, "{path}");
+            assert_eq!(document.objects[image - 1].kind, expected);
+            assert_eq!(document.encode().unwrap(), bytes, "{path}");
+            assert_eq!(
+                document.objects[image - 1].visual_style,
+                document.objects[image - 2].visual_style
+            );
+            let before = document.polygon_points(image).unwrap();
+            assert!(
+                document.move_point(if image == 6 { 2 } else { 4 }, Point { x: 175., y: 170. })
+            );
+            assert_ne!(document.polygon_points(image).unwrap(), before);
+            assert!(
+                !Document::from_bytes(&document.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
     }
     #[test]
     fn marked_ratio_dilation_imports_and_tracks_ratio_points() {
