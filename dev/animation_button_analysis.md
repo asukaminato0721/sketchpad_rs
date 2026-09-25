@@ -16,4 +16,6 @@ The port's button dialog now offers those directions, Once Only when applicable,
 
 Native buttons for a circle point and a free point use direction code `0x00` at medium speed. The free-point dialog hides the direction menu; free points wander at random regardless of the stored code. The port creates those native defaults for each point type. `action_animation_circle_original.gsp` and `action_animation_free_original.gsp` import and round-trip exactly, and port-generated circle and free-point button files opened and saved byte-identically in Sketchpad 5.
 
+The desktop Edit > Action Buttons > Animation flow was also exercised under Xvfb. Choosing Create added the fifth object, File > Save wrote a 2,240-byte sketch, and Sketchpad 5 opened and resaved that exact file byte-identically.
+
 Multiple targets, indirect animation of higher constructions, parameters, and exact native timing remain open. The parser preserves the other settings bytes and treats unrecognized layouts as unsupported source content.

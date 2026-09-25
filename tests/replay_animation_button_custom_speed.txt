@@ -1,0 +1,6 @@
+open tests/fixtures/animation_button_base.gsp
+animation_button 4 forward 12.5 repeat
+check
+save /tmp/sketchpad_animation_button_custom_speed_port.gsp
+open /tmp/sketchpad_animation_button_custom_speed_port.gsp
+check

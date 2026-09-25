@@ -1,0 +1,6 @@
+open tests/fixtures/three_point_arc.gsp
+trace 4 on
+check
+save /tmp/sketchpad_trace_arc_port.gsp
+open /tmp/sketchpad_trace_arc_port.gsp
+check

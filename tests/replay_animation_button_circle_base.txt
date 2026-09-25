@@ -1,0 +1,6 @@
+new
+point 200 150
+point 260 150
+circle 1 2
+point_on 3 200 90
+save /tmp/sketchpad_animation_button_circle_base.gsp

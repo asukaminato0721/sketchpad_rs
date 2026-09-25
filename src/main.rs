@@ -2837,8 +2837,12 @@ impl Editor {
                 });
                 ui.menu_button("Edit", |ui| {
                     ui.menu_button("Action Buttons", |ui| {
-                        let target = self.selection_order.iter().copied().find(|id| {
-                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                        let targets: Vec<_> = self
+                            .selection_order
+                            .iter()
+                            .copied()
+                            .filter(|id| {
+                                self.doc.objects.get(id - 1).is_some_and(|object| {
                                 object.page == self.doc.active_page
                                     && object.visible
                                     && !object.deleted
@@ -2848,20 +2852,19 @@ impl Editor {
                                             | Kind::AnimationButton { .. }
                                             | Kind::Unsupported(_)
                                     )
+                                })
                             })
-                        });
+                            .collect();
                         if ui
                             .add_enabled(
-                                target.is_some() && !self.doc.partial_view,
+                                !targets.is_empty() && !self.doc.partial_view,
                                 egui::Button::new("Hide/Show"),
                             )
                             .clicked()
                         {
-                            if let Some(target) = target {
-                                match self.doc.add_hide_show_button(target) {
-                                    Ok(id) => self.select_only(id),
-                                    Err(error) => self.status = error,
-                                }
+                            match self.doc.add_hide_show_button_for_targets(&targets) {
+                                Ok(id) => self.select_only(id),
+                                Err(error) => self.status = error,
                             }
                             ui.close();
                         }

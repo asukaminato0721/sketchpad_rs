@@ -1,0 +1,6 @@
+open tests/fixtures/animation_button_base.gsp
+animation_button 4
+check
+save /tmp/sketchpad_animation_button_port.gsp
+open /tmp/sketchpad_animation_button_port.gsp
+check

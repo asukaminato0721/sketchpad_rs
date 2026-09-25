@@ -157,7 +157,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Command | Status |
 | --- | --- |
 | Hide/Show | Partial: original and generated buttons cross-opened, click updates target visibility, save/reopen verified |
-| Animation | Partial: single-point buttons import, create, save, and start or stop motion without the floating controller. Native direction, speed preset, and Once Only records were mapped; forward, backward, bidirectional, random, three speed presets, and custom numeric speed are available. Port-generated default and custom buttons opened and saved byte-identically in Sketchpad 5; native free-point and circle defaults also match. Multiple targets, indirect geometric targets, parameters, and exact timing pending |
+| Animation | Partial: single-point buttons import, create, save, and start or stop motion without the floating controller. Native direction, speed preset, and Once Only records were mapped; forward, backward, bidirectional, random, three speed presets, and custom numeric speed are available. The desktop creation and save flow was exercised; that file and other port-generated default and custom buttons opened and saved byte-identically in Sketchpad 5. Native free-point and circle defaults also match. Multiple targets, indirect geometric targets, parameters, and exact timing pending |
 | Movement | Pending |
 | Presentation | Pending |
 | Link | Pending |

@@ -1,0 +1,8 @@
+open tests/fixtures/animation_button_circle_base.gsp
+animation_button 4
+check
+save /tmp/sketchpad_animation_button_circle_port.gsp
+open tests/fixtures/animation_free_point_base.gsp
+animation_button 1
+check
+save /tmp/sketchpad_animation_button_free_port.gsp

@@ -155,8 +155,16 @@ impl HideShowButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        Self::from_original_template_targets(&[target], label, anchor)
+    }
+
+    pub fn from_original_template_targets(
+        targets: &[u32],
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
         let mut group = Self::parse(include_bytes!("../assets/action_hide_show_group.bin"))?;
-        group.set_single_target(target)?;
+        group.set_targets(targets)?;
         group.set_label(label)?;
         group.set_screen_anchor(anchor);
         Ok(group)
@@ -203,10 +211,24 @@ impl HideShowButtonGroup {
     }
 
     pub fn set_single_target(&mut self, target: u32) -> Result<(), String> {
-        if target == 0 || self.target_ids().len() != 1 {
+        if self.target_ids().len() != 1 {
             return Err("A single-target button needs one nonzero target ID".into());
         }
-        self.records[1].payload[4..8].copy_from_slice(&target.to_le_bytes());
+        self.set_targets(&[target])?;
+        Ok(())
+    }
+
+    pub fn set_targets(&mut self, targets: &[u32]) -> Result<(), String> {
+        let count = u32::try_from(targets.len()).map_err(|_| "Too many button targets")?;
+        if count == 0 || targets.contains(&0) {
+            return Err("A Hide/Show button needs nonzero target IDs".into());
+        }
+        let payload = &mut self.records[1].payload;
+        payload.clear();
+        payload.extend_from_slice(&count.to_le_bytes());
+        for target in targets {
+            payload.extend_from_slice(&target.to_le_bytes());
+        }
         Ok(())
     }
 

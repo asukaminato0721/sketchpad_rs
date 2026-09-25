@@ -1,0 +1,7 @@
+open tests/fixtures/animation_button_base.gsp
+animation_button 4 forward 80 once
+animation_button 4 backward 4 repeat
+check
+save /tmp/sketchpad_animation_button_variants_port.gsp
+open /tmp/sketchpad_animation_button_variants_port.gsp
+check

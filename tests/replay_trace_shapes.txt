@@ -1,0 +1,12 @@
+new
+point 200 150
+point 260 150
+circle 1 2
+trace 3 on
+point 220 200
+polygon 1 2 4
+trace 5 on
+check
+save /tmp/sketchpad_trace_shapes_port.gsp
+open /tmp/sketchpad_trace_shapes_port.gsp
+check

@@ -1,0 +1,16 @@
+new
+point 200 150
+point 300 150
+ray 1 2
+save /tmp/sketchpad_trace_ray_base.gsp
+trace 3 on
+check
+save /tmp/sketchpad_trace_ray_port.gsp
+new
+point 200 150
+point 300 150
+line 1 2
+save /tmp/sketchpad_trace_line_base.gsp
+trace 3 on
+check
+save /tmp/sketchpad_trace_line_port.gsp
