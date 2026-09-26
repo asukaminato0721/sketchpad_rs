@@ -1,0 +1,16 @@
+new
+point 100 150
+point 300 150
+segment 1 2
+point_on 3 130 150
+point_on 3 190 150
+point_on 3 250 150
+check
+save tests/fixtures/animation_button_three_points_base.gsp
+animation_button_multi 4 5 6
+check
+save tests/fixtures/action_animation_three_points_port.gsp
+open tests/fixtures/animation_button_three_points_base.gsp
+animation_button_multi 4:bidirectional:24:repeat 5:backward:4:repeat 6:forward:80:once
+check
+save tests/fixtures/action_animation_three_points_settings_port.gsp

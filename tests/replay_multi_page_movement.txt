@@ -1,0 +1,14 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+movement_button 2 3 medium follow
+check
+save tests/fixtures/two_page_movement_port.gsp
+
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+movement_button 2 3 medium follow
+page 1
+point 200 200
+movement_button 1 7 instant initial
+check
+save tests/fixtures/two_page_movement_both_port.gsp

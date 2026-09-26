@@ -1,0 +1,41 @@
+open tests/fixtures/two_page_blank_native.gsp
+remove_page 2
+check
+save tests/fixtures/one_page_removed_last_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+remove_page 1
+check
+save tests/fixtures/one_page_removed_first_port.gsp
+new
+point 120 180
+add_page
+point 240 280
+add_page
+point 320 220
+rename_page 3 Last
+remove_page 2
+check
+save tests/fixtures/two_page_removed_middle_port.gsp
+new
+add_page
+add_page
+page 1
+link_page_button 3
+remove_page 2
+check
+save tests/fixtures/two_page_remapped_link_port.gsp
+open tests/fixtures/action_link_page_first_port_generated.gsp
+remove_page 2
+check
+save tests/fixtures/one_page_removed_targeted_link_port.gsp
+new
+point 120 180
+add_page
+point 240 180
+add_page
+point 320 180
+page 1
+link_page_button 2
+remove_page 2
+check
+save tests/fixtures/two_page_removed_targeted_link_port.gsp

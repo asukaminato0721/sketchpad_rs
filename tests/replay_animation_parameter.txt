@@ -1,0 +1,4 @@
+open tests/fixtures/animation_parameter_base.gsp
+animation_button 1
+check
+save tests/fixtures/action_animation_parameter_port.gsp

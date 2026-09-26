@@ -1,0 +1,6 @@
+open tests/fixtures/wine_segment_length.gsp
+move 2 200 304
+calculate_length 4 3
+translate_marked_distance 1 5 0
+check
+save tests/fixtures/calculation_marked_distance_port.gsp

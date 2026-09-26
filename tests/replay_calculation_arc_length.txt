@@ -1,0 +1,4 @@
+open tests/fixtures/wine_arc_length.gsp
+calculate_length 5 3
+check
+save tests/fixtures/calculation_arc_length_times_three_port.gsp

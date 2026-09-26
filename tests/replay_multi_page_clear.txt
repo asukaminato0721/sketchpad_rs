@@ -1,0 +1,32 @@
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+clear 4
+save tests/fixtures/two_page_segment_cleared_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+clear 2
+save tests/fixtures/two_page_point_and_segment_cleared_port.gsp
+open tests/fixtures/two_page_pasted_segment_first_page_port.gsp
+page 1
+clear 1
+save tests/fixtures/two_page_first_point_cleared_port.gsp
+open tests/fixtures/two_page_one_host_measurements_port.gsp
+page 2
+clear 5
+save tests/fixtures/two_page_polygon_measurements_cleared_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 120 180
+point 300 180
+segment 2 3
+clear 2
+save tests/fixtures/two_page_unsaved_chain_cleared_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+page 2
+cut 4
+paste
+save tests/fixtures/two_page_cut_pasted_segment_port.gsp
+open tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp
+page 2
+clear 4
+save tests/fixtures/two_page_midpoint_circle_cleared_port.gsp

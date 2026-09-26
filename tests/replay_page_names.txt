@@ -1,0 +1,19 @@
+new
+rename_page 1 Front
+point 120 180
+check
+save tests/fixtures/one_page_named_port.gsp
+add_page
+rename_page 2 Review
+point 240 280
+check
+save tests/fixtures/two_page_named_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+rename_page 1 Intro
+rename_page 2 Results
+check
+save tests/fixtures/two_page_native_renamed_port.gsp
+open tests/fixtures/three_page_from_new_port.gsp
+rename_page 3 Alpha
+check
+save tests/fixtures/three_page_renamed_port.gsp

@@ -4177,7 +4177,7 @@ impl Editor {
                     }
                     if ui.button("Calculate…").clicked() {
                         self.calculation_draft = if self.doc.selected.len() == 1
-                            && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))) {
+                            && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)))) {
                             "× 2".into()
                         } else { "2 + 3".into() };
                         self.calculation_dialog = true;
@@ -6067,10 +6067,10 @@ impl Editor {
                             self.doc
                                 .objects
                                 .get(id - 1)
-                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)))
                         })
                     {
-                        "Selected length × factor (0–9), or two integers with +, −, ×, ÷"
+                        "Selected length measurement × factor (0–9), or two integers with +, −, ×, ÷"
                     } else {
                         "Enter two integers from 0 to 99 with +, -, *, or /"
                     },
@@ -6103,10 +6103,17 @@ impl Editor {
                 let y = (5usize + row * 33).min(i16::MAX as usize) as i16;
                 let selected_length = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
-                        self.doc
-                            .objects
-                            .get(id - 1)
-                            .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                        self.doc.objects.get(id - 1).is_some_and(|object| {
+                            matches!(
+                                object.kind,
+                                Kind::SegmentLength(_)
+                                    | Kind::PointDistance(_, _)
+                                    | Kind::PolygonPerimeter(_)
+                                    | Kind::CircleCircumference(_)
+                                    | Kind::CircleRadius(_)
+                                    | Kind::ArcLength(_)
+                            )
+                        })
                     })
                 } else {
                     None

@@ -1,0 +1,7 @@
+new
+calculate_at 10 5 12+34
+calculate_at 10 42 12-34
+calculate_at 10 79 12*34
+calculate_at 10 116 12/34
+check
+save tests/fixtures/calculation_two_digit_operators_port.gsp

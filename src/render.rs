@@ -138,7 +138,7 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
     if let Kind::MeasuredCalculation(source, group) = &object.kind {
         let value = doc.measured_calculation_cm(id)?;
         let name = doc
-            .segment_length_name(*source)
+            .length_measurement_name(*source)
             .unwrap_or_else(|| "Length".into());
         return Some((
             group.anchor(),

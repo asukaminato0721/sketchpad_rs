@@ -1,0 +1,31 @@
+open tests/fixtures/line.gsp
+point_on 3 371 220
+check
+save tests/fixtures/point_on_line_port.gsp
+open tests/fixtures/ray.gsp
+point_on 3 371 220
+check
+save tests/fixtures/point_on_ray_port.gsp
+open tests/fixtures/point_on_line_native.gsp
+move 4 243 212
+check
+save tests/fixtures/point_on_line_moved_port.gsp
+open tests/fixtures/point_on_ray_native.gsp
+move 4 603 234.5
+check
+save tests/fixtures/point_on_ray_moved_port.gsp
+open tests/fixtures/two_page_line_native.gsp
+point_on 5 21 111
+check
+save tests/fixtures/two_page_line_point_port.gsp
+open tests/fixtures/two_page_ray_native.gsp
+point_on 5 381 111
+check
+save tests/fixtures/two_page_ray_point_port.gsp
+open tests/fixtures/two_page_line_point_port.gsp
+page 2
+copy 6
+page 1
+paste
+check
+save tests/fixtures/two_page_pasted_line_point_first_page_port.gsp

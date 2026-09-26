@@ -1,0 +1,8 @@
+open tests/fixtures/wine_circle_circumference.gsp
+calculate_length 4 3
+check
+save tests/fixtures/calculation_circumference_times_three_port.gsp
+open tests/fixtures/wine_circle_radius.gsp
+calculate_length 4 3
+check
+save tests/fixtures/calculation_radius_times_three_port.gsp

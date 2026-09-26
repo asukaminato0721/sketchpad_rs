@@ -11,3 +11,15 @@ save tests/fixtures/action_hide_show_two_points_generated_clicked.gsp
 open tests/fixtures/action_hide_show_two_points_generated_clicked.gsp
 activate_button 4
 check
+open tests/fixtures/action_hide_show_mixed_base.gsp
+hide_show_button 4 5 6
+check
+save tests/fixtures/action_hide_show_mixed_port.gsp
+activate_button 7
+check
+open tests/fixtures/action_hide_show_three_points_base.gsp
+hide_show_button 1 2 3
+check
+save tests/fixtures/action_hide_show_three_points_port.gsp
+activate_button 4
+check

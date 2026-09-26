@@ -1,0 +1,5 @@
+open tests/fixtures/two_page_presentation_base_port.gsp
+page 2
+presentation_button sequential 6 7
+check
+save tests/fixtures/two_page_presentation_sequential_port.gsp

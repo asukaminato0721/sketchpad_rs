@@ -1,0 +1,24 @@
+open tests/fixtures/three_page_from_new_port.gsp
+move_page 3 1
+check
+save tests/fixtures/three_page_moved_last_first_port.gsp
+open tests/fixtures/three_page_from_new_port.gsp
+move_page 1 3
+check
+save tests/fixtures/three_page_moved_first_last_port.gsp
+open tests/fixtures/two_page_named_port.gsp
+move_page 2 1
+check
+save tests/fixtures/two_page_moved_named_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+move_page 2 1
+check
+save tests/fixtures/two_page_moved_segment_port.gsp
+new
+add_page
+add_page
+page 1
+link_page_button 3
+move_page 3 1
+check
+save tests/fixtures/three_page_moved_link_port.gsp

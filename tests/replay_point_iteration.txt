@@ -1,0 +1,6 @@
+new
+point 280 240
+translate 1 0 1
+iterate 1 2 3
+check
+save tests/fixtures/point_translation_iteration_port.gsp

@@ -1,0 +1,13 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+scroll_button 2 upper_left
+check
+save tests/fixtures/two_page_scroll_port.gsp
+
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+scroll_button 2 upper_left
+page 1
+scroll_button 1 center
+check
+save tests/fixtures/two_page_scroll_both_port.gsp

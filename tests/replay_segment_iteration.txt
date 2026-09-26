@@ -1,0 +1,7 @@
+new
+point 150 180
+translate_rectangular_fixed 1 1 1
+segment 1 2
+iterate_segment 1 2 3 3
+check
+save tests/fixtures/point_translation_carried_segment_port.gsp

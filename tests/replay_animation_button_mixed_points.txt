@@ -1,0 +1,15 @@
+new
+point 120 100
+point 100 200
+point 300 200
+segment 2 3
+point_on 4 200 200
+point 300 100
+point 330 100
+circle 6 7
+point_on 8 300 70
+check
+save tests/fixtures/animation_button_mixed_points_base.gsp
+animation_button_multi 1 5 9
+check
+save tests/fixtures/action_animation_mixed_points_port.gsp

@@ -1,0 +1,4 @@
+open tests/fixtures/animation_parameter_base.gsp
+animation_parameter_button 1 bidirectional 2 discrete 0.5 -3 7
+check
+save tests/fixtures/action_animation_parameter_custom_port.gsp

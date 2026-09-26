@@ -1,0 +1,40 @@
+open tests/fixtures/animation_indirect_segment_base.gsp
+animation_button_from 3
+check
+save tests/fixtures/action_animation_indirect_segment_port.gsp
+open tests/fixtures/animation_indirect_circle_base.gsp
+animation_button_from 3
+check
+save tests/fixtures/action_animation_indirect_circle_port.gsp
+open tests/fixtures/animation_indirect_segment_hidden_base.gsp
+animation_button_from 3
+check
+save tests/fixtures/action_animation_indirect_segment_hidden_port.gsp
+open tests/fixtures/animation_indirect_line_base.gsp
+animation_button_from 3
+check
+save tests/fixtures/action_animation_indirect_line_port.gsp
+open tests/fixtures/animation_indirect_ray_base.gsp
+animation_button_from 3
+check
+save tests/fixtures/action_animation_indirect_ray_port.gsp
+open tests/fixtures/animation_indirect_polygon_base.gsp
+animation_button_from 4
+check
+save tests/fixtures/action_animation_indirect_polygon_port.gsp
+open tests/fixtures/animation_indirect_quadrilateral_base.gsp
+animation_button_from 5
+check
+save tests/fixtures/action_animation_indirect_quadrilateral_port.gsp
+open tests/fixtures/animation_indirect_pentagon_base.gsp
+animation_button_from 6
+check
+save tests/fixtures/action_animation_indirect_pentagon_port.gsp
+open tests/fixtures/animation_indirect_hexagon_base.gsp
+animation_button_from 7
+check
+save tests/fixtures/action_animation_indirect_hexagon_port.gsp
+open tests/fixtures/animation_indirect_heptagon_base.gsp
+animation_button_from 8
+check
+save tests/fixtures/action_animation_indirect_heptagon_port.gsp

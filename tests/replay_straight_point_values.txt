@@ -1,0 +1,16 @@
+open tests/fixtures/point_on_line_native.gsp
+point_value 4
+check
+save tests/fixtures/point_on_line_value_port.gsp
+open tests/fixtures/point_on_ray_native.gsp
+point_value 4
+check
+save tests/fixtures/point_on_ray_value_port.gsp
+open tests/fixtures/point_on_line_value_native.gsp
+move 4 243 212
+check
+save tests/fixtures/point_on_line_value_moved_port.gsp
+open tests/fixtures/point_on_ray_value_native.gsp
+move 4 603 234.5
+check
+save tests/fixtures/point_on_ray_value_moved_port.gsp

@@ -1272,6 +1272,7 @@ fn is_distance_value_kind(kind: &Kind) -> bool {
             | Kind::CircleCircumference(_)
             | Kind::CircleRadius(_)
             | Kind::ArcLength(_)
+            | Kind::MeasuredCalculation(_, _)
     )
 }
 
@@ -2284,7 +2285,7 @@ impl Document {
                         }
                     }
                     (48, None, [source]) if *source > 0
-                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_))) => {
+                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_))) => {
                         match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
                             _ => Kind::Unsupported(code),
@@ -4276,10 +4277,19 @@ impl Document {
                 .objects
                 .get(source.checked_sub(1).ok_or("Invalid measurement ID")?)
                 .is_some_and(|object| {
-                    !object.deleted && matches!(object.kind, Kind::SegmentLength(_))
+                    !object.deleted
+                        && matches!(
+                            object.kind,
+                            Kind::SegmentLength(_)
+                                | Kind::PointDistance(_, _)
+                                | Kind::PolygonPerimeter(_)
+                                | Kind::CircleCircumference(_)
+                                | Kind::CircleRadius(_)
+                                | Kind::ArcLength(_)
+                        )
                 })
         {
-            return Err("Select a supported segment length".into());
+            return Err("Select a supported length or distance measurement".into());
         }
         let group = MeasuredCalculationGroup::multiply(
             u32::try_from(source).map_err(|_| "Invalid measurement ID")?,
@@ -4297,14 +4307,32 @@ impl Document {
         if object.deleted {
             return None;
         }
-        Some(self.segment_length_cm(*source)? * f64::from(group.factor()))
-    }
-    pub fn segment_length_name(&self, id: usize) -> Option<String> {
-        let Kind::SegmentLength(segment) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
+        let measurement = match self.objects.get(source.checked_sub(1)?)?.kind {
+            Kind::SegmentLength(_) => self.segment_length_cm(*source)?,
+            Kind::PointDistance(_, _) => self.point_distance_cm(*source)?,
+            Kind::PolygonPerimeter(_) => self.perimeter_cm(*source)?,
+            Kind::CircleCircumference(_) => self.circle_circumference_cm(*source)?,
+            Kind::CircleRadius(_) => self.circle_radius_cm(*source)?,
+            Kind::ArcLength(_) => self.arc_length_cm(*source)?,
+            _ => return None,
         };
-        let Kind::Segment(first, second) = self.objects.get(segment.checked_sub(1)?)?.kind else {
-            return None;
+        Some(measurement * f64::from(group.factor()))
+    }
+    pub fn length_measurement_name(&self, id: usize) -> Option<String> {
+        let (first, second) = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::SegmentLength(segment) => {
+                let Kind::Segment(first, second) = self.objects.get(segment.checked_sub(1)?)?.kind
+                else {
+                    return None;
+                };
+                (first, second)
+            }
+            Kind::PointDistance(first, second) => (first, second),
+            Kind::PolygonPerimeter(_) => return Some("Perimeter".into()),
+            Kind::CircleCircumference(_) => return Some("Circumference".into()),
+            Kind::CircleRadius(_) => return Some("Radius".into()),
+            Kind::ArcLength(_) => return Some("Arc Length".into()),
+            _ => return None,
         };
         Some(format!(
             "{}{}",
@@ -8698,7 +8726,17 @@ impl Document {
                         || !self
                             .objects
                             .get(source.saturating_sub(1))
-                            .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                            .is_some_and(|object| {
+                                matches!(
+                                    object.kind,
+                                    Kind::SegmentLength(_)
+                                        | Kind::PointDistance(_, _)
+                                        | Kind::PolygonPerimeter(_)
+                                        | Kind::CircleCircumference(_)
+                                        | Kind::CircleRadius(_)
+                                        | Kind::ArcLength(_)
+                                )
+                            })
                     {
                         return Err("Unsupported measured calculation source".into());
                     }
@@ -17354,6 +17392,145 @@ mod tests {
         assert!(matches!(&compact.objects[4].kind,
             Kind::MeasuredCalculation(4, group) if group.source_id() == 4 && group.factor() == 0));
         assert_eq!(compact.measured_calculation_cm(5), Some(0.));
+
+        let distance_native =
+            include_bytes!("../tests/fixtures/calculation_distance_times_two_native.gsp");
+        let distance = Document::from_bytes(distance_native, None).unwrap();
+        assert!(!distance.partial_view);
+        assert_eq!(distance.encode().unwrap(), distance_native);
+        assert!(
+            (distance.measured_calculation_cm(7).unwrap()
+                - distance.point_distance_cm(6).unwrap() * 2.)
+                .abs()
+                < 1e-10
+        );
+        let distance_port =
+            include_bytes!("../tests/fixtures/calculation_distance_times_three_port.gsp");
+        let mut distance = Document::from_bytes(distance_port, None).unwrap();
+        assert!(!distance.partial_view);
+        assert_eq!(distance.encode().unwrap(), distance_port);
+        assert_eq!(distance.length_measurement_name(6).as_deref(), Some("AB"));
+        assert!(distance.move_point(2, Point { x: 300., y: 120. }));
+        assert!(
+            (distance.measured_calculation_cm(7).unwrap()
+                - distance.point_distance_cm(6).unwrap() * 3.)
+                .abs()
+                < 1e-10
+        );
+
+        let perimeter_native =
+            include_bytes!("../tests/fixtures/calculation_perimeter_times_two_native.gsp");
+        let perimeter = Document::from_bytes(perimeter_native, None).unwrap();
+        assert!(!perimeter.partial_view);
+        assert_eq!(perimeter.encode().unwrap(), perimeter_native);
+        assert!(
+            (perimeter.measured_calculation_cm(6).unwrap()
+                - perimeter.perimeter_cm(5).unwrap() * 2.)
+                .abs()
+                < 1e-10
+        );
+        let perimeter_port =
+            include_bytes!("../tests/fixtures/calculation_perimeter_times_three_port.gsp");
+        let mut perimeter = Document::from_bytes(perimeter_port, None).unwrap();
+        assert!(!perimeter.partial_view);
+        assert_eq!(perimeter.encode().unwrap(), perimeter_port);
+        assert_eq!(
+            perimeter.length_measurement_name(5).as_deref(),
+            Some("Perimeter")
+        );
+        assert!(perimeter.move_point(3, Point { x: 300., y: 240. }));
+        assert!(
+            (perimeter.measured_calculation_cm(6).unwrap()
+                - perimeter.perimeter_cm(5).unwrap() * 3.)
+                .abs()
+                < 1e-10
+        );
+
+        for (native, port, expected_name, measure) in [
+            (
+                include_bytes!("../tests/fixtures/calculation_circumference_times_two_native.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/calculation_circumference_times_three_port.gsp")
+                    .as_slice(),
+                "Circumference",
+                Document::circle_circumference_cm as fn(&Document, usize) -> Option<f64>,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_radius_times_two_native.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/calculation_radius_times_three_port.gsp")
+                    .as_slice(),
+                "Radius",
+                Document::circle_radius_cm as fn(&Document, usize) -> Option<f64>,
+            ),
+        ] {
+            let imported = Document::from_bytes(native, None).unwrap();
+            assert!(!imported.partial_view);
+            assert_eq!(imported.encode().unwrap(), native);
+            assert!(
+                (imported.measured_calculation_cm(5).unwrap()
+                    - measure(&imported, 4).unwrap() * 2.)
+                    .abs()
+                    < 1e-10
+            );
+            let mut generated = Document::from_bytes(port, None).unwrap();
+            assert!(!generated.partial_view);
+            assert_eq!(generated.encode().unwrap(), port);
+            assert_eq!(
+                generated.length_measurement_name(4).as_deref(),
+                Some(expected_name)
+            );
+            assert!(generated.move_point(2, Point { x: 300., y: 120. }));
+            assert!(
+                (generated.measured_calculation_cm(5).unwrap()
+                    - measure(&generated, 4).unwrap() * 3.)
+                    .abs()
+                    < 1e-10
+            );
+        }
+
+        let arc_native =
+            include_bytes!("../tests/fixtures/calculation_arc_length_times_two_native.gsp");
+        let arc = Document::from_bytes(arc_native, None).unwrap();
+        assert!(!arc.partial_view);
+        assert_eq!(arc.encode().unwrap(), arc_native);
+        assert!(
+            (arc.measured_calculation_cm(6).unwrap() - arc.arc_length_cm(5).unwrap() * 2.).abs()
+                < 1e-10
+        );
+        let arc_port =
+            include_bytes!("../tests/fixtures/calculation_arc_length_times_three_port.gsp");
+        let mut arc = Document::from_bytes(arc_port, None).unwrap();
+        assert!(!arc.partial_view);
+        assert_eq!(arc.encode().unwrap(), arc_port);
+        assert_eq!(
+            arc.length_measurement_name(5).as_deref(),
+            Some("Arc Length")
+        );
+        assert!(arc.move_point(2, Point { x: 260., y: 110. }));
+        assert!(
+            (arc.measured_calculation_cm(6).unwrap() - arc.arc_length_cm(5).unwrap() * 3.).abs()
+                < 1e-10
+        );
+
+        let marked_bytes = include_bytes!("../tests/fixtures/calculation_marked_distance_port.gsp");
+        let mut marked = Document::from_bytes(marked_bytes, None).unwrap();
+        assert!(!marked.partial_view);
+        assert_eq!(marked.encode().unwrap(), marked_bytes);
+        assert!((marked.position(6).unwrap().x - 264.).abs() < 1e-9);
+        assert!(marked.move_point(2, Point { x: 210., y: 304. }));
+        assert!((marked.position(6).unwrap().x - 294.).abs() < 1e-9);
+
+        let mut copied = Document::from_bytes(native, None).unwrap();
+        copied.selected.insert(5);
+        let clipboard = copied.copy_selected().unwrap();
+        let pasted = copied.paste(&clipboard).unwrap();
+        let clone_id = *pasted.last().unwrap();
+        let cloned = Document::from_bytes(&copied.encode().unwrap(), None).unwrap();
+        assert!(!cloned.partial_view);
+        assert!(matches!(&cloned.objects[clone_id - 1].kind,
+            Kind::MeasuredCalculation(source, group) if *source != 4 && group.source_id() as usize == *source));
+        assert!(cloned.measured_calculation_cm(clone_id).is_some());
     }
 
     #[test]

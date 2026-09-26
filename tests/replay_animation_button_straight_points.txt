@@ -1,0 +1,8 @@
+open tests/fixtures/point_on_ray_native.gsp
+animation_button 4
+save /tmp/sketchpad_animation_button_ray_port.gsp
+open /tmp/sketchpad_animation_button_ray_port.gsp
+open tests/fixtures/point_on_line_native.gsp
+animation_button 4
+save /tmp/sketchpad_animation_button_line_port.gsp
+open /tmp/sketchpad_animation_button_line_port.gsp

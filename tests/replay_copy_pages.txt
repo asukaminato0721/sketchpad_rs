@@ -1,0 +1,12 @@
+open tests/fixtures/two_page_segment_native.gsp
+copy_page 2
+check
+save tests/fixtures/three_page_copied_segment_port.gsp
+open tests/fixtures/two_page_segment_native.gsp
+copy_page 1
+check
+save tests/fixtures/three_page_copied_first_port.gsp
+open tests/fixtures/two_page_review_native.gsp
+copy_page 2
+check
+save tests/fixtures/three_page_copied_named_port.gsp

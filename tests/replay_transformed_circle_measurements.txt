@@ -1,0 +1,13 @@
+open tests/fixtures/marked_distance_circle_translation_original.gsp
+area 7
+circumference 7
+radius 7
+check
+save tests/fixtures/transformed_circle_measurements_port.gsp
+open tests/fixtures/ratio_dilation_circle_original.gsp
+area 8
+circumference 8
+radius 8
+move 6 180 120
+check
+save tests/fixtures/scaled_circle_measurements_port.gsp

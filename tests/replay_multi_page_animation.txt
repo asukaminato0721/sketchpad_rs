@@ -1,0 +1,19 @@
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+animation_button 5
+check
+save tests/fixtures/two_page_animation_point_port.gsp
+
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+animation_button_from 4
+check
+save tests/fixtures/two_page_animation_segment_port.gsp
+
+open tests/fixtures/two_page_segment_constrained_native.gsp
+page 2
+animation_button 5
+page 1
+animation_button 1
+check
+save tests/fixtures/two_page_animation_both_port.gsp

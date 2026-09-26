@@ -1,0 +1,15 @@
+open tests/fixtures/two_page_presentation_port.gsp
+page 2
+clear 6
+check
+save tests/fixtures/two_page_presentation_parent_cleared_port.gsp
+open tests/fixtures/two_page_presentation_port.gsp
+page 2
+clear 2
+check
+save tests/fixtures/two_page_presentation_target_cleared_port.gsp
+open tests/fixtures/two_page_presentation_port.gsp
+page 2
+clear 5
+check
+save tests/fixtures/two_page_presentation_point_cleared_port.gsp

@@ -4,4 +4,14 @@ The native fixture `tests/fixtures/calculation_length_times_two_native.gsp` was 
 
 `MeasuredCalculationGroup` accepts this measured-length × one-digit form. `Document` resolves it from the current segment geometry, so dragging either endpoint updates the value and a calculation may supply a marked distance. Import and byte-preserving save of the native file, import of the generated file, live source edits, and native Sketchpad open/save were checked. A generated sketch with the source measurement as object 5 also displayed the expected 14.98 cm in native Sketchpad.
 
+The native `calculation_distance_times_two_native.gsp` uses the same code-48 format with a point-distance source. Its group differs in source reference, anchor, and opaque cache words; the generated `calculation_distance_times_three_port.gsp` opened, displayed 7.94 cm, and saved byte-identically in Sketchpad 5.
+
+The native `calculation_perimeter_times_two_native.gsp` also uses the same code-48 formula linked to a polygon-perimeter source. `calculation_perimeter_times_three_port.gsp` displayed 28.58 cm and saved byte-identically in Sketchpad 5.
+
+Native `calculation_circumference_times_two_native.gsp` and `calculation_radius_times_two_native.gsp` share the code-48 layout. Generated factor-three versions displayed 49.87 cm and 7.94 cm and saved byte-identically in Sketchpad 5.
+
+Native `calculation_arc_length_times_two_native.gsp` uses the same code-48 format. The generated factor-three file displayed 13.46 cm and saved byte-identically in Sketchpad 5.
+
+`calculation_marked_distance_port.gsp` uses the length calculation as a marked distance for point translation. It opened and saved byte-identically in Sketchpad 5; moving the segment endpoint in the port updates the translated point. The calculation also survives copying and pasting with its measurement and geometry parents, and renumbering after an earlier unrelated object is deleted.
+
 Other source types, operators, longer literals, and expression nesting still need native fixtures before broadening the writer.

@@ -1,0 +1,18 @@
+new
+point 120 180
+add_page
+point 240 280
+add_page
+point 320 220
+check
+save tests/fixtures/three_page_from_new_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+add_page
+point 310 220
+check
+save tests/fixtures/three_page_from_native_port.gsp
+open tests/fixtures/three_page_from_new_port.gsp
+add_page
+point 200 160
+check
+save tests/fixtures/four_page_from_new_port.gsp

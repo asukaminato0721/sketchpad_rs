@@ -1,0 +1,4 @@
+open tests/fixtures/wine_point_distance.gsp
+calculate_length 6 3
+check
+save tests/fixtures/calculation_distance_times_three_port.gsp

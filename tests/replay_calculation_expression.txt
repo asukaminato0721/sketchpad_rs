@@ -1,0 +1,12 @@
+new
+calculate 7 * 4
+check
+save tests/fixtures/calculation_seven_times_four_port.gsp
+new
+calculate 7 / 4
+check
+save tests/fixtures/calculation_seven_divide_four_port.gsp
+open tests/fixtures/wine_segment_length.gsp
+calculate 9 - 2
+check
+save tests/fixtures/measurement_and_calculation_port.gsp

@@ -1,0 +1,19 @@
+open tests/fixtures/point_on_arc.gsp
+point_value 5
+check
+save tests/fixtures/point_on_arc_value_port.gsp
+open tests/fixtures/arc_on_circle.gsp
+point_on 6 446.17921546257634 202.7213138551129
+check
+save tests/fixtures/point_on_circle_arc_port.gsp
+point_value 7
+check
+save tests/fixtures/point_on_circle_arc_value_port.gsp
+open tests/fixtures/point_on_arc_value_native.gsp
+move 5 209.17111318359585 469.68286247339006
+check
+save tests/fixtures/point_on_arc_value_moved_port.gsp
+open tests/fixtures/point_on_circle_arc_value_native.gsp
+move 7 436.54086027855686 167.14548117567242
+check
+save tests/fixtures/point_on_circle_arc_value_moved_port.gsp

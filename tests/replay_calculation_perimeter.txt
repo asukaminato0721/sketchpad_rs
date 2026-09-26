@@ -1,0 +1,4 @@
+open tests/fixtures/wine_polygon_perimeter.gsp
+calculate_length 5 3
+check
+save tests/fixtures/calculation_perimeter_times_three_port.gsp
