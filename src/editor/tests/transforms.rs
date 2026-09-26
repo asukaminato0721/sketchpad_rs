@@ -265,12 +265,12 @@ fn fixed_rotated_ray_and_line_commands_pick_the_correct_extents() {
         editor.dilate_selected();
         editor.marked_mirror = Some(4);
         editor.reflect_selected();
-        assert_eq!(editor.doc.objects.len(), count);
+        assert_eq!(editor.doc.objects.len(), count + 1);
         editor.select_only(4);
         editor.rotation_use_marked = true;
         editor.marked_angle = Some(MarkedAngle::Points([1, 2, 3]));
         editor.rotate_selected();
-        assert_eq!(editor.doc.objects.len(), count);
+        assert_eq!(editor.doc.objects.len(), count + 1);
     }
 }
 
@@ -317,6 +317,16 @@ fn fixed_scaled_ray_and_line_commands_preserve_direction_and_zero_rejection() {
             editor.hit(&vp, vp.screen(Point { x: 100., y: 70. })),
             if ray { None } else { Some(6) }
         );
+        let mut image_only = editor.doc.clone();
+        for object in &mut image_only.objects {
+            object.visible = object.id == 6;
+        }
+        let svg = sketchpad_rs::render::svg_page(&image_only, &vp).unwrap();
+        assert!(svg.contains(if ray {
+            "<line x1=\"100\" y1=\"120\" x2=\"0\" y2=\"120\""
+        } else {
+            "<line x1=\"500\" y1=\"120\" x2=\"0\" y2=\"120\""
+        }));
         editor.doc.verify_roundtrip().unwrap();
         let before = editor.doc.encode().unwrap();
         editor.select_only(4);
@@ -326,8 +336,99 @@ fn fixed_scaled_ray_and_line_commands_preserve_direction_and_zero_rejection() {
         editor.dilation_factor = 2.;
         editor.select_only(6);
         editor.dilate_selected();
-        assert_eq!(editor.doc.encode().unwrap(), before);
+        assert_eq!(
+            editor.doc.objects[6].kind,
+            if ray {
+                Kind::ScaledRay(6, 1, 2.)
+            } else {
+                Kind::ScaledLine(6, 1, 2.)
+            }
+        );
+        editor.doc.verify_roundtrip().unwrap();
+        let before = editor.doc.encode().unwrap();
         editor.select_only(4);
+        editor.dilation_use_marked = true;
+        editor.marked_ratio = Some([1, 2, 3]);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}
+
+#[test]
+fn fixed_ray_and_line_chain_commands_inherit_source_strokes_and_keep_marked_exclusions() {
+    for (ray, bytes) in [
+        (
+            true,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_rotation_ray_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            false,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_rotation_line_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            true,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_dilation_ray_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            false,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_dilation_line_original.gsp"
+            )
+            .as_slice(),
+        ),
+    ] {
+        let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+        editor.marked_center = Some(1);
+        editor.rotation_use_marked = false;
+        editor.rotation_angle = 90.;
+        editor.select_only(5);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects[7].kind,
+            if ray {
+                Kind::RotatedRay(5, 1, 90.)
+            } else {
+                Kind::RotatedLine(5, 1, 90.)
+            }
+        );
+        assert_eq!(
+            editor.doc.objects[7].visual_style,
+            editor.doc.objects[4].visual_style
+        );
+        assert_eq!(editor.doc.line_points(8), editor.doc.line_points(6));
+        editor.dilation_use_marked = false;
+        editor.dilation_factor = -2.;
+        editor.select_only(5);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects[8].kind,
+            if ray {
+                Kind::ScaledRay(5, 1, -2.)
+            } else {
+                Kind::ScaledLine(5, 1, -2.)
+            }
+        );
+        assert_eq!(
+            editor.doc.objects[8].visual_style,
+            editor.doc.objects[4].visual_style
+        );
+        assert_eq!(editor.doc.line_points(9), editor.doc.line_points(7));
+        editor.doc.verify_roundtrip().unwrap();
+        let before = editor.doc.encode().unwrap();
+        editor.select_only(5);
+        editor.rotation_use_marked = true;
+        editor.marked_angle = Some(MarkedAngle::Points([1, 2, 3]));
+        editor.rotate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
         editor.dilation_use_marked = true;
         editor.marked_ratio = Some([1, 2, 3]);
         editor.dilate_selected();

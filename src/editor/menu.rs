@@ -462,7 +462,11 @@ impl Editor {
                             "a + b".into()
                         } else if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
-                                Some(Kind::Parameter(group)) => format!("{}^2", group.name()),
+                                Some(Kind::Parameter(group)) => {
+                                    let source = *self.doc.selected.iter().next().unwrap();
+                                    let name = self.doc.parameter_display_name(source).unwrap_or_else(|| "v1".into());
+                                    if group.display_mode() == 0 { format!("({name})^2") } else { format!("{name}^2") }
+                                },
                                 Some(kind) if kind.numeric_unit() == Some(sketchpad_rs::table_records::NumericUnit::Degrees) => "v / 2".into(),
                                 Some(Kind::AngleMeasurement(_,_,_) | Kind::ArcAngle(_)) => "v / 2".into(),
                                 Some(Kind::ParameterCalculation(_, group)) if matches!(group.unit(),sketchpad_rs::table_records::NumericUnit::Length | sketchpad_rs::table_records::NumericUnit::Area) => "v * 2".into(),

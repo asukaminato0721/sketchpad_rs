@@ -1,0 +1,23 @@
+# Fixed dilation of primitive rays and lines
+
+Native Sketchpad creates fixed dilations of a primitive ray or infinite line as code 30, class 2, subtype 13 or 12 respectively. This family is represented by `ScaledRay(source, center, factor)` and `ScaledLine(source, center, factor)`; neither is a finite segment. The decoder requires the corresponding proven source mode and the exact modern 28-byte target header. Fixed rotation/dilation chains are now supported as documented in [fixed_straight_transform_chains_analysis.md](fixed_straight_transform_chains_analysis.md); marked and calculated ratios remain excluded.
+
+The authentic native files `tests/fixtures/fixed_dilation_ray_original.gsp` and `fixed_dilation_line_original.gsp` have center 1 = (130,150), source endpoints 2 = (170,190), 3 = (210,190), primitive source 4 and image 5 with ratio 2. The target control points are (210,230),(290,230). The ray extends only to the right of its first control point; the line spans both directions.
+
+The ray target header is `1e000000000002000d00220100008000ffff515cc1bdf0ff00000000`; the line changes subtype 13 to 12. The 12-byte reference record is `020000000400000001000000`, meaning [source 4, center 1]. The 12-byte constraint is `1e0000000000000000000040`, meaning code 30, zero prefix word and factor 2 as a little-endian f64. Native dialogs separately accept numerator and denominator; these originals were created with 2/1.
+
+## Negative and zero ratios
+
+Both authentic `fixed_dilation_{ray,line}_negative_native_verified.gsp` files were created with -2/1. Their ordered endpoints are (50,70),(-30,70). The ray consequently extends left from (50,70); the infinite line still spans both directions. Geometry scales both control points in their original order, preserving this direction.
+
+Native rejects creating a zero ratio with an alert and adds no object. However, an existing code 30 factor 0 record opens and saves unchanged. The files `fixed_dilation_{ray,line}_zero_point_native_verified.gsp` retain a point 6 constrained at parameter .5 to the image 5. All objects except this point were hidden for the controlled native observation. Both native screenshots were blank: the point and host are undefined, rather than collapsed to the center. Each 2244-byte native open/save succeeded and preserved every byte. These records remain supported and savable, but `line_points` and the dependent point position return None. The editor still requires a finite nonzero ratio for creation.
+
+The positive `fixed_dilation_{ray,line}_point_native_verified.gsp` controls have the same constraint. Native places point 6 at (250,230). The native point constraint uses the host's subtype 13 or 12 and parameter .5, independently verifying generic constrained-point dependents for these transformed hosts.
+
+## Verification
+
+`fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits` checks native input preservation, mode and ordered control points, zero dependents, source/center edits, clipboard offsets, deletion dependencies and wrong source-mode rejection. `fixed_scaled_ray_and_line_commands_preserve_direction_and_zero_rejection` checks editor creation, both viewport extents, negative ray direction, picking and atomic rejection of zero-ratio or unproven source/marked-ratio constructions. `tests/transform_fixed_dilation_straights_replay.txt` reproduces the four ordinary writer constructions.
+
+The four fresh writer files `fixed_dilation_{ray,line}_{positive,negative}_generated_native_verified.gsp` each contain 2120 bytes. All four opened and saved successfully in native Sketchpad, preserved every byte, and displayed the expected one-sided ray or two-sided line extent. The two edited files `fixed_dilation_{ray,line}_edited_native_verified.gsp` contain 2164 bytes each and likewise passed open/save, exact comparison and visible geometry inspection. Their center 1 = (150,170) and source endpoints 2 = (180,220), 3 = (260,200) yield image endpoints (210,270),(370,230), with the corresponding native ray or line extent. These writer files are compared directly in the existing regression.
+
+The two `reflected_point_scaled_{ray,line}_mirror_native_verified.gsp` files each contain 2184 bytes and passed successful native open/save with exact comparison. Native places the primitive center's reflection at (130,310), across support y = 230. The projection (130,230) lies behind the scaled ray's origin (210,230), independently proving that the existing point-reflection command uses the full support line when the mirror is a scaled ray. This supports the generic mirror-host classification; reflected ray/line source constructions remain excluded.

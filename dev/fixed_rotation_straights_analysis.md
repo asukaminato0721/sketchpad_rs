@@ -58,7 +58,7 @@ uses code 27 with subtype 13 or 12 and the same fixed-angle payload as the
 previous supported families. Stroke color/width/pattern come from the observed
 modern class-2 header fields, including the authored default medium navy stroke.
 
-The current source guard accepts primitive `Ray` or `Line` objects, with known
+The source guard accepts primitive and fixed transformed `Ray` or `Line` objects, with known
 point centers and finite fixed angles. Chained rotations of these new kinds,
 their use as dilation/reflection/calculated-transform sources, and marked-angle
 ray/line rotation remain outside this slice. The existing fixed rotation editor
@@ -69,7 +69,7 @@ its bytes match the native-verified fresh fixtures.
 Regressions in `src/document/tests/transforms.rs` cover unchanged native bytes,
 the edited native goldens, explicit geometry/mode, fresh native writer bytes,
 clipboard translation, dependency deletion, wrong source modes and target
-subtypes, and rejection of unproven rotation chains.
+subtypes, and the initially bounded primitive-source writer. Fixed rotation/dilation source chains now have independent native proof in [fixed_straight_transform_chains_analysis.md](fixed_straight_transform_chains_analysis.md).
 The same test compares explicit reflected-point geometry and exact native
 mirror-host bytes, retaining the consistent straight-host classification.
 `src/editor/tests/transforms.rs` covers the fixed command, ray/line picking

@@ -182,6 +182,18 @@ fn legacy_stroke_paste_and_new_patterns_keep_native_pen_meaning() {
         }
         document.verify_roundtrip().unwrap();
         let pasted = document.encode().unwrap();
+        let golden = if dashed {
+            include_bytes!(
+                "../../../tests/fixtures/legacy_dashed_paste_upgraded_native_verified.gsp"
+            )
+            .as_slice()
+        } else {
+            include_bytes!(
+                "../../../tests/fixtures/legacy_stroke_paste_upgraded_native_verified.gsp"
+            )
+            .as_slice()
+        };
+        assert_eq!(pasted, golden);
         if std::env::var_os("SKETCHPAD_WRITE_LEGACY_STROKE_FIXTURE").is_some() {
             fs::write(
                 if dashed {
@@ -221,6 +233,14 @@ fn legacy_stroke_paste_and_new_patterns_keep_native_pen_meaning() {
             })
         ));
         document.verify_roundtrip().unwrap();
+        if !dashed {
+            assert_eq!(
+                styled,
+                include_bytes!(
+                    "../../../tests/fixtures/legacy_stroke_dotted_upgraded_native_verified.gsp"
+                )
+            );
+        }
         if !dashed && std::env::var_os("SKETCHPAD_WRITE_LEGACY_STROKE_FIXTURE").is_some() {
             fs::write("/tmp/legacy_stroke_dotted_edit_port.gsp", &styled).unwrap();
         }

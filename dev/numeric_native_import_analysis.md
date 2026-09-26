@@ -301,3 +301,86 @@ math. The viewport probe uses a separate temporary copy, preserving the exact
 unscrolled fixture used for the API byte comparison. After this bounded π
 support, the same corpus audit imports 426/436 typed groups (307 Length,
 119 Degrees), leaving the ten presentation/invalid-zero groups above.
+
+The subsequent presentation probes establish the remaining supported typed
+forms independently of their numeric words. Native groups without 0x07d5
+use `[07d0,0907,07d8,08a3,07d7]`; labeled groups can carry one exact-empty
+0x232e immediately after 0x08a3 and before 0x07d7. The parser accepts precisely
+these observed sequences and preserves label absence and the empty attribute
+through numeric edits and anchor changes. Nonempty, misplaced, duplicated,
+and unobserved optional-record combinations remain guarded. Bbox/font access follows record
+kinds instead of assuming a label is always present. All six original typed
+unlabeled groups, the actual Length attribute group and mode-zero group,
+and authentic scalar controls have retained raw fixtures and regressions.
+
+An absent label is not a value-only caption. Native display names come from
+the page's 6-byte 0x0960 record: leading u16=0, then the next u32 parameter
+index. The baseline cursor 4 generates t₄ for one unnamed parameter; making
+all three unnamed produces t₄,t₅,t₆ in object order. Renaming the explicit
+t₃ to a custom name or removing that unused parameter does not change the
+unnamed parameter's t₄. Changing only the cursor to 7 produces t₇, including
+in dependent formulas. The retained counter controls are
+`numeric_parameter_autoname_{counter_seven,all_unnamed,two_parameters}_native_verified.gsp`.
+No generated label is inserted into the source group. Document-level name
+resolution applies the page cursor and preceding live unnamed groups;
+parameter math continues to use references rather than names.
+
+All 29 actual unnamed subtype79–81 groups have valid leading-zero counters:
+21 use cursor 1, 4 use cursor 2, 2 use cursor 5, and 2 use cursor 11. A missing, malformed,
+duplicated, zero, or overflowing naming counter does not receive a guessed
+name: those unnamed constructions remain unsupported/partial. Explicitly
+named parameters remain independent of this unrelated metadata. Zero-counter
+naming semantics have not been established and are not generalized.
+
+The one actual mode-zero parameter (timer object 15) is an ordinary0.5cm
+literal with stored name t₂. Native mode 0 uses its unrounded numeric definition
+as the caption name: `0.5cm = 0.50cm`, with dependent formula `(0.5cm)*1`.
+Bounded support applies only to labeled, ordinary centimeter literals in the
+standard sequence. Its stored name, mode, caches, domain, and step remain
+unchanged; other unit, scientific, and optional-record mode-zero combinations
+remain unsupported. The renderer and authored calculation input use the
+resolved display name, while dependent formula formatting brackets the
+literal definition separately from expression evaluation.
+
+The independent native isolates demonstrate Length0.0001cm×10000=1cm,
+Degrees35°→sin≈0.57, Scalar0+1=1, Length3.2cm×1=3.2cm,
+mode-zero Length0.5cm×1=0.5cm, and attributed Scalar27/10=2.7.
+Each includes a positive numeric XY point and an exact-byte native open/save
+comparison. The empty attribute does not suppress these captions; its box or
+other presentation meaning is not inferred (the scalar control still boxes
+its value). Original caption modes, style fields, fonts, and cached bounds
+are preserved independently from these established numeric semantics.
+
+All six actual API edit/copy probes retain 24 objects and reopen/save with
+identical bytes: unlabeled Length 4,714 bytes, unlabeled Degrees 4,710 bytes,
+unlabeled Scalar 4,678 bytes, attributed Length 4,770 bytes, mode-zero Length
+4,762 bytes, and attributed Scalar 4,770 bytes. Edited values respectively
+produce plotted x=2.5, y=sin(45°), x=3.5, x=2.75, x=2.25, and x=3.25.
+Each native capture shows the shifted copied point and its live calculation;
+unnamed originals/copies display t₄/t₅, while mode-zero copies retain the
+numeric definition caption. The retained files use
+`numeric_parameter_presentation_*_edited_copied_native_verified.gsp`.
+Positive captures are `/tmp/presentation_*_api_after_setup.png`.
+
+The integration regression compares complete API output with every retained
+native fixture, tests live updates and authored squares using the resolved
+names (including `(0.5 cm)^2` followed by a source edit), and verifies reopening
+preserves copied geometry/name resolution. The complete typed audit now imports
+434 of 436 groups: 312 Length and 122 Degrees, with no parser/decoder gaps.
+Only the two original zero-word groups with invalid/unestablished metadata
+remain rejected. Explicit-name collision and deleted-unnamed ordinal controls
+are separate naming checks rather than evidence for interpreting those zero
+values or their animation bytes.
+
+The final naming controls establish two edge cases. With explicit stored
+`t[4]` and page cursor 4, an unnamed parameter also displays t₄; native does
+not skip occupied explicit names. Their values and referenced calculations
+remain distinct (Scalar 1 versus Length 0.0001cm), confirming that formulas
+bind object IDs. Removing the first unnamed parameter through the API also
+removes its dependent calculation and three coordinate points. Native reopening
+assigns t₄/t₅ to the two remaining unnamed parameters in their new order,
+matching resolution over live groups. The remaining Length calculation still
+gives 1cm. Both controls compare byte-identically (3,518/2,868 bytes) and have
+positive captures `/tmp/presentation_autoname_{collision,deleted}_after_setup.png`.
+Retained fixtures and regressions cover the name collision, dependency deletion,
+reference remapping, unchanged cursor, new display names, and live math.

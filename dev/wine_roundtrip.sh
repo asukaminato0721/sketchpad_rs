@@ -24,7 +24,8 @@ xvfb-run -a bash -c '
   exec 9>&-
   export WINEPREFIX="${SKETCHPAD_WINEPREFIX:-/tmp/sketchpad_rs_wine}"
   capture_prefix="$3"
-  wine "$1" "$2" > "${capture_prefix}_runtime.log" 2>&1 &
+  wine_path="$(winepath -w "$2" | tr -d "\r")"
+  wine "$1" "$wine_path" > "${capture_prefix}_runtime.log" 2>&1 &
   wine_pid=$!
   trap '\''kill "$wine_pid" 2>/dev/null || true; wineserver -k 2>/dev/null || true; wineserver -w 2>/dev/null || true'\'' EXIT
   window_id=""
@@ -34,22 +35,23 @@ xvfb-run -a bash -c '
     sleep 1
   done
   test -n "$window_id"
-  test -n "$window_id"
   echo "Selected window: $(xdotool getwindowname "$window_id")"
   xdotool windowfocus "$window_id"
-  sleep 3
-  xdotool key --clearmodifiers ctrl+o
-  sleep 2
-  wine_path="$(winepath -w "$2" | tr -d "\r")"
-  echo "Opening $wine_path"
-  xdotool type --clearmodifiers --delay 1 "$wine_path"
-  xdotool key Return
-  opened_name=""
-  for _ in $(seq 1 10); do
-    sleep 1
-    opened_name="$(xdotool getwindowname "$window_id")"
-    [[ "$opened_name" == *"$(basename "$2")"* ]] && break
-  done
+  opened_name="$(xdotool getwindowname "$window_id")"
+  if [[ "$opened_name" != *"$(basename "$2")"* ]]; then
+    sleep 3
+    xdotool key --clearmodifiers ctrl+o
+    sleep 2
+    echo "Opening $wine_path"
+    xdotool key --clearmodifiers alt+n ctrl+a
+    xdotool type --clearmodifiers --delay 1 "$wine_path"
+    xdotool key Return
+    for _ in $(seq 1 10); do
+      sleep 1
+      opened_name="$(xdotool getwindowname "$window_id")"
+      [[ "$opened_name" == *"$(basename "$2")"* ]] && break
+    done
+  fi
   if [[ "$opened_name" != *"$(basename "$2")"* ]]; then
     "$4" -window root "${capture_prefix}_open_failed.png"
     echo "Sketchpad did not open $2: $opened_name" >&2

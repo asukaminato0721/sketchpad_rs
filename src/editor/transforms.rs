@@ -1,5 +1,5 @@
 use super::{Editor, MarkedAngle, TranslationMode};
-use sketchpad_rs::document::Kind;
+use sketchpad_rs::document::{Kind, LineMode};
 
 impl Editor {
     pub(super) fn translate_selected(&mut self) {
@@ -516,7 +516,7 @@ impl Editor {
             && (!self.dilation_factor.is_finite() || self.dilation_factor == 0.)
         {
             self.status =
-                "Select a point, segment, or circle and a center point; use a nonzero ratio".into();
+                "Use a finite nonzero dilation ratio".into();
             return;
         }
         let (source, center) = match self.selection_order.as_slice() {
@@ -529,7 +529,7 @@ impl Editor {
                 }
             },
             _ => {
-                self.status = "Select a point, segment, or circle, then a center point".into();
+                self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
                 return;
             }
         };
@@ -543,7 +543,7 @@ impl Editor {
             return;
         }
         if self.doc.position(center).is_none() {
-            self.status = "Select a point, segment, or circle, then a center point".into();
+            self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
             return;
         }
         if self.dilation_use_marked
@@ -616,12 +616,12 @@ impl Editor {
             Kind::ScaledSegment(source, center, self.dilation_factor)
         } else if matches!(
             self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::Ray(..))
+            Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray)
         ) {
             Kind::ScaledRay(source, center, self.dilation_factor)
         } else if matches!(
             self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::Line(..))
+            Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Line)
         ) {
             Kind::ScaledLine(source, center, self.dilation_factor)
         } else if matches!(
@@ -633,7 +633,7 @@ impl Editor {
         ) {
             Kind::ScaledPolygon(source, center, self.dilation_factor)
         } else {
-            self.status = "Select a point, segment, or circle, then a center point".into();
+            self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
             return;
         };
         let id = self.doc.add(kind);
@@ -685,9 +685,9 @@ impl Editor {
             || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
                 && kind.is_circle()))
             && self.doc.circle_points(source).is_some();
-        let source_ray = !self.rotation_use_marked && matches!(source_kind, Some(Kind::Ray(..)))
+        let source_ray = !self.rotation_use_marked && source_kind.is_some_and(|kind| kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
             && self.doc.line_points(source).is_some();
-        let source_line = !self.rotation_use_marked && matches!(source_kind, Some(Kind::Line(..)))
+        let source_line = !self.rotation_use_marked && source_kind.is_some_and(|kind| kind.fixed_transform_straight_mode() == Some(LineMode::Line))
             && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
             || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))

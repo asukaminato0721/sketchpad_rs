@@ -1053,6 +1053,10 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
+                if let Some(label) = &o.label {
+                    let labels = crate::text_records::encode_point_label_records(label);
+                    group.splice(72..72, labels);
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -1517,8 +1521,15 @@ impl Document {
                         .to_le_bytes(),
                 );
             }
-            if matches!(o.kind, Kind::RotatedRay(..) | Kind::RotatedLine(..) | Kind::ScaledRay(..) | Kind::ScaledLine(..)) {
-                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..)) { 64 } else { 63 });
+            if matches!(
+                o.kind,
+                Kind::RotatedRay(..) | Kind::RotatedLine(..) | Kind::ScaledRay(..) | Kind::ScaledLine(..)
+            ) {
+                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..)) {
+                    64
+                } else {
+                    63
+                });
                 h[0] = code as u8;
                 h[18..20].copy_from_slice(&[0x51, 0x5c]);
             }

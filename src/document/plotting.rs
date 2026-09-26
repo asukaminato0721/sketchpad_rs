@@ -1,4 +1,4 @@
-use super::kind::{plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
+use super::kind::{is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
 use super::{Document, Kind, Point};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{plot_axis_records, plot_points_records, style_records};
@@ -113,13 +113,22 @@ impl Document {
         }
         Ok(ids)
     }
-    fn plotted_path_position(&self, path: usize, value: f64) -> Result<Point, String> {
+    fn plotted_path_position(&self, path: usize, value: f64) -> Result<Option<Point>, String> {
         let object = self
             .objects
             .get(path.checked_sub(1).ok_or("Invalid path")?)
             .ok_or("Invalid path")?;
         if object.page != self.active_page || object.deleted {
             return Err("Select a path on this page".into());
+        }
+        if is_transformed_plot_path_kind(&object.kind) && value.is_finite() {
+            let (start, end, _) = self.line_points(path).ok_or("Invalid transformed path")?;
+            if is_transformed_plot_ray_kind(&object.kind) && value < 0.0 {
+                if start == end { return Err("Invalid transformed path".into()); }
+                return Ok(None);
+            }
+            let point = Point { x: start.x + (end.x - start.x) * value, y: start.y + (end.y - start.y) * value };
+            return (point.x.is_finite() && point.y.is_finite()).then_some(Some(point)).ok_or("Plotted value is outside the supported range".into());
         }
         if !plot_path_accepts(&object.kind, value) {
             return Err(match object.kind {
@@ -137,7 +146,7 @@ impl Document {
                 y: center.y - radius * angle.sin(),
             };
             return (point.x.is_finite() && point.y.is_finite())
-                .then_some(point)
+                .then_some(Some(point))
                 .ok_or("Plotted value is outside the supported range".into());
         }
         let (start, end) = match object.kind {
@@ -156,7 +165,7 @@ impl Document {
         if !point.x.is_finite() || !point.y.is_finite() {
             return Err("Plotted value is outside the supported range".into());
         }
-        Ok(point)
+        Ok(Some(point))
     }
     pub fn plot_parameter_on_path(
         &mut self,

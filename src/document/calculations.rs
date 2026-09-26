@@ -261,8 +261,9 @@ impl Document {
         if object.deleted || object.page != self.active_page {
             return Err("Select a numeric value on the active page".into());
         }
-        let source_name = if let Kind::Parameter(parameter) = &object.kind {
-            parameter.name().to_owned()
+        let source_name = if matches!(object.kind, Kind::Parameter(_)) {
+            self.parameter_display_name(source)
+                .ok_or("Parameter display name is unavailable")?
         } else {
             "v".to_owned()
         };
@@ -509,7 +510,10 @@ impl Document {
             }
             let source = &source;
             let name = match &source_object.kind {
-                Kind::Parameter(parameter) => parameter.name().to_owned(),
+                Kind::Parameter(parameter) => {
+                    let name = self.parameter_display_name(*source)?;
+                    if parameter.display_mode() == 0 { format!("({name})") } else { name }
+                }
                 Kind::ParameterCalculation(_, _) => {
                     self.parameter_calculation_expression(*source)?
                 }

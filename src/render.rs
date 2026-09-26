@@ -104,17 +104,43 @@ pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rec
     let width = (label.chars().count() as f32 * 8. + 20.).max(88.);
     Rect::from_min_size(min, egui::vec2(width, 24.))
 }
+fn display_parameter_indices(text: &str) -> String {
+    let mut output = String::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("t[") {
+        output.push_str(&remaining[..start]);
+        let suffix = &remaining[start + 2..];
+        if let Some(end) = suffix.find(']')
+            && !suffix[..end].is_empty()
+            && suffix[..end].bytes().all(|digit| digit.is_ascii_digit())
+        {
+            output.push('t');
+            for digit in suffix[..end].bytes() {
+                output.push(
+                    ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉'][usize::from(digit - b'0')],
+                );
+            }
+            remaining = &suffix[end + 1..];
+        } else {
+            output.push_str("t[");
+            remaining = suffix;
+        }
+    }
+    output.push_str(remaining);
+    output
+}
+
 pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
     match kind {
         Kind::Parameter(group) => Some((
             group.anchor(),
             vec![format!(
                 "{} = {}",
-                match group.name() {
-                    "t[1]" => "t₁",
-                    "t[2]" => "t₂",
-                    name => name,
-                },
+                display_parameter_indices(&if group.display_mode() == 0 {
+                    group.literal_definition()
+                } else {
+                    group.name().to_owned()
+                }),
                 group.value_text()
             )],
         )),
@@ -153,6 +179,14 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
 
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
+    if let Kind::Parameter(group) = &object.kind {
+        let name = doc.parameter_display_name(id)?;
+        let name = display_parameter_indices(&name);
+        return Some((
+            group.anchor(),
+            vec![format!("{name} = {}", group.value_text())],
+        ));
+    }
     if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
         let value = doc.length_pair_calculation_value(id).map_or_else(
             || "undefined".into(),
@@ -199,7 +233,7 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             (1, None) => value,
             _ => {
                 let expression = doc.parameter_calculation_expression(id)?;
-                let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
+                let expression = display_parameter_indices(&expression);
                 format!("{expression} = {value}")
             }
         };
@@ -2053,6 +2087,43 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_generated_parameter_names_render_in_captions_and_formulas() {
+        let doc = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/numeric_parameter_autoname_all_unnamed_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        for (id, prefix) in [(1, "t₄ = "), (2, "t₅ = "), (3, "t₆ = ")] {
+            let (_, lines) = number_lines_for_object(&doc, id).unwrap();
+            assert!(lines[0].starts_with(prefix), "{:?}", lines);
+        }
+        let doc = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/numeric_parameter_autoname_counter_seven_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        let (_, lines) = number_lines_for_object(&doc, 2).unwrap();
+        assert!(lines[0].starts_with("t₇ = "));
+        let (_, lines) = number_lines_for_object(&doc, 5).unwrap();
+        assert!(lines[0].contains("t₇"), "{:?}", lines);
+        let doc = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/numeric_parameter_presentation_mode_zero_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        let (_, lines) = number_lines_for_object(&doc, 2).unwrap();
+        assert!(lines[0].starts_with("0.5 cm = "), "{:?}", lines);
+        let (_, lines) = number_lines_for_object(&doc, 5).unwrap();
+        assert!(lines[0].contains("0.5 cm"), "{:?}", lines);
+    }
 
     #[test]
     fn legacy_polygon_fill_color_edit_and_modern_clipboard_keep_native_opacity() {

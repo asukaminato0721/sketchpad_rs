@@ -19,6 +19,7 @@ mod legacy;
 mod locus;
 mod measurements;
 mod pages;
+mod parameter_names;
 mod plotting;
 mod records;
 mod save;
@@ -424,7 +425,11 @@ impl Document {
         | Kind::CalculatedRatioScaledPolygon(source, _, _)
         | Kind::AngleRotatedPolygon(source, _, _, _, _)
         | Kind::ScaledPolygon(source, _, _)
-        | Kind::RatioScaledPolygon(source, _, _, _, _) = kind
+        | Kind::RatioScaledPolygon(source, _, _, _, _)
+        | Kind::RotatedRay(source, _, _)
+        | Kind::RotatedLine(source, _, _)
+        | Kind::ScaledRay(source, _, _)
+        | Kind::ScaledLine(source, _, _) = kind
         {
             self.objects
                 .get(source.saturating_sub(1))

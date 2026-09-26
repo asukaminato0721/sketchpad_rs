@@ -369,11 +369,18 @@ impl ParameterGroup {
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
-        if rs.iter().map(|r| r.kind).collect::<Vec<_>>()
-            != [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
+        let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
+        if !matches!(kinds.as_slice(),
+            [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
+            | [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
+            | [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x232e, 0x07d7])
+            || rs.iter().any(|r| r.kind == 0x232e && r.end != r.payload)
         {
             return Err("Unsupported parameter record sequence".into());
         }
+        let font = rs.iter().find(|r| r.kind == 0x07d8).unwrap();
+        let bbox_record = rs.iter().find(|r| r.kind == 0x08a3).unwrap();
+        let label_record = rs.iter().find(|r| r.kind == 0x07d5);
         let payload_len = rs[1].end - rs[1].payload;
         if !(94..=156).contains(&payload_len) || payload_len % 2 != 0 {
             return Err("Unsupported parameter value length".into());
@@ -394,7 +401,14 @@ impl ParameterGroup {
             Some([81, 0]) => NumericUnit::Degrees,
             _ => return Err("Unsupported parameter units".into()),
         };
-        parameter_literal(&words, unit)?;
+        let literal = parameter_literal(&words, unit)?;
+        let display_mode = u16::from_le_bytes(payload[26..28].try_into().unwrap());
+        // Native mode zero displays the literal definition instead of its
+        // stored name. Only an ordinary, labeled centimeter literal has been
+        // established in this mode; do not infer other combinations.
+        let display_mode_supported = matches!(display_mode, 1 | 3)
+            || display_mode == 0 && unit == NumericUnit::Length
+                && !literal.scientific && label_record.is_some() && kinds.len() == 6;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
         let domain = (
@@ -413,20 +427,22 @@ impl ParameterGroup {
         let expected = &template[base[1].payload..base[1].end];
         let immutable = [0..12, 16..22, 24..26, 32..36, 40..44, 46..48];
         if immutable.iter().any(|range| payload[range.clone()] != expected[range.clone()])
-            || !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 1 | 3)
+            || !display_mode_supported
             || rs[0].end - rs[0].payload != 28
             || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap()) & 0xffff != 0
             || !matches!(u16::from_le_bytes(bytes[rs[0].payload + 8..rs[0].payload + 10].try_into().unwrap()), 79..=81)
-            || rs[3].end - rs[3].payload != 2
-            || rs[4].end - rs[4].payload != 8
-            || rs[5].end != rs[5].payload
+            || font.end - font.payload != 2
+            || bbox_record.end - bbox_record.payload != 8
+            || rs.last().unwrap().end != rs.last().unwrap().payload
         {
             return Err("Unsupported parameter variant".into());
         }
-        let label = crate::text_records::LabelAux::parse(&bytes[rs[2].payload..rs[2].end])?;
-        let name = label.name_utf8().map_err(|_| "Parameter name is not UTF-8")?;
-        if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
-            return Err("Unsupported parameter name".into());
+        if let Some(record) = label_record {
+            let label = crate::text_records::LabelAux::parse(&bytes[record.payload..record.end])?;
+            let name = label.name_utf8().map_err(|_| "Parameter name is not UTF-8")?;
+            if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+                return Err("Unsupported parameter name".into());
+            }
         }
         let group = Self {
             bytes: bytes.to_vec(),
@@ -442,12 +458,26 @@ impl ParameterGroup {
         Ok(group)
     }
 
+    /// The explicitly stored name; an absent label returns an empty string.
+    /// Native generated names require the containing page's naming counter.
     pub fn name(&self) -> &str {
         let rs = records(&self.bytes, 0).unwrap();
-        let payload = rs[2].payload;
+        let Some(label) = rs.iter().find(|r| r.kind == 0x07d5) else { return ""; };
+        let payload = label.payload;
         let len =
             u16::from_le_bytes(self.bytes[payload + 22..payload + 24].try_into().unwrap()) as usize;
         std::str::from_utf8(&self.bytes[payload + 24..payload + 24 + len]).unwrap()
+    }
+
+    pub fn display_mode(&self) -> u16 {
+        let rs = records(&self.bytes, 0).unwrap();
+        u16::from_le_bytes(self.bytes[rs[1].payload + 26..rs[1].payload + 28].try_into().unwrap())
+    }
+
+    /// A canonical numeric definition before display rounding. Its use as a
+    /// native mode-zero caption is established for centimeter literals.
+    pub fn literal_definition(&self) -> String {
+        format!("{}{}", self.value(), self.unit().suffix())
     }
 
     pub fn precision(&self) -> usize {
@@ -567,7 +597,7 @@ impl ParameterGroup {
         put_record(&mut updated, 0x0907, &payload);
         updated.extend_from_slice(&self.bytes[rs[1].end..]);
         let changed = records(&updated, 0)?;
-        let right = changed[4].payload + 4;
+        let right = changed.iter().find(|r| r.kind == 0x08a3).unwrap().payload + 4;
         let old_right = i16::from_le_bytes(updated[right..right + 2].try_into().unwrap());
         let new_right = i16::try_from(i32::from(old_right) + width_delta)
             .map_err(|_| "Parameter box coordinate overflow")?;
@@ -593,7 +623,7 @@ impl ParameterGroup {
 
     pub fn bbox(&self) -> ((i16, i16), (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs[4].payload;
+        let at = rs.iter().find(|r| r.kind == 0x08a3).unwrap().payload;
         let word = |offset| {
             i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap())
         };
@@ -607,7 +637,7 @@ impl ParameterGroup {
             i32::from(anchor.0) - i32::from(before.0),
             i32::from(anchor.1) - i32::from(before.1),
         );
-        let bbox = rs[4].payload;
+        let bbox = rs.iter().find(|r| r.kind == 0x08a3).unwrap().payload;
         let mut updates = Vec::new();
         for (index, difference) in [(0, delta.0), (2, delta.1), (4, delta.0), (6, delta.1)] {
             let old = i16::from_le_bytes(

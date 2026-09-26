@@ -1,4 +1,4 @@
-use super::kind::{is_straight_kind, plot_path_accepts};
+use super::kind::{is_straight_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
@@ -225,6 +225,13 @@ fn three_point_arc_geometry(
 }
 
 impl Document {
+    /// Native code 95/123 retain negative ray values as undefined points.
+    pub(super) fn undefined_transformed_ray_plot(&self, path: usize, value: f64) -> bool {
+        value.is_finite() && value < 0.0
+            && self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && is_transformed_plot_ray_kind(&host.kind))
+            && self.line_points(path).is_some_and(|(start, end, _)| start != end)
+    }
+
     pub fn position(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
             fn on_path(
@@ -236,6 +243,11 @@ impl Document {
                 let kind = &d.objects.get(path.checked_sub(1)?)?.kind;
                 if !plot_path_accepts(kind, t) {
                     return None;
+                }
+                if is_transformed_plot_path_kind(kind) {
+                    let (start, end, _) = d.line_points(path)?;
+                    let point = Point { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t };
+                    return (point.x.is_finite() && point.y.is_finite()).then_some(point);
                 }
                 if kind.is_circle() {
                     let (center, radius) = d.circle_points(path)?;
@@ -689,6 +701,19 @@ impl Document {
             _ => None,
         }
     }
+    pub(super) fn fixed_straight_has_zero_factor(&self, mut id: usize) -> bool {
+        let mut seen = BTreeSet::new();
+        while seen.insert(id) {
+            match self.objects.get(id.saturating_sub(1)).map(|object| &object.kind) {
+                Some(Kind::ScaledRay(_, _, factor) | Kind::ScaledLine(_, _, factor)) if *factor == 0. => return true,
+                Some(Kind::ScaledRay(source, _, _) | Kind::ScaledLine(source, _, _)
+                    | Kind::RotatedRay(source, _, _) | Kind::RotatedLine(source, _, _)) => id = *source,
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
             d: &Document,

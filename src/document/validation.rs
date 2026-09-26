@@ -633,7 +633,7 @@ impl Document {
             if let Kind::PathValuePoint(source, path) = o.kind {
                 if !self.objects.get(source.saturating_sub(1)).is_some_and(|parent| !parent.deleted && parent.page == o.page && source < o.id && parent.kind.numeric_unit() == Some(NumericUnit::Scalar))
                     || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
-                    || self.position(o.id).is_none()
+                    || (self.position(o.id).is_none() && !self.numeric_value(source).is_some_and(|value| self.undefined_transformed_ray_plot(path, value)))
                 {
                     return Err(format!("Invalid path value point {}", o.id));
                 }
@@ -643,7 +643,7 @@ impl Document {
                     .objects
                     .get(path.saturating_sub(1))
                     .is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && literal_plot_path_accepts(&host.kind, value))
-                    || self.position(o.id).is_none()
+                    || (self.position(o.id).is_none() && !self.undefined_transformed_ray_plot(path, value))
                 {
                     return Err(format!("Invalid literal path point {}", o.id));
                 }
@@ -1117,11 +1117,11 @@ impl Document {
             {
                 let expected = if matches!(o.kind, Kind::ScaledRay(..)) { LineMode::Ray } else { LineMode::Line };
                 let source_matches = self.objects.get(source.saturating_sub(1)).is_some_and(|object|
-                    !object.deleted && matches!((&o.kind, &object.kind),
-                        (Kind::ScaledRay(..), Kind::Ray(..)) | (Kind::ScaledLine(..), Kind::Line(..))));
+                    !object.deleted && object.kind.fixed_transform_straight_mode() == Some(expected));
                 if !source_matches
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
-                    || (factor != 0. && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
+                    || (factor != 0. && !self.fixed_straight_has_zero_factor(source)
+                        && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
                 {
                     return Err(format!("Invalid ray or line source/center in dilation {}", o.id));
                 }
@@ -1131,11 +1131,11 @@ impl Document {
             {
                 let expected = if matches!(o.kind, Kind::RotatedRay(..)) { LineMode::Ray } else { LineMode::Line };
                 let source_matches = self.objects.get(source.saturating_sub(1)).is_some_and(|object|
-                    !object.deleted && matches!((&o.kind, &object.kind),
-                        (Kind::RotatedRay(..), Kind::Ray(..)) | (Kind::RotatedLine(..), Kind::Line(..))));
+                    !object.deleted && object.kind.fixed_transform_straight_mode() == Some(expected));
                 if !source_matches
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
-                    || self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected)
+                    || (!self.fixed_straight_has_zero_factor(source)
+                        && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
                 {
                     return Err(format!("Invalid ray or line source/center in rotation {}", o.id));
                 }
@@ -1245,7 +1245,21 @@ impl Document {
                 return Err(format!("Undefined transformed point {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind,Kind::Segment(a,b)|Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
+                && matches!(o.kind, Kind::Segment(a, b) if [a, b].iter().any(|&id| {
+                    !self.objects.get(id.saturating_sub(1)).is_some_and(|point| {
+                        !point.deleted && point.page == o.page && id < o.id && is_point_kind(&point.kind)
+                            && (self.position(id).is_some() || match point.kind {
+                                Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_transformed_ray_plot(path, value)),
+                                Kind::PathLiteralPoint(path, value) => self.undefined_transformed_ray_plot(path, value),
+                                _ => false,
+                            })
+                    })
+                }))
+            {
+                return Err(format!("Invalid point dependency in object {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind,Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
                 if self.position(a).is_none()||self.position(b).is_none())
             {
                 return Err(format!("Invalid point dependency in object {}", o.id));

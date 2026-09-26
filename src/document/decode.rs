@@ -150,6 +150,7 @@ impl Document {
                         | 34
                         | 69
                         | 95
+                        | 123
                 );
             let numeric_label = matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 48 | 49 | 50 | 51 | 65 | 66 | 86 | 87 | 94);
             let mut rich_text: Option<Vec<u8>> = None;
@@ -315,6 +316,8 @@ impl Document {
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(code == 48 && r.kind == 0x232e && d.is_empty())
+                    && !(code == 0 && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
+                        && r.kind == 0x232e && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(code == 90 && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
@@ -771,7 +774,12 @@ impl Document {
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
                         let group = &b[group_start..rs[i].data.end];
                         if let Ok(parameter) = ParameterGroup::parse(group) {
-                            Kind::Parameter(parameter)
+                            let generated_name_valid = !parameter.name().is_empty()
+                                || parameter.display_mode() == 0
+                                || u32::try_from(objects.iter().filter(|object| object.page == page
+                                    && matches!(&object.kind, Kind::Parameter(group) if group.name().is_empty())).count())
+                                    .ok().and_then(|ordinal| super::parameter_names::parameter_name_counter(b, page)?.checked_add(ordinal)).is_some();
+                            if generated_name_valid { Kind::Parameter(parameter) } else { Kind::Unsupported(code) }
                         } else if let Ok(calculation) = CalculationGroup::parse(group) {
                             Kind::Calculation(calculation)
                         } else {
@@ -1350,8 +1358,8 @@ impl Document {
                                     Some(kind) if is_point_kind(kind) => Kind::ScaledPoint(*source, *center, factor),
                                     Some(kind) if kind.is_circle() => Kind::ScaledCircle(*source, *center, factor),
                                     Some(kind) if is_segment_kind(kind) && h[6..8] == [2, 0] && h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
-                                    Some(Kind::Ray(..)) if h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [13, 0] => Kind::ScaledRay(*source, *center, factor),
-                                    Some(Kind::Line(..)) if h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [12, 0] => Kind::ScaledLine(*source, *center, factor),
+                                    Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [13, 0] => Kind::ScaledRay(*source, *center, factor),
+                                    Some(kind) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [12, 0] => Kind::ScaledLine(*source, *center, factor),
                                     Some(Kind::Polygon(vertices)) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
                                         && h.len() == 28 && h[6..8] == [4, 0] => Kind::ScaledPolygon(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
@@ -1371,8 +1379,8 @@ impl Document {
                                 match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                                     (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, f64_at(payload, 20)),
                                     (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
-                                    (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedRay(*source, *center, f64_at(payload, 20)),
-                                    (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedLine(*source, *center, f64_at(payload, 20)),
+                                    (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedRay(*source, *center, f64_at(payload, 20)),
+                                    (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedLine(*source, *center, f64_at(payload, 20)),
                                     (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
                                         && h.len() == 28 && h[6..8] == [4, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),

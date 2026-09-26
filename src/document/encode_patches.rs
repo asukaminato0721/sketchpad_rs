@@ -584,7 +584,7 @@ impl Document {
                 } else {
                     let insertion = if matches!(
                         object.kind,
-                        Kind::NumericCoordinatePoint(..) | Kind::PathValuePoint(..)
+                        Kind::NumericCoordinatePoint(..) | Kind::PathValuePoint(..) | Kind::PathLiteralPoint(..)
                     ) {
                         group
                             .iter()

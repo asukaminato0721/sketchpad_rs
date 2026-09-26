@@ -704,7 +704,7 @@ fn fixed_rotated_ray_and_line_preserve_native_modes_edits_and_dependencies() {
         } else {
             Kind::RotatedLine(image, center, 45.)
         });
-        assert!(chained.encode().is_err());
+        chained.verify_roundtrip().unwrap();
         let mut mirror = fresh.clone();
         let reflected = mirror.add(Kind::ReflectedPoint(1, image));
         close(
@@ -762,10 +762,40 @@ fn fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits() {
         assert_eq!(doc.objects[4].kind, kind(2.));
         assert!(!doc.objects[4].kind.is_segment());
         assert_eq!(doc.encode().unwrap(), bytes);
+        let mut malformed = bytes.to_vec();
+        let header = records(bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == 0x7d0)
+            .nth(4)
+            .unwrap();
+        malformed[header.data.start + 8] = if ray { 12 } else { 13 };
+        let rejected = Document::from_bytes(&malformed, None).unwrap();
+        assert_eq!(rejected.objects[4].kind, Kind::Unsupported(30));
+        assert_eq!(rejected.encode().unwrap(), malformed);
+        let mut chained = doc.clone();
+        chained.add(if ray {
+            Kind::ScaledRay(5, 1, 2.)
+        } else {
+            Kind::ScaledLine(5, 1, 2.)
+        });
+        chained.verify_roundtrip().unwrap();
+
         assert_eq!(
             doc.line_points(5),
             Some((Point { x: 210., y: 230. }, Point { x: 290., y: 230. }, mode))
         );
+        let positive_point = if ray {
+            include_bytes!("../../../tests/fixtures/fixed_dilation_ray_point_native_verified.gsp")
+                .as_slice()
+        } else {
+            include_bytes!("../../../tests/fixtures/fixed_dilation_line_point_native_verified.gsp")
+                .as_slice()
+        };
+        let positive_point = Document::from_bytes(positive_point, None).unwrap();
+        assert!(!positive_point.partial_view);
+        assert_eq!(positive_point.position(6), Some(Point { x: 250., y: 230. }));
+        positive_point.verify_roundtrip().unwrap();
         let zero = Document::from_bytes(zero, None).unwrap();
         assert!(!zero.partial_view);
         assert_eq!(zero.objects[4].kind, kind(0.));
@@ -779,6 +809,26 @@ fn fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits() {
             Some((Point { x: 210., y: 270. }, Point { x: 270., y: 210. }, mode))
         );
         doc.verify_roundtrip().unwrap();
+        let mut edited = doc.clone();
+        edited.move_point(3, Point { x: 260., y: 200. });
+        assert_eq!(
+            edited.line_points(5),
+            Some((Point { x: 210., y: 270. }, Point { x: 370., y: 230. }, mode))
+        );
+        assert_eq!(
+            edited.encode().unwrap(),
+            if ray {
+                include_bytes!(
+                    "../../../tests/fixtures/fixed_dilation_ray_edited_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/fixed_dilation_line_edited_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
         let image = doc.add(kind(-2.));
         assert_eq!(
             doc.line_points(image),
@@ -815,6 +865,43 @@ fn fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits() {
         assert!(doc.objects[point - 1].deleted);
         assert!(!doc.objects[copy - 1].deleted);
         doc.verify_roundtrip().unwrap();
+        for factor in [2., -2.] {
+            let mut fresh = Document::new();
+            let center = fresh.add(Kind::Free(Point { x: 130., y: 150. }));
+            let a = fresh.add(Kind::Free(Point { x: 170., y: 190. }));
+            let b = fresh.add(Kind::Free(Point { x: 210., y: 190. }));
+            let source = fresh.add(if ray {
+                Kind::Ray(a, b)
+            } else {
+                Kind::Line(a, b)
+            });
+            let image = fresh.add(if ray {
+                Kind::ScaledRay(source, center, factor)
+            } else {
+                Kind::ScaledLine(source, center, factor)
+            });
+            fresh.verify_roundtrip().unwrap();
+            let golden = match (ray, factor > 0.) {
+                (true, true) => include_bytes!("../../../tests/fixtures/fixed_dilation_ray_positive_generated_native_verified.gsp").as_slice(),
+                (true, false) => include_bytes!("../../../tests/fixtures/fixed_dilation_ray_negative_generated_native_verified.gsp").as_slice(),
+                (false, true) => include_bytes!("../../../tests/fixtures/fixed_dilation_line_positive_generated_native_verified.gsp").as_slice(),
+                (false, false) => include_bytes!("../../../tests/fixtures/fixed_dilation_line_negative_generated_native_verified.gsp").as_slice(),
+            };
+            assert_eq!(fresh.encode().unwrap(), golden);
+            if factor > 0. {
+                let reflected = fresh.add(Kind::ReflectedPoint(center, image));
+                assert_eq!(fresh.position(reflected), Some(Point { x: 130., y: 310. }));
+                fresh.verify_roundtrip().unwrap();
+                assert_eq!(
+                    fresh.encode().unwrap(),
+                    if ray {
+                        include_bytes!("../../../tests/fixtures/reflected_point_scaled_ray_mirror_native_verified.gsp").as_slice()
+                    } else {
+                        include_bytes!("../../../tests/fixtures/reflected_point_scaled_line_mirror_native_verified.gsp").as_slice()
+                    }
+                );
+            }
+        }
         let mut invalid = Document::new();
         let center = invalid.add(Kind::Free(Point { x: 100., y: 100. }));
         let endpoint = invalid.add(Kind::Free(Point { x: 150., y: 120. }));
@@ -854,4 +941,214 @@ fn fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits() {
         );
         assert_eq!(doc.encode().unwrap(), bytes);
     }
+}
+
+#[test]
+fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancestors() {
+    let style = Some(VisualStyle::Stroke {
+        line: SegmentLineStyle {
+            width: LineWidth::Thick,
+            pattern: LinePattern::Dashed,
+        },
+        color: RgbColor {
+            red: 255,
+            green: 0,
+            blue: 255,
+        },
+    });
+    let rotate = |p: Point, c: Point, degrees: f64| {
+        let (s, co) = degrees.to_radians().sin_cos();
+        Point {
+            x: c.x + co * (p.x - c.x) + s * (p.y - c.y),
+            y: c.y + co * (p.y - c.y) - s * (p.x - c.x),
+        }
+    };
+    let scale = |p: Point, c: Point, factor: f64| Point {
+        x: c.x + factor * (p.x - c.x),
+        y: c.y + factor * (p.y - c.y),
+    };
+    let close = |a: Point, b: Point| {
+        assert!(
+            (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9,
+            "{a:?} != {b:?}"
+        )
+    };
+    for (ray, rotation, bytes) in [
+        (
+            true,
+            true,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_rotation_ray_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            false,
+            true,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_rotation_line_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            true,
+            false,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_dilation_ray_original.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            false,
+            false,
+            include_bytes!(
+                "../../../tests/fixtures/fixed_straight_chain_dilation_line_original.gsp"
+            )
+            .as_slice(),
+        ),
+    ] {
+        let mode = if ray { LineMode::Ray } else { LineMode::Line };
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(
+            doc.objects[5].kind,
+            if ray {
+                Kind::RotatedRay(5, 1, 90.)
+            } else {
+                Kind::RotatedLine(5, 1, 90.)
+            }
+        );
+        assert_eq!(
+            doc.objects[6].kind,
+            if ray {
+                Kind::ScaledRay(5, 1, -2.)
+            } else {
+                Kind::ScaledLine(5, 1, -2.)
+            }
+        );
+        for object in &doc.objects[4..7] {
+            assert_eq!(object.visual_style, style);
+            assert!(!object.kind.is_segment());
+        }
+        for moved in [false, true] {
+            if moved {
+                doc.move_point(1, Point { x: 150., y: 170. });
+                doc.move_point(2, Point { x: 180., y: 220. });
+                doc.move_point(3, Point { x: 260., y: 200. });
+            }
+            let c = doc.position(1).unwrap();
+            let host = |p| {
+                if rotation {
+                    rotate(p, c, 45.)
+                } else {
+                    scale(p, c, 2.)
+                }
+            };
+            let (a, b) = (
+                host(doc.position(2).unwrap()),
+                host(doc.position(3).unwrap()),
+            );
+            for (id, ea, eb) in [
+                (5, a, b),
+                (6, rotate(a, c, 90.), rotate(b, c, 90.)),
+                (7, scale(a, c, -2.), scale(b, c, -2.)),
+            ] {
+                let (actual_a, actual_b, actual_mode) = doc.line_points(id).unwrap();
+                close(actual_a, ea);
+                close(actual_b, eb);
+                assert_eq!(actual_mode, mode);
+            }
+            doc.verify_roundtrip().unwrap();
+        }
+        doc.selected.insert(6);
+        doc.selected.insert(7);
+        let copies = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        for original in [6, 7] {
+            let copy = *copies
+                .iter()
+                .find(|&&id| {
+                    if original == 6 {
+                        matches!(
+                            doc.objects[id - 1].kind,
+                            Kind::RotatedRay(_, _, 90.) | Kind::RotatedLine(_, _, 90.)
+                        )
+                    } else {
+                        matches!(
+                            doc.objects[id - 1].kind,
+                            Kind::ScaledRay(_, _, -2.) | Kind::ScaledLine(_, _, -2.)
+                        )
+                    }
+                })
+                .unwrap();
+            let (a, b, _) = doc.line_points(original).unwrap();
+            let (ca, cb, cm) = doc.line_points(copy).unwrap();
+            close(
+                ca,
+                Point {
+                    x: a.x + 20.,
+                    y: a.y + 20.,
+                },
+            );
+            close(
+                cb,
+                Point {
+                    x: b.x + 20.,
+                    y: b.y + 20.,
+                },
+            );
+            assert_eq!(cm, mode);
+            assert_eq!(doc.objects[copy - 1].visual_style, style);
+        }
+        doc.verify_roundtrip().unwrap();
+        doc.selected.clear();
+        doc.selected.insert(4);
+        doc.clear_selected().unwrap();
+        assert!(doc.objects[4..7].iter().all(|object| object.deleted));
+        assert!(copies.iter().all(|id| !doc.objects[id - 1].deleted));
+        doc.verify_roundtrip().unwrap();
+    }
+    for (ray, negative, zero) in [
+        (true, include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_ray_negative_control_native_verified.gsp").as_slice(), include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_ray_zero_control_native_verified.gsp").as_slice()),
+        (false, include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_line_negative_control_native_verified.gsp").as_slice(), include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_line_zero_control_native_verified.gsp").as_slice()),
+    ] {
+        let mode = if ray { LineMode::Ray } else { LineMode::Line };
+        let negative = Document::from_bytes(negative, None).unwrap();
+        assert!(!negative.partial_view);
+        assert_eq!(negative.line_points(6), Some((Point { x: 50., y: 230. }, Point { x: 50., y: 310. }, mode)));
+        assert_eq!(negative.line_points(7), Some((Point { x: 290., y: 310. }, Point { x: 450., y: 310. }, mode)));
+        negative.verify_roundtrip().unwrap();
+        let mut doc = Document::from_bytes(zero, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), zero);
+        for id in [5, 6, 7] { assert!(doc.line_points(id).is_none()); }
+        doc.selected.insert(6); doc.selected.insert(7);
+        let copies = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        for id in copies { if doc.objects[id - 1].kind.fixed_transform_straight_mode().is_some() && !matches!(doc.objects[id - 1].kind, Kind::Ray(..) | Kind::Line(..)) { assert!(doc.line_points(id).is_none()); } }
+        doc.verify_roundtrip().unwrap();
+    }
+    for bytes in [
+        include_bytes!(
+            "../../../tests/fixtures/fixed_straight_chain_primitive_ray_style_native_verified.gsp"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/fixed_straight_chain_primitive_line_style_native_verified.gsp"
+        )
+        .as_slice(),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        for id in [4, 6, 7] {
+            assert_eq!(doc.objects[id - 1].visual_style, style);
+        }
+        doc.verify_roundtrip().unwrap();
+    }
+    let mut unsupported = Document::new();
+    let a = unsupported.add(Kind::Free(Point { x: 100., y: 100. }));
+    let b = unsupported.add(Kind::Free(Point { x: 150., y: 120. }));
+    let c = unsupported.add(Kind::Free(Point { x: 120., y: 150. }));
+    let bisector = unsupported.add(Kind::Bisector(a, b, c));
+    unsupported.add(Kind::RotatedRay(bisector, a, 45.));
+    assert!(unsupported.encode().is_err());
 }

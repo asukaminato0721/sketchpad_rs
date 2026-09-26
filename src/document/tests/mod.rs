@@ -62,6 +62,7 @@ mod numeric_transforms;
 mod page_links;
 mod pages;
 mod plot_paths_and_tables;
+mod transformed_plot_paths;
 mod plot_points;
 mod point_iteration;
 mod polygons;

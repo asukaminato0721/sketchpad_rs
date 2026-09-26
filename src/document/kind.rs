@@ -78,6 +78,13 @@ impl Kind {
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
     }
+    pub fn fixed_transform_straight_mode(&self) -> Option<LineMode> {
+        match self {
+            Kind::Ray(..) | Kind::RotatedRay(..) | Kind::ScaledRay(..) => Some(LineMode::Ray),
+            Kind::Line(..) | Kind::RotatedLine(..) | Kind::ScaledLine(..) => Some(LineMode::Line),
+            _ => None,
+        }
+    }
     pub fn is_circle(&self) -> bool {
         matches!(
             self,
@@ -1331,7 +1338,15 @@ pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
             | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
             | Kind::CircleAxis(_, 0 | 1)
             | Kind::DistanceAxis(_, _, 0 | 1)
-    ) || kind.is_circle()
+    ) || kind.is_circle() || is_transformed_plot_path_kind(kind)
+}
+
+pub(super) fn is_transformed_plot_ray_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::RotatedRay(..) | Kind::ScaledRay(..))
+}
+
+pub(super) fn is_transformed_plot_path_kind(kind: &Kind) -> bool {
+    is_transformed_plot_ray_kind(kind) || matches!(kind, Kind::RotatedLine(..) | Kind::ScaledLine(..))
 }
 
 pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
@@ -1339,7 +1354,7 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
         && is_plot_path_kind(kind)
         && match kind {
             Kind::Segment(_, _) => (0.0..=1.0).contains(&value),
-            Kind::Ray(_, _) => value >= 0.0,
+            Kind::Ray(_, _) | Kind::RotatedRay(..) | Kind::ScaledRay(..) => value >= 0.0,
             _ => true,
         }
 }
@@ -1350,7 +1365,7 @@ pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || (kind.is_polygon() && value.is_finite())
+    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind)) && value.is_finite())
 }
 
 /// Native code 123 also accepts a literal fraction of a polygon perimeter.
@@ -1359,7 +1374,7 @@ pub(super) fn is_literal_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn literal_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || (kind.is_polygon() && value.is_finite())
+    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind)) && value.is_finite())
 }
 
 /// Supported polygon transforms retain their source's vertex count. Require
