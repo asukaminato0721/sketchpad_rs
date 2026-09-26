@@ -1,3 +1,4 @@
+use super::embedded_tools::{document_record_indices, document_records};
 use super::calculations::parse_numeric_calculation;
 use super::iteration::{
     supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
@@ -41,13 +42,14 @@ impl Document {
     }
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
         let rs = records(b)?;
+        let document_indices: BTreeSet<_> = document_record_indices(&rs).into_iter().collect();
         let title_slots = page_title_slots(b, &rs)?;
         let title_offsets: BTreeSet<usize> = title_slots
             .iter()
             .filter_map(|(title, _, _)| title.map(|index| rs[index].start))
             .collect();
         let page_names: Vec<_> = title_slots.into_iter().map(|(_, _, name)| name).collect();
-        let has_picture_resource = rs.iter().any(|record| record.kind == 0x0514);
+        let has_picture_resource = document_records(&rs).any(|record| record.kind == 0x0514);
         let image_file = has_picture_resource
             .then(|| ImageFile::parse(b))
             .transpose()
@@ -56,8 +58,7 @@ impl Document {
         let image_read_only =
             has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../../assets/point_template.gsp"))?;
-        let angle_unit_radians = rs
-            .iter()
+        let angle_unit_radians = document_records(&rs)
             .find(|record| record.kind == 0x273a && record.data.len() == 2)
             .is_some_and(|record| b[record.data.clone()] == [0, 0]);
         let safe_outside: BTreeSet<u32> = baseline_records
@@ -65,18 +66,22 @@ impl Document {
             .map(|record| record.kind)
             .chain([0x2328, 0x232d])
             .collect();
-        let text_style_count = rs.iter().filter(|record| record.kind == 0x04b3).count();
-        let font_family_count = rs.iter().filter(|record| record.kind == 0x04b1).count();
+        let text_style_count = document_records(&rs).filter(|record| record.kind == 0x04b3).count();
+        let font_family_count = document_records(&rs).filter(|record| record.kind == 0x04b1).count();
         let mut objects: Vec<Object> = Vec::new();
-        let total_pages = rs.iter().filter(|record| record.kind == 0x3e8).count();
+        let total_pages = document_records(&rs).filter(|record| record.kind == 0x3e8).count();
         let mut i = 0;
-        let mut safe = true;
+        let mut safe = document_indices.len() == rs.len();
         let mut snap_points = Vec::new();
         let mut grid_dotted = Vec::new();
         let mut grid_form = Vec::new();
         let mut frame_styles = BTreeMap::new();
         let (mut page, mut page_base, mut page_count) = (0, 0, 0);
         while i < rs.len() {
+            if !document_indices.contains(&i) {
+                i += 1;
+                continue;
+            }
             if rs[i].kind == 0x3e8 {
                 if page_count > 0 {
                     page += 1;
@@ -1283,6 +1288,8 @@ impl Document {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedAngleRotatedPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
+                            (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedRay(*source, *center, *angle),
+                            (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedLine(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
                             (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
@@ -1294,6 +1301,8 @@ impl Document {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
+                            (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledRay(*source, *center, *angle),
+                            (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledLine(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
                             (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
@@ -1542,8 +1551,7 @@ impl Document {
         {
             safe = false;
         }
-        if rs
-            .iter()
+        if document_records(&rs)
             .filter(|record| record.kind == 0x232d)
             .any(|record| {
                 record.data.len() != 4
@@ -1557,7 +1565,7 @@ impl Document {
         let mut marked_coordinate_system = vec![None; page_count.max(1)];
         let mut link_page = 0usize;
         let mut seen_page = false;
-        for record in &rs {
+        for record in document_records(&rs) {
             if record.kind == 0x3e8 {
                 if seen_page {
                     link_page += 1;

@@ -685,9 +685,15 @@ impl Editor {
             || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
                 && kind.is_circle()))
             && self.doc.circle_points(source).is_some();
-        let source_ray = !self.rotation_use_marked && source_kind.is_some_and(|kind| kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
+        let source_ray = source_kind.is_some_and(|kind|
+            (!self.rotation_use_marked && kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
+            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
+                && matches!(kind, Kind::Ray(..))))
             && self.doc.line_points(source).is_some();
-        let source_line = !self.rotation_use_marked && source_kind.is_some_and(|kind| kind.fixed_transform_straight_mode() == Some(LineMode::Line))
+        let source_line = source_kind.is_some_and(|kind|
+            (!self.rotation_use_marked && kind.fixed_transform_straight_mode() == Some(LineMode::Line))
+            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
+                && matches!(kind, Kind::Line(..))))
             && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
             || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))

@@ -384,3 +384,177 @@ gives 1cm. Both controls compare byte-identically (3,518/2,868 bytes) and have
 positive captures `/tmp/presentation_autoname_{collision,deleted}_after_setup.png`.
 Retained fixtures and regressions cover the name collision, dependency deletion,
 reference remapping, unchanged cursor, new display names, and live math.
+
+## Native tables of generated names and literal definitions
+
+Three independent actual **Number → Tabulate** operations establish the next
+unsupported table prerequisite. These operations were performed in Sketchpad,
+not by substituting an authored record. The retained native outputs are
+`numeric_parameter_table_{unnamed_scalar,all_unnamed,mode_zero}_native_created.gsp`
+(3,782 / 3,802 / 3,800 bytes, each 15 objects). Positive captures are
+`/tmp/numeric_{unnamed_scalar_table_clear,all_unnamed_table,mode_zero_table}_after_setup.png`.
+The initial scalar attempt left a plotted point selected alongside the parameter,
+which disabled Tabulate; clearing that selection enabled the native operation.
+This is an interaction correction, not a format rejection.
+
+The unnamed Scalar0 source, previously rendered t₄ with cursor4, acquires an
+explicit stored t[4] label in the native-written output; the cursor becomes5.
+Its table references source2 and displays subscript t₄ above the cached value0.
+In the control with three unnamed parameters, tabulating the third source writes
+all three explicit labels t[4],t[5],t[6] and advances the cursor4→7. The table
+references source3 and shows t₆ above1.00. Materializing every unnamed source may
+be a general native dirty-serialization behavior; this evidence does not isolate
+it as a table-specific action or alter the existing read-only name resolver.
+
+Both scalar tables have 64-byte0x090d captions and fontslot3. Their header
+contains `<SS2<T1xt>><T1x4>>` or `<SS2<T1xt>><T1x6>>`; the cached value preserves
+source precision (0 versus1.00). This differs from the supported ASCII named
+snapshot and the canonical t₁ table with its fixed two-decimal formatter.
+Replacing a missing raw name with the resolved t[4] in the ASCII writer would
+therefore emit the wrong native family. A complete writer also needs an atomic
+source-label/cursor transaction, with undo and subsequent-name evidence.
+
+The mode-zero Length0.5cm table instead uses the literal definition `0.5 厘米`
+as its header and `0.50 厘米` as its row. Its 76-byte0x090d includes UTF-8 unit
+text and separate rich-text runs for value and unit; cursor4 is unchanged. It
+cannot use the scalar snapshot without losing units or caption semantics.
+
+Authoring now explicitly rejects generated-name and mode-zero parameter tables
+before checkpointing or changing any source/counter metadata. Existing scalar
+named/default tables remain supported; typed table import/authoring is not
+claimed. The regressions prove that rejection leaves the encoded document and
+object count unchanged, undo still reaches the preceding parameter edit, redo
+restores it, and a following unnamed parameter still receives t₅/t₇ from the
+unchanged cursor/order. Every native-created table remains Unsupported91 with
+an exact-byte preserving document roundtrip, while all parameter sources remain
+fully imported. Pair-table creation retains its explicit scalar t₁/t₂ guard.
+
+All three actual native-created outputs were subsequently opened and saved again
+in Sketchpad, with positive table captures and byte-identical comparisons at
+3,782 / 3,802 / 3,800 bytes. These are native writer goldens for the unsupported
+families, not claims that the port already authors or fully renders them.
+
+## Bounded radian literals in source-dependent calculations
+
+The next code48 audit found genuine angle literal suffix0x0100 in main-scene
+calculations: cylinder-side development object28 has
+`[6000,1003,6001,1002,2,0100]`, and circle formation object8 has
+`[2,1002,13,0100,1003,6000]`. Their original groups are retained as
+`numeric_calculation_{decimal,pi}_radian_original.bin`. The first is a ratio
+of two lengths multiplied by2rad; the second uses a scalar divisor and πrad.
+The preliminary corpus token audit also contains embedded tool definitions;
+its raw counts are not claimed as scene coverage. Observed numeric radian
+literal words are exactly1,2,3 and π13; decimal fractions, other constants,
+and arbitrary suffix substitutions are not inferred from these layouts.
+
+Independent native isolates retain those original token words and result
+subtype49, with known supported scalar sources and positive code69 points.
+For source values0.01 and1, the native formula shows
+`(t₄÷t₃)·114.592° =1.15°`; its coordinate point uses the full value
+0.02×180/3.1415926535898≈1.14591559026. With a scalar100 divisor, the second
+formula shows `2·180°÷t₃ =3.60°`, and its coordinate point has x=3.6.
+Controls1rad and3rad show literal captions57.2958° and171.887°, results0.57°
+and1.72°, and the corresponding full-precision degree coordinate values.
+Raising result precision2→4 leaves the2rad literal caption114.592° unchanged
+while the result becomes1.1459°. Literal-caption rounding is therefore
+independent of result precision. The raw radian/π tokens are not rewritten
+into rounded degree literals.
+
+The first probes accidentally selected an undeclared caption fontslot2,
+which native rendered through its fallback but the port correctly marked
+partial. The retained controls instead use the base document's declared
+fontslot0. Their larger-font captions remain positively visible, without
+weakening any font guard. Moving the original caption anchor upward was
+also necessary to avoid clipping by the small native viewport; an offscreen
+caption was not treated as suppression or a format rejection.
+
+Bounded parser support accepts the exact authentic decimal words1/2/3 and
+π with0x0100, computes canonical Degrees at full precision, and uses the
+independently established native caption text. The authored calculation API
+accepts the explicit `rad` token for these same literals. Existing degree
+suffix0101 and scalar π/e behavior remain distinct. Incompatible source units,
+nonobserved radian literals (including fractional/other constants), malformed
+suffix sequences remain guarded. At this stage source-free code0 radian
+calculations were also guarded; the following bounded subtype49 investigation
+now establishes their separate record/header family. Unit evaluation,
+caption formatting, and original raw-token preservation are tested separately.
+
+All five declared-font isolates reopen/save byte-identically in native Sketchpad:
+1rad /2rad /3rad /2rad-precision4 are3,514 bytes each; πrad is3,508 bytes.
+Positive captions and geometry are captured under
+`/tmp/numeric_calc_radian_{one,decimal,three,decimal_precision4,pi}_font0_after_setup.png`.
+Retained fixtures are `numeric_calculation_*_radian*_native_verified.gsp`.
+The API then edits the original angle to1.5°, scalar sources to0.03 and200,
+authors scalar×2rad and2πrad÷scalar calculations, creates their code69 points,
+and copies both points with their live prerequisites. Native shows3.44° /1.80°
+for both original and copied calculations, with shifted visible coordinate
+points, and reopens/saves31 objects /5,666 bytes identically. The complete
+writer golden is
+`numeric_calculation_radian_edited_authored_copied_native_verified.gsp`, with
+positive capture `/tmp/numeric_calc_radian_api_after_setup.png`. The regression
+recreates those bytes exactly, checks live values and independent copied-source
+edits, and verifies preserved original0x0100 tokens rather than substituting
+rounded degree words. Numeric integration tests cover the scalar/angle unit
+conflicts and atomic rejection of unproven literals separately from captions.
+
+The follow-up scene-aware code48 blocker audit is retained temporarily as
+`/tmp/native_code48_blockers_after_radian.txt`. It reports841 unexpected-token
+failures; its earlier993 comparison also included embedded tool prototypes,
+so the difference is not attributed solely to this literal extension. The
+next example is `橡皮筋大战钉子(蚂蚁制作).gsp` object19. Raw corpus unit suffix
+families and main-scene coverage should continue to be reported separately.
+
+
+The next drawing-scoped audit (`/tmp/numeric_remaining_literal_audit.txt`)
+finds three actual main-scene source-free radian angle groups, independently
+of embedded-tool prototypes. Two copies of cylinder-intersection object118
+contain `[13,0100,1003,1,2]` (πrad÷12), subtype49, mode3, precision2,
+and the explicit UTF8 name `x轴首刻度`. Music/sine-wave object11 contains
+`[5,1002,13,0100,1003,6,3]` (5πrad÷63), subtype49, mode0, precision5,
+and no stored name. Both use the standard0x0907 numeric expression record;
+the cached numeric/domain fields are preserved without inferring their meaning.
+Original groups are retained as `numeric_sourcefree_radian_{named,unnamed}_original.bin`.
+
+Native isolates clear the original hidden bit, use declared font0, and move
+the caption into the visible viewport while retaining its bounding-box size.
+They preserve the original expression tokens and add a dependent angle÷10
+and code69 coordinate point. The named source displays `x轴首刻度 =15.00°`,
+its dependent1.50°, and x=1.5. The unnamed source displays
+`5·180°/63 =14.28571°`, its dependent1.43°, and x=10/7. Both16-object
+files reopen/save identically (3,800 and3,758 bytes). Captures are
+`/tmp/numeric_sourcefree_radian_{named,unnamed}_after_setup.png`.
+
+The parser now accepts this exact source-free subtype49 angle family with
+mode0 or3, bounded observed radian literals, and arithmetic. Source-free
+subtype51 radian expressions, scalar/compound result units, other radian
+constants, and function expressions remain guarded. Public values remain
+canonical Degrees; raw0x0100 literals and all opaque numeric metadata stay
+unchanged. Group getters expose the explicit name and display mode. Derived
+calculation captions use the current object label; clearing or changing a name
+therefore cannot reintroduce an obsolete stored name.
+
+The new bounded expression setter replaces only numeric token count/length
+and words, preserving anchors, label/font records, mode, precision, bounding
+box, and opaque numeric-prefix fields. Document edits validate before taking
+an undo checkpoint. Both native isolates are edited toπrad÷120, precision4,
+and a moved caption; the API authors another source-free angle and point,
+copies live prerequisites, and independently edits the copied source toπrad÷240.
+Native positively shows1.5000° and0.7500° with corresponding original and
+shifted coordinate points. The complete30-object writer goldens reopen/save
+identically (named5,540 bytes, unnamed5,448 bytes), retained as
+`numeric_sourcefree_radian_{named,unnamed}_edited_authored_copied_native_verified.gsp`.
+A separately authored1rad source displays `57.2958° =57.30°`, with its
+full-precision angle÷100 coordinate point; the19-object4,222-byte golden is
+`numeric_sourcefree_radian_one_literal_native_verified.gsp`.
+
+The copied source's downstream0.075° caption exposed a formatting issue,
+independent of unit conversion. Three scalar controls prove native precision2
+rounding:3/40 displays0.07,1/8 displays0.13, and−1/8 displays−0.13.
+Binary f64 0.075 lies below the decimal half while multiplying it by100 in
+f64 produces an artificial exact7.5; exact binary-rational decimal rounding
+avoids that false tie. True ties round away from zero. These separate controls
+have positive coordinate points and byte-identical native writer goldens,
+`numeric_scalar_{fraction,true_half,negative_half}_precision_native_verified.gsp`.
+Their screenshots are `/tmp/numeric_scalar_{fraction,true_half,negative_half}_precision_after_setup.png`.
+The formatter implementation is coordinated separately; no π constant or
+angle evaluation rule is changed to compensate for display rounding.

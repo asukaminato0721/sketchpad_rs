@@ -222,3 +222,18 @@ fn traced_ray_and_line_capture_modes_and_motion() {
         TraceMark::Straight(Point { x: 35., y: 45. }, _, LineMode::Line, _)
     ));
 }
+
+#[test]
+fn native_linear_three_point_arc_is_pickable_on_its_segment() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/arc_three_point_collapsed_plot_native_verified.gsp"), None).unwrap();
+    for object in &mut doc.objects { object.visible = object.id == 5; }
+    let editor = Editor::new(doc);
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 300.)),
+        scale: 1., center: Point { x: 150., y: 150. },
+    };
+    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 225., y: 180. })), Some(5));
+    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 190., y: 180. })), None);
+    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 225., y: 190. })), None);
+}

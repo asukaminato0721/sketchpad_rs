@@ -59,9 +59,9 @@ previous supported families. Stroke color/width/pattern come from the observed
 modern class-2 header fields, including the authored default medium navy stroke.
 
 The source guard accepts primitive and fixed transformed `Ray` or `Line` objects, with known
-point centers and finite fixed angles. Chained rotations of these new kinds,
-their use as dilation/reflection/calculated-transform sources, and marked-angle
-ray/line rotation remain outside this slice. The existing fixed rotation editor
+point centers and finite fixed angles. Fixed rotation/dilation chains have independent
+native proof in [fixed_straight_transform_chains_analysis.md](fixed_straight_transform_chains_analysis.md).
+Reflected, calculated and marked-angle ray/line source constructions remain excluded. The existing fixed rotation editor
 command and `gsp_probe replay` command `rotate` select the explicit variant.
 `tests/transform_fixed_rotation_straights_replay.txt` generates both fresh files;
 its bytes match the native-verified fresh fixtures.

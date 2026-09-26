@@ -187,6 +187,15 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             vec![format!("{name} = {}", group.value_text())],
         ));
     }
+    if let Kind::Calculation(group) = &object.kind
+        && group.is_native_radian_angle()
+        && group.display_mode() == 3
+        && let Some(name) = object.label.as_ref()
+            .and_then(|label| label.name_utf8().ok())
+            .filter(|name| !name.is_empty())
+    {
+        return Some((group.anchor(), vec![format!("{name} = {}", group.value_text())]));
+    }
     if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
         let value = doc.length_pair_calculation_value(id).map_or_else(
             || "undefined".into(),
@@ -2087,6 +2096,24 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_radian_literal_calculations_render_named_and_formula_modes() {
+        let mut named = Document::from_bytes(include_bytes!(
+            "../tests/fixtures/numeric_sourcefree_radian_named_native_verified.gsp"
+        ), None).unwrap();
+        assert_eq!(number_lines_for_object(&named, 5).unwrap().1, vec!["x轴首刻度 = 15.00°"]);
+        assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("x轴首刻度"));
+        named.objects[4].label.as_mut().unwrap().set_name("θ").unwrap();
+        assert_eq!(number_lines_for_object(&named, 5).unwrap().1, vec!["θ = 15.00°"]);
+        assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("θ"));
+        let unnamed = Document::from_bytes(include_bytes!(
+            "../tests/fixtures/numeric_sourcefree_radian_unnamed_native_verified.gsp"
+        ), None).unwrap();
+        let caption = &number_lines_for_object(&unnamed, 5).unwrap().1[0];
+        assert!(caption.contains("180°"), "{caption}");
+        assert!(caption.contains("14.28571°"), "{caption}");
+    }
 
     #[test]
     fn native_generated_parameter_names_render_in_captions_and_formulas() {

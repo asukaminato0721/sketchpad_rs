@@ -13,6 +13,16 @@ impl Document {
         let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).map(|o| &o.kind) else {
             return Err("Select a supported parameter".into());
         };
+        // Native Tabulate uses a separate literal/unit caption for mode zero.
+        // For unnamed sources it materializes generated names and advances the
+        // page counter on save. Neither family is the named scalar snapshot.
+        // Reject before checkpointing or changing source/name metadata.
+        if parameter.display_mode() == 0 {
+            return Err("Tables of parameter definitions are not yet supported".into());
+        }
+        if parameter.name().is_empty() {
+            return Err("Tables of generated parameter names are not yet supported".into());
+        }
         if parameter.unit() != crate::table_records::NumericUnit::Scalar {
             return Err("This table supports scalar parameters".into());
         }

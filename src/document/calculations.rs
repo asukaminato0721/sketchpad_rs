@@ -190,6 +190,22 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::Calculation(group)))
     }
+    pub fn set_calculation_expression(&mut self, id: usize, expression: &str) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot edit a calculation in this sketch safely".into());
+        }
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid calculation ID")?)
+            .filter(|object| !object.deleted && object.page == self.active_page)
+            .ok_or("Select a calculation on the active page")?;
+        let Kind::Calculation(group) = &object.kind else {
+            return Err("Select a supported calculation".into());
+        };
+        let mut updated = group.clone();
+        updated.set_expression(expression)?;
+        self.checkpoint();
+        self.objects[id - 1].kind = Kind::Calculation(updated);
+        Ok(())
+    }
     fn numeric_caption_height(&self, id: usize) -> usize {
         let Some(object) = id.checked_sub(1).and_then(|i| self.objects.get(i)) else {
             return 33;
@@ -524,6 +540,11 @@ impl Document {
                     self.coordinate_point_name(*c)?
                 ),
                 Kind::ArcAngle(_) => format!("arc angle {source}"),
+                Kind::Calculation(g) if g.is_native_radian_angle() && g.display_mode() == 3 => {
+                    source_object.label.as_ref().and_then(|label| label.name_utf8().ok())
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned).unwrap_or_else(|| g.expression())
+                }
                 Kind::Calculation(g) => g.expression(),
                 Kind::PointRatio(_, _, _) => format!("Ratio {source}"),
                 Kind::SlopeMeasurement(_, _) => format!("Slope {source}"),

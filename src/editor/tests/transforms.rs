@@ -435,3 +435,158 @@ fn fixed_ray_and_line_chain_commands_inherit_source_strokes_and_keep_marked_excl
         assert_eq!(editor.doc.encode().unwrap(), before);
     }
 }
+
+#[test]
+fn calculated_angle_rotation_commands_keep_ray_and_line_modes() {
+    for ray in [true, false] {
+        let mut editor = Editor::new(Document::new());
+        let center = editor.doc.add(Kind::Free(Point { x: 130., y: 150. }));
+        let a = editor.doc.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 210., y: 190. }));
+        let source = editor.doc.add(if ray {
+            Kind::Ray(a, b)
+        } else {
+            Kind::Line(a, b)
+        });
+        let n = editor.doc.add_named_parameter("n", 4., (50, 30)).unwrap();
+        let angle = editor
+            .doc
+            .add_parameter_calculation(n, "360°/n", (50, 60))
+            .unwrap();
+        editor.marked_center = Some(center);
+        editor.rotation_use_marked = true;
+        editor.marked_angle = Some(MarkedAngle::Value(angle));
+        editor.select_only(source);
+        editor.rotate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[image - 1].kind,
+            if ray {
+                Kind::CalculatedAngleRotatedRay(source, center, angle)
+            } else {
+                Kind::CalculatedAngleRotatedLine(source, center, angle)
+            }
+        );
+        assert_eq!(
+            editor.doc.line_points(image).unwrap().2,
+            if ray { LineMode::Ray } else { LineMode::Line }
+        );
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let mut image_only = editor.doc.clone();
+        for object in &mut image_only.objects {
+            object.visible = object.id == image;
+        }
+        let picking = Editor::new(image_only.clone());
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 170., y: 20. })),
+            Some(image)
+        );
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 170., y: 250. })),
+            if ray { None } else { Some(image) }
+        );
+        let svg = sketchpad_rs::render::svg_page(&image_only, &vp).unwrap();
+        let y1 = if ray { 160 } else { 400 };
+        assert!(svg.contains(&format!("<line x1=\"220\" y1=\"{y1}\" x2=\"220\" y2=\"0\"")));
+        editor.doc.verify_roundtrip().unwrap();
+        let before = editor.doc.encode().unwrap();
+        editor.select_only(source);
+        editor.marked_angle = Some(MarkedAngle::Points([a, center, b]));
+        editor.rotate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.select_only(image);
+        editor.rotation_use_marked = false;
+        editor.rotate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}
+
+#[test]
+fn calculated_ratio_dilation_commands_keep_ray_and_line_extents_and_domains() {
+    for (ray, bytes) in [
+        (
+            true,
+            include_bytes!("../../../tests/fixtures/numeric_ratio_ray_original.gsp").as_slice(),
+        ),
+        (
+            false,
+            include_bytes!("../../../tests/fixtures/numeric_ratio_line_original.gsp").as_slice(),
+        ),
+    ] {
+        let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+        editor.marked_center = Some(1);
+        editor.dilation_use_marked = true;
+        editor.marked_ratio_value = Some(7);
+        editor.select_only(4);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects[8].kind,
+            if ray {
+                Kind::CalculatedRatioScaledRay(4, 1, 7)
+            } else {
+                Kind::CalculatedRatioScaledLine(4, 1, 7)
+            }
+        );
+        assert_eq!(
+            editor.doc.objects[8].visual_style,
+            editor.doc.objects[3].visual_style
+        );
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let image_only = |doc: &Document| {
+            let mut doc = doc.clone();
+            for object in &mut doc.objects {
+                object.visible = object.id == 9;
+            }
+            doc
+        };
+        let picking = Editor::new(image_only(&editor.doc));
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 400., y: 230. })),
+            Some(9)
+        );
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 180., y: 230. })),
+            if ray { None } else { Some(9) }
+        );
+        let svg = sketchpad_rs::render::svg_page(&picking.doc, &vp).unwrap();
+        let x1 = if ray { 260 } else { 0 };
+        assert!(svg.contains(&format!(
+            "<line x1=\"{x1}\" y1=\"280\" x2=\"500\" y2=\"280\""
+        )));
+        editor.doc.set_parameter_value(5, -4.).unwrap();
+        let picking = Editor::new(image_only(&editor.doc));
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 20., y: 70. })),
+            Some(9)
+        );
+        assert_eq!(
+            picking.hit(&vp, vp.screen(Point { x: 100., y: 70. })),
+            if ray { None } else { Some(9) }
+        );
+        editor.doc.set_parameter_value(5, 0.).unwrap();
+        assert!(editor.doc.line_points(9).is_none());
+        editor.doc.verify_roundtrip().unwrap();
+        editor.doc.set_parameter_value(5, 4.).unwrap();
+        assert!(editor.doc.line_points(9).is_some());
+        let before = editor.doc.encode().unwrap();
+        editor.select_only(9);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.select_only(4);
+        editor.marked_ratio_value = Some(6);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.marked_ratio_value = None;
+        editor.marked_ratio = Some([1, 2, 3]);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}

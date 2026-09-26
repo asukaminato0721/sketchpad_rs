@@ -108,20 +108,14 @@ pub fn decode_font_state_at(bytes: &[u8], index: usize) -> Result<FontState, Str
             .unwrap(),
     ) as usize;
     let family_record = &bytes[family_record.payload..family_record.payload + family_len];
-    if family_record.len() < 4 {
-        return Err("Unsupported font family record".into());
+    decode_font_payloads(style, family_record)
+}
+
+pub(crate) fn decode_font_payloads(style: &[u8], family_record: &[u8]) -> Result<FontState, String> {
+    if style.len() != 20 {
+        return Err("Unsupported font style record".into());
     }
-    let end = family_record[2..]
-        .iter()
-        .position(|byte| *byte == 0)
-        .ok_or("Unterminated font name")?
-        + 2;
-    let family = std::str::from_utf8(&family_record[2..end])
-        .map_err(|_| "Invalid font name")?
-        .to_owned();
-    if family.is_empty() || family.len() > 255 {
-        return Err("Invalid font name".into());
-    }
+    let family = decode_font_family_payload(family_record)?;
     let word = |at| u16::from_le_bytes(style[at..at + 2].try_into().unwrap());
     let flag = |at| -> Result<bool, String> {
         match word(at) {
@@ -163,22 +157,27 @@ pub fn font_families(bytes: &[u8]) -> Result<Vec<String>, String> {
             let len = u32::from_le_bytes(bytes[record.start..record.start + 4].try_into().unwrap())
                 as usize;
             let payload = &bytes[record.payload..record.payload + len];
-            let end = payload
-                .get(2..)
-                .ok_or("Short font family record")?
-                .iter()
-                .position(|byte| *byte == 0)
-                .ok_or("Unterminated font name")?
-                + 2;
-            let name = std::str::from_utf8(&payload[2..end])
-                .map_err(|_| "Invalid font name")?
-                .to_owned();
-            if name.is_empty() || name.len() > 255 {
-                return Err("Invalid font name".into());
-            }
-            Ok(name)
+            decode_font_family_payload(payload)
         })
         .collect()
+}
+
+pub(crate) fn decode_font_family_payload(family_record: &[u8]) -> Result<String, String> {
+    if family_record.len() < 4 {
+        return Err("Unsupported font family record".into());
+    }
+    let end = family_record[2..]
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or("Unterminated font name")?
+        + 2;
+    let family = std::str::from_utf8(&family_record[2..end])
+        .map_err(|_| "Invalid font name")?
+        .to_owned();
+    if family.is_empty() || family.len() > 255 {
+        return Err("Invalid font name".into());
+    }
+    Ok(family)
 }
 
 pub fn encode_font_family_payload(name: &str) -> Result<Vec<u8>, String> {

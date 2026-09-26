@@ -12,7 +12,8 @@ pub fn decode_group(group: &[u8]) -> Result<[u32; 2], String> {
     if group.len() < 64
         || word(group, 0) != 28
         || word(group, 4) != 0x07d0
-        || word(group, 8) != 95
+        || word(group, 8) & 0xffff != 95
+        || word(group, 8) >> 16 > 3
         || word(group, 36) != 12
         || word(group, 40) != 0x07d2
         || word(group, 44) != 2
@@ -58,7 +59,8 @@ pub fn decode_literal_group(group: &[u8]) -> Result<(u32, f64), String> {
     if group.len() < 80
         || word(group, 0) != 28
         || word(group, 4) != 0x07d0
-        || word(group, 8) != 123
+        || word(group, 8) & 0xffff != 123
+        || word(group, 8) >> 16 > 3
         || word(group, 36) != 8
         || word(group, 40) != 0x07d2
         || word(group, 44) != 1
@@ -106,6 +108,26 @@ pub fn encode_literal_group(axis: u32, value: f64) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plot_header_codes_accept_only_native_proved_flags() {
+        for flags in 0_u16..=3 {
+            let mut value = TEMPLATE.to_vec();
+            value[10..12].copy_from_slice(&flags.to_le_bytes());
+            assert_eq!(decode_group(&value).unwrap(), [1, 5]);
+            let mut literal = LITERAL_TEMPLATE.to_vec();
+            literal[10..12].copy_from_slice(&flags.to_le_bytes());
+            assert_eq!(decode_literal_group(&literal).unwrap(), (3, 2.5));
+        }
+        for flags in [4_u16, 5, 0x8000, 0xffff] {
+            let mut value = TEMPLATE.to_vec();
+            value[10..12].copy_from_slice(&flags.to_le_bytes());
+            assert!(decode_group(&value).is_err());
+            let mut literal = LITERAL_TEMPLATE.to_vec();
+            literal[10..12].copy_from_slice(&flags.to_le_bytes());
+            assert!(decode_literal_group(&literal).is_err());
+        }
+    }
 
     #[test]
     fn original_axis_value_group_references_parameter_and_x_axis() {

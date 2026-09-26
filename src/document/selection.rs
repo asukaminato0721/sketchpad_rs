@@ -5,11 +5,26 @@ use crate::graph::GridForm;
 use std::collections::BTreeSet;
 
 impl Document {
+    // Native plot points can have defined geometry while their source header
+    // suppresses presentation. Native hide/show leaves this flag untouched;
+    // clipboard copies convert the suppressed dependency to ordinary hidden.
+    fn native_plot_suppressed(&self, id: usize) -> bool {
+        id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|object| {
+            matches!(object.kind, Kind::PathValuePoint(..) | Kind::PathLiteralPoint(..))
+                && object.header_offset.and_then(|offset| self.original.get(offset + 2))
+                    .is_some_and(|flags| flags & 2 != 0)
+        })
+    }
+
     pub fn is_displayed(&self, id: usize) -> bool {
         let Some(object) = id.checked_sub(1).and_then(|at| self.objects.get(at)) else {
             return false;
         };
-        if !object.visible || object.deleted || object.page != self.active_page {
+        if !object.visible
+            || object.deleted
+            || object.page != self.active_page
+            || self.native_plot_suppressed(id)
+        {
             return false;
         }
         if matches!(object.kind, Kind::DistanceVerticalUnit(_, _, false)) {
@@ -222,7 +237,7 @@ impl Document {
                     Ok(ClipboardObject {
                         old_id: id,
                         kind: object.kind.clone(),
-                        visible: object.visible,
+                        visible: object.visible && !self.native_plot_suppressed(id),
                         tracing: object.tracing,
                         midpoint_host: object.midpoint_host,
                         visual_style: object.visual_style,
@@ -465,18 +480,19 @@ impl Document {
         Ok(removed.into_iter().collect())
     }
     pub fn set_selected_visibility(&mut self, visible: bool) {
-        if !self
-            .objects
-            .iter()
-            .any(|o| !o.deleted && self.selected.contains(&o.id) && o.visible != visible)
-        {
+        let ids: Vec<_> = self.objects.iter()
+            .filter(|object| {
+                !object.deleted && self.selected.contains(&object.id)
+                    && object.visible != visible && !self.native_plot_suppressed(object.id)
+            })
+            .map(|object| object.id)
+            .collect();
+        if ids.is_empty() {
             return;
         }
         self.checkpoint();
-        for o in &mut self.objects {
-            if !o.deleted && self.selected.contains(&o.id) {
-                o.visible = visible;
-            }
+        for id in ids {
+            self.objects[id - 1].visible = visible;
         }
         if !visible {
             self.selected.clear();
@@ -512,18 +528,19 @@ impl Document {
         Ok(ids.len())
     }
     pub fn show_all_hidden(&mut self) {
-        if !self
-            .objects
-            .iter()
-            .any(|o| !o.deleted && o.page == self.active_page && !o.visible)
-        {
+        let ids: Vec<_> = self.objects.iter()
+            .filter(|object| {
+                !object.deleted && object.page == self.active_page
+                    && !object.visible && !self.native_plot_suppressed(object.id)
+            })
+            .map(|object| object.id)
+            .collect();
+        if ids.is_empty() {
             return;
         }
         self.checkpoint();
-        for o in &mut self.objects {
-            if !o.deleted && o.page == self.active_page {
-                o.visible = true;
-            }
+        for id in ids {
+            self.objects[id - 1].visible = true;
         }
     }
 }

@@ -1,3 +1,4 @@
+use super::embedded_tools::document_records;
 use super::kind::is_point_kind;
 use super::records::records;
 use super::{Document, Kind, Point, TextStyleCommand};
@@ -158,10 +159,27 @@ impl Document {
         } else {
             0
         };
-        text_style_records::decode_font_state_at(&self.original, style).ok()
+        let entries = records(&self.original).ok()?;
+        let style_record = document_records(&entries)
+            .filter(|r| r.kind == 0x04b3)
+            .nth(style)?;
+        let payload = &self.original[style_record.data.clone()];
+        let family_index = u16::from_le_bytes(payload.get(..2)?.try_into().ok()?) as usize;
+        let family_record = document_records(&entries)
+            .filter(|r| r.kind == 0x04b1)
+            .nth(family_index)?;
+        text_style_records::decode_font_payloads(
+            payload,
+            &self.original[family_record.data.clone()],
+        ).ok()
     }
     pub fn text_font_families(&self) -> Option<Vec<String>> {
-        let mut families = text_style_records::font_families(&self.original).ok()?;
+        let entries = records(&self.original).ok()?;
+        let mut families = document_records(&entries)
+            .filter(|r| r.kind == 0x04b1)
+            .map(|r| text_style_records::decode_font_family_payload(&self.original[r.data.clone()]))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
         families.extend(self.run_font_families.iter().cloned());
         Some(families)
     }

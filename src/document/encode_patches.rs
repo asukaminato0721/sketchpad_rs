@@ -1,3 +1,4 @@
+use super::embedded_tools::{document_record_indices, document_records};
 use super::calculations::calculation_source_ids;
 use super::kind::is_point_kind;
 use super::records::{put_record, records};
@@ -12,7 +13,7 @@ impl Document {
         };
         let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
         let rs = records(&out)?;
-        if let Some(link) = rs.iter().find(|record| record.kind == 0x232d) {
+        if let Some(link) = document_records(&rs).find(|record| record.kind == 0x232d) {
             if link.data.len() != 4 {
                 return Err("Invalid coordinate-system page link".into());
             }
@@ -107,7 +108,7 @@ impl Document {
         objects.sort_by_key(|object| object.page);
         let mut objects = objects.into_iter();
         let mut current = None;
-        for record in &rs {
+        for record in document_records(&rs) {
             if record.kind == 0x07d0 {
                 current = Some(objects.next().ok_or("Object group count mismatch")?);
             } else if record.kind == 0x0903 {
@@ -165,11 +166,11 @@ impl Document {
         }) {
             return Ok(bytes);
         }
-        if let Some(marker) = records(&bytes)?
-            .into_iter()
+        let entries = records(&bytes)?;
+        if let Some(marker) = document_records(&entries)
             .find(|record| record.kind == 0x2328 && record.data.len() == 4)
         {
-            bytes[marker.data].copy_from_slice(&(id as u32).to_le_bytes());
+            bytes[marker.data.clone()].copy_from_slice(&(id as u32).to_le_bytes());
         }
         Ok(bytes)
     }
@@ -188,6 +189,9 @@ impl Document {
             .collect::<Vec<_>>();
         if overrides.is_empty() && self.run_font_families.is_empty() {
             return Ok(bytes);
+        }
+        if !self.embedded_tools()?.is_empty() {
+            return Err("Text font changes with embedded tool font tables are not yet supported".into());
         }
         if overrides.iter().any(|(_, object, _)| {
             !matches!(object.kind, Kind::PlainText { .. })
@@ -285,10 +289,9 @@ impl Document {
             bytes.splice(insert_at..insert_at, appended);
         }
         let rs = records(&bytes)?;
-        let starts = rs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| (record.kind == 0x07d0).then_some(index))
+        let starts = document_record_indices(&rs)
+            .into_iter()
+            .filter(|&index| rs[index].kind == 0x07d0)
             .collect::<Vec<_>>();
         for (ordinal, index) in targets {
             let start = *starts.get(ordinal).ok_or("Missing styled text object")?;
@@ -313,7 +316,7 @@ impl Document {
     pub(super) fn patch_trace_flags(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let entries = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
-        for record in entries.iter().filter(|r| r.kind == 0x07d0) {
+        for record in document_records(&entries).filter(|r| r.kind == 0x07d0) {
             let object = objects.next().ok_or("Object group count mismatch")?;
             if record.data.len() < 5 {
                 return Err("Short object header".into());
@@ -330,7 +333,7 @@ impl Document {
         let rs = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
         let mut current = None;
-        for record in rs {
+        for record in document_records(&rs) {
             if record.kind == 0x07d0 {
                 current = Some(objects.next().ok_or("Object group count mismatch")?);
             } else if record.kind == 0x090a
@@ -354,7 +357,7 @@ impl Document {
             .filter(|object| !object.deleted)
             .collect();
         let mut ordinal = 0;
-        for record in rs.iter().filter(|record| record.kind == 0x07d0) {
+        for record in document_records(&rs).filter(|record| record.kind == 0x07d0) {
             let object = survivors
                 .get(ordinal)
                 .ok_or("Object group count mismatch")?;
@@ -420,7 +423,8 @@ impl Document {
         for (index, object) in survivors.iter().enumerate() {
             ids[object.id] = index + 1;
         }
-        for (index, record) in rs.iter().enumerate() {
+        for index in document_record_indices(&rs) {
+            let record = &rs[index];
             if record.kind == 0x07d0 {
                 ordinal += 1;
                 current_group = Some(index);

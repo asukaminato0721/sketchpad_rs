@@ -178,7 +178,9 @@ fn three_point_arc_matches_original_record_and_updates() {
     document.move_point(mid, Point { x: 0., y: -2. });
     assert_ne!(reopened.arc_points(id, 32), document.arc_points(id, 32));
     document.move_point(mid, Point { x: 0., y: 0. });
-    assert!(document.arc_points(id, 32).is_none());
+    assert_eq!(document.arc_points(id, 32), Some(vec![
+        Point { x: -1., y: 0. }, Point { x: 1., y: 0. },
+    ]));
 }
 #[test]
 fn circle_by_segment_matches_original_and_updates() {

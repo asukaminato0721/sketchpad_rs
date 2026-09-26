@@ -9,6 +9,7 @@ mod encode;
 mod encode_pages;
 mod encode_patches;
 mod encode_templates;
+mod embedded_tools;
 mod functions;
 mod geometry;
 mod history;
@@ -52,6 +53,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub use records::{Record, records};
+pub use embedded_tools::EmbeddedToolSummary;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -242,10 +244,14 @@ pub enum Kind {
     RotatedPoint(usize, usize, f64),
     CalculatedRatioScaledPoint(usize, usize, usize),
     CalculatedRatioScaledSegment(usize, usize, usize),
+    CalculatedRatioScaledRay(usize, usize, usize),
+    CalculatedRatioScaledLine(usize, usize, usize),
     CalculatedRatioScaledCircle(usize, usize, usize),
     CalculatedRatioScaledPolygon(usize, usize, usize),
     CalculatedAngleRotatedPoint(usize, usize, usize),
     CalculatedAngleRotatedSegment(usize, usize, usize),
+    CalculatedAngleRotatedRay(usize, usize, usize),
+    CalculatedAngleRotatedLine(usize, usize, usize),
     CalculatedAngleRotatedCircle(usize, usize, usize),
     CalculatedAngleRotatedPolygon(usize, usize, usize),
     RotatedSegment(usize, usize, f64),
@@ -426,6 +432,10 @@ impl Document {
         | Kind::AngleRotatedPolygon(source, _, _, _, _)
         | Kind::ScaledPolygon(source, _, _)
         | Kind::RatioScaledPolygon(source, _, _, _, _)
+        | Kind::CalculatedRatioScaledRay(source, _, _)
+        | Kind::CalculatedRatioScaledLine(source, _, _)
+        | Kind::CalculatedAngleRotatedRay(source, _, _)
+        | Kind::CalculatedAngleRotatedLine(source, _, _)
         | Kind::RotatedRay(source, _, _)
         | Kind::RotatedLine(source, _, _)
         | Kind::ScaledRay(source, _, _)

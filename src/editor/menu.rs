@@ -575,22 +575,8 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Graph", |ui| {
-                    let path = self.doc.selected.iter().copied().find(|&id| {
-                        self.doc.objects.get(id - 1).is_some_and(|o| {
-                            matches!(
-                                o.kind,
-                                Kind::Segment(_, _)
-                                    | Kind::Ray(_, _)
-                                    | Kind::Line(_, _)
-                                    | Kind::Circle(_, _)
-                                    | Kind::CircleBySegment(_, _)
-                                    | Kind::ReflectedCircle(_, _)
-                                    | Kind::ScaledCircle(_, _, _)
-                                    | Kind::RatioScaledCircle(_, _, _, _, _)
-                                    | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
-                            )
-                        })
-                    });
+                    let path = self.doc.selected.iter().copied()
+                        .find(|&id| self.doc.can_plot_value_on_path(id));
                     if ui
                         .button(if path.is_some() {
                             "Plot Value on Path"
@@ -599,12 +585,8 @@ impl Editor {
                         })
                         .clicked()
                     {
-                        let source = self.doc.selected.iter().copied().find(|&id| {
-                            self.doc
-                                .objects
-                                .get(id - 1)
-                                .is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
-                        });
+                        let source = self.doc.selected.iter().copied()
+                            .find(|&id| self.doc.is_scalar_plot_source(id));
                         self.status = match source {
                             Some(source) => match self.doc.plot_parameter_on_path(source, path) {
                                 Ok(id) => format!("Plotted path value {id}"),
@@ -614,7 +596,7 @@ impl Editor {
                                 self.plot_axis_dialog = Some(path);
                                 self.plot_axis_draft =
                                     match path.map(|id| &self.doc.objects[id - 1].kind) {
-                                        Some(Kind::Segment(_, _)) => "0.5",
+                                        Some(Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)) => "0.5",
                                         Some(
                                             Kind::Circle(_, _)
                                             | Kind::CircleBySegment(_, _)

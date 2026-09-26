@@ -23,14 +23,39 @@ const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
 const PARAMETER_CALCULATION_NATIVE: &[u8] =
     include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
 
-fn format_fixed_numeric_value(value: f64, precision: usize) -> String {
-    let factor = 10_f64.powi(i32::try_from(precision).unwrap_or(i32::MAX));
-    let displayed = if factor.is_finite() && value.abs() <= f64::MAX / factor {
-        (value * factor).round() / factor
+// Round the stored binary value directly. Multiplying by a floating decimal
+// scale can turn a value below a half into an exact half (for example 3/40).
+fn rounded_fixed_magnitude(value: f64, precision: usize) -> Option<u128> {
+    if !value.is_finite() || precision > 18 { return None; }
+    let bits = value.abs().to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let (mantissa, exponent) = if exponent == 0 {
+        (fraction, -1074)
     } else {
-        value
+        (fraction | (1u64 << 52), exponent - 1023 - 52)
     };
-    format!("{displayed:.precision$}")
+    let numerator = u128::from(mantissa).checked_mul(5u128.pow(precision as u32))?;
+    let shift = exponent + precision as i32;
+    if shift >= 0 {
+        return numerator.checked_mul(1u128.checked_shl(shift as u32)?);
+    }
+    let denominator_shift = (-shift) as u32;
+    if denominator_shift > 128 { return Some(0); }
+    if denominator_shift == 128 { return Some(u128::from(numerator >= (1u128 << 127))); }
+    let quotient = numerator >> denominator_shift;
+    let remainder = numerator & ((1u128 << denominator_shift) - 1);
+    Some(quotient + u128::from(remainder >= (1u128 << (denominator_shift - 1))))
+}
+
+fn format_fixed_numeric_value(value: f64, precision: usize) -> String {
+    if let Some(magnitude) = rounded_fixed_magnitude(value, precision) {
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        if precision == 0 { return format!("{sign}{magnitude}"); }
+        let factor = 10u128.pow(precision as u32);
+        return format!("{sign}{}.{:0precision$}", magnitude / factor, magnitude % factor);
+    }
+    format!("{value:.precision$}")
 }
 
 /// Native numeric captions round halfway values away from zero and use scientific
@@ -42,7 +67,11 @@ pub fn format_numeric_value(value: f64, precision: usize) -> String {
     let mut exponent = value.abs().log10().floor() as i32;
     let mut mantissa = value / 10_f64.powi(exponent);
     let factor = 10_f64.powi(precision as i32);
-    if (mantissa.abs() * factor).round() / factor >= 10. {
+    let carries = rounded_fixed_magnitude(mantissa, precision).map_or_else(
+        || (mantissa.abs() * factor).round() / factor >= 10.,
+        |rounded| rounded >= 10u128.pow(precision as u32) * 10,
+    );
+    if carries {
         exponent += 1;
         mantissa /= 10.;
     }
@@ -1189,6 +1218,12 @@ impl<'a> ParameterExprParser<'a> {
         }
         if word == 13 || word == 14 {
             self.at += 1;
+            if word == 13 && self.words.get(self.at) == Some(&0x0100) {
+                self.at += 1;
+                // Native captions show pi radians as 180 degrees, while the
+                // original pi/unit words remain untouched in the group.
+                return Ok(ParameterExpr::Literal(180., "180°".into()));
+            }
             return Ok(ParameterExpr::Literal(
                 if word == 13 {
                     CALCULATOR_PI
@@ -1234,10 +1269,24 @@ impl<'a> ParameterExprParser<'a> {
                     return Err("Decimal point needs fractional digits".into());
                 }
             }
-            let value = text
+            let mut value = text
                 .parse::<f64>()
                 .map_err(|_| "Invalid calculation literal")?;
-            if self.words.get(self.at) == Some(&0x0101) {
+            if self.words.get(self.at) == Some(&0x0100) {
+                // These are the authentic decimal-radian literals observed in
+                // the corpus. Independent native controls establish the full
+                // degree value and these six-significant-digit captions; the
+                // literal caption does not follow the result's precision.
+                let caption = match text.as_str() {
+                    "1" => "57.2958°",
+                    "2" => "114.592°",
+                    "3" => "171.887°",
+                    _ => return Err("Unsupported radian calculation literal".into()),
+                };
+                value = value * 180. / CALCULATOR_PI;
+                text = caption.into();
+                self.at += 1;
+            } else if self.words.get(self.at) == Some(&0x0101) {
                 self.at += 1;
                 text.push('°');
             }
@@ -1294,6 +1343,11 @@ fn calculation_words_for_sources(
         }) {
             words.push(0x6000 + *index as u16);
             input = &input[source_name.len()..];
+        } else if input.strip_prefix("rad").is_some_and(|rest| {
+            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }) {
+            words.push(0x0100);
+            input = &input[3..];
         } else if ch == 'π' || input.starts_with("pi") {
             words.push(13);
             input = &input[if ch == 'π' { ch.len_utf8() } else { 2 }..];
@@ -1801,6 +1855,48 @@ impl MeasuredCalculationGroup {
 }
 
 impl CalculationGroup {
+    pub fn display_mode(&self) -> u16 {
+        let rs = records(&self.bytes, 0).unwrap();
+        u16::from_le_bytes(self.bytes[rs[1].payload + 26..rs[1].payload + 28].try_into().unwrap())
+    }
+
+    /// The explicitly stored calculation name, without inventing a caption.
+    pub fn name(&self) -> Option<&str> {
+        let rs = records(&self.bytes, 0).ok()?;
+        let label = rs.iter().find(|record| record.kind == 0x07d5)?;
+        let len = u16::from_le_bytes(self.bytes[label.payload + 22..label.payload + 24].try_into().ok()?) as usize;
+        std::str::from_utf8(&self.bytes[label.payload + 24..label.payload + 24 + len]).ok()
+            .filter(|name| !name.is_empty())
+    }
+
+    /// The independently verified source-free angle/radian record family.
+    pub fn is_native_radian_angle(&self) -> bool {
+        self.bytes.get(16..18) == Some(&[49, 0])
+    }
+
+    /// Edit the verified angle family while retaining its presentation/cache
+    /// records. A change of native quantity family is a separate operation.
+    pub fn set_expression(&mut self, expression: &str) -> Result<(), String> {
+        if !self.is_native_radian_angle() {
+            return Err("Editing this calculation expression is not yet supported".into());
+        }
+        let words = calculation_words(expression, "")?;
+        let rs = records(&self.bytes, 0)?;
+        let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
+        payload.truncate(92);
+        payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        for word in words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut bytes = self.bytes[..rs[1].start].to_vec();
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&self.bytes[rs[1].end..]);
+        let parsed = Self::parse(&bytes)?;
+        *self = parsed;
+        Ok(())
+    }
+
     pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
         let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
         *self = Self::parse(&updated)?;
@@ -1821,19 +1917,25 @@ impl CalculationGroup {
         }
         let words = calculation_words(expression, "")?;
         let tree = calculation_tree(&words)?;
-        tree.unit(NumericUnit::Scalar)?;
+        let unit = tree.unit(NumericUnit::Scalar)?;
+        if words.contains(&0x0100) && unit != NumericUnit::Degrees {
+            return Err("Source-free radian calculations require an angle result".into());
+        }
         let base = Self::literal_two_plus_three();
         let rs = records(&base.bytes, 0)?;
         let mut payload = base.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
         payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
         payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
-        for word in words {
+        for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
         }
         let mut bytes = base.bytes[..rs[1].start].to_vec();
         put_record(&mut bytes, 0x0907, &payload);
         bytes.extend_from_slice(&base.bytes[rs[1].end..]);
+        if words.contains(&0x0100) {
+            bytes[16..18].copy_from_slice(&49_u16.to_le_bytes());
+        }
         Self::parse(&bytes)
     }
     fn expression_tree(&self) -> Result<ParameterExpr, String> {
@@ -1842,11 +1944,25 @@ impl CalculationGroup {
             .chunks_exact(2)
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
-        if words.contains(&0x6000) {
+        if words.iter().any(|word| (0x6000..=0x600f).contains(word)) {
             return Err("Literal calculation has a source reference".into());
         }
+        // Native source-free radian expressions use subtype49 and produce an
+        // angle. Scalar/compound results and other subtype49 literal families
+        // are independent prerequisites, not inferred from these groups.
+        let native_radians = self.is_native_radian_angle();
+        if words.contains(&0x0100) && !native_radians {
+            return Err("Radian calculations without a source are not yet supported".into());
+        }
         let tree = calculation_tree(&words)?;
-        tree.unit(NumericUnit::Scalar)?;
+        let unit = tree.unit(NumericUnit::Scalar)?;
+        if native_radians && (!words.contains(&0x0100) || unit != NumericUnit::Degrees
+            || !matches!(self.display_mode(), 0 | 3)) {
+            return Err("Unsupported source-free radian angle layout".into());
+        }
+        if native_radians && words.iter().any(|word| calculation_function_name(*word).is_some()) {
+            return Err("Source-free radian angle functions are not yet supported".into());
+        }
         Ok(tree)
     }
     pub fn unit(&self) -> NumericUnit {
@@ -1964,7 +2080,7 @@ impl CalculationGroup {
             || rs[font_index + 1].end - rs[font_index + 1].payload != 8
             || rs.last().unwrap().end != rs.last().unwrap().payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 0
-            || u16::from_le_bytes(bytes[16..18].try_into().unwrap()) != 51
+            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 49 | 51)
         {
             return Err("Unsupported calculation record lengths or subtype".into());
         }
@@ -2872,6 +2988,15 @@ pub fn append_default_parameter_table(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_binary_fraction_rounding_avoids_false_decimal_ties() {
+        // Independent native scalar controls: 3/40, 1/8, and -1/8 at precision 2.
+        assert_eq!(format_numeric_value(3. / 40., 2), "0.07");
+        assert_eq!(format_numeric_value(1. / 8., 2), "0.13");
+        assert_eq!(format_numeric_value(-1. / 8., 2), "-0.13");
+        assert_eq!(format_numeric_value(-3. / 40., 2), "-0.07");
+    }
+
     #[test]
     fn parameter_calculation_chain_imports_and_evaluates() {
         let native = include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");

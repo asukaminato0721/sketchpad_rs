@@ -1,4 +1,4 @@
-use super::kind::{is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
+use super::kind::{is_arc_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
 use super::{Document, Kind, Point};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{plot_axis_records, plot_points_records, style_records};
@@ -113,6 +113,28 @@ impl Document {
         }
         Ok(ids)
     }
+    /// The numeric category accepted by Plot Value; undefined values report an
+    /// error when plotting rather than opening the literal-value dialog.
+    pub fn is_scalar_plot_source(&self, id: usize) -> bool {
+        id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|object| {
+            !object.deleted && object.page == self.active_page
+                && object.kind.numeric_unit() == Some(crate::table_records::NumericUnit::Scalar)
+        })
+    }
+
+    /// Uses the same geometry eligibility as the plotting API at an in-range
+    /// sample, including native-supported undefined collapsed arcs.
+    pub fn can_plot_value_on_path(&self, id: usize) -> bool {
+        let Some(object) = id.checked_sub(1).and_then(|index| self.objects.get(index)) else {
+            return false;
+        };
+        if object.deleted || object.page != self.active_page { return false; }
+        if object.kind.is_polygon() {
+            return self.point_at_polygon_parameter(id, 0.5).is_some();
+        }
+        self.plotted_path_position(id, 0.5).is_ok()
+    }
+
     fn plotted_path_position(&self, path: usize, value: f64) -> Result<Option<Point>, String> {
         let object = self
             .objects
@@ -120,6 +142,14 @@ impl Document {
             .ok_or("Invalid path")?;
         if object.page != self.active_page || object.deleted {
             return Err("Select a path on this page".into());
+        }
+        if is_arc_kind(&object.kind) {
+            if !value.is_finite() || !self.plot_arc_host_available(path) {
+                return Err("Select a valid arc and a finite value".into());
+            }
+            if self.undefined_arc_plot(path, value) { return Ok(None); }
+            return self.plotted_arc_position(path, value).map(Some)
+                .ok_or("Arc geometry is outside the supported range".into());
         }
         if is_transformed_plot_path_kind(&object.kind) && value.is_finite() {
             let (start, end, _) = self.line_points(path).ok_or("Invalid transformed path")?;
@@ -178,14 +208,7 @@ impl Document {
         let path = path
             .or_else(|| self.active_x_axis(self.active_page))
             .ok_or("No coordinate axis or selected path")?;
-        let numeric_source = self
-            .objects
-            .get(source.checked_sub(1).ok_or("Invalid value")?)
-            .ok_or("Invalid value")?;
-        if numeric_source.page != self.active_page || numeric_source.deleted {
-            return Err("Select a scalar numeric value".into());
-        }
-        if numeric_source.kind.numeric_unit() != Some(crate::table_records::NumericUnit::Scalar) {
+        if !self.is_scalar_plot_source(source) {
             return Err("Select a scalar numeric value".into());
         }
         let value = self.numeric_value(source).ok_or("Numeric value is undefined")?;

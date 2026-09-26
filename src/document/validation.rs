@@ -133,11 +133,15 @@ impl Document {
             match &o.kind {
                 Kind::CalculatedRatioScaledPoint(source, center, ratio)
                 | Kind::CalculatedRatioScaledSegment(source, center, ratio)
+                | Kind::CalculatedRatioScaledRay(source, center, ratio)
+                | Kind::CalculatedRatioScaledLine(source, center, ratio)
                 | Kind::CalculatedRatioScaledCircle(source, center, ratio)
                 | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedRatioScaledPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedRatioScaledSegment(..) => is_segment_kind(&p.kind),
+                        Kind::CalculatedRatioScaledRay(..) => matches!(p.kind, Kind::Ray(..)),
+                        Kind::CalculatedRatioScaledLine(..) => matches!(p.kind, Kind::Line(..)),
                         Kind::CalculatedRatioScaledCircle(..) => p.kind.is_circle(),
                         _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
@@ -146,17 +150,25 @@ impl Document {
                         || !self.objects.get(ratio.saturating_sub(1)).is_some_and(|p| !p.deleted && p.kind.numeric_unit() == Some(NumericUnit::Scalar)) {
                         return Err("Invalid numeric-ratio dilation parents".into());
                     }
-                    if i >= self.source_count && (self.unitless_numeric_value(*ratio).is_none() || self.position(*center).is_none()) {
+                    let straight_ratio = matches!(o.kind, Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..));
+                    let factor = self.unitless_numeric_value(*ratio);
+                    if i >= self.source_count && (self.position(*center).is_none()
+                        || (!straight_ratio && factor.is_none())
+                        || (straight_ratio && factor.is_some_and(|factor| factor != 0.) && self.line_points(o.id).is_none())) {
                         return Err("Undefined numeric-ratio dilation".into());
                     }
                 }
                 Kind::CalculatedAngleRotatedPoint(source, center, angle)
                 | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+                | Kind::CalculatedAngleRotatedRay(source, center, angle)
+                | Kind::CalculatedAngleRotatedLine(source, center, angle)
                 | Kind::CalculatedAngleRotatedCircle(source, center, angle)
                 | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedAngleRotatedPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedAngleRotatedSegment(..) => is_segment_kind(&p.kind),
+                        Kind::CalculatedAngleRotatedRay(..) => matches!(p.kind, Kind::Ray(..)),
+                        Kind::CalculatedAngleRotatedLine(..) => matches!(p.kind, Kind::Line(..)),
                         Kind::CalculatedAngleRotatedCircle(..) => p.kind.is_circle(),
                         _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
@@ -165,8 +177,9 @@ impl Document {
                         || !self.objects.get(angle.saturating_sub(1)).is_some_and(|p| !p.deleted && p.kind.numeric_unit() == Some(NumericUnit::Degrees)) {
                         return Err("Invalid numeric-angle rotation parents".into());
                     }
-                    if i >= self.source_count && (self.numeric_value(*angle).is_none() || self.position(*center).is_none()
-                        || match o.kind { Kind::CalculatedAngleRotatedPoint(..) => self.position(o.id).is_none(), Kind::CalculatedAngleRotatedSegment(..) => self.line_points(o.id).is_none(), Kind::CalculatedAngleRotatedCircle(..) => self.circle_points(o.id).is_none(), _ => self.polygon_points(o.id).is_none() }) {
+                    let undefined_straight_angle = matches!(o.kind, Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)) && self.numeric_value(*angle).is_none();
+                    if i >= self.source_count && (self.position(*center).is_none() || (!undefined_straight_angle && (self.numeric_value(*angle).is_none()
+                        || match o.kind { Kind::CalculatedAngleRotatedPoint(..) => self.position(o.id).is_none(), Kind::CalculatedAngleRotatedSegment(..) | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..) => self.line_points(o.id).is_none(), Kind::CalculatedAngleRotatedCircle(..) => self.circle_points(o.id).is_none(), _ => self.polygon_points(o.id).is_none() }))) {
                         return Err("Undefined numeric-angle rotation".into());
                     }
                 }
@@ -633,7 +646,7 @@ impl Document {
             if let Kind::PathValuePoint(source, path) = o.kind {
                 if !self.objects.get(source.saturating_sub(1)).is_some_and(|parent| !parent.deleted && parent.page == o.page && source < o.id && parent.kind.numeric_unit() == Some(NumericUnit::Scalar))
                     || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
-                    || (self.position(o.id).is_none() && !self.numeric_value(source).is_some_and(|value| self.undefined_transformed_ray_plot(path, value)))
+                    || (self.position(o.id).is_none() && !self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)))
                 {
                     return Err(format!("Invalid path value point {}", o.id));
                 }
@@ -643,7 +656,7 @@ impl Document {
                     .objects
                     .get(path.saturating_sub(1))
                     .is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && literal_plot_path_accepts(&host.kind, value))
-                    || (self.position(o.id).is_none() && !self.undefined_transformed_ray_plot(path, value))
+                    || (self.position(o.id).is_none() && !self.undefined_native_path_plot(path, value))
                 {
                     return Err(format!("Invalid literal path point {}", o.id));
                 }
@@ -1249,8 +1262,8 @@ impl Document {
                     !self.objects.get(id.saturating_sub(1)).is_some_and(|point| {
                         !point.deleted && point.page == o.page && id < o.id && is_point_kind(&point.kind)
                             && (self.position(id).is_some() || match point.kind {
-                                Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_transformed_ray_plot(path, value)),
-                                Kind::PathLiteralPoint(path, value) => self.undefined_transformed_ray_plot(path, value),
+                                Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
+                                Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 _ => false,
                             })
                     })

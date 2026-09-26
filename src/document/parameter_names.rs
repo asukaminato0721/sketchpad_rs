@@ -3,14 +3,15 @@ use super::{Document, Kind, records};
 pub(super) fn parameter_name_counter(bytes: &[u8], target_page: usize) -> Option<u32> {
     let mut page = None;
     let mut counter = None;
-    for record in records(bytes).ok()? {
+    let entries = records(bytes).ok()?;
+    for record in super::embedded_tools::document_records(&entries) {
         if record.kind == 0x03e8 {
             page = Some(page.map_or(0, |page| page + 1));
             if page.is_some_and(|page| page > target_page) {
                 break;
             }
         } else if page == Some(target_page) && record.kind == 0x0960 {
-            let payload = &bytes[record.data];
+            let payload = &bytes[record.data.clone()];
             if payload.len() != 6 || payload[..2] != [0, 0] || counter.is_some() {
                 return None;
             }

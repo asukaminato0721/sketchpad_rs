@@ -1,4 +1,4 @@
-use super::kind::{is_straight_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts};
+use super::kind::{is_arc_kind, is_point_kind, is_straight_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
@@ -232,6 +232,84 @@ impl Document {
             && self.line_points(path).is_some_and(|(start, end, _)| start != end)
     }
 
+    pub(super) fn plot_arc_host_available(&self, path: usize) -> bool {
+        let Some(host) = path.checked_sub(1).and_then(|index| self.objects.get(index)) else {
+            return false;
+        };
+        if host.deleted { return false; }
+        let point_available = |id: usize| {
+            id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|point| {
+                id < path && !point.deleted && point.page == host.page
+                    && is_point_kind(&point.kind)
+                    && self.position(id).is_some_and(|position| position.x.is_finite() && position.y.is_finite())
+            })
+        };
+        match host.kind {
+            Kind::ThreePointArc(a, b, c) => [a, b, c].into_iter().all(point_available),
+            Kind::ArcOnCircle(circle, start, end) => {
+                self.objects.get(circle.saturating_sub(1)).is_some_and(|object| {
+                    circle < path && !object.deleted && object.page == host.page && object.kind.is_circle()
+                }) && self.circle_points(circle).is_some()
+                    && [start, end].into_iter().all(|id| {
+                        point_available(id) && matches!(self.objects[id - 1].kind,
+                            Kind::PointOnCircle(source, _, _) if source == circle)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Native three-point arcs with three distinct collinear positions form a
+    /// segment only when the middle vertex is strictly between the endpoints.
+    pub fn linear_three_point_arc(&self, path: usize) -> Option<(Point, Point)> {
+        let Kind::ThreePointArc(a, b, c) = self.objects.get(path.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        if !self.plot_arc_host_available(path) { return None; }
+        let (a, b, c) = (self.position(a)?, self.position(b)?, self.position(c)?);
+        let (dx, dy) = (c.x - a.x, c.y - a.y);
+        let determinant = (b.x - a.x) * dy - (b.y - a.y) * dx;
+        let length_squared = dx * dx + dy * dy;
+        let projection = (b.x - a.x) * dx + (b.y - a.y) * dy;
+        (determinant == 0.0 && length_squared.is_finite() && length_squared > 0.0
+            && projection > 0.0 && projection < length_squared).then_some((a, c))
+    }
+
+    pub(super) fn undefined_arc_plot(&self, path: usize, value: f64) -> bool {
+        if !value.is_finite() || !self.plot_arc_host_available(path) { return false; }
+        if !(0.0..=1.0).contains(&value) { return true; }
+        match self.objects[path - 1].kind {
+            Kind::ThreePointArc(a, b, c) => {
+                let (a, b, c) = (self.position(a).unwrap(), self.position(b).unwrap(), self.position(c).unwrap());
+                let determinant = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+                determinant == 0.0 && self.linear_three_point_arc(path).is_none()
+            }
+            Kind::ArcOnCircle(_, start, end) => self.position(start) == self.position(end),
+            _ => false,
+        }
+    }
+
+    pub(super) fn plotted_arc_position(&self, path: usize, value: f64) -> Option<Point> {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value)
+            || !self.plot_arc_host_available(path) || self.undefined_arc_plot(path, value) {
+            return None;
+        }
+        if let Some((start, end)) = self.linear_three_point_arc(path) {
+            return Some(Point {
+                x: start.x + (end.x - start.x) * value,
+                y: start.y + (end.y - start.y) * value,
+            });
+        }
+        let geometry = self.arc_geometry(path)?;
+        if geometry.3 == 0.0 { return None; }
+        let point = Self::sample_arc(geometry, value);
+        (point.x.is_finite() && point.y.is_finite()).then_some(point)
+    }
+
+    pub(super) fn undefined_native_path_plot(&self, path: usize, value: f64) -> bool {
+        self.undefined_transformed_ray_plot(path, value) || self.undefined_arc_plot(path, value)
+    }
+
     pub fn position(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
             fn on_path(
@@ -243,6 +321,9 @@ impl Document {
                 let kind = &d.objects.get(path.checked_sub(1)?)?.kind;
                 if !plot_path_accepts(kind, t) {
                     return None;
+                }
+                if is_arc_kind(kind) {
+                    return d.plotted_arc_position(path, t);
                 }
                 if is_transformed_plot_path_kind(kind) {
                     let (start, end, _) = d.line_points(path)?;
@@ -845,17 +926,22 @@ impl Document {
                         mode,
                     ))
                 }
-                Kind::CalculatedRatioScaledSegment(source, center, ratio) => {
+                Kind::CalculatedRatioScaledSegment(source, center, ratio)
+                | Kind::CalculatedRatioScaledRay(source, center, ratio)
+                | Kind::CalculatedRatioScaledLine(source, center, ratio) => {
                     let (a, b, mode) = go(d, source, seen)?;
                     let center = d.position(center)?;
                     let factor = d.unitless_numeric_value(ratio)?;
+                    if factor == 0. && matches!(object.kind, Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)) { return None; }
                     Some((
                         scale_point_about(a, center, factor)?,
                         scale_point_about(b, center, factor)?,
                         mode,
                     ))
                 }
-                Kind::CalculatedAngleRotatedSegment(source, center, angle) => {
+                Kind::CalculatedAngleRotatedSegment(source, center, angle)
+                | Kind::CalculatedAngleRotatedRay(source, center, angle)
+                | Kind::CalculatedAngleRotatedLine(source, center, angle) => {
                     let (a, b, mode) = go(d, source, seen)?;
                     let center = d.position(center)?;
                     let theta = d.numeric_value(angle)?.to_radians();
@@ -1290,6 +1376,13 @@ impl Document {
         }
     }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
+        if self.objects.get(id.saturating_sub(1)).is_some_and(|object| matches!(object.kind, Kind::ArcOnCircle(..)))
+            && self.undefined_arc_plot(id, 0.5) {
+            return None;
+        }
+        if let Some((start, end)) = self.linear_three_point_arc(id) {
+            return Some(vec![start, end]);
+        }
         let geometry = self.arc_geometry(id)?;
         let count = subdivisions.max(2);
         Some(

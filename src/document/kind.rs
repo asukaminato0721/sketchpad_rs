@@ -281,10 +281,14 @@ impl Kind {
         }
         if let Kind::CalculatedAngleRotatedPoint(source, center, angle)
         | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+        | Kind::CalculatedAngleRotatedRay(source, center, angle)
+        | Kind::CalculatedAngleRotatedLine(source, center, angle)
         | Kind::CalculatedAngleRotatedCircle(source, center, angle)
         | Kind::CalculatedAngleRotatedPolygon(source, center, angle)
         | Kind::CalculatedRatioScaledPoint(source, center, angle)
         | Kind::CalculatedRatioScaledSegment(source, center, angle)
+        | Kind::CalculatedRatioScaledRay(source, center, angle)
+        | Kind::CalculatedRatioScaledLine(source, center, angle)
         | Kind::CalculatedRatioScaledCircle(source, center, angle)
         | Kind::CalculatedRatioScaledPolygon(source, center, angle) = self
         {
@@ -452,6 +456,10 @@ impl Kind {
             | Kind::CalculatedAngleRotatedPoint(_, _, _)
             | Kind::CalculatedRatioScaledPoint(_, _, _)
             | Kind::CalculatedAngleRotatedSegment(_, _, _)
+            | Kind::CalculatedAngleRotatedRay(_, _, _)
+            | Kind::CalculatedAngleRotatedLine(_, _, _)
+            | Kind::CalculatedRatioScaledRay(_, _, _)
+            | Kind::CalculatedRatioScaledLine(_, _, _)
             | Kind::CalculatedRatioScaledSegment(_, _, _)
             | Kind::CalculatedAngleRotatedCircle(_, _, _)
             | Kind::CalculatedRatioScaledCircle(_, _, _)
@@ -931,6 +939,8 @@ impl Kind {
             Kind::CalculatedRatioScaledSegment(a, b, value) => {
                 Kind::CalculatedRatioScaledSegment(m(a), m(b), m(value))
             }
+            Kind::CalculatedRatioScaledRay(a, b, value) => Kind::CalculatedRatioScaledRay(m(a), m(b), m(value)),
+            Kind::CalculatedRatioScaledLine(a, b, value) => Kind::CalculatedRatioScaledLine(m(a), m(b), m(value)),
             Kind::CalculatedRatioScaledCircle(a, b, value) => {
                 Kind::CalculatedRatioScaledCircle(m(a), m(b), m(value))
             }
@@ -940,6 +950,8 @@ impl Kind {
             Kind::CalculatedAngleRotatedPoint(a, b, value) => {
                 Kind::CalculatedAngleRotatedPoint(m(a), m(b), m(value))
             }
+            Kind::CalculatedAngleRotatedRay(a, b, value) => Kind::CalculatedAngleRotatedRay(m(a), m(b), m(value)),
+            Kind::CalculatedAngleRotatedLine(a, b, value) => Kind::CalculatedAngleRotatedLine(m(a), m(b), m(value)),
             Kind::CalculatedAngleRotatedSegment(a, b, value) => {
                 Kind::CalculatedAngleRotatedSegment(m(a), m(b), m(value))
             }
@@ -1096,6 +1108,10 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::ScaledRay(_, _, _)
             | Kind::RotatedLine(_, _, _)
             | Kind::ScaledLine(_, _, _)
+            | Kind::CalculatedAngleRotatedRay(_, _, _)
+            | Kind::CalculatedAngleRotatedLine(_, _, _)
+            | Kind::CalculatedRatioScaledRay(_, _, _)
+            | Kind::CalculatedRatioScaledLine(_, _, _)
             | Kind::PolarTranslatedSegment(_, _, _, _)
             | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
             | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
@@ -1125,7 +1141,7 @@ pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
         Some(LineMode::Segment)
     } else if matches!(
         kind,
-        Kind::Ray(_, _) | Kind::RotatedRay(_, _, _) | Kind::ScaledRay(_, _, _) | Kind::Bisector(_, _, _)
+        Kind::Ray(_, _) | Kind::RotatedRay(_, _, _) | Kind::ScaledRay(_, _, _) | Kind::CalculatedAngleRotatedRay(_, _, _) | Kind::CalculatedRatioScaledRay(_, _, _) | Kind::Bisector(_, _, _)
     ) {
         Some(LineMode::Ray)
     } else if is_straight_kind(kind) {
@@ -1338,7 +1354,7 @@ pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
             | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
             | Kind::CircleAxis(_, 0 | 1)
             | Kind::DistanceAxis(_, _, 0 | 1)
-    ) || kind.is_circle() || is_transformed_plot_path_kind(kind)
+    ) || kind.is_circle() || is_arc_kind(kind) || is_transformed_plot_path_kind(kind)
 }
 
 pub(super) fn is_transformed_plot_ray_kind(kind: &Kind) -> bool {
@@ -1353,7 +1369,7 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
     value.is_finite()
         && is_plot_path_kind(kind)
         && match kind {
-            Kind::Segment(_, _) => (0.0..=1.0).contains(&value),
+            Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) => (0.0..=1.0).contains(&value),
             Kind::Ray(_, _) | Kind::RotatedRay(..) | Kind::ScaledRay(..) => value >= 0.0,
             _ => true,
         }
@@ -1365,7 +1381,7 @@ pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind)) && value.is_finite())
+    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind)) && value.is_finite())
 }
 
 /// Native code 123 also accepts a literal fraction of a polygon perimeter.
@@ -1374,7 +1390,7 @@ pub(super) fn is_literal_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn literal_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind)) && value.is_finite())
+    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind)) && value.is_finite())
 }
 
 /// Supported polygon transforms retain their source's vertex count. Require
@@ -1497,6 +1513,10 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::ScaledRay(_, _, _)
         | Kind::RotatedLine(_, _, _)
         | Kind::ScaledLine(_, _, _)
+        | Kind::CalculatedAngleRotatedRay(_, _, _)
+        | Kind::CalculatedAngleRotatedLine(_, _, _)
+        | Kind::CalculatedRatioScaledRay(_, _, _)
+        | Kind::CalculatedRatioScaledLine(_, _, _)
         | Kind::Parallel(_, _)
         | Kind::Perpendicular(_, _)
         | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),

@@ -1,3 +1,4 @@
+use super::embedded_tools::document_records;
 use super::calculations::calculation_source_ids;
 use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding, straight_kind_mode};
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
@@ -45,7 +46,7 @@ impl Document {
         self.can_save()?;
         let rs = records(&self.original)?;
         let mut out = self.original.clone();
-        if let Some(record) = rs.iter().find(|record| record.kind == 0x273a) {
+        if let Some(record) = document_records(&rs).find(|record| record.kind == 0x273a) {
             if record.data.len() != 2 {
                 return Err("Invalid angle-unit record".into());
             }
@@ -376,7 +377,7 @@ impl Document {
             out = picture.encode().to_vec();
         }
         let mut page_index = 0;
-        for record in rs.iter().filter(|r| r.kind == 0x3e8) {
+        for record in document_records(&rs).filter(|r| r.kind == 0x3e8) {
             if self.objects.iter().any(|o| {
                 o.page == page_index && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
             }) {
@@ -1456,12 +1457,16 @@ impl Document {
                 | Kind::ScaledPolygon(source, center, _) => (30, vec![source, center]),
                 Kind::CalculatedRatioScaledPoint(source, center, ratio)
                 | Kind::CalculatedRatioScaledSegment(source, center, ratio)
+                | Kind::CalculatedRatioScaledRay(source, center, ratio)
+                | Kind::CalculatedRatioScaledLine(source, center, ratio)
                 | Kind::CalculatedRatioScaledCircle(source, center, ratio)
                 | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
                     (33, vec![source, center, ratio])
                 }
                 Kind::CalculatedAngleRotatedPoint(source, center, angle)
                 | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+                | Kind::CalculatedAngleRotatedRay(source, center, angle)
+                | Kind::CalculatedAngleRotatedLine(source, center, angle)
                 | Kind::CalculatedAngleRotatedCircle(source, center, angle)
                 | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
                     (29, vec![source, center, angle])
@@ -1524,8 +1529,10 @@ impl Document {
             if matches!(
                 o.kind,
                 Kind::RotatedRay(..) | Kind::RotatedLine(..) | Kind::ScaledRay(..) | Kind::ScaledLine(..)
+                    | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)
+                    | Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)
             ) {
-                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..)) {
+                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..) | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedRatioScaledRay(..)) {
                     64
                 } else {
                     63

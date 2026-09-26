@@ -1060,7 +1060,62 @@ fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancesto
                 assert_eq!(actual_mode, mode);
             }
             doc.verify_roundtrip().unwrap();
+            if moved {
+                let golden = match (rotation, ray) {
+                    (true, true) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_rotation_ray_edited_native_verified.gsp").as_slice(),
+                    (true, false) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_rotation_line_edited_native_verified.gsp").as_slice(),
+                    (false, true) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_ray_edited_native_verified.gsp").as_slice(),
+                    (false, false) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_line_edited_native_verified.gsp").as_slice(),
+                };
+                assert_eq!(doc.encode().unwrap(), golden);
+            }
         }
+
+        let mut fresh = Document::new();
+        let c = fresh.add(Kind::Free(Point { x: 130., y: 150. }));
+        let a = fresh.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = fresh.add(Kind::Free(Point { x: 210., y: 190. }));
+        let source = fresh.add(if ray {
+            Kind::Ray(a, b)
+        } else {
+            Kind::Line(a, b)
+        });
+        let image = fresh.add(match (rotation, ray) {
+            (true, true) => Kind::RotatedRay(source, c, 45.),
+            (true, false) => Kind::RotatedLine(source, c, 45.),
+            (false, true) => Kind::ScaledRay(source, c, 2.),
+            (false, false) => Kind::ScaledLine(source, c, 2.),
+        });
+        fresh.selected.insert(image);
+        fresh
+            .set_selected_color(RgbColor {
+                red: 255,
+                green: 0,
+                blue: 255,
+            })
+            .unwrap();
+        fresh.set_selected_line_width(LineWidth::Thick).unwrap();
+        fresh
+            .set_selected_line_pattern(LinePattern::Dashed)
+            .unwrap();
+        fresh.add(if ray {
+            Kind::RotatedRay(image, c, 90.)
+        } else {
+            Kind::RotatedLine(image, c, 90.)
+        });
+        fresh.add(if ray {
+            Kind::ScaledRay(image, c, -2.)
+        } else {
+            Kind::ScaledLine(image, c, -2.)
+        });
+        fresh.verify_roundtrip().unwrap();
+        let golden = match (rotation, ray) {
+            (true, true) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_rotation_ray_generated_native_verified.gsp").as_slice(),
+            (true, false) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_rotation_line_generated_native_verified.gsp").as_slice(),
+            (false, true) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_ray_generated_native_verified.gsp").as_slice(),
+            (false, false) => include_bytes!("../../../tests/fixtures/fixed_straight_chain_dilation_line_generated_native_verified.gsp").as_slice(),
+        };
+        assert_eq!(fresh.encode().unwrap(), golden);
         doc.selected.insert(6);
         doc.selected.insert(7);
         let copies = doc.paste(&doc.copy_selected().unwrap()).unwrap();
@@ -1151,4 +1206,449 @@ fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancesto
     let bisector = unsupported.add(Kind::Bisector(a, b, c));
     unsupported.add(Kind::RotatedRay(bisector, a, 45.));
     assert!(unsupported.encode().is_err());
+}
+
+#[test]
+fn calculated_angle_ray_and_line_require_degrees_and_preserve_live_modes() {
+    for (ray, bytes) in [
+        (
+            true,
+            include_bytes!("../../../tests/fixtures/numeric_angle_ray_original.gsp").as_slice(),
+        ),
+        (
+            false,
+            include_bytes!("../../../tests/fixtures/numeric_angle_line_original.gsp").as_slice(),
+        ),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(
+            doc.objects
+                .iter()
+                .all(|object| !matches!(object.kind, Kind::Unsupported(..)))
+        );
+        assert_eq!(
+            doc.objects[7].kind,
+            if ray {
+                Kind::CalculatedAngleRotatedRay(4, 1, 6)
+            } else {
+                Kind::CalculatedAngleRotatedLine(4, 1, 6)
+            }
+        );
+        assert_eq!(doc.objects[7].visual_style, doc.objects[3].visual_style);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        doc.verify_roundtrip().unwrap();
+        let mut malformed = bytes.to_vec();
+        let header = records(bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.kind == 0x7d0)
+            .nth(7)
+            .unwrap();
+        malformed[header.data.start + 8] = if ray { 12 } else { 13 };
+        let unsupported = Document::from_bytes(&malformed, None).unwrap();
+        assert_eq!(unsupported.objects[7].kind, Kind::Unsupported(29));
+        assert_eq!(unsupported.encode().unwrap(), malformed);
+    }
+    for ray in [true, false] {
+        let mut doc = Document::new();
+        let center = doc.add(Kind::Free(Point { x: 130., y: 150. }));
+        let a = doc.add(Kind::Free(Point { x: 170., y: 190. }));
+        let b = doc.add(Kind::Free(Point { x: 210., y: 190. }));
+        let source = doc.add(if ray {
+            Kind::Ray(a, b)
+        } else {
+            Kind::Line(a, b)
+        });
+        let n = doc.add_named_parameter("n", 4., (50, 30)).unwrap();
+        let angle = doc
+            .add_parameter_calculation(n, "360°/n", (50, 60))
+            .unwrap();
+        doc.add_parameter_calculation(n, "n/2", (50, 90)).unwrap();
+        doc.selected.insert(source);
+        doc.set_selected_color(RgbColor {
+            red: 255,
+            green: 0,
+            blue: 255,
+        })
+        .unwrap();
+        doc.set_selected_line_width(LineWidth::Thick).unwrap();
+        doc.set_selected_line_pattern(LinePattern::Dashed).unwrap();
+        let before = doc.encode().unwrap();
+        assert!(
+            doc.add_calculated_angle_rotation(source, center, n)
+                .is_err()
+        );
+        assert_eq!(doc.encode().unwrap(), before);
+        let image = doc
+            .add_calculated_angle_rotation(source, center, angle)
+            .unwrap();
+        assert_eq!(
+            doc.objects[image - 1].kind,
+            if ray {
+                Kind::CalculatedAngleRotatedRay(source, center, angle)
+            } else {
+                Kind::CalculatedAngleRotatedLine(source, center, angle)
+            }
+        );
+        assert!(!doc.objects[image - 1].kind.is_segment());
+        assert_eq!(
+            doc.objects[image - 1].visual_style,
+            doc.objects[source - 1].visual_style
+        );
+        let mode = if ray { LineMode::Ray } else { LineMode::Line };
+        let close = |a: Point, b: Point| {
+            assert!(
+                (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9,
+                "{a:?} != {b:?}"
+            )
+        };
+        let (ra, rb, actual_mode) = doc.line_points(image).unwrap();
+        close(ra, Point { x: 170., y: 110. });
+        close(rb, Point { x: 170., y: 70. });
+        assert_eq!(actual_mode, mode);
+        assert_eq!(
+            doc.encode().unwrap(),
+            if ray {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_ray_generated_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_line_generated_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
+        doc.verify_roundtrip().unwrap();
+        let mut fresh_undefined = doc.clone();
+        fresh_undefined.set_parameter_value(n, 0.).unwrap();
+        assert!(fresh_undefined.line_points(image).is_none());
+        fresh_undefined.verify_roundtrip().unwrap();
+        fresh_undefined.set_parameter_value(n, 4.).unwrap();
+        assert_eq!(fresh_undefined.line_points(image), doc.line_points(image));
+        fresh_undefined.verify_roundtrip().unwrap();
+        let mut doc = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        doc.set_parameter_value(n, 8.).unwrap();
+        let (ra, rb, _) = doc.line_points(image).unwrap();
+        close(
+            ra,
+            Point {
+                x: 186.5685424949238,
+                y: 150.,
+            },
+        );
+        close(
+            rb,
+            Point {
+                x: 214.8528137423857,
+                y: 121.7157287525381,
+            },
+        );
+        let mut moved = doc.clone();
+        assert!(moved.move_point(center, Point { x: 140., y: 160. }));
+        assert!(moved.move_point(a, Point { x: 180., y: 210. }));
+        assert!(moved.move_point(b, Point { x: 240., y: 220. }));
+        assert_eq!(
+            moved.encode().unwrap(),
+            if ray {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_ray_edited_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_line_edited_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
+        doc.set_parameter_value(n, -4.).unwrap();
+        assert_eq!(
+            doc.encode().unwrap(),
+            if ray {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_ray_negative_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_line_negative_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
+        let (ra, rb, _) = doc.line_points(image).unwrap();
+        close(ra, Point { x: 90., y: 190. });
+        close(rb, Point { x: 90., y: 230. });
+        doc.set_parameter_value(n, 0.).unwrap();
+        assert!(doc.numeric_value(angle).is_none());
+        assert!(doc.line_points(image).is_none());
+        assert_eq!(
+            doc.encode().unwrap(),
+            if ray {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_ray_undefined_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/numeric_angle_line_undefined_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
+        doc.verify_roundtrip().unwrap();
+        doc.set_parameter_value(n, 4.).unwrap();
+        doc.verify_roundtrip().unwrap();
+        doc.selected.clear();
+        doc.selected.insert(image);
+        let copied = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        let copy = *copied
+            .iter()
+            .find(|&&id| {
+                matches!(
+                    doc.objects[id - 1].kind,
+                    Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)
+                )
+            })
+            .unwrap();
+        let (ra, rb, copied_mode) = doc.line_points(copy).unwrap();
+        close(ra, Point { x: 190., y: 130. });
+        close(rb, Point { x: 190., y: 90. });
+        assert_eq!(copied_mode, mode);
+        doc.verify_roundtrip().unwrap();
+        doc.selected.clear();
+        doc.selected.insert(angle);
+        doc.clear_selected().unwrap();
+        assert!(doc.objects[image - 1].deleted);
+        assert!(!doc.objects[copy - 1].deleted);
+        doc.verify_roundtrip().unwrap();
+        let mut invalid = Document::new();
+        let a = invalid.add(Kind::Free(Point { x: 100., y: 100. }));
+        let b = invalid.add(Kind::Free(Point { x: 150., y: 120. }));
+        let opposite = invalid.add(if ray {
+            Kind::Line(a, b)
+        } else {
+            Kind::Ray(a, b)
+        });
+        let n = invalid.add_named_parameter("n", 4., (50, 30)).unwrap();
+        let angle = invalid
+            .add_parameter_calculation(n, "360°/n", (50, 60))
+            .unwrap();
+        invalid.add(if ray {
+            Kind::CalculatedAngleRotatedRay(opposite, a, angle)
+        } else {
+            Kind::CalculatedAngleRotatedLine(opposite, a, angle)
+        });
+        assert!(invalid.encode().is_err());
+    }
+}
+
+fn numeric_ratio_straight_document(ray: bool, reciprocal: bool) -> Document {
+    let mut doc = Document::new();
+    doc.add(Kind::Free(Point { x: 130., y: 150. }));
+    let a = doc.add(Kind::Free(Point { x: 170., y: 190. }));
+    let b = doc.add(Kind::Free(Point { x: 210., y: 190. }));
+    let source = doc.add(if ray {
+        Kind::Ray(a, b)
+    } else {
+        Kind::Line(a, b)
+    });
+    let n = doc.add_named_parameter("n", 4., (50, 30)).unwrap();
+    doc.add_parameter_calculation(n, "360°/n", (50, 60))
+        .unwrap();
+    doc.add_parameter_calculation(n, if reciprocal { "2/n" } else { "n/2" }, (50, 90))
+        .unwrap();
+    doc.selected.insert(source);
+    doc.set_selected_color(RgbColor {
+        red: 255,
+        green: 0,
+        blue: 255,
+    })
+    .unwrap();
+    doc.set_selected_line_width(LineWidth::Thick).unwrap();
+    doc.set_selected_line_pattern(LinePattern::Dashed).unwrap();
+    doc
+}
+
+#[test]
+fn calculated_ratio_ray_and_line_preserve_native_modes_and_live_domains() {
+    for (ray, original, generated, edited, negative, zero, undefined) in [
+        (
+            true,
+            include_bytes!("../../../tests/fixtures/numeric_ratio_ray_original.gsp").as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_ray_generated_native_verified.gsp"
+            )
+            .as_slice(),
+            include_bytes!("../../../tests/fixtures/numeric_ratio_ray_edited_native_verified.gsp")
+                .as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_ray_negative_native_verified.gsp"
+            )
+            .as_slice(),
+            include_bytes!("../../../tests/fixtures/numeric_ratio_ray_zero_native_verified.gsp")
+                .as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_ray_undefined_native_verified.gsp"
+            )
+            .as_slice(),
+        ),
+        (
+            false,
+            include_bytes!("../../../tests/fixtures/numeric_ratio_line_original.gsp").as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_line_generated_native_verified.gsp"
+            )
+            .as_slice(),
+            include_bytes!("../../../tests/fixtures/numeric_ratio_line_edited_native_verified.gsp")
+                .as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_line_negative_native_verified.gsp"
+            )
+            .as_slice(),
+            include_bytes!("../../../tests/fixtures/numeric_ratio_line_zero_native_verified.gsp")
+                .as_slice(),
+            include_bytes!(
+                "../../../tests/fixtures/numeric_ratio_line_undefined_native_verified.gsp"
+            )
+            .as_slice(),
+        ),
+    ] {
+        let expected = if ray {
+            Kind::CalculatedRatioScaledRay(4, 1, 7)
+        } else {
+            Kind::CalculatedRatioScaledLine(4, 1, 7)
+        };
+        let mode = if ray { LineMode::Ray } else { LineMode::Line };
+        let doc = Document::from_bytes(original, None).unwrap();
+        assert!(
+            doc.objects
+                .iter()
+                .all(|object| !matches!(object.kind, Kind::Unsupported(..)))
+        );
+        assert_eq!(doc.objects[7].kind, expected);
+        assert_eq!(doc.encode().unwrap(), original);
+        assert_eq!(doc.objects[7].visual_style, doc.objects[3].visual_style);
+        doc.verify_roundtrip().unwrap();
+        let mut malformed = original.to_vec();
+        let h = records(original)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == 0x7d0)
+            .nth(7)
+            .unwrap();
+        malformed[h.data.start + 8] = if ray { 12 } else { 13 };
+        let rejected = Document::from_bytes(&malformed, None).unwrap();
+        assert_eq!(rejected.objects[7].kind, Kind::Unsupported(33));
+        assert_eq!(rejected.encode().unwrap(), malformed);
+
+        let mut doc = numeric_ratio_straight_document(ray, false);
+        let before = doc.encode().unwrap();
+        assert!(doc.add_calculated_ratio_dilation(4, 1, 6).is_err());
+        assert_eq!(doc.encode().unwrap(), before);
+        let image = doc.add_calculated_ratio_dilation(4, 1, 7).unwrap();
+        assert_eq!(image, 8);
+        assert_eq!(doc.objects[7].kind, expected);
+        assert!(!doc.objects[7].kind.is_segment());
+        assert_eq!(doc.objects[7].visual_style, doc.objects[3].visual_style);
+        assert_eq!(doc.encode().unwrap(), generated);
+        assert_eq!(
+            doc.line_points(8),
+            Some((Point { x: 210., y: 230. }, Point { x: 290., y: 230. }, mode))
+        );
+        doc.verify_roundtrip().unwrap();
+        doc.set_parameter_value(5, 8.).unwrap();
+        assert!(doc.move_point(1, Point { x: 140., y: 160. }));
+        assert!(doc.move_point(2, Point { x: 180., y: 210. }));
+        assert!(doc.move_point(3, Point { x: 240., y: 220. }));
+        assert_eq!(
+            doc.line_points(8),
+            Some((Point { x: 300., y: 360. }, Point { x: 540., y: 400. }, mode))
+        );
+        assert_eq!(doc.encode().unwrap(), edited);
+        doc.verify_roundtrip().unwrap();
+        let mut doc = Document::from_bytes(generated, None).unwrap();
+        doc.set_parameter_value(5, -4.).unwrap();
+        assert_eq!(
+            doc.line_points(8),
+            Some((Point { x: 50., y: 70. }, Point { x: -30., y: 70. }, mode))
+        );
+        assert_eq!(doc.encode().unwrap(), negative);
+        doc.set_parameter_value(5, 0.).unwrap();
+        assert_eq!(doc.unitless_numeric_value(7), Some(0.));
+        assert!(doc.line_points(8).is_none());
+        assert_eq!(doc.encode().unwrap(), zero);
+        doc.verify_roundtrip().unwrap();
+        doc.set_parameter_value(5, 4.).unwrap();
+        assert_eq!(doc.line_points(8).unwrap().2, mode);
+        doc.selected.clear();
+        doc.selected.insert(8);
+        let copied = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        let copy = *copied
+            .iter()
+            .find(|&&id| {
+                matches!(
+                    doc.objects[id - 1].kind,
+                    Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            doc.line_points(copy),
+            Some((Point { x: 230., y: 250. }, Point { x: 310., y: 250. }, mode))
+        );
+        doc.verify_roundtrip().unwrap();
+        doc.selected.clear();
+        doc.selected.insert(7);
+        doc.clear_selected().unwrap();
+        assert!(doc.objects[7].deleted);
+        assert!(!doc.objects[copy - 1].deleted);
+        doc.verify_roundtrip().unwrap();
+
+        let mut fresh_zero = numeric_ratio_straight_document(ray, false);
+        fresh_zero.set_parameter_value(5, 0.).unwrap();
+        assert_eq!(
+            fresh_zero.add_calculated_ratio_dilation(4, 1, 7).unwrap(),
+            8
+        );
+        assert!(fresh_zero.line_points(8).is_none());
+        assert_eq!(fresh_zero.encode().unwrap(), zero);
+        fresh_zero.verify_roundtrip().unwrap();
+        fresh_zero.set_parameter_value(5, 4.).unwrap();
+        assert!(fresh_zero.line_points(8).is_some());
+        fresh_zero.verify_roundtrip().unwrap();
+        let mut reciprocal = numeric_ratio_straight_document(ray, true);
+        reciprocal.set_parameter_value(5, 0.).unwrap();
+        let before = reciprocal.encode().unwrap();
+        assert!(reciprocal.add_calculated_ratio_dilation(4, 1, 7).is_err());
+        assert_eq!(reciprocal.encode().unwrap(), before);
+        reciprocal.set_parameter_value(5, 4.).unwrap();
+        reciprocal.add_calculated_ratio_dilation(4, 1, 7).unwrap();
+        reciprocal.set_parameter_value(5, 0.).unwrap();
+        assert!(reciprocal.unitless_numeric_value(7).is_none());
+        assert!(reciprocal.line_points(8).is_none());
+        assert_eq!(reciprocal.encode().unwrap(), undefined);
+        reciprocal.verify_roundtrip().unwrap();
+        let mut reciprocal = Document::from_bytes(undefined, None).unwrap();
+        reciprocal.set_parameter_value(5, 4.).unwrap();
+        assert_eq!(
+            reciprocal.line_points(8),
+            Some((Point { x: 150., y: 170. }, Point { x: 170., y: 170. }, mode))
+        );
+        reciprocal.verify_roundtrip().unwrap();
+        let transformed = reciprocal.add(if ray {
+            Kind::ScaledRay(4, 1, 2.)
+        } else {
+            Kind::ScaledLine(4, 1, 2.)
+        });
+        let before = reciprocal.encode().unwrap();
+        assert!(
+            reciprocal
+                .add_calculated_ratio_dilation(transformed, 1, 7)
+                .is_err()
+        );
+        assert_eq!(reciprocal.encode().unwrap(), before);
+    }
 }

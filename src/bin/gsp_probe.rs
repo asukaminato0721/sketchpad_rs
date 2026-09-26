@@ -56,6 +56,10 @@ fn inspect(path: &str) -> Result<(), String> {
             object.kind
         );
     }
+    for tool in document.embedded_tools()? {
+        println!("embedded tool {:?}: {} prototype object(s), inputs={:?}, complete={}", tool.name, tool.object_codes.len(), tool.input_ids, tool.complete);
+    }
+
     Ok(())
 }
 
@@ -225,6 +229,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
     let mut unsupported: BTreeMap<u16, (usize, BTreeSet<PathBuf>)> = BTreeMap::new();
     let (mut full, mut partial, mut objects, mut preserved, mut failures, mut partial_views) =
         (0, 0, 0, 0, 0, 0);
+    let (mut tool_definitions, mut tool_documents, mut tool_slots, mut scene_full) = (0, 0, 0, 0);
     for path in &files {
         let result = (|| -> Result<Document, String> {
             let bytes = fs::read(path).map_err(|error| error.to_string())?;
@@ -239,16 +244,20 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         match result {
             Ok(document) => {
                 partial_views += usize::from(document.partial_view);
-                if document
-                    .objects
-                    .iter()
-                    .any(|object| matches!(object.kind, Kind::Unsupported(_)))
-                {
+                let tools = document.embedded_tools()?;
+                let prototype_slots: usize = tools.iter().map(|tool| tool.object_codes.len()).sum();
+                tool_definitions += tools.len();
+                tool_documents += usize::from(!tools.is_empty());
+                tool_slots += prototype_slots;
+                let has_unsupported_scene = document.objects.iter()
+                    .any(|object| matches!(object.kind, Kind::Unsupported(_)));
+                scene_full += usize::from(!has_unsupported_scene);
+                if has_unsupported_scene || !tools.is_empty() {
                     partial += 1;
                 } else {
                     full += 1;
                 }
-                objects += document.objects.len();
+                objects += document.objects.len() + prototype_slots;
                 for object in &document.objects {
                     if let Kind::Unsupported(code) = object.kind {
                         let (count, examples) = unsupported.entry(code).or_default();
@@ -275,7 +284,11 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         "Partial views: {partial_views}/{} (includes multi-page structural edit restrictions)",
         files.len()
     );
-    println!("Unsupported object codes (code, objects, documents, first example):");
+    println!("Drawing objects: {} slots; {scene_full} documents with all drawing kinds decoded", objects - tool_slots);
+    println!("Embedded tool prototypes: {tool_definitions} definitions in {tool_documents} documents; {tool_slots} undecoded slots");
+    let scene_unsupported: usize = unsupported.values().map(|(count, _)| count).sum();
+    println!("Unsupported object slots including tool prototypes: {}", scene_unsupported + tool_slots);
+    println!("Unsupported drawing object codes (code, objects, documents, first example):");
     let mut families: Vec<_> = unsupported.into_iter().collect();
     families.sort_by_key(|(code, (count, _))| (std::cmp::Reverse(*count), *code));
     for (code, (count, examples)) in families {
@@ -2036,9 +2049,9 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Segment(_, _))
                     ) {
                         Kind::ScaledSegment(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Ray(..))) {
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray)) {
                         Kind::ScaledRay(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Line(..))) {
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line)) {
                         Kind::ScaledLine(source, center, factor)
                     } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
@@ -2115,8 +2128,8 @@ fn replay(path: &str) -> Result<(), String> {
                         .map(|o| &o.kind)
                     {
                         Some(Kind::Segment(_, _)) => Kind::RotatedSegment(source, center, angle),
-                        Some(Kind::Ray(..)) => Kind::RotatedRay(source, center, angle),
-                        Some(Kind::Line(..)) => Kind::RotatedLine(source, center, angle),
+                        Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray) => Kind::RotatedRay(source, center, angle),
+                        Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line) => Kind::RotatedLine(source, center, angle),
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::RotatedCircle(source, center, angle)
                         }

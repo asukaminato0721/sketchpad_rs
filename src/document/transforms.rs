@@ -36,13 +36,15 @@ impl Document {
             Some(kind) if is_segment_kind(kind) && self.line_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedSegment(source, center, angle)
             }
+            Some(Kind::Ray(..)) if self.line_points(source).is_some() => Kind::CalculatedAngleRotatedRay(source, center, angle),
+            Some(Kind::Line(..)) if self.line_points(source).is_some() => Kind::CalculatedAngleRotatedLine(source, center, angle),
             Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedCircle(source, center, angle)
             }
             Some(kind) if kind.is_polygon() && self.polygon_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedPolygon(source, center, angle)
             }
-            _ => return Err("Select a point, segment, circle, or polygon interior".into()),
+            _ => return Err("Select a point, segment, ray, line, circle, or polygon interior".into()),
         };
         self.checkpoint();
         Ok(self.append_object(kind))
@@ -78,13 +80,15 @@ impl Document {
             Some(kind) if is_segment_kind(kind) && self.line_points(source).is_some() => {
                 Kind::CalculatedRatioScaledSegment(source, center, ratio)
             }
+            Some(Kind::Ray(..)) if self.line_points(source).is_some() => Kind::CalculatedRatioScaledRay(source, center, ratio),
+            Some(Kind::Line(..)) if self.line_points(source).is_some() => Kind::CalculatedRatioScaledLine(source, center, ratio),
             Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedRatioScaledCircle(source, center, ratio)
             }
             Some(kind) if kind.is_polygon() && self.polygon_points(source).is_some() => {
                 Kind::CalculatedRatioScaledPolygon(source, center, ratio)
             }
-            _ => return Err("Select a point, segment, circle, or polygon interior".into()),
+            _ => return Err("Select a point, segment, ray, line, circle, or polygon interior".into()),
         };
         self.checkpoint();
         Ok(self.append_object(kind))

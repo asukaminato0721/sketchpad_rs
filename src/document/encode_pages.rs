@@ -1,3 +1,4 @@
+use super::embedded_tools::document_record_indices;
 use super::kind::{
     is_arc_kind, is_multi_page_addition_kind, is_multi_page_deletion_kind, is_point_kind,
     is_segment_kind, is_straight_kind, straight_kind_mode, polygon_vertex_count_for_encoding,
@@ -1241,10 +1242,9 @@ impl Document {
             .sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
         let rs = records(&bytes)?;
         let mut edits = Vec::new();
-        let starts = rs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| (record.kind == 0x07d0).then_some(index))
+        let starts = document_record_indices(&rs)
+            .into_iter()
+            .filter(|&index| rs[index].kind == 0x07d0)
             .collect::<Vec<_>>();
         if starts.len() != ordered.objects.len() {
             return Err("Multi-page object group count mismatch".into());
