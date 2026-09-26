@@ -1,0 +1,544 @@
+use super::Editor;
+use sketchpad_rs::document::{IterationDepth, Kind, Point};
+
+impl Editor {
+    pub(super) fn pair(&mut self, mode: u8) {
+        if self.doc.partial_view && !(self.doc.page_count > 1 && matches!(mode, 0..=4)) {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids: Vec<_> = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|id| self.doc.position(*id).is_some())
+            .collect();
+        if ids.len() != 2 {
+            self.status = "Select exactly two points".into();
+            return;
+        }
+        let (a, b) = (ids[0], ids[1]);
+        if a == b
+            || self.doc.objects[a - 1].page != self.doc.active_page
+            || self.doc.objects[b - 1].page != self.doc.active_page
+            || self.doc.page_count > 1
+                && self
+                    .doc
+                    .position(a)
+                    .unwrap()
+                    .distance(self.doc.position(b).unwrap())
+                    <= 1e-9
+        {
+            self.status = "Select two distinct points on the current page".into();
+            return;
+        }
+        let kind = match mode {
+            0 => Kind::Segment(a, b),
+            1 => Kind::Circle(a, b),
+            3 => Kind::Line(a, b),
+            4 => Kind::Ray(a, b),
+            _ => {
+                if !self
+                    .doc
+                    .objects
+                    .iter()
+                    .any(|o| matches!(o.kind,Kind::Segment(x,y) if (x==a&&y==b)||(x==b&&y==a)))
+                {
+                    self.doc.add(Kind::Segment(a, b));
+                }
+                Kind::Midpoint(a, b)
+            }
+        };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
+    pub(super) fn derived_line(&mut self, perpendicular: bool) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let points: Vec<_> = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|id| self.doc.position(*id).is_some())
+            .collect();
+        let lines: Vec<_> = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|id| self.doc.line_points(*id).is_some())
+            .collect();
+        if points.len() != 1 || lines.len() != 1 || self.doc.selected.len() != 2 {
+            self.status = "Select one point and one straight object".into();
+            return;
+        }
+        if self.doc.objects[points[0] - 1].page != self.doc.active_page
+            || self.doc.objects[lines[0] - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
+        let kind = if perpendicular {
+            Kind::Perpendicular(points[0], lines[0])
+        } else {
+            Kind::Parallel(points[0], lines[0])
+        };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
+    pub(super) fn circle_by_segment(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let selected = &self.selection_order;
+        let centers: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|id| self.doc.position(*id).is_some())
+            .collect();
+        let segments: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|id| {
+                matches!(
+                    self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                    Some(Kind::Segment(_, _))
+                )
+            })
+            .collect();
+        if selected.len() != 2 || centers.len() != 1 || segments.len() != 1 {
+            self.status = "Select one center point and one radius segment".into();
+            return;
+        }
+        if self.doc.objects[centers[0] - 1].page != self.doc.active_page
+            || self.doc.objects[segments[0] - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
+        let id = self.doc.add(Kind::CircleBySegment(centers[0], segments[0]));
+        self.select_only(id);
+    }
+    pub(super) fn polygon_interior(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let vertices = self.selection_order.clone();
+        if vertices.len() < 3 || vertices.iter().any(|&id| self.doc.position(id).is_none()) {
+            self.status = "Select at least three points in polygon order".into();
+            return;
+        }
+        if vertices
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
+        let id = self.doc.add(Kind::Polygon(vertices));
+        self.select_only(id);
+        self.status = format!("Constructed polygon interior {id}");
+    }
+    pub(super) fn construct_locus(&mut self) {
+        let ids = self.selection_order.clone();
+        if ids.len() != 2 {
+            self.status = "Select a moving point and a dependent object".into();
+            return;
+        }
+        let (driver, target) = if matches!(
+            self.doc.objects[ids[0] - 1].kind,
+            Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _)
+        ) {
+            (ids[0], ids[1])
+        } else {
+            (ids[1], ids[0])
+        };
+        match self.doc.construct_locus(driver, target) {
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Constructed locus {id}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    pub(super) fn iterate_selected(&mut self, depth: u32) {
+        if !(2..=8).contains(&self.selection_order.len()) {
+            self.status =
+                "Select a free point and transformed image; optionally add their segment or circle, ray with a depth parameter, or parameter mapping with a numeric label".into();
+            return;
+        }
+        let seed = self
+            .selection_order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Free(_)));
+        let image = self.selection_order.iter().copied().find(|id| {
+            matches!(
+                self.doc.objects[*id - 1].kind,
+                Kind::PolarTranslatedPoint(_, _, _, _)
+                    | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
+                    | Kind::RotatedPoint(_, _, _)
+                    | Kind::CalculatedAngleRotatedPoint(_, _, _)
+                    | Kind::CalculatedRatioScaledPoint(_, _, _)
+                    | Kind::ScaledPoint(_, _, _)
+                    | Kind::RatioScaledPoint(_, _, _, _, _)
+                    | Kind::ReflectedPoint(_, _)
+                    | Kind::VectorTranslatedPoint(_, _, _)
+                    | Kind::MarkedDistanceTranslatedPoint(_, _, _)
+                    | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
+                    | Kind::RectangularMarkedTranslatedPoint(_, _, _)
+                    | Kind::AngleRotatedPoint(_, _, _, _, _)
+            )
+        });
+        let (Some(seed), Some(image)) = (seed, image) else {
+            self.status = "Select a free point and its directly translated, rotated, dilated, or reflected image".into();
+            return;
+        };
+        let selected_polygon = self
+            .selection_order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Polygon(_)));
+        let result = if let Some(polygon) = selected_polygon {
+            let images = self.selection_order.iter().copied().filter(|id| matches!(self.doc.objects[*id-1].kind,Kind::PolarTranslatedPoint(source,_,_,_) | Kind::FixedRectangularTranslatedPoint(source,_,_,_,_) if source==seed)).collect::<Vec<_>>();
+            let segments = self
+                .selection_order
+                .iter()
+                .copied()
+                .filter(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Segment(_, _)))
+                .collect::<Vec<_>>();
+            let depth_parameter = self
+                .selection_order
+                .iter()
+                .copied()
+                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
+            let depth = depth_parameter.map_or(IterationDepth::Fixed(depth), IterationDepth::Value);
+            if images.len() == 2 {
+                self.doc.add_branching_polygon_iteration(
+                    seed, images[0], images[1], polygon, &segments, depth,
+                )
+            } else {
+                Err("Select two directly translated images for the branching triangle".into())
+            }
+        } else if self.selection_order.len() >= 5 {
+            let calculation =
+                self.selection_order
+                    .iter()
+                    .find_map(|id| match self.doc.objects[*id - 1].kind {
+                        Kind::PointNumericLabel(_, value)
+                            if self.selection_order.contains(&value) =>
+                        {
+                            Some(value)
+                        }
+                        _ => None,
+                    });
+            let parameter = calculation.and_then(|id| {
+                let sources = self.doc.objects[id - 1].kind.dependencies();
+                self.selection_order.iter().copied().find(|source| {
+                    sources.contains(source)
+                        && matches!(self.doc.objects[*source - 1].kind, Kind::Parameter(_))
+                })
+            });
+            let label = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::PointNumericLabel(_, _)
+                )
+            });
+            match (parameter, calculation, label) {
+                (Some(parameter), Some(calculation), Some(label)) => {
+                    let depth = if self.selection_order.len() == 6 {
+                        self.selection_order
+                            .iter()
+                            .copied()
+                            .find(|id| {
+                                *id != parameter
+                                    && *id != calculation
+                                    && self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                                    && self.doc.unitless_numeric_value(*id).is_some()
+                            })
+                            .map(IterationDepth::Value)
+                    } else {
+                        Some(IterationDepth::Fixed(depth))
+                    };
+                    match depth {
+                        Some(depth) => self.doc.add_point_parameter_iteration(
+                            seed,
+                            parameter,
+                            image,
+                            calculation,
+                            label,
+                            depth,
+                        ),
+                        None => Err("Select a distinct scalar depth parameter along with the numeric mapping".into()),
+                    }
+                }
+                _ => Err(
+                    "Select the point mapping, parameter mapping, and attached numeric label"
+                        .into(),
+                ),
+            }
+        } else if self.selection_order.len() == 4 {
+            let carried = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Circle(_, _)
+                )
+            });
+            let value = self.selection_order.iter().copied().find(|id| {
+                self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                    && self.doc.unitless_numeric_value(*id).is_some()
+            });
+            match (carried,value) {
+                (Some(object),Some(value))=>match self.doc.objects[object-1].kind {
+                    Kind::Segment(_,_)=>self.doc.add_segment_iteration(seed, image, object, IterationDepth::Value(value)),
+                    Kind::Ray(_,_)=>self.doc.add_ray_iteration(seed,image,object,value),
+                    Kind::Circle(_,_)=>self.doc.add_circle_iteration(seed, image, object, IterationDepth::Value(value)),
+                    _=>unreachable!(),
+                },
+                _=>Err("Select the connecting segment, ray, or circle and an scalar parameter or calculation for depth".into()),
+            }
+        } else if self.selection_order.len() == 3 {
+            let segment = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::Segment(_, _) | Kind::Circle(_, _)
+                )
+            });
+            match segment {
+                Some(segment) => match self.doc.objects[segment - 1].kind {
+                    Kind::Circle(_, _) => self.doc.add_circle_iteration(seed, image, segment, IterationDepth::Fixed(depth)),
+                    _ => self.doc.add_segment_iteration(seed, image, segment, IterationDepth::Fixed(depth)),
+                },
+                None => match self
+                    .selection_order
+                    .iter()
+                    .copied()
+                    .find(|id| self.doc.objects[*id - 1].kind.is_iteration_depth_value())
+                {
+                    Some(value) => self
+                        .doc.add_point_iteration(seed, image, IterationDepth::Value(value)),
+                    None => Err(
+                        "Select their segment, circle, or an scalar parameter/calculation for depth".into(),
+                    ),
+                },
+            }
+        } else {
+            self.doc
+                .add_point_iteration(seed, image, IterationDepth::Fixed(depth))
+        };
+        match result {
+            Ok(id) => {
+                self.select_only(id);
+                let actual_depth = self.doc.point_iteration_images(id).map_or_else(
+                    || match self.doc.objects[id - 1].kind {
+                        Kind::BranchingPolygonIteration {
+                            depth: IterationDepth::Fixed(n),
+                            ..
+                        } => n as usize,
+                        Kind::BranchingPolygonIteration {
+                            depth: IterationDepth::Value(p),
+                            ..
+                        } => self
+                            .doc
+                            .unitless_numeric_value(p)
+                            .unwrap_or(f64::from(depth)) as usize,
+                        _ => depth as usize,
+                    },
+                    |points| points.len(),
+                );
+                self.status = format!("Created iteration {id} to depth {actual_depth}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    pub(super) fn point_on_object(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let host = self.selection_order.iter().copied().find(|id| {
+            matches!(
+                self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                Some(
+                    Kind::Segment(_, _)
+                        | Kind::Ray(_, _)
+                        | Kind::Line(_, _)
+                        | Kind::Circle(_, _)
+                        | Kind::CircleBySegment(_, _)
+                        | Kind::ReflectedCircle(_, _)
+                        | Kind::ScaledCircle(_, _, _)
+                        | Kind::RatioScaledCircle(_, _, _, _, _)
+                        | Kind::ThreePointArc(_, _, _)
+                        | Kind::ArcOnCircle(_, _, _)
+                )
+            )
+        });
+        let Some(host) = host else {
+            self.status = "Select a segment, ray, line, circle, or arc".into();
+            return;
+        };
+        if self.doc.objects[host - 1].page != self.doc.active_page {
+            self.status = "Select a host on the current page".into();
+            return;
+        }
+        if self.selection_order.len() > 2 {
+            self.status = "Select one host, optionally with a point to project".into();
+            return;
+        }
+        let position = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|id| *id != host)
+            .find_map(|id| self.doc.position(id))
+            .or_else(|| {
+                if let Some((a, b, _)) = self.doc.line_points(host) {
+                    Some(Point {
+                        x: (a.x + b.x) / 2.,
+                        y: (a.y + b.y) / 2.,
+                    })
+                } else if let Some((center, radius)) = self.doc.circle_points(host) {
+                    Some(Point {
+                        x: center.x + radius,
+                        y: center.y,
+                    })
+                } else {
+                    self.doc.point_on_arc(host, 0.5)
+                }
+            });
+        let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {
+            self.status = "Selected host has no usable geometry".into();
+            return;
+        };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
+    pub(super) fn intersection(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids: Vec<_> = self.selection_order.clone();
+        if ids.len() != 2 {
+            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            return;
+        }
+        let (a, b) = (ids[0], ids[1]);
+        if self.doc.objects[a - 1].page != self.doc.active_page
+            || self.doc.objects[b - 1].page != self.doc.active_page
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
+        let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
+            vec![Kind::Intersection(a, b)]
+        } else if (self.doc.line_points(a).is_some() && self.doc.circle_points(b).is_some())
+            || (self.doc.circle_points(a).is_some() && self.doc.line_points(b).is_some())
+        {
+            let (line, circle) = if self.doc.line_points(a).is_some() {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            vec![
+                Kind::LineCircleIntersection(line, circle, 0),
+                Kind::LineCircleIntersection(line, circle, 1),
+            ]
+        } else if self.doc.circle_points(a).is_some() && self.doc.circle_points(b).is_some() {
+            vec![
+                Kind::CircleCircleIntersection(a, b, 0),
+                Kind::CircleCircleIntersection(a, b, 1),
+            ]
+        } else {
+            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            return;
+        };
+        self.doc.selected.clear();
+        self.selection_order.clear();
+        for kind in kinds {
+            if self.doc.page_count > 1 {
+                let mut probe = self.doc.clone();
+                let probe_id = probe.add(kind.clone());
+                if probe.position(probe_id).is_none() {
+                    continue;
+                }
+            }
+            let id = self.doc.add(kind);
+            self.doc.selected.insert(id);
+            self.selection_order.push(id);
+        }
+        if self.selection_order.is_empty() {
+            self.status = "Selected paths have no intersection".into();
+        }
+    }
+    pub(super) fn angle_bisector(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 || ids.iter().any(|id| self.doc.position(*id).is_none()) {
+            self.status = "Select three points in order, with the vertex second".into();
+            return;
+        }
+        if ids
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
+        let id = self.doc.add(Kind::Bisector(ids[0], ids[1], ids[2]));
+        self.select_only(id);
+    }
+    pub(super) fn three_point_arc(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 || ids.iter().any(|id| self.doc.position(*id).is_none()) {
+            self.status = "Select the arc start, a point on the arc, then its end".into();
+            return;
+        }
+        if ids
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select points on the current page".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ThreePointArc(ids[0], ids[1], ids[2]));
+        self.select_only(id);
+    }
+    pub(super) fn arc_on_circle(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 {
+            self.status = "Select a circle, then its start and end points".into();
+            return;
+        }
+        let (circle, start, end) = (ids[0], ids[1], ids[2]);
+        if [circle, start, end]
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
+            self.status = "Select objects on the current page".into();
+            return;
+        }
+        let valid = [start,end].iter().all(|id| matches!(self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle));
+        if !valid || self.doc.circle_points(circle).is_none() {
+            self.status = "Select a circle and two points constrained to it".into();
+            return;
+        }
+        let id = self.doc.add(Kind::ArcOnCircle(circle, start, end));
+        self.select_only(id);
+    }
+}

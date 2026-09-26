@@ -5,7 +5,9 @@ use sketchpad_rs::action_records::{
     ScrollPlacement,
 };
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, TextStyleCommand, records};
+use sketchpad_rs::document::{
+    Clipboard, Document, IterationDepth, Kind, Point, Record, TextStyleCommand, records,
+};
 use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{Viewport, svg_page};
@@ -270,7 +272,7 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "parameter2_value" => {
                     let value: u16 = rest.parse().map_err(|_| "invalid second parameter value")?;
-                    document.set_second_parameter_value(2, value)?;
+                    document.set_parameter_value(2, f64::from(value))?;
                 }
                 "parameter_value" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
@@ -282,7 +284,7 @@ fn replay(path: &str) -> Result<(), String> {
                     document.set_parameter_value(id, value)?;
                 }
                 "calculate_2_plus_3" => {
-                    let id = document.add_literal_calculation(number_anchor(rest)?)?;
+                    let id = document.add_calculation_expression("2 + 3", number_anchor(rest)?)?;
                     println!("line {}: calculate_2_plus_3 -> object {id}", index + 1);
                 }
                 "calculate" => {
@@ -351,12 +353,20 @@ fn replay(path: &str) -> Result<(), String> {
                 "measurement_precision" | "numeric_precision" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let [ids, precision] = parts.as_slice() else {
-                        return Err("expected measurement_precision ID,ID,... DECIMAL_PLACES".into());
+                        return Err(
+                            "expected measurement_precision ID,ID,... DECIMAL_PLACES".into()
+                        );
                     };
-                    let ids = ids.split(',').map(|id| id.parse::<usize>().map_err(|_| "Invalid measurement ID")).collect::<Result<Vec<_>, _>>()?;
+                    let ids = ids
+                        .split(',')
+                        .map(|id| id.parse::<usize>().map_err(|_| "Invalid measurement ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
                     let precision = precision.parse().map_err(|_| "Invalid precision")?;
-                    if command == "numeric_precision" { document.set_numeric_precision(&ids, precision)?; }
-                    else { document.set_measurement_precision(&ids, precision)?; }
+                    if command == "numeric_precision" {
+                        document.set_numeric_precision(&ids, precision)?;
+                    } else {
+                        document.set_measurement_precision(&ids, precision)?;
+                    }
                 }
                 "calculate_multi" => {
                     let (ids, expression) = rest
@@ -1412,7 +1422,8 @@ fn replay(path: &str) -> Result<(), String> {
                     let seed = parts[0].parse().map_err(|_| "invalid seed ID")?;
                     let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
                     let depth = parts[2].parse().map_err(|_| "invalid iteration depth")?;
-                    let id = document.add_point_iteration(seed, image, depth)?;
+                    let id =
+                        document.add_point_iteration(seed, image, IterationDepth::Fixed(depth))?;
                     println!("line {}: iterate -> object {id}", index + 1);
                 }
                 "iterate_segment" => {
@@ -1426,7 +1437,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
                     let segment = parts[2].parse().map_err(|_| "invalid segment ID")?;
                     let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
-                    let id = document.add_segment_iteration(seed, image, segment, depth)?;
+                    let id = document.add_segment_iteration(
+                        seed,
+                        image,
+                        segment,
+                        IterationDepth::Fixed(depth),
+                    )?;
                     println!("line {}: iterate_segment -> object {id}", index + 1);
                 }
                 "iterate_circle" => {
@@ -1438,7 +1454,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
                     let circle = parts[2].parse().map_err(|_| "invalid circle ID")?;
                     let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
-                    let id = document.add_circle_iteration(seed, image, circle, depth)?;
+                    let id = document.add_circle_iteration(
+                        seed,
+                        image,
+                        circle,
+                        IterationDepth::Fixed(depth),
+                    )?;
                     println!("line {}: iterate_circle -> object {id}", index + 1);
                 }
                 "iterate_polygon_branch" | "iterate_polygon_branch_live" => {
@@ -1486,10 +1507,10 @@ fn replay(path: &str) -> Result<(), String> {
                     let [seed, image, depth] = parts.as_slice() else {
                         return Err("expected SEED IMAGE DEPTH_VALUE".into());
                     };
-                    let id = document.add_point_iteration_with_depth_value(
+                    let id = document.add_point_iteration(
                         seed.parse().map_err(|_| "invalid seed")?,
                         image.parse().map_err(|_| "invalid image")?,
-                        depth.parse().map_err(|_| "invalid depth")?,
+                        IterationDepth::Value(depth.parse().map_err(|_| "invalid depth")?),
                     )?;
                     println!("line {}: iterate_point_live -> object {id}", index + 1);
                 }
@@ -1501,8 +1522,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let [seed, image, segment, depth] = ids.as_slice() else {
                         return Err("expected SEED IMAGE SEGMENT DEPTH_VALUE".into());
                     };
-                    let id = document
-                        .add_segment_iteration_with_depth_value(*seed, *image, *segment, *depth)?;
+                    let id = document.add_segment_iteration(
+                        *seed,
+                        *image,
+                        *segment,
+                        IterationDepth::Value(*depth),
+                    )?;
                     println!("line {}: iterate_segment_live -> object {id}", index + 1);
                 }
                 "iterate_circle_live" => {
@@ -1513,8 +1538,12 @@ fn replay(path: &str) -> Result<(), String> {
                     let [seed, image, circle, depth] = ids.as_slice() else {
                         return Err("expected SEED IMAGE SEGMENT DEPTH_VALUE".into());
                     };
-                    let id = document
-                        .add_circle_iteration_with_depth_value(*seed, *image, *circle, *depth)?;
+                    let id = document.add_circle_iteration(
+                        *seed,
+                        *image,
+                        *circle,
+                        IterationDepth::Value(*depth),
+                    )?;
                     println!("line {}: iterate_circle_live -> object {id}", index + 1);
                 }
                 "iterate_numeric" | "iterate_numeric_live" => {
@@ -1530,25 +1559,19 @@ fn replay(path: &str) -> Result<(), String> {
                         text.parse::<usize>()
                             .map_err(|_| "Invalid iteration parent ID")
                     };
-                    let id = if command == "iterate_numeric_live" {
-                        document.add_point_parameter_iteration_with_parameter_depth(
-                            parse(seed)?,
-                            parse(parameter)?,
-                            parse(image)?,
-                            parse(calculation)?,
-                            parse(label)?,
-                            parse(depth)?,
-                        )?
+                    let depth = if command == "iterate_numeric_live" {
+                        IterationDepth::Value(parse(depth)?)
                     } else {
-                        document.add_point_parameter_iteration(
-                            parse(seed)?,
-                            parse(parameter)?,
-                            parse(image)?,
-                            parse(calculation)?,
-                            parse(label)?,
-                            depth.parse().map_err(|_| "Invalid iteration depth")?,
-                        )?
+                        IterationDepth::Fixed(depth.parse().map_err(|_| "Invalid iteration depth")?)
                     };
+                    let id = document.add_point_parameter_iteration(
+                        parse(seed)?,
+                        parse(parameter)?,
+                        parse(image)?,
+                        parse(calculation)?,
+                        parse(label)?,
+                        depth,
+                    )?;
                     println!("line {}: {command} -> object {id}", index + 1);
                 }
                 "iterate_ray" => {
@@ -1887,8 +1910,13 @@ fn replay(path: &str) -> Result<(), String> {
                     println!("line {}: dilate -> object {id}", index + 1);
                 }
                 "dilate_value" => {
-                    let ids = rest.split_whitespace().map(|p| p.parse::<usize>().map_err(|_| "invalid dilation ID")).collect::<Result<Vec<_>, _>>()?;
-                    let [source, center, ratio] = ids.as_slice() else { return Err("expected SOURCE CENTER RATIO_VALUE".into()); };
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|p| p.parse::<usize>().map_err(|_| "invalid dilation ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [source, center, ratio] = ids.as_slice() else {
+                        return Err("expected SOURCE CENTER RATIO_VALUE".into());
+                    };
                     let id = document.add_calculated_ratio_dilation(*source, *center, *ratio)?;
                     println!("line {}: dilate_value -> object {id}", index + 1);
                 }

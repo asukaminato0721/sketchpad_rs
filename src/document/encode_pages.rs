@@ -1,0 +1,1423 @@
+use super::kind::{
+    is_arc_kind, is_multi_page_addition_kind, is_multi_page_deletion_kind, is_point_kind,
+    is_segment_kind, is_straight_kind, straight_kind_mode,
+};
+use super::records::{header, page_title_slots, polygon_subtype, put_record, records, u32_at};
+use super::{Document, Kind, LineMode, Object};
+use crate::action_records::{
+    AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
+    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
+};
+use crate::style_records;
+use std::collections::BTreeSet;
+
+impl Document {
+    pub(super) fn compact_deleted(&self, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        if !self.objects.iter().any(|o| o.deleted) {
+            return Ok(bytes);
+        }
+        let mut ids = vec![0; self.objects.len() + 1];
+        let mut kept = 0;
+        for object in &self.objects {
+            if !object.deleted {
+                kept += 1;
+                ids[object.id] = kept;
+            }
+        }
+        let rs = records(&bytes)?;
+        let mut out = bytes[..4].to_vec();
+        let mut group_id = 0;
+        let mut dropping = false;
+        for (index, record) in rs.iter().enumerate() {
+            if record.kind == 0x7d0 {
+                group_id += 1;
+                dropping = self
+                    .objects
+                    .get(group_id - 1)
+                    .ok_or("Object group count mismatch")?
+                    .deleted;
+            }
+            if !dropping && record.kind != 0x2328 {
+                let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
+                let mut raw = bytes[record.start..end].to_vec();
+                if record.kind == 0x232d {
+                    if record.data.len() != 4 {
+                        return Err("Invalid coordinate-system page link".into());
+                    }
+                    let old = u32_at(&bytes, record.data.start) as usize;
+                    let new = *ids.get(old).ok_or("Invalid coordinate-system page link")?;
+                    if new == 0 {
+                        continue;
+                    }
+                    raw[8..12].copy_from_slice(&(new as u32).to_le_bytes());
+                }
+                if record.kind == 0x3e8 {
+                    if record.data.len() < 28 {
+                        return Err("Short page preamble".into());
+                    }
+                    raw[32..36].copy_from_slice(&(kept as u32).to_le_bytes());
+                }
+                if record.kind == 0x7d2 {
+                    let payload = &bytes[record.data.clone()];
+                    if payload.len() < 4
+                        || (payload.len() - 4) % 4 != 0
+                        || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                    {
+                        return Err("Invalid object references during deletion".into());
+                    }
+                    for j in 0..(payload.len() - 4) / 4 {
+                        let old = u32_at(payload, 4 + j * 4) as usize;
+                        let new = *ids
+                            .get(old)
+                            .filter(|&&id| id > 0)
+                            .ok_or("Surviving object refers to a deleted object")?;
+                        raw[12 + j * 4..16 + j * 4].copy_from_slice(&(new as u32).to_le_bytes());
+                    }
+                }
+                out.extend_from_slice(&raw);
+            }
+            if record.kind == 0x7d7 {
+                dropping = false;
+            }
+        }
+        if group_id != self.objects.len() {
+            return Err("Object group count mismatch".into());
+        }
+        records(&out)?;
+        Ok(out)
+    }
+    pub(super) fn encode_multi_page_deletions(&self) -> Result<Vec<u8>, String> {
+        if self.page_count < 2
+            || self
+                .objects
+                .iter()
+                .any(|object| !is_multi_page_deletion_kind(&object.kind))
+        {
+            return Err("Deleting these multi-page objects cannot be saved safely".into());
+        }
+        let mut unmarked = self.clone();
+        for object in &mut unmarked.objects {
+            object.deleted = false;
+        }
+        let bytes = if unmarked.has_pending_multi_page_additions() {
+            unmarked.encode_multi_page_additions()?
+        } else {
+            unmarked.encode_multi_page_state()?
+        };
+        let mut ordered: Vec<_> = self.objects.iter().collect();
+        ordered.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        let mut page_objects = vec![Vec::new(); self.page_count];
+        for object in ordered {
+            page_objects
+                .get_mut(object.page)
+                .ok_or("Object belongs to a missing page")?
+                .push(object);
+        }
+        let mut local_ids = Vec::with_capacity(self.page_count);
+        let mut survivor_counts = Vec::with_capacity(self.page_count);
+        for objects in &page_objects {
+            let mut ids = vec![0u32; objects.len() + 1];
+            let mut survivors = 0u32;
+            for (index, object) in objects.iter().enumerate() {
+                if !object.deleted {
+                    survivors = survivors.checked_add(1).ok_or("Too many objects on page")?;
+                    ids[index + 1] = survivors;
+                }
+            }
+            local_ids.push(ids);
+            survivor_counts.push(survivors);
+        }
+        let rs = records(&bytes)?;
+        let mut out = bytes[..4].to_vec();
+        let mut current_page = None;
+        let mut pages_seen = 0;
+        let mut group_ordinal = 0;
+        let mut inside_group = false;
+        let mut dropping = false;
+        for (index, record) in rs.iter().enumerate() {
+            let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
+            let mut raw = bytes[record.start..end].to_vec();
+            match record.kind {
+                0x03e8 => {
+                    if current_page.is_some()
+                        || inside_group
+                        || record.data.len() < 28
+                        || pages_seen >= self.page_count
+                    {
+                        return Err("Invalid page preamble during deletion".into());
+                    }
+                    current_page = Some(pages_seen);
+                    group_ordinal = 0;
+                    if u32_at(&bytes, record.data.start + 24) as usize
+                        != page_objects[pages_seen].len()
+                    {
+                        return Err("Page object count differs from its preamble".into());
+                    }
+                    raw[32..36].copy_from_slice(&survivor_counts[pages_seen].to_le_bytes());
+                    pages_seen += 1;
+                }
+                0x07d0 => {
+                    if inside_group {
+                        return Err("Nested object group during deletion".into());
+                    }
+                    let page = current_page.ok_or("Object group outside page")?;
+                    let object = page_objects[page]
+                        .get(group_ordinal)
+                        .ok_or("Too many object groups on page")?;
+                    group_ordinal += 1;
+                    inside_group = true;
+                    dropping = object.deleted;
+                }
+                0x07d2 if inside_group && !dropping => {
+                    let page = current_page.ok_or("Object references outside page")?;
+                    let payload = &bytes[record.data.clone()];
+                    if payload.len() < 4
+                        || (payload.len() - 4) % 4 != 0
+                        || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                    {
+                        return Err("Invalid page-local references during deletion".into());
+                    }
+                    for reference in 0..(payload.len() - 4) / 4 {
+                        let old = u32_at(payload, 4 + reference * 4) as usize;
+                        let new = *local_ids[page]
+                            .get(old)
+                            .filter(|&&id| id > 0)
+                            .ok_or("Surviving object refers to a deleted object")?;
+                        raw[12 + reference * 4..16 + reference * 4]
+                            .copy_from_slice(&new.to_le_bytes());
+                    }
+                }
+                0x07d2 if !inside_group => {
+                    return Err("Object references outside group".into());
+                }
+                0x07d7 => {
+                    if !inside_group {
+                        return Err("Object terminator outside group".into());
+                    }
+                }
+                0x03e9 => {
+                    let page = current_page.ok_or("Page trailer without preamble")?;
+                    if inside_group || group_ordinal != page_objects[page].len() {
+                        return Err("Object group count mismatch on page".into());
+                    }
+                    current_page = None;
+                }
+                0x232d => {
+                    let page = current_page.ok_or("Page link outside page")?;
+                    if record.data.len() != 4 {
+                        return Err("Invalid page link during deletion".into());
+                    }
+                    let old = u32_at(&bytes, record.data.start) as usize;
+                    let new = *local_ids[page]
+                        .get(old)
+                        .filter(|&&id| id > 0)
+                        .ok_or("Page link refers to a deleted object")?;
+                    raw[8..12].copy_from_slice(&new.to_le_bytes());
+                }
+                0x2328 if !inside_group => continue,
+                _ => {}
+            }
+            if inside_group
+                && !matches!(
+                    record.kind,
+                    0x07d0 | 0x07d2 | 0x07d3 | 0x07d5 | 0x07d7 | 0x07d8 | 0x0899 | 0x0903 | 0x0906
+                )
+            {
+                return Err("Object group has unsupported deletion records".into());
+            }
+            if !dropping {
+                out.extend_from_slice(&raw);
+            }
+            if record.kind == 0x07d7 {
+                inside_group = false;
+                dropping = false;
+            }
+        }
+        if pages_seen != self.page_count || current_page.is_some() || inside_group {
+            return Err("Incomplete multi-page document during deletion".into());
+        }
+        records(&out)?;
+        Ok(out)
+    }
+    pub(super) fn encode_added_pages(&self) -> Result<Vec<u8>, String> {
+        let rs = records(&self.original)?;
+        let old_count = rs.iter().filter(|record| record.kind == 0x03e8).count();
+        if old_count == 0
+            || self.page_count <= old_count
+            || self.page_count > 32768
+            || self.image_read_only
+        {
+            return Err("Cannot add pages to this document".into());
+        }
+        let header = rs
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing document page header")?;
+        let end = rs
+            .last()
+            .filter(|record| record.kind == 0x0385)
+            .ok_or("Missing document end record")?;
+        let page_metadata: Vec<_> = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .collect();
+        if page_metadata.len() != old_count
+            || u16::from_le_bytes(
+                self.original[header.data.start + 2..header.data.start + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize
+                != old_count
+        {
+            return Err("Document page metadata is inconsistent".into());
+        }
+        let blank = include_bytes!("../../assets/blank_page_records.bin");
+        let mut expanded = self.original[..end.start].to_vec();
+        for _ in old_count..self.page_count {
+            expanded.extend_from_slice(blank);
+        }
+        expanded.extend_from_slice(&self.original[end.start..]);
+        let expanded_records = records(&expanded)?;
+        let expanded_header = expanded_records
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing expanded document header")?;
+        let header_start = expanded_header.data.start;
+        expanded[header_start + 2..header_start + 4]
+            .copy_from_slice(&(self.page_count as u16).to_le_bytes());
+        expanded[header_start + 16..header_start + 18]
+            .copy_from_slice(&(self.active_page as u16).to_le_bytes());
+        expanded[header_start + 24..header_start + 28]
+            .copy_from_slice(&((self.page_count + 1) as u32).to_le_bytes());
+        let page_marker = (self.page_count * 2 - 1) as u16;
+        for record in expanded_records
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+        {
+            expanded[record.data.start + 6..record.data.start + 8]
+                .copy_from_slice(&page_marker.to_le_bytes());
+            expanded[record.data.start + 8..record.data.start + 10]
+                .copy_from_slice(&page_marker.to_le_bytes());
+        }
+        let mut working = self.clone();
+        working.original = expanded;
+        working.encode()
+    }
+    fn multi_page_local_reference(
+        &self,
+        page: usize,
+        current_id: usize,
+        reference: usize,
+    ) -> Result<u32, String> {
+        let target = self
+            .objects
+            .get(reference.saturating_sub(1))
+            .ok_or("Missing multi-page construction parent")?;
+        if reference == 0 || reference >= current_id || target.page != page || target.deleted {
+            return Err(
+                "Multi-page construction parent must precede its child on the same page".into(),
+            );
+        }
+        let preceding = self
+            .objects
+            .iter()
+            .take(self.source_count)
+            .filter(|object| object.page == page)
+            .chain(
+                self.objects
+                    .iter()
+                    .skip(self.source_count)
+                    .take_while(|object| object.id < current_id)
+                    .filter(|object| object.page == page),
+            );
+        let ordinal = preceding
+            .enumerate()
+            .find_map(|(index, object)| (object.id == reference).then_some(index + 1))
+            .ok_or("Missing page-local construction parent")?;
+        u32::try_from(ordinal).map_err(|_| "Too many objects on page".into())
+    }
+    fn append_multi_page_reference_group(
+        groups: &mut Vec<u8>,
+        object: &Object,
+        code: u16,
+        refs: &[u32],
+    ) -> Result<(), String> {
+        let mut object_header = header(code);
+        if !object.visible {
+            object_header[2] = 1;
+        }
+        object_header[4] = u8::from(object.tracing);
+        if let Some(style) = object.visual_style {
+            style_records::set_visual_style(&mut object_header, style)?;
+        }
+        if let Kind::Polygon(vertices) = &object.kind {
+            object_header[8..10].copy_from_slice(
+                &polygon_subtype(vertices.len())
+                    .ok_or("Polygon has too many vertices")?
+                    .to_le_bytes(),
+            );
+        }
+        put_record(groups, 0x07d0, &object_header);
+        if is_point_kind(&object.kind) {
+            if let Some(label) = &object.label {
+                groups.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+            }
+        }
+        let mut references = Vec::with_capacity(4 + refs.len() * 4);
+        references.extend_from_slice(
+            &u32::try_from(refs.len())
+                .map_err(|_| "Too many construction parents")?
+                .to_le_bytes(),
+        );
+        for reference in refs {
+            references.extend_from_slice(&reference.to_le_bytes());
+        }
+        put_record(groups, 0x07d2, &references);
+        put_record(groups, 0x07d7, &[]);
+        Ok(())
+    }
+    pub(super) fn encode_multi_page_additions(&self) -> Result<Vec<u8>, String> {
+        let original = Self::from_bytes(&self.original, None)?;
+        if self.page_count < 2
+            || original.page_count != self.page_count
+            || self.source_count > self.objects.len()
+            || original.snap_points != self.snap_points
+            || original.grid_dotted != self.grid_dotted
+            || original.grid_form != self.grid_form
+            || original.angle_unit_radians != self.angle_unit_radians
+            || original.marked_coordinate_system != self.marked_coordinate_system
+            || original.frame_styles != self.frame_styles
+            || self.objects[self.source_count..].iter().any(|object| {
+                object.deleted
+                    || object.page >= self.page_count
+                    || !is_multi_page_addition_kind(&object.kind)
+            })
+        {
+            return Err("Multi-page edit contains unsupported additions".into());
+        }
+        let rs = records(&self.original)?;
+        let mut out = self.encode_multi_page_source_state()?;
+        let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x3e8).collect();
+        if preambles.len() != self.page_count {
+            return Err("Page preamble count mismatch".into());
+        }
+        let mut insertions = Vec::new();
+        for (page, preamble) in preambles.iter().enumerate() {
+            if preamble.data.len() < 28 {
+                return Err("Short page preamble".into());
+            }
+            let next_page = preambles.get(page + 1).map_or(out.len(), |next| next.start);
+            let trailer = rs
+                .iter()
+                .find(|record| {
+                    record.kind == 0x3e9
+                        && record.start > preamble.start
+                        && record.start < next_page
+                })
+                .ok_or("Missing page trailer")?
+                .start;
+            let existing = original
+                .objects
+                .iter()
+                .filter(|object| object.page == page)
+                .count();
+            if u32_at(&self.original, preamble.data.start + 24) as usize != existing {
+                return Err("Page object count differs from its preamble".into());
+            }
+            let new_objects: Vec<_> = self.objects[self.source_count..]
+                .iter()
+                .filter(|object| object.page == page)
+                .collect();
+            if new_objects.is_empty() {
+                continue;
+            }
+            let last_group_end = rs
+                .iter()
+                .filter(|record| {
+                    record.kind == 0x7d7 && record.start > preamble.start && record.start < trailer
+                })
+                .map(|record| record.data.end)
+                .max()
+                .unwrap_or(preamble.data.end);
+            let insert_at = rs
+                .iter()
+                .find(|record| {
+                    matches!(record.kind, 0x2328 | 0x232d)
+                        && record.start >= last_group_end
+                        && record.start < trailer
+                })
+                .map(|record| record.start)
+                .unwrap_or(trailer);
+            let mut groups = Vec::new();
+            let mut measurement_row = original
+                .objects
+                .iter()
+                .filter(|object| object.page == page && object.kind.is_measurement())
+                .count();
+            for (added_index, object) in new_objects.into_iter().enumerate() {
+                match &object.kind {
+                    Kind::Free(point) => {
+                        if !point.x.is_finite() || !point.y.is_finite() {
+                            return Err("Multi-page point coordinates must be finite".into());
+                        }
+                        let mut object_header = header(0);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut coordinates = Vec::with_capacity(16);
+                        coordinates.extend_from_slice(&point.x.to_le_bytes());
+                        coordinates.extend_from_slice(&point.y.to_le_bytes());
+                        put_record(&mut groups, 0x0899, &coordinates);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::PointOnSegment(host, t)
+                    | Kind::PointOnRay(host, t)
+                    | Kind::PointOnLine(host, t)
+                    | Kind::PointOnArc(host, t) => {
+                        if !t.is_finite()
+                            || matches!(
+                                object.kind,
+                                Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _)
+                            ) && !(0.0..=1.0).contains(t)
+                            || matches!(object.kind, Kind::PointOnRay(_, _)) && *t < 0.
+                        {
+                            return Err("Invalid path-point parameter".into());
+                        }
+                        let host_object = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing point host")?;
+                        if host_object.page != page
+                            || matches!(object.kind, Kind::PointOnSegment(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Segment)
+                            || matches!(object.kind, Kind::PointOnRay(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Ray)
+                            || matches!(object.kind, Kind::PointOnLine(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Line)
+                            || matches!(object.kind, Kind::PointOnArc(_, _))
+                                && !is_arc_kind(&host_object.kind)
+                        {
+                            return Err("Invalid point host on this page".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut object_header = header(15);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        let code = match object.kind {
+                            Kind::PointOnLine(_, _) => 12,
+                            Kind::PointOnRay(_, _) => 13,
+                            Kind::PointOnSegment(_, _) => 14,
+                            Kind::PointOnArc(_, _) => 67,
+                            _ => unreachable!(),
+                        };
+                        let mut constraint = vec![15, 0, code, 0];
+                        constraint.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut groups, 0x07d3, &constraint);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::PointOnCircle(host, x, y) => {
+                        if !x.is_finite() || !y.is_finite() || (x * x + y * y - 1.).abs() > 1e-6 {
+                            return Err("Invalid circle-point parameter".into());
+                        }
+                        let host_object = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing point host")?;
+                        if host_object.page != page || !host_object.kind.is_circle() {
+                            return Err("Invalid circle host on this page".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut object_header = header(15);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        let mut constraint = vec![15, 0, 28, 0];
+                        constraint.extend_from_slice(&x.to_le_bytes());
+                        constraint.extend_from_slice(&y.to_le_bytes());
+                        put_record(&mut groups, 0x07d3, &constraint);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Segment(a, b)
+                    | Kind::Circle(a, b)
+                    | Kind::Line(a, b)
+                    | Kind::Ray(a, b) => {
+                        if a == b
+                            || !self
+                                .objects
+                                .get(a.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || !self
+                                .objects
+                                .get(b.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || self
+                                .position(*a)
+                                .zip(self.position(*b))
+                                .is_none_or(|(first, second)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Straight object or circle needs two distinct points".into()
+                            );
+                        }
+                        let first = self.multi_page_local_reference(page, object.id, *a)?;
+                        let second = self.multi_page_local_reference(page, object.id, *b)?;
+                        let code = match object.kind {
+                            Kind::Segment(_, _) => 2,
+                            Kind::Circle(_, _) => 3,
+                            Kind::Line(_, _) => 63,
+                            Kind::Ray(_, _) => 64,
+                            _ => unreachable!(),
+                        };
+                        let mut object_header = header(code);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = Vec::with_capacity(12);
+                        references.extend_from_slice(&2u32.to_le_bytes());
+                        references.extend_from_slice(&first.to_le_bytes());
+                        references.extend_from_slice(&second.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Midpoint(a, b) => {
+                        let host = object
+                            .midpoint_host
+                            .ok_or("Midpoint needs a segment host")?;
+                        if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == *a && *second == *b) || (*first == *b && *second == *a))
+                        {
+                            return Err("Midpoint host has different endpoints".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, host)?;
+                        let mut object_header = header(1);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::CircleBySegment(center, radius) => {
+                        if !self
+                            .objects
+                            .get(center.saturating_sub(1))
+                            .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || !matches!(
+                                self.objects
+                                    .get(radius.saturating_sub(1))
+                                    .map(|parent| &parent.kind),
+                                Some(Kind::Segment(_, _))
+                            )
+                            || self
+                                .line_points(*radius)
+                                .is_none_or(|(first, second, _)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Circle by segment needs a point and nonzero segment".into()
+                            );
+                        }
+                        let local_center =
+                            self.multi_page_local_reference(page, object.id, *center)?;
+                        let local_radius =
+                            self.multi_page_local_reference(page, object.id, *radius)?;
+                        let mut object_header = header(4);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = Vec::with_capacity(12);
+                        references.extend_from_slice(&2u32.to_le_bytes());
+                        references.extend_from_slice(&local_center.to_le_bytes());
+                        references.extend_from_slice(&local_radius.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::Parallel(point, line) | Kind::Perpendicular(point, line) => {
+                        if !self
+                            .objects
+                            .get(point.saturating_sub(1))
+                            .is_some_and(|parent| is_point_kind(&parent.kind))
+                            || self
+                                .line_points(*line)
+                                .is_none_or(|(first, second, _)| first.distance(second) <= 1e-9)
+                        {
+                            return Err(
+                                "Derived line needs a point and nonzero straight object".into()
+                            );
+                        }
+                        let local_point =
+                            self.multi_page_local_reference(page, object.id, *point)?;
+                        let local_line = self.multi_page_local_reference(page, object.id, *line)?;
+                        let code = if matches!(object.kind, Kind::Parallel(_, _)) {
+                            6
+                        } else {
+                            5
+                        };
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            code,
+                            &[local_point, local_line],
+                        )?;
+                    }
+                    Kind::Intersection(a, b)
+                    | Kind::LineCircleIntersection(a, b, _)
+                    | Kind::CircleCircleIntersection(a, b, _) => {
+                        let code = match object.kind {
+                            Kind::Intersection(_, _)
+                                if self.line_points(*a).is_some()
+                                    && self.line_points(*b).is_some() =>
+                            {
+                                9
+                            }
+                            Kind::LineCircleIntersection(_, _, variant)
+                                if variant <= 1
+                                    && self.line_points(*a).is_some()
+                                    && self.circle_points(*b).is_some() =>
+                            {
+                                if variant == 0 {
+                                    12
+                                } else {
+                                    11
+                                }
+                            }
+                            Kind::CircleCircleIntersection(_, _, variant)
+                                if variant <= 1
+                                    && self.circle_points(*a).is_some()
+                                    && self.circle_points(*b).is_some() =>
+                            {
+                                if variant == 0 {
+                                    14
+                                } else {
+                                    13
+                                }
+                            }
+                            _ => return Err("Intersection needs compatible paths".into()),
+                        };
+                        if self.position(object.id).is_none() {
+                            return Err("Intersection has no finite point".into());
+                        }
+                        let local_a = self.multi_page_local_reference(page, object.id, *a)?;
+                        let local_b = self.multi_page_local_reference(page, object.id, *b)?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            code,
+                            &[local_a, local_b],
+                        )?;
+                    }
+                    Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) => {
+                        if [*a, *b, *c].iter().any(|id| {
+                            !self
+                                .objects
+                                .get(id.saturating_sub(1))
+                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                        }) {
+                            return Err("Construction needs three points".into());
+                        }
+                        let code = if matches!(object.kind, Kind::Bisector(_, _, _)) {
+                            if self.line_points(object.id).is_none() {
+                                return Err("Angle bisector has no finite direction".into());
+                            }
+                            7
+                        } else {
+                            if self.arc_geometry(object.id).is_none() {
+                                return Err("Three-point arc has no finite geometry".into());
+                            }
+                            81
+                        };
+                        let refs = [
+                            self.multi_page_local_reference(page, object.id, *a)?,
+                            self.multi_page_local_reference(page, object.id, *b)?,
+                            self.multi_page_local_reference(page, object.id, *c)?,
+                        ];
+                        Self::append_multi_page_reference_group(&mut groups, object, code, &refs)?;
+                    }
+                    Kind::ArcOnCircle(circle, start, end) => {
+                        if self.arc_geometry(object.id).is_none()
+                            || [*start, *end].iter().any(|id| {
+                                !matches!(
+                                    self.objects.get(id.saturating_sub(1)).map(|parent| &parent.kind),
+                                    Some(Kind::PointOnCircle(host, _, _)) if *host == *circle
+                                )
+                            })
+                        {
+                            return Err("Arc needs a circle and two points on it".into());
+                        }
+                        let refs = [
+                            self.multi_page_local_reference(page, object.id, *circle)?,
+                            self.multi_page_local_reference(page, object.id, *start)?,
+                            self.multi_page_local_reference(page, object.id, *end)?,
+                        ];
+                        Self::append_multi_page_reference_group(&mut groups, object, 79, &refs)?;
+                    }
+                    Kind::Polygon(vertices) => {
+                        if vertices.len() < 3
+                            || vertices.iter().collect::<BTreeSet<_>>().len() != vertices.len()
+                            || vertices.iter().any(|id| {
+                                !self
+                                    .objects
+                                    .get(id.saturating_sub(1))
+                                    .is_some_and(|parent| is_point_kind(&parent.kind))
+                            })
+                            || self.polygon_points(object.id).is_none()
+                        {
+                            return Err("Polygon needs at least three distinct points".into());
+                        }
+                        let refs = vertices
+                            .iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, *id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 8, &refs)?;
+                    }
+                    Kind::SegmentLength(host)
+                    | Kind::PolygonPerimeter(host)
+                    | Kind::CircleCircumference(host)
+                    | Kind::CircleRadius(host)
+                    | Kind::CircleArea(host)
+                    | Kind::PolygonArea(host)
+                    | Kind::ArcAngle(host)
+                    | Kind::ArcLength(host) => {
+                        let host_kind = &self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing measurement host")?
+                            .kind;
+                        let template: &[u8] = match &object.kind {
+                            Kind::SegmentLength(_) if is_segment_kind(host_kind) => {
+                                include_bytes!("../../assets/length_measurement_group.bin")
+                            }
+                            Kind::PolygonPerimeter(_) if host_kind.is_polygon() => {
+                                include_bytes!("../../assets/perimeter_measurement_group.bin")
+                            }
+                            Kind::CircleCircumference(_) if host_kind.is_circle() => {
+                                include_bytes!("../../assets/circumference_measurement_group.bin")
+                            }
+                            Kind::CircleRadius(_) if host_kind.is_circle() => {
+                                include_bytes!("../../assets/radius_measurement_group.bin")
+                            }
+                            Kind::CircleArea(_) if host_kind.is_circle() => {
+                                include_bytes!("../../assets/area_measurement_group.bin")
+                            }
+                            Kind::PolygonArea(_) if host_kind.is_polygon() => {
+                                include_bytes!("../../assets/area_measurement_group.bin")
+                            }
+                            Kind::ArcAngle(_) if is_arc_kind(host_kind) => {
+                                include_bytes!("../../assets/arc_angle_measurement_group.bin")
+                            }
+                            Kind::ArcLength(_) if is_arc_kind(host_kind) => {
+                                include_bytes!("../../assets/arc_length_measurement_group.bin")
+                            }
+                            _ => return Err("Measurement needs a compatible host".into()),
+                        };
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut group = template.to_vec();
+                        group[48..52].copy_from_slice(&local_host.to_le_bytes());
+                        Self::place_measurement(&mut group, 60, &mut measurement_row)?;
+                        if !object.visible {
+                            group[10] = 1;
+                        }
+                        groups.extend_from_slice(&group);
+                    }
+                    Kind::PointDistance(a, b)
+                    | Kind::PointLineDistance(a, b)
+                    | Kind::AngleMeasurement(a, b, _)
+                    | Kind::PointRatio(a, b, _) => {
+                        let (parents, template, format_offset): (Vec<usize>, &[u8], usize) =
+                            match &object.kind {
+                                Kind::PointDistance(_, _) => (
+                                    vec![*a, *b],
+                                    include_bytes!("../../assets/distance_measurement_group.bin"),
+                                    64,
+                                ),
+                                Kind::PointLineDistance(_, _) => (
+                                    vec![*a, *b],
+                                    include_bytes!(
+                                        "../../assets/point_line_distance_measurement_group.bin"
+                                    ),
+                                    64,
+                                ),
+                                Kind::AngleMeasurement(_, _, c) => (
+                                    vec![*a, *b, *c],
+                                    include_bytes!("../../assets/angle_measurement_group.bin"),
+                                    68,
+                                ),
+                                Kind::PointRatio(_, _, c) => (
+                                    vec![*a, *b, *c],
+                                    include_bytes!("../../assets/ratio_measurement_group.bin"),
+                                    68,
+                                ),
+                                _ => unreachable!(),
+                            };
+                        if parents.iter().enumerate().any(|(index, id)| {
+                            !self
+                                .objects
+                                .get(id.saturating_sub(1))
+                                .is_some_and(|parent| {
+                                    if index == 1
+                                        && matches!(object.kind, Kind::PointLineDistance(_, _))
+                                    {
+                                        is_straight_kind(&parent.kind)
+                                    } else {
+                                        is_point_kind(&parent.kind)
+                                    }
+                                })
+                        }) {
+                            return Err("Measurement needs point parents".into());
+                        }
+                        let mut group = template.to_vec();
+                        for (index, parent) in parents.iter().enumerate() {
+                            let local =
+                                self.multi_page_local_reference(page, object.id, *parent)?;
+                            group[48 + index * 4..52 + index * 4]
+                                .copy_from_slice(&local.to_le_bytes());
+                        }
+                        Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
+                        if !object.visible {
+                            group[10] = 1;
+                        }
+                        groups.extend_from_slice(&group);
+                    }
+                    Kind::LinkPageButton {
+                        target_page,
+                        target_button_ordinal,
+                        label,
+                        anchor,
+                    } => {
+                        if *target_page >= self.page_count || *target_page == page {
+                            return Err("Invalid Page Link destination".into());
+                        }
+                        let destination_buttons = self.link_destination_buttons(*target_page);
+                        if target_button_ordinal.is_some_and(|ordinal| {
+                            ordinal == 0
+                                || destination_buttons.get(ordinal - 1).is_none_or(|id| {
+                                    !matches!(
+                                        self.objects[id - 1].kind,
+                                        Kind::HideShowButton { .. }
+                                    )
+                                })
+                        }) {
+                            return Err("Page Link destination button is unavailable".into());
+                        }
+                        let mut group = LinkPageButtonGroup::from_original_template(
+                            *target_page,
+                            label,
+                            *anchor,
+                        )?;
+                        group.set_target_button_ordinal(*target_button_ordinal)?;
+                        group.set_page_object_index(existing + added_index)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                        if let Some(ordinal) = target_button_ordinal {
+                            let destination = &self.objects[destination_buttons[ordinal - 1] - 1];
+                            if destination.id <= self.source_count {
+                                let header = destination
+                                    .header_offset
+                                    .ok_or("Missing destination button header")?;
+                                let header_index = rs
+                                    .iter()
+                                    .position(|record| {
+                                        record.kind == 0x07d0 && record.data.start == header
+                                    })
+                                    .ok_or("Missing destination button group")?;
+                                let action = rs[header_index + 1..]
+                                    .iter()
+                                    .take_while(|record| record.kind != 0x07d7)
+                                    .find(|record| record.kind == 0x0906 && record.data.len() >= 20)
+                                    .ok_or("Missing destination button action")?;
+                                out[action.data.start + 18..action.data.start + 20]
+                                    .copy_from_slice(&1u16.to_le_bytes());
+                            }
+                        }
+                    }
+                    Kind::LinkUrlButton { url, label, anchor } => {
+                        let mut group =
+                            LinkUrlButtonGroup::from_original_template(url, label, *anchor)?;
+                        group.set_page_object_index(existing + added_index)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::HideShowButton {
+                        targets,
+                        action,
+                        label,
+                        anchor,
+                    } => {
+                        if targets.is_empty()
+                            || targets.iter().any(|target| {
+                                self.objects
+                                    .get(target.saturating_sub(1))
+                                    .is_none_or(|source| {
+                                        source.deleted
+                                            || source.page != page
+                                            || matches!(source.kind, Kind::Unsupported(_))
+                                    })
+                            })
+                        {
+                            return Err("Invalid Hide/Show targets on this page".into());
+                        }
+                        let ids = targets
+                            .iter()
+                            .map(|&target| self.multi_page_local_reference(page, object.id, target))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group = HideShowButtonGroup::from_original_template_targets(
+                            &ids, label, *anchor,
+                        )?;
+                        group.set_action(*action);
+                        group.set_hidden(!object.visible);
+                        let destination_buttons = self.link_destination_buttons(page);
+                        let linked = self.objects.iter().any(|source| {
+                            matches!(
+                                source.kind,
+                                Kind::LinkPageButton {
+                                    target_page,
+                                    target_button_ordinal: Some(ordinal),
+                                    ..
+                                } if target_page == page
+                                    && ordinal.checked_sub(1)
+                                        .and_then(|index| destination_buttons.get(index))
+                                        == Some(&object.id)
+                            )
+                        });
+                        group.set_link_destination(linked);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::AnimationButton {
+                        targets,
+                        label,
+                        anchor,
+                        settings,
+                    } => {
+                        if targets.is_empty() || targets.len() != settings.len() {
+                            return Err("Invalid Animation targets on this page".into());
+                        }
+                        let ids = targets
+                            .iter()
+                            .map(|&target| self.multi_page_local_reference(page, object.id, target))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group = AnimationButtonGroup::from_original_template_targets(
+                            &ids, label, *anchor,
+                        )?;
+                        group.set_settings_list(settings)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::MovementButton {
+                        source,
+                        destination,
+                        speed,
+                        follow,
+                        label,
+                        anchor,
+                    } => {
+                        if source == destination
+                            || !self
+                                .objects
+                                .get(source.saturating_sub(1))
+                                .is_some_and(|point| matches!(point.kind, Kind::Free(_)))
+                            || self.position(*destination).is_none()
+                        {
+                            return Err("Invalid Movement points on this page".into());
+                        }
+                        let local_source =
+                            self.multi_page_local_reference(page, object.id, *source)?;
+                        let local_destination =
+                            self.multi_page_local_reference(page, object.id, *destination)?;
+                        let mut group = MovementButtonGroup::from_original_template(
+                            local_source,
+                            local_destination,
+                            label,
+                            *anchor,
+                        )?;
+                        group.set_speed(*speed);
+                        group.set_follows_destination(*follow);
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::ScrollButton {
+                        target,
+                        placement,
+                        label,
+                        anchor,
+                    } => {
+                        if !self
+                            .objects
+                            .get(target.saturating_sub(1))
+                            .is_some_and(|point| is_point_kind(&point.kind))
+                            || self.position(*target).is_none()
+                        {
+                            return Err("Invalid Scroll point on this page".into());
+                        }
+                        let local_target =
+                            self.multi_page_local_reference(page, object.id, *target)?;
+                        let mut group = ScrollButtonGroup::from_original_template(
+                            local_target,
+                            label,
+                            *anchor,
+                        )?;
+                        group.set_placement(*placement);
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::PresentationButton {
+                        targets,
+                        mode,
+                        label,
+                        anchor,
+                    } => {
+                        if targets.is_empty()
+                            || targets.iter().any(|target| {
+                                self.objects
+                                    .get(target.saturating_sub(1))
+                                    .is_none_or(|parent| !parent.kind.is_action_button())
+                            })
+                        {
+                            return Err("Invalid Presentation buttons on this page".into());
+                        }
+                        let ids = targets
+                            .iter()
+                            .map(|&target| self.multi_page_local_reference(page, object.id, target))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group = PresentationButtonGroup::from_original_template_targets(
+                            &ids, label, *anchor,
+                        )?;
+                        group.set_mode(*mode);
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    _ => return Err("Expected supported multi-page addition".into()),
+                }
+            }
+            let count = u32::try_from(
+                existing
+                    + self.objects[self.source_count..]
+                        .iter()
+                        .filter(|object| object.page == page)
+                        .count(),
+            )
+            .map_err(|_| "Too many objects on page")?;
+            out[preamble.data.start + 24..preamble.data.start + 28]
+                .copy_from_slice(&count.to_le_bytes());
+            insertions.push((insert_at, groups));
+        }
+        for (insert_at, groups) in insertions.into_iter().rev() {
+            out.splice(insert_at..insert_at, groups);
+        }
+        records(&out)?;
+        Ok(out)
+    }
+    pub(super) fn encode_multi_page_state(&self) -> Result<Vec<u8>, String> {
+        if self.source_count != self.objects.len() {
+            return Err("Multi-page state edit cannot add objects".into());
+        }
+        self.encode_multi_page_source_state()
+    }
+    fn encode_multi_page_source_state(&self) -> Result<Vec<u8>, String> {
+        let original = Self::from_bytes(&self.original, None)?;
+        if self.page_count < 2
+            || self.image_read_only
+            || self.source_count > self.objects.len()
+            || original.objects.len() != self.source_count
+            || original.page_count != self.page_count
+            || original.snap_points != self.snap_points
+            || original.grid_dotted != self.grid_dotted
+            || original.grid_form != self.grid_form
+            || original.angle_unit_radians != self.angle_unit_radians
+            || original.marked_coordinate_system != self.marked_coordinate_system
+            || original.frame_styles != self.frame_styles
+        {
+            return Err("Multi-page state edit changes the document structure".into());
+        }
+        let rs = records(&self.original)?;
+        let mut out = self.original.clone();
+        for (saved, current) in original
+            .objects
+            .iter()
+            .zip(&self.objects[..self.source_count])
+        {
+            let mut expected = saved.clone();
+            expected.visible = current.visible;
+            if saved.kind.has_measurement_precision()
+                && current
+                    .measurement_precision
+                    .is_some_and(|precision| precision <= 5)
+            {
+                expected.measurement_precision = current.measurement_precision;
+            }
+            if saved.visual_style.is_some() {
+                expected.tracing = current.tracing;
+            }
+            if saved.visual_style.is_some() && current.visual_style.is_some() {
+                expected.visual_style = current.visual_style;
+            }
+            if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
+                if !point.x.is_finite() || !point.y.is_finite() {
+                    return Err("Multi-page point coordinates must be finite".into());
+                }
+                expected.kind = current.kind.clone();
+            }
+            match (&saved.kind, &current.kind) {
+                (Kind::PointOnSegment(old_host, _), Kind::PointOnSegment(host, t))
+                    if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnRay(old_host, _), Kind::PointOnRay(host, t))
+                    if old_host == host && t.is_finite() && *t >= 0. =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnLine(old_host, _), Kind::PointOnLine(host, t))
+                    if old_host == host && t.is_finite() =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnArc(old_host, _), Kind::PointOnArc(host, t))
+                    if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnCircle(old_host, _, _), Kind::PointOnCircle(host, x, y))
+                    if old_host == host
+                        && x.is_finite()
+                        && y.is_finite()
+                        && (x * x + y * y - 1.0).abs() <= 1e-6 =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                _ => {}
+            }
+            if let (
+                Kind::HideShowButton {
+                    targets: old_targets,
+                    anchor: old_anchor,
+                    ..
+                },
+                Kind::HideShowButton {
+                    targets, anchor, ..
+                },
+            ) = (&saved.kind, &current.kind)
+                && old_targets == targets
+                && old_anchor == anchor
+            {
+                expected.kind = current.kind.clone();
+            }
+            if expected != *current
+                || matches!(current.kind, Kind::Unsupported(_)) && saved.visible != current.visible
+            {
+                return Err("Multi-page state edit changes unsupported object data".into());
+            }
+            let header = current.header_offset.ok_or("Missing object header")?;
+            if saved.tracing != current.tracing {
+                let record = rs
+                    .iter()
+                    .find(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing traced object header")?;
+                if record.data.len() < 5 {
+                    return Err("Short traced object header".into());
+                }
+                out[header + 4] = (out[header + 4] & !1) | u8::from(current.tracing);
+            }
+            if saved.visual_style != current.visual_style {
+                let record = rs
+                    .iter()
+                    .find(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing styled object header")?;
+                let style = current.visual_style.ok_or("Missing object style")?;
+                style_records::set_visual_style(&mut out[record.data.clone()], style)
+                    .map_err(|error| format!("Invalid style in object {}: {error}", current.id))?;
+            }
+            if let (Kind::Free(before), Kind::Free(point)) = (&saved.kind, &current.kind)
+                && before != point
+            {
+                let at = current
+                    .point_offset
+                    .ok_or("Missing free-point coordinates")?;
+                out[at..at + 8].copy_from_slice(&point.x.to_le_bytes());
+                out[at + 8..at + 16].copy_from_slice(&point.y.to_le_bytes());
+            }
+            if saved.kind != current.kind
+                && matches!(
+                    current.kind,
+                    Kind::PointOnSegment(_, _)
+                        | Kind::PointOnRay(_, _)
+                        | Kind::PointOnLine(_, _)
+                        | Kind::PointOnArc(_, _)
+                        | Kind::PointOnCircle(_, _, _)
+                )
+            {
+                let at = current
+                    .constraint_offset
+                    .ok_or("Missing point constraint")?;
+                match &current.kind {
+                    Kind::PointOnSegment(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 14, 0]) {
+                            return Err("Invalid segment-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short segment-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnRay(_, t) | Kind::PointOnLine(_, t) => {
+                        let code = if matches!(current.kind, Kind::PointOnRay(_, _)) {
+                            13
+                        } else {
+                            12
+                        };
+                        if out.get(at..at + 4) != Some(&[15, 0, code, 0]) {
+                            return Err("Invalid straight-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short straight-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnArc(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 67, 0]) {
+                            return Err("Invalid arc-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short arc-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnCircle(_, x, y) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 28, 0]) {
+                            return Err("Invalid circle-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short circle-point constraint")?
+                            .copy_from_slice(&x.to_le_bytes());
+                        out.get_mut(at + 12..at + 20)
+                            .ok_or("Short circle-point constraint")?
+                            .copy_from_slice(&y.to_le_bytes());
+                    }
+                    _ => {}
+                }
+            }
+            if let Kind::HideShowButton { action, label, .. } = &current.kind {
+                let start_record = rs
+                    .iter()
+                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing saved Hide/Show button header")?;
+                let end_record = rs[start_record..]
+                    .iter()
+                    .position(|record| record.kind == 0x07d7)
+                    .map(|index| start_record + index)
+                    .ok_or("Missing saved Hide/Show button terminator")?;
+                let start = rs[start_record].start;
+                let end = rs[end_record].data.end;
+                let mut group = HideShowButtonGroup::parse(&out[start..end])?;
+                group.set_action(*action);
+                group.set_label(label)?;
+                group.set_hidden(!current.visible);
+                let encoded = group.encode();
+                if encoded.len() != end - start {
+                    return Err("Editing a saved button label cannot change its byte length".into());
+                }
+                out[start..end].copy_from_slice(&encoded);
+            } else if saved.visible != current.visible {
+                let mut class = u32_at(&out, header);
+                if current.visible {
+                    class &= !0x1_0000;
+                } else {
+                    class |= 0x1_0000;
+                }
+                out[header..header + 4].copy_from_slice(&class.to_le_bytes());
+            }
+        }
+        records(&out)?;
+        Ok(out)
+    }
+    pub(super) fn encode_page_names(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let slots = page_title_slots(&bytes, &rs)?;
+        if slots.len() != self.page_count || self.page_names.len() != self.page_count {
+            return Err("Page name count mismatch".into());
+        }
+        for page in (0..self.page_count).rev() {
+            let (title, trailer, actual) = &slots[page];
+            let desired = &self.page_names[page];
+            if actual == desired {
+                continue;
+            }
+            let mut replacement = Vec::new();
+            if let Some(name) = desired {
+                if name.as_bytes().contains(&0) || name.len() > 255 {
+                    return Err("Invalid page name".into());
+                }
+                let mut payload = name.as_bytes().to_vec();
+                payload.push(0);
+                if payload.len() % 2 != 0 {
+                    payload.push(0);
+                }
+                put_record(&mut replacement, 0x044c, &payload);
+            }
+            let (start, end) = if let Some(index) = title {
+                (rs[*index].start, rs[*index + 1].start)
+            } else {
+                (rs[*trailer].start, rs[*trailer].start)
+            };
+            bytes.splice(start..end, replacement);
+        }
+        records(&bytes)?;
+        Ok(bytes)
+    }
+}

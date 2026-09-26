@@ -84,6 +84,22 @@ The writer supports the constructions and measurements listed in [COMMAND_PARITY
 
 Other Sketchpad features are incomplete. In particular, many transformations, graphing commands, advanced image and table workflows, custom tools, action button variants, other import formats, page setup, print preview, and full multi-page editing are still pending. See [COMMAND_PARITY.md](COMMAND_PARITY.md) for the command inventory. This build is not ready as a Sketchpad 5 replacement.
 
+## Source layout
+
+- `src/document.rs` holds the document data model and basic object creation.
+  `src/document/` groups editing operations by responsibility: geometry,
+  measurements, coordinates, functions, iterations, text, tables, actions,
+  selection, pages, and history. File handling lives in `records.rs`,
+  `decode.rs`, `encode*.rs`, `validation.rs`, and `save.rs`.
+- `src/main.rs` starts the desktop editor. `src/editor/mod.rs` holds editor
+  state; `runtime.rs` owns the window and render loop. Commands, picking,
+  animation, file operations, and fonts have separate modules.
+- `src/editor/ui.rs` coordinates menus, panels, canvas, and dialogs in render
+  order. Their implementations live in `menu.rs`, `panels.rs`, `canvas.rs`,
+  and the `*_dialogs.rs` modules.
+- `src/document/tests/` and `src/editor/tests/` group the existing unit tests
+  by feature. Binary fixtures remain in `tests/fixtures/`.
+
 ## Verification
 
 Run `cargo test`. Tests cover record parsing and byte preservation, dependency updates, geometry, undo/redo, and save/reopen. All 1,599 `.gsp` files in the sibling project and the bundled 523-object Example Tools document pass unedited byte-preservation verification; many remain partial views and are guarded against unsafe edits. Generated constructions, measurements, text, action buttons, styles, bounded number/table files, and arithmetic and sine/cosine/tangent plots have been opened and saved in the supplied Windows Sketchpad 5 through Wine. Native KDE screenshots confirm geometry and style rendering; full command and interaction verification remains open.
