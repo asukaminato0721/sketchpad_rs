@@ -10,7 +10,7 @@ use sketchpad_rs::render::{GeometryRenderer, TraceMark, Viewport, svg_page_with_
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor, VisualStyle};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     io::Write,
     path::PathBuf,
     process::{Command, Stdio},
@@ -145,7 +145,11 @@ enum CircleMeasure {
 #[derive(Clone, Copy)]
 struct AnimationTrack {
     id: usize,
+    allow_hidden: bool,
     phase: f64,
+    straight_range: Option<(f64, f64)>,
+    parameter_domain: Option<(f64, f64)>,
+    discrete_remainder: f64,
     direction: f64,
     free_velocity: Option<Point>,
     free_turn_remaining: f64,
@@ -159,6 +163,7 @@ struct AnimationButtonDraft {
     targets: Vec<usize>,
     settings: Vec<AnimationSettings>,
     selected: usize,
+    label: Option<String>,
 }
 #[derive(Clone, Copy)]
 struct MovementTrack {
@@ -223,6 +228,10 @@ struct Editor {
     animation_last_tick: Instant,
     animation_bounds: Option<(Point, Point)>,
     viewport_rect: Option<egui::Rect>,
+    document_options_dialog: bool,
+    document_options_page: usize,
+    page_name_draft: String,
+    remove_page_confirmation: Option<usize>,
     show_motion_controller: bool,
     animation_button_dialog: Option<AnimationButtonDraft>,
     movement_button_dialog: Option<MovementButtonDraft>,
@@ -311,6 +320,10 @@ impl Editor {
             animation_last_tick: Instant::now(),
             animation_bounds: None,
             viewport_rect: None,
+            document_options_dialog: false,
+            document_options_page: 0,
+            page_name_draft: String::new(),
+            remove_page_confirmation: None,
             show_motion_controller: false,
             animation_button_dialog: None,
             movement_button_dialog: None,
@@ -1248,16 +1261,20 @@ impl Editor {
             .get(first.saturating_sub(1))
             .map(|object| &object.kind)
         {
-            Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if !equation => {
-                (ValueEquationKind::PointValue, *host)
-            }
+            Some(
+                Kind::PointOnSegment(host, _)
+                | Kind::PointOnRay(host, _)
+                | Kind::PointOnLine(host, _)
+                | Kind::PointOnArc(host, _)
+                | Kind::PointOnCircle(host, _, _),
+            ) if !equation => (ValueEquationKind::PointValue, *host),
             Some(Kind::Line(_, _)) if equation => (ValueEquationKind::LineEquation, 0),
             Some(Kind::Circle(_, _)) if equation => (ValueEquationKind::CircleEquation, 0),
             _ => {
                 self.status = if equation {
                     "Select one line or circle for Equation"
                 } else {
-                    "Select one point constrained to a segment or circle"
+                    "Select one point constrained to a segment, ray, line, circle, or arc"
                 }
                 .into();
                 return;
@@ -1897,6 +1914,8 @@ impl Editor {
                 self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                 Some(
                     Kind::Segment(_, _)
+                        | Kind::Ray(_, _)
+                        | Kind::Line(_, _)
                         | Kind::Circle(_, _)
                         | Kind::CircleBySegment(_, _)
                         | Kind::ReflectedCircle(_, _)
@@ -1908,7 +1927,7 @@ impl Editor {
             )
         });
         let Some(host) = host else {
-            self.status = "Select a segment, circle, or arc".into();
+            self.status = "Select a segment, ray, line, circle, or arc".into();
             return;
         };
         if self.doc.objects[host - 1].page != self.doc.active_page {
@@ -2788,9 +2807,61 @@ impl Editor {
         *state ^= *state << 17;
         (*state >> 11) as f64 / (1u64 << 53) as f64
     }
-    fn animation_track(&self, id: usize) -> Option<AnimationTrack> {
+    fn straight_animation_range(&self, host: usize, mode: LineMode, t: f64) -> Option<(f64, f64)> {
+        let (a, b, actual_mode) = self.doc.line_points(host)?;
+        if actual_mode != mode {
+            return None;
+        }
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        if dx * dx + dy * dy < 1e-12 {
+            return None;
+        }
+        let fallback = match mode {
+            LineMode::Ray => (0., t.max(1.)),
+            LineMode::Line => (t.min(-1.), t.max(2.)),
+            LineMode::Segment => (0., 1.),
+        };
+        let Some((corner_a, corner_b)) = self.animation_bounds else {
+            return Some(fallback);
+        };
+        let margin = 10. / f64::from(self.scale);
+        let mut low = if mode == LineMode::Ray {
+            0.
+        } else {
+            f64::NEG_INFINITY
+        };
+        let mut high = f64::INFINITY;
+        for (origin, delta, edge_a, edge_b) in [
+            (a.x, dx, corner_a.x, corner_b.x),
+            (a.y, dy, corner_a.y, corner_b.y),
+        ] {
+            let min = edge_a.min(edge_b) + margin;
+            let max = edge_a.max(edge_b) - margin;
+            if min >= max {
+                return Some(fallback);
+            }
+            if delta.abs() < 1e-12 {
+                if origin < min || origin > max {
+                    return Some(fallback);
+                }
+            } else {
+                let start = (min - origin) / delta;
+                let end = (max - origin) / delta;
+                low = low.max(start.min(end));
+                high = high.min(start.max(end));
+            }
+        }
+        if !low.is_finite() || !high.is_finite() || high - low < 1e-9 {
+            Some(fallback)
+        } else {
+            Some((low.min(t), high.max(t)))
+        }
+    }
+    fn animation_track(&self, id: usize, allow_hidden: bool) -> Option<AnimationTrack> {
         let object = self.doc.objects.get(id.checked_sub(1)?)?;
-        if object.deleted || !object.visible || object.page != self.doc.active_page {
+        if object.deleted || !allow_hidden && !object.visible || object.page != self.doc.active_page
+        {
             return None;
         }
         if let Kind::Free(point) = object.kind {
@@ -2801,7 +2872,11 @@ impl Editor {
             let angle = Self::next_animation_random(&mut random_state) * std::f64::consts::TAU;
             return Some(AnimationTrack {
                 id,
+                allow_hidden,
                 phase: 0.,
+                straight_range: None,
+                parameter_domain: None,
+                discrete_remainder: 0.,
                 direction: 1.,
                 free_velocity: Some(Point {
                     x: angle.cos(),
@@ -2814,27 +2889,63 @@ impl Editor {
                 distance_travelled: 0.,
             });
         }
-        let phase = match object.kind {
+        if let Kind::Parameter(group) = &object.kind {
+            let (min, max) = group.animation_domain();
+            let phase = (group.value() - min) / (max - min);
+            if !min.is_finite() || !max.is_finite() || max <= min || !phase.is_finite() {
+                return None;
+            }
+            return Some(AnimationTrack {
+                id,
+                allow_hidden,
+                phase: phase.clamp(0., 1.),
+                straight_range: None,
+                parameter_domain: Some((min, max)),
+                discrete_remainder: 0.,
+                direction: 1.,
+                free_velocity: None,
+                free_turn_remaining: 0.,
+                random_state: ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ phase.to_bits())
+                    | 1,
+                button_settings: None,
+                start_phase: phase.clamp(0., 1.),
+                distance_travelled: 0.,
+            });
+        }
+        let (phase, straight_range) = match object.kind {
             Kind::PointOnSegment(host, t)
                 if matches!(self.doc.line_points(host), Some((_, _, LineMode::Segment))) =>
             {
-                t
+                (t, None)
             }
-            Kind::PointOnCircle(host, x, y) if self.doc.circle_points(host).is_some() => {
-                y.atan2(x).rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU
+            Kind::PointOnRay(host, t) => {
+                let range = self.straight_animation_range(host, LineMode::Ray, t)?;
+                ((t - range.0) / (range.1 - range.0), Some(range))
             }
-            Kind::PointOnArc(host, t) if self.doc.point_on_arc(host, t).is_some() => t,
+            Kind::PointOnLine(host, t) => {
+                let range = self.straight_animation_range(host, LineMode::Line, t)?;
+                ((t - range.0) / (range.1 - range.0), Some(range))
+            }
+            Kind::PointOnCircle(host, x, y) if self.doc.circle_points(host).is_some() => (
+                y.atan2(x).rem_euclid(std::f64::consts::TAU) / std::f64::consts::TAU,
+                None,
+            ),
+            Kind::PointOnArc(host, t) if self.doc.point_on_arc(host, t).is_some() => (t, None),
             _ => return None,
         };
         phase.is_finite().then_some(AnimationTrack {
             id,
-            phase,
+            allow_hidden,
+            phase: phase.clamp(0., 1.),
+            straight_range,
+            parameter_domain: None,
+            discrete_remainder: 0.,
             direction: 1.,
             free_velocity: None,
             free_turn_remaining: 0.,
             random_state: ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ phase.to_bits()) | 1,
             button_settings: None,
-            start_phase: phase,
+            start_phase: phase.clamp(0., 1.),
             distance_travelled: 0.,
         })
     }
@@ -2843,24 +2954,99 @@ impl Editor {
             .iter()
             .copied()
             .filter(|id| !self.animations.iter().any(|track| track.id == *id))
-            .filter_map(|id| self.animation_track(id))
+            .filter_map(|id| self.animation_track(id, true))
             .collect::<Vec<_>>();
         if added.is_empty() {
-            self.status = "Select a free point or a point on a segment, circle, or arc".into();
+            self.status = "Select a parameter or a free or path-constrained point".into();
             return;
         }
         if self.animations.is_empty() {
             self.doc.checkpoint();
         }
-        self.status = format!("Animating {} point(s)", added.len());
+        self.status = format!("Animating {} object(s)", added.len());
         self.animations.extend(added);
         self.animation_paused = false;
         self.animation_last_tick = Instant::now();
         self.show_motion_controller |= show_controller;
     }
+    fn collect_animation_sources(
+        &self,
+        id: usize,
+        indirect: bool,
+        visited: &mut BTreeSet<usize>,
+        sources: &mut Vec<usize>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        let Some(object) = id
+            .checked_sub(1)
+            .and_then(|index| self.doc.objects.get(index))
+        else {
+            return;
+        };
+        if object.deleted || !indirect && !object.visible || object.page != self.doc.active_page {
+            return;
+        }
+        if self.animation_track(id, indirect).is_some() {
+            sources.push(id);
+            return;
+        }
+        if object.kind.is_action_button()
+            || object.kind.is_measurement()
+            || matches!(
+                object.kind,
+                Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _)
+            )
+        {
+            return;
+        }
+        for parent in object.kind.dependencies() {
+            self.collect_animation_sources(parent, true, visited, sources);
+        }
+    }
+    fn animation_sources(&self, selected: &[usize]) -> Vec<usize> {
+        let mut visited = BTreeSet::new();
+        let mut sources = Vec::new();
+        for &id in selected {
+            self.collect_animation_sources(id, false, &mut visited, &mut sources);
+        }
+        sources
+    }
+    fn animation_button_draft(&self) -> Option<AnimationButtonDraft> {
+        let source_kind = match self.selection_order.as_slice() {
+            [id] => self
+                .doc
+                .objects
+                .get(id.checked_sub(1)?)
+                .map(|object| &object.kind),
+            _ => None,
+        };
+        let mut targets = self.animation_sources(&self.selection_order);
+        let label = source_kind
+            .and_then(Kind::animation_button_source_label)
+            .map(str::to_owned);
+        if label.is_some() {
+            targets.reverse();
+        }
+        if targets.is_empty() {
+            return None;
+        }
+        let settings = targets
+            .iter()
+            .map(|&id| self.doc.animation_button_default_settings(id))
+            .collect::<Option<Vec<_>>>()?;
+        Some(AnimationButtonDraft {
+            targets,
+            settings,
+            selected: 0,
+            label,
+        })
+    }
     fn animate_selected(&mut self) {
         let selected = self.doc.selected.iter().copied().collect::<Vec<_>>();
-        self.animate_targets(&selected, true);
+        let sources = self.animation_sources(&selected);
+        self.animate_targets(&sources, true);
     }
     fn animate_button_targets(&mut self, targets: &[usize], settings: &[AnimationSettings]) {
         if targets
@@ -2880,6 +3066,14 @@ impl Editor {
                 } else {
                     1.
                 };
+                if let Some(parameter) = setting.parameter {
+                    let (min, max) = (f64::from(parameter.min), f64::from(parameter.max));
+                    if let Kind::Parameter(group) = &self.doc.objects[target - 1].kind {
+                        track.parameter_domain = Some((min, max));
+                        track.phase = ((group.value() - min) / (max - min)).clamp(0., 1.);
+                        track.start_phase = track.phase;
+                    }
+                }
             }
         }
     }
@@ -3300,14 +3494,38 @@ impl Editor {
             let Some(object) = self.doc.objects.get(track.id - 1) else {
                 return false;
             };
-            if object.deleted || !object.visible || object.page != self.doc.active_page {
+            if object.deleted
+                || !track.allow_hidden && !object.visible
+                || object.page != self.doc.active_page
+            {
                 return false;
             }
             let kind = &object.kind;
             let speed_scale = track
                 .button_settings
                 .map_or(1., |settings| f64::from(settings.speed) / 24.);
-            let step = base_step * speed_scale;
+            let step = if let Some((min, max)) = track.parameter_domain {
+                let amount = elapsed_seconds.clamp(0., 0.1)
+                    * self.animation_speed
+                    * track
+                        .button_settings
+                        .map_or(1., |settings| f64::from(settings.speed));
+                let amount = if let Some(parameter) = track
+                    .button_settings
+                    .and_then(|settings| settings.parameter)
+                    .filter(|parameter| parameter.discrete)
+                {
+                    track.discrete_remainder += amount;
+                    let count = (track.discrete_remainder + 1e-9).floor();
+                    track.discrete_remainder = (track.discrete_remainder - count).max(0.);
+                    count * f64::from(parameter.step)
+                } else {
+                    amount
+                };
+                amount / (max - min)
+            } else {
+                base_step * speed_scale
+            };
             if let Some(mut velocity) = track.free_velocity {
                 let Kind::Free(current) = *kind else {
                     return false;
@@ -3357,6 +3575,9 @@ impl Editor {
                 let moved = self.doc.move_point(track.id, destination);
                 return moved && !track.button_settings.is_some_and(|settings| settings.once);
             }
+            if track.parameter_domain.is_some() && step == 0. {
+                return true;
+            }
             let circular = matches!(kind, Kind::PointOnCircle(_, _, _));
             match track.button_settings.map(|settings| settings.direction) {
                 Some(AnimationDirection::Forward) => {
@@ -3399,6 +3620,14 @@ impl Editor {
             {
                 track.phase = track.start_phase;
             }
+            if let Kind::Parameter(_) = kind {
+                let Some((min, max)) = track.parameter_domain else {
+                    return false;
+                };
+                let value = min + (max - min) * track.phase;
+                let moved = self.doc.animate_parameter_value(track.id, value).is_ok();
+                return moved && !once_complete;
+            }
             let destination = match *kind {
                 Kind::PointOnSegment(host, _) => self
                     .doc
@@ -3408,6 +3637,17 @@ impl Editor {
                         x: a.x + (b.x - a.x) * track.phase,
                         y: a.y + (b.y - a.y) * track.phase,
                     }),
+                Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) => {
+                    self.doc.line_points(host).and_then(|(a, b, _)| {
+                        track.straight_range.map(|(min, max)| {
+                            let t = min + (max - min) * track.phase;
+                            Point {
+                                x: a.x + (b.x - a.x) * t,
+                                y: a.y + (b.y - a.y) * t,
+                            }
+                        })
+                    })
+                }
                 Kind::PointOnCircle(host, _, _) => self.doc.circle_points(host).map(|(c, r)| {
                     let angle = track.phase * std::f64::consts::TAU;
                     Point {
@@ -3520,6 +3760,14 @@ impl Editor {
                         self.pending_output = Some(OutputAction::Print);
                         ui.close();
                     }
+                    if ui.button("Document Options…").clicked() {
+                        self.document_options_page = self.doc.active_page;
+                        self.page_name_draft = self.doc.page_names[self.doc.active_page]
+                            .clone()
+                            .unwrap_or_default();
+                        self.document_options_dialog = true;
+                        ui.close();
+                    }
                     if ui.button("Quit").clicked() {
                         if self.doc.dirty {
                             self.pending_action = Some(PendingAction::Quit);
@@ -3556,7 +3804,7 @@ impl Editor {
                             .collect();
                         if ui
                             .add_enabled(
-                                !targets.is_empty() && !self.doc.partial_view,
+                                self.doc.can_add_hide_show_button_for_targets(&targets).is_ok(),
                                 egui::Button::new("Hide/Show"),
                             )
                             .clicked()
@@ -3567,39 +3815,43 @@ impl Editor {
                             }
                             ui.close();
                         }
-                        let animation_targets = self
-                            .selection_order
-                            .iter()
-                            .copied()
-                            .filter_map(|id| {
-                                self.animation_track(id)?;
-                                Some((id, self.doc.animation_button_default_settings(id)?))
-                            })
-                            .collect::<Vec<_>>();
+                        let animation_draft = self.animation_button_draft();
+                        let animation_ready = animation_draft.as_ref().is_some_and(|draft| {
+                            let settings = draft
+                                .targets
+                                .iter()
+                                .copied()
+                                .zip(draft.settings.iter().copied())
+                                .collect::<Vec<_>>();
+                            self.doc
+                                .can_add_animation_button_for_targets_with_settings_and_label(
+                                    &settings,
+                                    draft.label.as_deref(),
+                                )
+                                .is_ok()
+                        });
                         if ui
                             .add_enabled(
-                                !animation_targets.is_empty() && !self.doc.partial_view,
+                                animation_ready,
                                 egui::Button::new("Animation"),
                             )
                             .clicked()
                         {
-                            self.animation_button_dialog = Some(AnimationButtonDraft {
-                                targets: animation_targets.iter().map(|(id, _)| *id).collect(),
-                                settings: animation_targets.iter().map(|(_, value)| *value).collect(),
-                                selected: 0,
-                            });
+                            self.animation_button_dialog = animation_draft;
                             ui.close();
                         }
                         let movement_pair = match self.selection_order.as_slice() {
                             [source, destination]
-                                if matches!(self.doc.objects[*source - 1].kind, Kind::Free(_))
-                                    && self.doc.position(*destination).is_some() =>
+                                if self
+                                    .doc
+                                    .can_add_movement_button(*source, *destination)
+                                    .is_ok() =>
                             {
                                 Some((*source, *destination))
                             }
                             _ => None,
                         };
-                        if ui.add_enabled(movement_pair.is_some() && !self.doc.partial_view,
+                        if ui.add_enabled(movement_pair.is_some(),
                             egui::Button::new("Movement")).clicked()
                         {
                             let (source, destination) = movement_pair.unwrap();
@@ -3640,10 +3892,10 @@ impl Editor {
                             ui.close();
                         }
                         let scroll_target = match self.selection_order.as_slice() {
-                            [target] if self.doc.position(*target).is_some() => Some(*target),
+                            [target] if self.doc.can_add_scroll_button(*target).is_ok() => Some(*target),
                             _ => None,
                         };
-                        if ui.add_enabled(scroll_target.is_some() && !self.doc.partial_view,
+                        if ui.add_enabled(scroll_target.is_some(),
                             egui::Button::new("Scroll")).clicked()
                         {
                             self.scroll_button_dialog = Some(ScrollButtonDraft {
@@ -4520,6 +4772,9 @@ impl Editor {
                         self.doc.active_page + 1,
                         self.doc.page_count
                     ));
+                    if let Some(name) = &self.doc.page_names[self.doc.active_page] {
+                        ui.label(name);
+                    }
                     if ui
                         .add_enabled(
                             self.doc.active_page + 1 < self.doc.page_count,
@@ -4784,6 +5039,8 @@ impl Editor {
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _)
                                     | Kind::PointOnSegment(_, _)
+                                    | Kind::PointOnRay(_, _)
+                                    | Kind::PointOnLine(_, _)
                                     | Kind::PointOnCircle(_, _, _)
                                     | Kind::PointOnArc(_, _)
                             ) {
@@ -5193,6 +5450,163 @@ impl Editor {
                     );
                 }
             });
+        if self.document_options_dialog {
+            let mut add_page = false;
+            let mut copy_page = false;
+            let mut rename_page = false;
+            let mut remove_page = false;
+            let mut move_up = false;
+            let mut move_down = false;
+            let mut close = false;
+            let mut selected_page = self.document_options_page;
+            egui::Modal::new(egui::Id::new("document_options")).show(root.ctx(), |ui| {
+                ui.heading("Document Options");
+                egui::ComboBox::from_label("Page")
+                    .selected_text(format!("Page {}", selected_page + 1))
+                    .show_ui(ui, |ui| {
+                        for page in 0..self.doc.page_count {
+                            let label = self.doc.page_names[page].as_ref().map_or_else(
+                                || format!("Page {}", page + 1),
+                                |name| format!("Page {}: {name}", page + 1),
+                            );
+                            ui.selectable_value(&mut selected_page, page, label);
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut self.page_name_draft);
+                });
+                ui.label("Leave the name empty to use the page number.");
+                rename_page = ui.button("Rename Page").clicked();
+                add_page = ui.button("Add Blank Page").clicked();
+                copy_page = ui.button("Copy Selected Page").clicked();
+                remove_page = ui
+                    .add_enabled(self.doc.page_count > 1, egui::Button::new("Remove Page…"))
+                    .clicked();
+                ui.horizontal(|ui| {
+                    move_up = ui
+                        .add_enabled(selected_page > 0, egui::Button::new("Move Up"))
+                        .clicked();
+                    move_down = ui
+                        .add_enabled(
+                            selected_page + 1 < self.doc.page_count,
+                            egui::Button::new("Move Down"),
+                        )
+                        .clicked();
+                });
+                close = ui.button("Close").clicked();
+            });
+            if selected_page != self.document_options_page {
+                self.document_options_page = selected_page;
+                self.page_name_draft = self.doc.page_names[selected_page]
+                    .clone()
+                    .unwrap_or_default();
+            }
+            if rename_page {
+                match self
+                    .doc
+                    .set_page_name(self.document_options_page, &self.page_name_draft)
+                {
+                    Ok(()) => {
+                        self.status = format!("Renamed page {}", self.document_options_page + 1)
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            if add_page {
+                match self.doc.add_blank_page() {
+                    Ok(page) => {
+                        self.document_options_page = page - 1;
+                        self.page_name_draft.clear();
+                        self.selection_order.clear();
+                        self.pending = None;
+                        self.fit();
+                        self.status = format!("Added page {page}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            if copy_page {
+                match self.doc.copy_page(self.document_options_page) {
+                    Ok(page) => {
+                        self.document_options_page = page - 1;
+                        self.page_name_draft =
+                            self.doc.page_names[page - 1].clone().unwrap_or_default();
+                        self.selection_order.clear();
+                        self.pending = None;
+                        self.fit();
+                        self.status = format!("Copied page to page {page}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            if remove_page {
+                self.remove_page_confirmation = Some(self.document_options_page);
+            }
+            if move_up || move_down {
+                let from = self.document_options_page;
+                let to = if move_up { from - 1 } else { from + 1 };
+                match self.doc.move_page(from, to) {
+                    Ok(()) => {
+                        self.document_options_page = to;
+                        self.page_name_draft = self.doc.page_names[to].clone().unwrap_or_default();
+                        self.selection_order.clear();
+                        self.pending = None;
+                        self.fit();
+                        self.status = format!("Moved page {} to position {}", from + 1, to + 1);
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            if close {
+                self.document_options_dialog = false;
+            }
+        }
+        if let Some(page) = self.remove_page_confirmation {
+            let mut confirm = false;
+            let mut cancel = false;
+            let affected_links = self
+                .doc
+                .objects
+                .iter()
+                .filter(|object| {
+                    object.page != page
+                        && matches!(object.kind, Kind::LinkPageButton { target_page, .. } if target_page == page)
+                })
+                .count();
+            egui::Modal::new(egui::Id::new("remove_page_confirmation")).show(root.ctx(), |ui| {
+                ui.heading(format!("Remove page {}?", page + 1));
+                ui.label("The page and its objects will be removed from this sketch.");
+                if affected_links > 0 {
+                    ui.label(format!(
+                        "{affected_links} Page Link(s) to this page will lose their destination."
+                    ));
+                }
+                ui.horizontal(|ui| {
+                    confirm = ui.button("Remove Page").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if confirm {
+                match self.doc.remove_page(page) {
+                    Ok(()) => {
+                        self.document_options_page = page.min(self.doc.page_count - 1);
+                        self.page_name_draft = self.doc.page_names[self.document_options_page]
+                            .clone()
+                            .unwrap_or_default();
+                        self.selection_order.clear();
+                        self.pending = None;
+                        self.fit();
+                        self.status = format!("Removed page {}", page + 1);
+                    }
+                    Err(error) => self.status = error,
+                }
+                self.remove_page_confirmation = None;
+            }
+            if cancel {
+                self.remove_page_confirmation = None;
+            }
+        }
         if self.pending_action.is_some() {
             enum Decision {
                 Save,
@@ -5228,30 +5642,36 @@ impl Editor {
             egui::Modal::new(egui::Id::new("animation_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Animation Button");
                 if draft.targets.len() > 1 {
-                    ui.label("Choose a point to set its motion:");
+                    ui.label("Choose a target to set its motion:");
                     for (index, target) in draft.targets.iter().enumerate() {
-                        ui.selectable_value(&mut draft.selected, index, format!("Point {target}"));
+                        ui.selectable_value(&mut draft.selected, index, format!("Object {target}"));
                     }
                     ui.separator();
                 }
                 let target = draft.targets[draft.selected];
                 let settings = &mut draft.settings[draft.selected];
                 let free = matches!(self.doc.objects[target - 1].kind, Kind::Free(_));
+                let parameter = matches!(self.doc.objects[target - 1].kind, Kind::Parameter(_));
                 let circle = matches!(
                     self.doc.objects[target - 1].kind,
                     Kind::PointOnCircle(_, _, _)
                 );
-                ui.label(format!("Animate point {target}"));
+                ui.label(format!(
+                    "Animate {} {target}",
+                    if parameter { "parameter" } else { "point" }
+                ));
                 if free {
                     ui.label("Free points move at random");
                 } else {
-                    let direction_name = match (circle, settings.direction) {
-                        (true, AnimationDirection::Forward) => "Counterclockwise",
-                        (true, AnimationDirection::Backward) => "Clockwise",
-                        (_, AnimationDirection::Forward) => "Forward",
-                        (_, AnimationDirection::Backward) => "Backward",
-                        (_, AnimationDirection::Bidirectional) => "Bidirectional",
-                        (_, AnimationDirection::Random) => "Random",
+                    let direction_name = match (circle, parameter, settings.direction) {
+                        (true, _, AnimationDirection::Forward) => "Counterclockwise",
+                        (true, _, AnimationDirection::Backward) => "Clockwise",
+                        (_, true, AnimationDirection::Forward) => "Increasing",
+                        (_, true, AnimationDirection::Backward) => "Decreasing",
+                        (_, _, AnimationDirection::Forward) => "Forward",
+                        (_, _, AnimationDirection::Backward) => "Backward",
+                        (_, _, AnimationDirection::Bidirectional) => "Bidirectional",
+                        (_, _, AnimationDirection::Random) => "Random",
                     };
                     egui::ComboBox::from_label("Direction")
                         .selected_text(direction_name)
@@ -5261,13 +5681,21 @@ impl Editor {
                                     AnimationDirection::Forward,
                                     if circle {
                                         "Counterclockwise"
+                                    } else if parameter {
+                                        "Increasing"
                                     } else {
                                         "Forward"
                                     },
                                 ),
                                 (
                                     AnimationDirection::Backward,
-                                    if circle { "Clockwise" } else { "Backward" },
+                                    if circle {
+                                        "Clockwise"
+                                    } else if parameter {
+                                        "Decreasing"
+                                    } else {
+                                        "Backward"
+                                    },
                                 ),
                                 (AnimationDirection::Bidirectional, "Bidirectional"),
                                 (AnimationDirection::Random, "Random"),
@@ -5283,18 +5711,41 @@ impl Editor {
                     free || settings.direction != AnimationDirection::Bidirectional,
                     egui::Checkbox::new(&mut settings.once, "Once Only"),
                 );
-                ui.horizontal(|ui| {
-                    ui.label("Speed");
-                    for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
-                        if ui.selectable_label(settings.speed == speed, name).clicked() {
-                            settings.speed = speed;
-                        }
+                if parameter {
+                    ui.horizontal(|ui| {
+                        ui.label("Change per second");
+                        ui.add(egui::DragValue::new(&mut settings.speed).range(0.025..=2_500.));
+                    });
+                    if let Some(options) = settings.parameter.as_mut() {
+                        ui.checkbox(&mut options.discrete, "Discrete changes");
+                        ui.horizontal(|ui| {
+                            ui.label("Step");
+                            ui.add_enabled(
+                                options.discrete,
+                                egui::DragValue::new(&mut options.step).range(0.001..=10_000.),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Domain");
+                            ui.add(egui::DragValue::new(&mut options.min).speed(0.1));
+                            ui.label("to");
+                            ui.add(egui::DragValue::new(&mut options.max).speed(0.1));
+                        });
                     }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Custom speed");
-                    ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
-                });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Speed");
+                        for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
+                            if ui.selectable_label(settings.speed == speed, name).clicked() {
+                                settings.speed = speed;
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Custom speed");
+                        ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
+                    });
+                }
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -5311,8 +5762,10 @@ impl Editor {
                     .collect::<Vec<_>>();
                 match self
                     .doc
-                    .add_animation_button_for_targets_with_settings(&values)
-                {
+                    .add_animation_button_for_targets_with_settings_and_label(
+                        &values,
+                        draft.label.as_deref(),
+                    ) {
                     Ok(id) => {
                         self.select_only(id);
                         self.animation_button_dialog = None;
@@ -6707,6 +7160,39 @@ mod tests {
     }
 
     #[test]
+    fn point_tool_and_construct_command_use_ray_and_line_hosts() {
+        for (bytes, click, expected) in [
+            (
+                include_bytes!("../tests/fixtures/two_page_line_native.gsp").as_slice(),
+                Point { x: -20., y: 111. },
+                Kind::PointOnLine(5, -131. / 180.),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_ray_native.gsp").as_slice(),
+                Point { x: 400., y: 111. },
+                Kind::PointOnRay(5, 289. / 180.),
+            ),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            editor.doc.active_page = 1;
+            editor.tool = Tool::Point;
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600., 400.)),
+                scale: 1.,
+                center: Point { x: 250., y: 150. },
+            };
+            editor.click(&viewport, viewport.screen(click), false);
+            assert_eq!(editor.doc.objects[5].kind, expected);
+            editor.selection_order = vec![5];
+            editor.doc.selected = [5].into();
+            editor.point_on_object();
+            assert_eq!(editor.doc.objects.len(), 7);
+            let saved = editor.doc.encode().unwrap();
+            assert_eq!(Document::from_bytes(&saved, None).unwrap().objects.len(), 7);
+        }
+    }
+
+    #[test]
     fn segment_and_circle_tools_construct_on_multi_page_sketch() {
         let document = Document::from_bytes(
             include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
@@ -6927,6 +7413,49 @@ mod tests {
     }
 
     #[test]
+    fn copy_and_paste_segment_to_first_page() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_segment_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.active_page = 1;
+        editor.doc.selected.insert(4);
+        assert!(editor.copy_selected());
+        editor.doc.active_page = 0;
+        editor.paste();
+        assert_eq!(editor.selection_order, vec![5, 6, 7]);
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_pasted_segment_first_page_port.gsp")
+        );
+    }
+
+    #[test]
+    fn clear_and_cut_work_on_multi_page_sketch() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+        editor.doc.active_page = 1;
+        editor.doc.selected.insert(2);
+        editor.clear_selected();
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_point_and_segment_cleared_port.gsp")
+        );
+
+        let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+        editor.doc.active_page = 1;
+        editor.doc.selected.insert(4);
+        editor.cut_selected();
+        editor.paste();
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_cut_pasted_segment_port.gsp")
+        );
+    }
+
+    #[test]
     fn page_link_activates_destination_hide_show_button() {
         for (index, bytes) in [
             include_bytes!(
@@ -6937,6 +7466,7 @@ mod tests {
                 "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
             )
             .as_slice(),
+            include_bytes!("../tests/fixtures/two_page_new_hide_show_link_port.gsp").as_slice(),
         ]
         .into_iter()
         .enumerate()
@@ -6955,7 +7485,9 @@ mod tests {
                 scale: editor.scale,
                 center: editor.center,
             };
-            let Kind::LinkPageButton { label, anchor, .. } = &editor.doc.objects[3].kind else {
+            let Kind::LinkPageButton { label, anchor, .. } =
+                &editor.doc.objects.last().unwrap().kind
+            else {
                 panic!();
             };
             let click = editor
@@ -7058,6 +7590,46 @@ mod tests {
     }
 
     #[test]
+    fn page_two_movement_button_runs_and_saves() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/two_page_movement_port.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.doc.active_page = 1;
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::MovementButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+            panic!("Expected Movement button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        let first_page = editor.doc.position(1).unwrap();
+        editor.click(&viewport, click, false);
+        for _ in 0..100 {
+            editor.tick_movement(0.1);
+        }
+        assert_eq!(editor.doc.position(2), editor.doc.position(3));
+        assert_eq!(editor.doc.position(1), Some(first_page));
+        let saved = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.position(2), saved.position(3));
+        assert_eq!(saved.position(1), Some(first_page));
+        let clicked = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_movement_port_clicked_by_wine.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(clicked.position(2), clicked.position(3));
+        assert_eq!(clicked.position(1), Some(first_page));
+    }
+
+    #[test]
     fn clicking_animation_button_starts_its_target_without_controller() {
         let doc = Document::from_bytes(
             include_bytes!("../tests/fixtures/animation_button_base.gsp"),
@@ -7098,6 +7670,7 @@ mod tests {
                 direction,
                 speed,
                 once: false,
+                ..AnimationSettings::default()
             };
             editor
                 .doc
@@ -7114,6 +7687,7 @@ mod tests {
             direction: AnimationDirection::Forward,
             speed: 80.,
             once: true,
+            ..AnimationSettings::default()
         };
         editor.animate_button_targets(&[4], &[settings]);
         for _ in 0..8 {
@@ -7160,6 +7734,230 @@ mod tests {
         assert!((editor.doc.position(5).unwrap().x - 265.).abs() < 1e-9);
         editor.click(&viewport, click, false);
         assert!(editor.animations.is_empty());
+    }
+
+    #[test]
+    fn three_point_animation_button_moves_all_targets() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_animation_three_points_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[6].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = sketchpad_rs::render::action_button_rect(&viewport, *anchor, label).center();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 3);
+        editor.tick_animation(0.1);
+        for (id, expected_x) in [(4, 140.), (5, 200.), (6, 260.)] {
+            assert!((editor.doc.position(id).unwrap().x - expected_x).abs() < 1e-9);
+        }
+        editor.click(&viewport, click, false);
+        assert!(editor.animations.is_empty());
+        let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(6), editor.doc.position(6));
+    }
+
+    #[test]
+    fn mixed_point_animation_button_moves_each_point_by_its_path() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_animation_mixed_points_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[9].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        let before = [1, 5, 9].map(|id| editor.doc.position(id).unwrap());
+        assert_eq!(editor.hit(&viewport, click), Some(10));
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 3);
+        editor.tick_animation(0.1);
+        for (id, initial) in [1, 5, 9].into_iter().zip(before) {
+            assert_ne!(editor.doc.position(id).unwrap(), initial);
+        }
+        assert!((editor.doc.position(5).unwrap().x - 210.).abs() < 1e-9);
+        let on_circle = editor.doc.position(9).unwrap();
+        assert!((on_circle.x - (300. + 30. * (0.3 * std::f64::consts::TAU).cos())).abs() < 1e-9);
+        editor.click(&viewport, click, false);
+        assert!(editor.animations.is_empty());
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn selected_parameter_animates_and_saves_with_one_undo_step() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/animation_parameter_base.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.select_only(1);
+        editor.animate_selected();
+        assert_eq!(editor.animations.len(), 1);
+        assert_eq!(editor.animations[0].parameter_domain, Some((-100., 100.)));
+        editor.tick_animation(0.1);
+        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 1.1).abs() < 1e-9);
+        editor.stop_animation();
+        let saved = editor.doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        let Kind::Parameter(group) = &reopened.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 1.1).abs() < 1e-9);
+        editor.doc.undo();
+        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 1.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parameter_animation_button_click_starts_and_stops_motion() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/action_animation_parameter_port.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[1].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        assert_eq!(editor.hit(&viewport, click), Some(2));
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 1);
+        assert!(!editor.show_motion_controller);
+        editor.tick_animation(0.1);
+        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 1.1).abs() < 1e-9);
+        editor.click(&viewport, click, false);
+        assert!(editor.animations.is_empty());
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn parameter_animation_bounces_at_default_domain_edge() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/animation_parameter_base.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.doc.set_parameter_value(1, 99.9).unwrap();
+        editor.select_only(1);
+        editor.animate_selected();
+        editor.tick_animation(0.1);
+        assert_eq!(editor.animations.len(), 1);
+        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 99.99).abs() < 1e-9);
+        editor.tick_animation(0.1);
+        assert_eq!(editor.animations.len(), 1);
+        let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+            panic!("Expected parameter")
+        };
+        assert!((group.value() - 99.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn custom_parameter_button_uses_rate_domain_and_discrete_step() {
+        use sketchpad_rs::action_records::ParameterAnimationSettings;
+        for (discrete, expected) in [(false, 1.2), (true, 1.0)] {
+            let mut editor = Editor::new(
+                Document::from_bytes(
+                    include_bytes!("../tests/fixtures/animation_parameter_base.gsp"),
+                    None,
+                )
+                .unwrap(),
+            );
+            let settings = AnimationSettings {
+                direction: AnimationDirection::Bidirectional,
+                speed: 2.,
+                once: false,
+                parameter: Some(ParameterAnimationSettings {
+                    discrete,
+                    step: 0.5,
+                    min: -3.,
+                    max: 7.,
+                }),
+            };
+            let button = editor
+                .doc
+                .add_animation_button_with_settings(1, settings)
+                .unwrap();
+            let encoded = editor.doc.encode().unwrap();
+            let reopened = Document::from_bytes(&encoded, None).unwrap();
+            assert!(!reopened.partial_view);
+            assert!(
+                matches!(&reopened.objects[button - 1].kind, Kind::AnimationButton { settings: actual, .. } if actual == &[settings])
+            );
+            editor.animate_button_targets(&[1], &[settings]);
+            assert_eq!(editor.animations[0].parameter_domain, Some((-3., 7.)));
+            editor.tick_animation(0.1);
+            let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+                panic!("Expected parameter")
+            };
+            assert!((group.value() - expected).abs() < 1e-9);
+            if discrete {
+                for _ in 0..4 {
+                    editor.tick_animation(0.1);
+                }
+                let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+                    panic!("Expected parameter")
+                };
+                assert!((group.value() - 1.5).abs() < 1e-9);
+                for _ in 0..15 {
+                    editor.tick_animation(0.1);
+                }
+                let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
+                    panic!("Expected parameter")
+                };
+                assert!((group.value() - 3.).abs() < 1e-9);
+            }
+        }
     }
 
     #[test]
@@ -8034,6 +8832,457 @@ mod tests {
         editor.doc.undo();
         assert_eq!(editor.doc.position(moving), Some(Point { x: 25., y: 0. }));
         assert_eq!(editor.doc.position(orbit), Some(Point { x: 220., y: 200. }));
+    }
+
+    #[test]
+    fn selected_segment_and_circle_animate_their_source_points() {
+        for (base, native_bytes) in [
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_segment_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/animation_indirect_segment_native.gsp")
+                    .as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_circle_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/animation_indirect_circle_native.gsp").as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_segment_hidden_base.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/animation_indirect_segment_hidden_native.gsp")
+                    .as_slice(),
+            ),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+            let before = [1, 2].map(|id| editor.doc.position(id).unwrap());
+            let hidden = !editor.doc.objects[0].visible;
+            editor.select_only(3);
+            editor.animate_selected();
+            assert_eq!(editor.animations.len(), 2);
+            assert_eq!(
+                editor
+                    .animations
+                    .iter()
+                    .map(|track| track.id)
+                    .collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+            if hidden {
+                assert!(editor.animations.iter().all(|track| track.allow_hidden));
+            }
+            editor.tick_animation(0.1);
+            for (id, initial) in [1, 2].into_iter().zip(before) {
+                assert_ne!(editor.doc.position(id).unwrap(), initial);
+                assert_eq!(editor.doc.objects[id - 1].visible, !hidden);
+            }
+            editor.stop_animation();
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+            let native = Document::from_bytes(native_bytes, None).unwrap();
+            assert!(!native.partial_view);
+            assert_eq!(native.encode().unwrap(), native_bytes);
+            assert_ne!(native.position(1).unwrap(), before[0]);
+            assert_ne!(native.position(2).unwrap(), before[1]);
+        }
+    }
+
+    #[test]
+    fn selected_measurement_and_table_have_no_animation_sources() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/animation_indirect_length_base.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.select_only(4);
+        assert!(editor.animation_sources(&[4]).is_empty());
+        assert!(editor.animation_button_draft().is_none());
+        editor.animate_selected();
+        assert!(editor.animations.is_empty());
+        assert_eq!(editor.doc.position(1), Some(Point { x: 100., y: 100. }));
+        assert_eq!(editor.doc.position(2), Some(Point { x: 200., y: 100. }));
+        let mut table_editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/animation_indirect_table_base.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        table_editor.select_only(2);
+        assert!(table_editor.animation_sources(&[2]).is_empty());
+        assert!(table_editor.animation_button_draft().is_none());
+        table_editor.animate_selected();
+        assert!(table_editor.animations.is_empty());
+    }
+
+    #[test]
+    fn selected_segment_and_circle_create_buttons_for_reversed_source_order() {
+        for (base, port, label) in [
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_segment_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_segment_port.gsp")
+                    .as_slice(),
+                "Animate Segment",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_circle_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_circle_port.gsp")
+                    .as_slice(),
+                "Animate Circle",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_segment_hidden_base.gsp")
+                    .as_slice(),
+                include_bytes!(
+                    "../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp"
+                )
+                .as_slice(),
+                "Animate Segment",
+            ),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+            editor.select_only(3);
+            let draft = editor.animation_button_draft().unwrap();
+            assert_eq!(draft.targets, vec![2, 1]);
+            assert_eq!(draft.label.as_deref(), Some(label));
+            let targets = draft
+                .targets
+                .iter()
+                .copied()
+                .zip(draft.settings.iter().copied())
+                .collect::<Vec<_>>();
+            editor
+                .doc
+                .add_animation_button_for_targets_with_settings_and_label(
+                    &targets,
+                    draft.label.as_deref(),
+                )
+                .unwrap();
+            assert_eq!(editor.doc.encode().unwrap(), port);
+        }
+    }
+
+    #[test]
+    fn indirect_segment_animation_button_moves_both_endpoints() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_port.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp")
+                .as_slice(),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: 1.,
+                center: Point { x: 200., y: 150. },
+            };
+            let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[3].kind else {
+                panic!("Expected Animation button")
+            };
+            let click = editor
+                .action_button_rect(&viewport, *anchor, label)
+                .center();
+            let before = [1, 2].map(|id| editor.doc.position(id).unwrap());
+            let visibility = [1, 2].map(|id| editor.doc.objects[id - 1].visible);
+            editor.click(&viewport, click, false);
+            assert_eq!(editor.animations.len(), 2);
+            editor.tick_animation(0.1);
+            for (id, initial) in [1, 2].into_iter().zip(before) {
+                assert_ne!(editor.doc.position(id).unwrap(), initial);
+                assert_eq!(editor.doc.objects[id - 1].visible, visibility[id - 1]);
+            }
+        }
+    }
+
+    #[test]
+    fn selected_lines_rays_and_polygons_create_native_button_targets() {
+        for (base, port, source, targets, label) in [
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_line_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_line_port.gsp")
+                    .as_slice(),
+                3,
+                &[2, 1][..],
+                "Animate Line",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_ray_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_ray_port.gsp")
+                    .as_slice(),
+                3,
+                &[2, 1][..],
+                "Animate Ray",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_polygon_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_polygon_port.gsp")
+                    .as_slice(),
+                4,
+                &[3, 2, 1][..],
+                "Animate Triangle",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_quadrilateral_base.gsp")
+                    .as_slice(),
+                include_bytes!(
+                    "../tests/fixtures/action_animation_indirect_quadrilateral_port.gsp"
+                )
+                .as_slice(),
+                5,
+                &[4, 3, 2, 1][..],
+                "Animate Quadrilateral",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_pentagon_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_pentagon_port.gsp")
+                    .as_slice(),
+                6,
+                &[5, 4, 3, 2, 1][..],
+                "Animate Pentagon",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_hexagon_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_hexagon_port.gsp")
+                    .as_slice(),
+                7,
+                &[6, 5, 4, 3, 2, 1][..],
+                "Animate Hexagon",
+            ),
+            (
+                include_bytes!("../tests/fixtures/animation_indirect_heptagon_base.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_indirect_heptagon_port.gsp")
+                    .as_slice(),
+                8,
+                &[7, 6, 5, 4, 3, 2, 1][..],
+                "Animate Polygon",
+            ),
+        ] {
+            let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
+            editor.select_only(source);
+            let draft = editor.animation_button_draft().unwrap();
+            assert_eq!(draft.targets, targets);
+            assert_eq!(draft.label.as_deref(), Some(label));
+            let settings = draft
+                .targets
+                .iter()
+                .copied()
+                .zip(draft.settings.iter().copied())
+                .collect::<Vec<_>>();
+            editor
+                .doc
+                .add_animation_button_for_targets_with_settings_and_label(
+                    &settings,
+                    draft.label.as_deref(),
+                )
+                .unwrap();
+            assert_eq!(editor.doc.encode().unwrap(), port);
+        }
+    }
+
+    #[test]
+    fn four_source_polygon_button_moves_all_vertices() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!(
+                    "../tests/fixtures/action_animation_indirect_quadrilateral_port.gsp"
+                ),
+                None,
+            )
+            .unwrap(),
+        );
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        let before = [1, 2, 3, 4].map(|id| editor.doc.position(id).unwrap());
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 4);
+        editor.tick_animation(0.1);
+        for (id, initial) in [1, 2, 3, 4].into_iter().zip(before) {
+            assert_ne!(editor.doc.position(id).unwrap(), initial);
+        }
+        let clicked = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/action_animation_indirect_quadrilateral_port_clicked_by_wine.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(!clicked.partial_view);
+        for (id, initial) in [1, 2, 3, 4].into_iter().zip(before) {
+            assert_ne!(clicked.position(id).unwrap(), initial);
+        }
+    }
+
+    #[test]
+    fn six_source_polygon_button_moves_all_vertices() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/action_animation_indirect_hexagon_port.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[7].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        let before = [1, 2, 3, 4, 5, 6].map(|id| editor.doc.position(id).unwrap());
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 6);
+        editor.tick_animation(0.1);
+        for (id, initial) in [1, 2, 3, 4, 5, 6].into_iter().zip(before) {
+            assert_ne!(editor.doc.position(id).unwrap(), initial);
+        }
+        let clicked = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/action_animation_indirect_hexagon_port_clicked_by_wine.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(!clicked.partial_view);
+        for (id, initial) in [1, 2, 3, 4, 5, 6].into_iter().zip(before) {
+            assert_ne!(clicked.position(id).unwrap(), initial);
+        }
+    }
+
+    #[test]
+    fn page_two_segment_animation_button_creates_and_runs() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.doc.active_page = 1;
+        editor.select_only(4);
+        let draft = editor.animation_button_draft().unwrap();
+        assert_eq!(draft.targets, vec![3, 2]);
+        let settings = draft
+            .targets
+            .iter()
+            .copied()
+            .zip(draft.settings.iter().copied())
+            .collect::<Vec<_>>();
+        assert!(
+            editor
+                .doc
+                .can_add_animation_button_for_targets_with_settings_and_label(
+                    &settings,
+                    draft.label.as_deref(),
+                )
+                .is_ok()
+        );
+        editor
+            .doc
+            .add_animation_button_for_targets_with_settings_and_label(
+                &settings,
+                draft.label.as_deref(),
+            )
+            .unwrap();
+        assert_eq!(
+            editor.doc.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_animation_segment_port.gsp")
+        );
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let Kind::AnimationButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+            panic!("Expected Animation button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        let before = [2, 3].map(|id| editor.doc.position(id).unwrap());
+        let other_page = editor.doc.position(1).unwrap();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.animations.len(), 2);
+        editor.tick_animation(0.1);
+        for (id, initial) in [2, 3].into_iter().zip(before) {
+            assert_ne!(editor.doc.position(id).unwrap(), initial);
+        }
+        assert_eq!(editor.doc.position(1).unwrap(), other_page);
+        let saved = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.position(1).unwrap(), other_page);
+        for id in [2, 3] {
+            assert_eq!(saved.position(id), editor.doc.position(id));
+        }
+        let clicked = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_animation_segment_port_clicked_by_wine.gsp"),
+            None,
+        )
+        .unwrap();
+        for (id, initial) in [2, 3].into_iter().zip(before) {
+            assert_ne!(clicked.position(id).unwrap(), initial);
+        }
+        assert_eq!(clicked.position(1).unwrap(), other_page);
+    }
+
+    #[test]
+    fn ray_and_line_points_animate_within_visible_path_and_save() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 200., y: 100. }));
+        let ray = editor.doc.add(Kind::Ray(a, b));
+        let line = editor.doc.add(Kind::Line(a, b));
+        let on_ray = editor.doc.add(Kind::PointOnRay(ray, 0.25));
+        let on_line = editor.doc.add(Kind::PointOnLine(line, -0.25));
+        editor.doc.add(Kind::Segment(on_ray, on_line));
+        let dependent = editor.doc.add(Kind::Midpoint(on_ray, on_line));
+        editor.animation_bounds = Some((Point { x: 0., y: 0. }, Point { x: 300., y: 200. }));
+        editor.doc.selected.extend([on_ray, on_line]);
+        editor.animate_selected();
+        assert_eq!(editor.animations.len(), 2);
+        assert!(
+            editor
+                .animations
+                .iter()
+                .all(|track| track.straight_range.is_some())
+        );
+        editor.tick_animation(0.1);
+        let ray_x = editor.doc.position(on_ray).unwrap().x;
+        let line_x = editor.doc.position(on_line).unwrap().x;
+        assert!((ray_x - 134.5).abs() < 1e-9);
+        assert!((line_x - 89.).abs() < 1e-9);
+        assert_eq!(
+            editor.doc.position(dependent).unwrap().x,
+            (ray_x + line_x) / 2.
+        );
+        for _ in 0..100 {
+            editor.tick_animation(0.1);
+            let ray_x = editor.doc.position(on_ray).unwrap().x;
+            let line_x = editor.doc.position(on_line).unwrap().x;
+            assert!((100. ..=290.).contains(&ray_x));
+            assert!((10. ..=290.).contains(&line_x));
+        }
+        editor.stop_animation();
+        let saved = editor.doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.position(on_ray), editor.doc.position(on_ray));
+        assert_eq!(reopened.position(on_line), editor.doc.position(on_line));
     }
 
     #[test]

@@ -96,7 +96,17 @@ It displayed `0.50`, `y = −0.50x − 0.52`, and
 unchanged. Captures are `/tmp/value_equation_port_{point,line,circle}_wine_before_save.png`.
 The native KDE screenshot `/tmp/sketchpad_native_equation.png` shows the live
 line equation above the rendered line and grid without a runtime error.
-The original point-value source file contains an additional document-level
-font record and remains a partial view; its generated counterpart is a full
-view. Arc point values, custom equation labels, skewed frames, and
-conic equations remain unprobed.
+The original point-value source file includes labels on a constrained point. The parser now recognizes those code-15 label and style records, so it and the new native ray/line value files open as full views. Custom equation labels, skewed frames, and conic equations remain unprobed.
+
+## Ray and line point values
+
+Native Sketchpad enables Value of Point for a point on a ray or line. The native code-94 groups in `point_on_line_value_native.gsp` and `point_on_ray_value_native.gsp` reference the point and its host, as with a segment, but set the `0x0903` path-format fields at offsets 22 and 30 to zero. Rust-generated groups match both native groups byte for byte. `tests/replay_straight_point_values.txt` produces unedited and moved ray/line measurements. All four generated files opened and saved byte-identically in Sketchpad 5; after the moves, native Sketchpad displayed −0.50 for a line point before its first defining point and 1.75 for a ray point beyond its second defining point.
+
+
+## Arc point values
+
+Native Sketchpad enables Value of Point for a point on either a three-point arc or an arc on a circle. `point_on_arc_value_native.gsp` and `point_on_circle_arc_value_native.gsp` import as full views, including the native labels on code-15 constrained points. Both display the point's normalized arc parameter.
+
+The two arc types use distinct `0x0903` records. The three-point arc group includes subtype 67 and the high two bytes of the point parameter; the circle-arc group uses a fixed alternate prefix. Native samples at two different parameters confirm these fields. Rust-generated groups match native groups byte for byte before the measurement's document-position field is set. The native three-point sample was created after scrolling, so its label position differs from the Rust default top-row position.
+
+`tests/replay_arc_point_values.txt` generates both measurements and moves each measured point. Both new and both moved files opened and saved byte-identically in Sketchpad 5. Native Sketchpad displayed 0.61 and 0.60 for the new measurements, then 0.40 and 0.80 after the moves.

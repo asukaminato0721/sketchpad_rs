@@ -85,15 +85,26 @@ Sketchpad 5 created `tests/fixtures/action_hide_show_two_points_original.gsp` fr
 
 The Rust editor now uses all selected supported objects when creating a Hide/Show button. The desktop two-point selection and File > Save flow produced the same bytes as `tests/replay_hide_show_multi.txt`, which generates and activates a two-point button. The generated default and clicked files opened and saved byte-identically in Sketchpad 5. Clicking the generated default in Sketchpad 5 hid both points; the saved `action_hide_show_two_points_port_clicked_by_wine.gsp` imports with the native `显示点` label. Copying a native two-point button with its targets also generates a valid file that Sketchpad 5 resaves byte-identically. Odd-length native point labels use `assets/action_hide_show_two_points_group.bin` as their template.
 
+## Three targets and mixed objects
+
+`action_hide_show_three_points_native.gsp` is the native button from three selected points. Its targets are `[1, 2, 3]` in selection order. The Rust-generated `action_hide_show_three_points_port.gsp` opened and saved byte-identically in Sketchpad 5. Clicking it there hid all three points and changed the button to Show; `action_hide_show_three_points_port_clicked_by_wine.gsp` imports and round-trips exactly.
+
+`action_hide_show_mixed_native.gsp` targets a selected point, segment, and polygon as `[4, 5, 6]`. The Rust-generated counterpart cross-opened byte-identically. A native click hid those three objects but left the polygon's untargeted defining points visible. The resulting `action_hide_show_mixed_port_clicked_by_wine.gsp` imports with a full view and reencodes exactly. `tests/replay_hide_show_multi.txt` reproduces both new generated buttons.
+
+## Multi-page insertion
+
+`two_page_hide_show_second_native.gsp` was created by Sketchpad 5 on page 2. Its global targets `[5, 4]` appear in the button's `0x07d2` record as page-local ordinals `[4, 3]`. The port uses the same mapping when appending a button to an existing multi-page document. `tests/replay_multi_page_hide_show.txt` creates a button on page 2, buttons on both pages before a single save, and a page-2 button activated before its first save. All three generated files opened and saved byte-identically in Sketchpad 5. Clicking the generated page-2 button in Sketchpad 5 hid its selected point and segment and left page 1 and the other page-2 objects visible; the clicked file imports and round-trips. The Hide/Show menu now enables creation on a supported multi-page page.
+
+The same replay also creates a page-1 Hide/Show button and a page-2 Page Link to that new button in one unsaved edit. The writer sets the destination action marker in the newly generated button group. The resulting file cross-opened byte-identically; clicking the Link in Sketchpad 5 hid the page-1 point and changed the new button to Show.
+
 ## Scope and remaining work
 
-The parser intentionally recognizes only code-62 Hide/Show groups with the
-observed six-record layout and action subtype `(0 or 1, 7)`. Other Action
-Button commands, broader target combinations, alternate label payloads, and insertion
-into arbitrary pages need their own probes. The writer currently refuses
-button insertion in a multipage document. A saved button's label may change
-only when its encoded byte length stays fixed, so opaque trailing bytes and
-following object offsets remain valid.
+The Hide/Show parser recognizes code-62 groups with the observed six-record
+layout and action subtype `(0 or 1, 7)`. Larger target sets and other object
+combinations still need native probes. New buttons in multi-page files remain
+limited to supported existing pages and same-page targets. A saved button's
+label may change only when its encoded byte length stays fixed, so opaque
+trailing bytes and following object offsets remain valid.
 
 Standalone tests:
 

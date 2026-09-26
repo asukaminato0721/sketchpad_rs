@@ -1,13 +1,20 @@
 # Display animation
 
-The editor animates selected free points and points constrained to segments,
-circles, and arcs. Segment and arc parameters reverse at their ends; circle
+The editor animates selected parameters, free points, and points constrained to
+segments, rays, lines, circles, and arcs. Parameters move over their stored
+domain and update dependent tables. Segment and arc parameters reverse at their ends; circle
 angles wrap. Free points wander within the visible canvas with changes of
 direction at random intervals. The editor advances existing point kinds, so
 dependent constructions and traces update through the normal document
 evaluator. One undo checkpoint covers a motion session. The floating Motion
 Controller pauses, resumes, stops, and adjusts speed; the Display menu also
 has speed and stop commands.
+
+## Indirect construction animation
+
+Native Sketchpad 5's Display > Animate Objects moves both source points when a segment or circle is selected. The saved `animation_indirect_segment_native.gsp` and `animation_indirect_circle_native.gsp` contain changed positions for both free points. It also moves a segment whose endpoints are hidden: `animation_indirect_segment_hidden_native.gsp` preserves their hidden state and changed coordinates. All three import without partial view and round-trip exactly. The port resolves selected constructions to movable source points and keeps hidden sources hidden while they animate. Directly selected points on paths still animate on their paths.
+
+Selecting a length measurement or parameter table in native Sketchpad leaves Animate Objects unavailable; both menu probes left their files unchanged. The port excludes measurements and tables from this indirect source search.
 
 An Xvfb desktop probe opened
 `tests/fixtures/locus_polar_polygon_target_original.gsp`, selected its point
@@ -48,3 +55,11 @@ desktop after stopping a free-point animation. Its point moved to
 opened and resaved it byte-identically through Wine. The Xvfb captures at
 `/tmp/sketchpad_free_port_animated_t0.png` and
 `/tmp/sketchpad_free_port_animated_t1.png` show the motion.
+
+## Ray and line points
+
+Sketchpad 5's Display > Animate Objects starts motion for a selected point on a ray or line and opens its Motion Controller. Native saves after animation changed the ray parameter from 0.3 to 0.02944863557118989 and the line parameter from 0.3 to -0.029448635571189867. The captures `/tmp/sketchpad_ray_animate_native_after_menu.png` and `/tmp/sketchpad_line_animate_native_after_menu.png` show the controller. The port animates these points along the visible portion of the straight path, reverses at its ends, and updates dependents. The exact native speed and reversal position remain unmeasured.
+
+## Parameters
+
+Sketchpad 5's Display > Animate Objects opens its Motion Controller for a selected parameter. `parameter_animated_native_saved.gsp` contains a value of 1.957 after motion and imports without partial view. Its decimal record has three fractional digits, which the parser now accepts. Native saves while edited Animation buttons run can contain up to 15 fractional digits; those also import and round-trip. The parameter record stores the default animation domain of −100 to 100. The port advances a selected parameter at one unit per second by default, rounds the displayed value to two decimals, updates supported dependent tables, and saves one undo checkpoint for the motion session. Display's own step and domain controls remain to be investigated.

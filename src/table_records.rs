@@ -116,7 +116,7 @@ fn decimal_words(value: f64) -> Result<Vec<u16>, String> {
 }
 
 fn value_from_words(words: &[u16]) -> Result<f64, String> {
-    if words.is_empty() || words.len() > 6 {
+    if words.is_empty() || words.len() > 32 {
         return Err("Unsupported parameter digits".into());
     }
     let (negative, digits) = if words[0] == 4097 {
@@ -129,28 +129,28 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
         Some(index) => (&digits[..index], &digits[index + 1..]),
         None => (digits, &[][..]),
     };
-    if !(1..=2).contains(&whole.len())
-        || fraction.len() > 2
+    if !(1..=6).contains(&whole.len())
+        || fraction.len() > 30
         || decimal.is_some() && fraction.is_empty()
         || whole.iter().chain(fraction).any(|digit| *digit > 9)
+        || whole.len() > 1 && whole[0] == 0
     {
         return Err("Unsupported parameter digits".into());
     }
-    let whole_value = whole.iter().fold(0_u16, |value, digit| value * 10 + *digit);
-    let fraction_value = fraction
+    let whole_value = whole
         .iter()
-        .fold(0_u16, |value, digit| value * 10 + *digit);
-    let fraction_cents = if fraction.len() == 1 {
-        fraction_value * 10
-    } else {
-        fraction_value
-    };
-    let value = (whole_value * 100 + fraction_cents) as f64 / 100.;
-    let value = if negative { -value } else { value };
-    if decimal_words(value)? != words {
-        return Err("Noncanonical parameter digits".into());
+        .fold(0_u32, |value, digit| value * 10 + u32::from(*digit));
+    let mut place = 1.;
+    let mut value = f64::from(whole_value);
+    for digit in fraction {
+        place /= 10.;
+        value += f64::from(*digit) * place;
     }
-    Ok(value)
+    let value = if negative { -value } else { value };
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or("Invalid parameter value".into())
 }
 
 impl ParameterGroup {
@@ -217,7 +217,7 @@ impl ParameterGroup {
             return Err("Unsupported parameter record sequence".into());
         }
         let payload_len = rs[1].end - rs[1].payload;
-        if !(94..=104).contains(&payload_len) || payload_len % 2 != 0 {
+        if !(94..=156).contains(&payload_len) || payload_len % 2 != 0 {
             return Err("Unsupported parameter value length".into());
         }
         let word_count = (payload_len - 92) / 2;
@@ -249,12 +249,15 @@ impl ParameterGroup {
                     let actual_payload = &bytes[actual.payload..actual.end];
                     let expected_payload = &template[expected.payload..expected.end];
                     (0..92).all(|i| {
+                        let animated_cache = actual_payload[80..88] == [0; 8]
+                            && expected_payload[80..88] == 1_f64.to_le_bytes();
                         let mutable = (12..16).contains(&i)
                             || (22..24).contains(&i)
                             || (28..32).contains(&i)
                             || (36..40).contains(&i)
                             || (44..46).contains(&i)
-                            || (52..60).contains(&i);
+                            || (52..60).contains(&i)
+                            || animated_cache && (80..88).contains(&i);
                         mutable || actual_payload[i] == expected_payload[i]
                     })
                 } else if record_index == 2 {
@@ -340,6 +343,15 @@ impl ParameterGroup {
             .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
             .collect::<Vec<_>>();
         value_from_words(&words).unwrap()
+    }
+
+    pub fn animation_domain(&self) -> (f64, f64) {
+        let rs = records(&self.bytes, 0).unwrap();
+        let payload = &self.bytes[rs[1].payload..rs[1].end];
+        (
+            f64::from_le_bytes(payload[60..68].try_into().unwrap()),
+            f64::from_le_bytes(payload[68..76].try_into().unwrap()),
+        )
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
@@ -1336,6 +1348,36 @@ mod tests {
         let output = append_default_parameter(blank, (140, 95)).unwrap();
         assert_eq!(object_group(&output, 1), parameter.as_bytes());
         assert!(append_default_parameter(&output, (10, 5)).is_err());
+    }
+
+    #[test]
+    fn animated_parameter_keeps_precise_native_value_and_domain() {
+        let bytes = include_bytes!("../tests/fixtures/parameter_animated_native_saved.gsp");
+        let group = object_group(bytes, 1);
+        let mut parameter = ParameterGroup::parse(&group).unwrap();
+        assert!((parameter.value() - 1.957).abs() < 1e-12);
+        assert_eq!(parameter.animation_domain(), (-100., 100.));
+        assert_eq!(parameter.as_bytes(), group);
+        parameter.set_value(2.5).unwrap();
+        assert_eq!(parameter.value(), 2.5);
+        ParameterGroup::parse(parameter.as_bytes()).unwrap();
+        for (bytes, range) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_rate2.gsp")
+                    .as_slice(),
+                5.7..5.8,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_discrete.gsp")
+                    .as_slice(),
+                6.7..6.9,
+            ),
+        ] {
+            let original = object_group(bytes, 1);
+            let parsed = ParameterGroup::parse(&original).unwrap();
+            assert!(range.contains(&parsed.value()));
+            assert_eq!(parsed.as_bytes(), original);
+        }
     }
 
     #[test]

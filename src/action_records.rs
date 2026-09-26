@@ -10,6 +10,7 @@ pub const ACTION_PAYLOAD: u32 = 0x0906;
 pub const BUTTON_LABEL: u32 = 0x07d5;
 pub const BUTTON_AUX: u32 = 0x07d8;
 pub const OBJECT_END: u32 = 0x07d7;
+pub const BROKEN_PAGE_LINK_TARGET: usize = 0xbd66;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisibilityAction {
@@ -30,6 +31,50 @@ pub struct AnimationSettings {
     pub direction: AnimationDirection,
     pub speed: f32,
     pub once: bool,
+    pub parameter: Option<ParameterAnimationSettings>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParameterAnimationSettings {
+    pub discrete: bool,
+    pub step: f32,
+    pub min: f32,
+    pub max: f32,
+}
+
+impl Default for ParameterAnimationSettings {
+    fn default() -> Self {
+        Self {
+            discrete: false,
+            step: 1.,
+            min: -100.,
+            max: 100.,
+        }
+    }
+}
+
+fn decode_parameter_number(stored: f32) -> Option<f32> {
+    if !stored.is_finite() {
+        return None;
+    }
+    if stored == 0. {
+        return Some(0.);
+    }
+    let exponent = (stored.abs().log2().floor() as i32 - 2).div_euclid(2);
+    let value = stored / 2_f32.powi(exponent + 2);
+    value.is_finite().then_some(value)
+}
+
+fn encode_parameter_number(value: f32) -> Option<f32> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value == 0. {
+        return Some(0.);
+    }
+    let exponent = value.abs().log2().floor() as i32;
+    let stored = value * 2_f32.powi(exponent + 2);
+    stored.is_finite().then_some(stored)
 }
 
 impl Default for AnimationSettings {
@@ -38,6 +83,7 @@ impl Default for AnimationSettings {
             direction: AnimationDirection::Bidirectional,
             speed: 24.,
             once: false,
+            parameter: None,
         }
     }
 }
@@ -49,6 +95,19 @@ impl AnimationSettings {
         }
         if self.once && self.direction == AnimationDirection::Bidirectional {
             return Err("Once Only is unavailable for bidirectional motion".into());
+        }
+        if let Some(parameter) = self.parameter {
+            if !parameter.step.is_finite()
+                || parameter.step <= 0.
+                || !parameter.min.is_finite()
+                || !parameter.max.is_finite()
+                || parameter.min >= parameter.max
+                || [self.speed, parameter.step, parameter.min, parameter.max]
+                    .iter()
+                    .any(|value| encode_parameter_number(*value).is_none())
+            {
+                return Err("Invalid parameter Animation settings".into());
+            }
         }
         Ok(())
     }
@@ -172,8 +231,15 @@ impl LinkPageButtonGroup {
         {
             return Err("Unsupported Page Link action".into());
         }
+        let broken_link_label =
+            if label.len() >= 26 && self.target_page() == BROKEN_PAGE_LINK_TARGET {
+                let end = 24 + u16_at(label, 22) as usize;
+                end < label.len() && label[end] == 0 && label.len() == (end + 2) & !1
+            } else {
+                false
+            };
         if label.len() < 26
-            || !valid_zero_terminated_text(label, 22)
+            || !(valid_zero_terminated_text(label, 22) || broken_link_label)
             || self.records[3].payload.len() != 2
             || self.records[4].payload.len() != 8
             || !self.records[5].payload.is_empty()
@@ -579,6 +645,10 @@ impl HideShowButtonGroup {
             VisibilityAction::Show => 1,
         };
         self.records[2].payload[12..14].copy_from_slice(&code.to_le_bytes());
+    }
+
+    pub fn set_link_destination(&mut self, linked: bool) {
+        self.records[2].payload[18..20].copy_from_slice(&u16::from(linked).to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
@@ -1129,7 +1199,9 @@ impl AnimationButtonGroup {
             || settings[..4] != default_settings[..4]
             || settings[4..].chunks_exact(32).any(|block| {
                 block.iter().zip(&default_settings[4..]).enumerate().any(
-                    |(index, (actual, expected))| !matches!(index, 3 | 4..=7) && actual != expected,
+                    |(index, (actual, expected))| {
+                        !matches!(index, 3 | 4..=19) && actual != expected
+                    },
                 )
             })
             || self.settings_list().is_err()
@@ -1185,7 +1257,25 @@ impl AnimationButtonGroup {
             .chunks_exact(32)
             .map(|block| {
                 let flags = block[3];
-                if flags & !0xb0 != 0 {
+                let point_settings =
+                    &include_bytes!("../assets/action_animation_group.bin")[72..84];
+                let parameter = if block[8..20] == *point_settings {
+                    None
+                } else {
+                    let number = |offset| {
+                        decode_parameter_number(f32::from_le_bytes(
+                            block[offset..offset + 4].try_into().unwrap(),
+                        ))
+                        .ok_or("Unsupported parameter Animation value".to_string())
+                    };
+                    Some(ParameterAnimationSettings {
+                        discrete: flags & 0x08 != 0,
+                        step: number(8)?,
+                        min: number(12)?,
+                        max: number(16)?,
+                    })
+                };
+                if flags & !(if parameter.is_some() { 0xb8 } else { 0xb0 }) != 0 {
                     return Err("Unsupported animation direction flags".into());
                 }
                 let direction = match flags & 0x30 {
@@ -1197,8 +1287,14 @@ impl AnimationButtonGroup {
                 };
                 let settings = AnimationSettings {
                     direction,
-                    speed: f32::from_le_bytes(block[4..8].try_into().unwrap()),
+                    speed: if parameter.is_some() {
+                        decode_parameter_number(f32::from_le_bytes(block[4..8].try_into().unwrap()))
+                            .ok_or("Unsupported parameter Animation rate")?
+                    } else {
+                        f32::from_le_bytes(block[4..8].try_into().unwrap())
+                    },
                     once: flags & 0x80 != 0,
+                    parameter,
                 };
                 settings.validate()?;
                 Ok(settings)
@@ -1240,8 +1336,33 @@ impl AnimationButtonGroup {
         };
         let bytes = &mut self.records[2].payload;
         let start = 4 + 32 * index;
-        bytes[start + 3] = direction | if settings.once { 0x80 } else { 0 };
-        bytes[start + 4..start + 8].copy_from_slice(&settings.speed.to_le_bytes());
+        bytes[start + 3] = direction
+            | if settings.once { 0x80 } else { 0 }
+            | if settings.parameter.is_some_and(|value| value.discrete) {
+                0x08
+            } else {
+                0
+            };
+        let stored_speed = if settings.parameter.is_some() {
+            encode_parameter_number(settings.speed).ok_or("Invalid parameter Animation rate")?
+        } else {
+            settings.speed
+        };
+        bytes[start + 4..start + 8].copy_from_slice(&stored_speed.to_le_bytes());
+        if let Some(parameter) = settings.parameter {
+            for (offset, value) in [
+                (8, parameter.step),
+                (12, parameter.min),
+                (16, parameter.max),
+            ] {
+                let encoded =
+                    encode_parameter_number(value).ok_or("Invalid parameter Animation value")?;
+                bytes[start + offset..start + offset + 4].copy_from_slice(&encoded.to_le_bytes());
+            }
+        } else {
+            let template = &include_bytes!("../assets/action_animation_group.bin")[72..84];
+            bytes[start + 8..start + 20].copy_from_slice(template);
+        }
         Ok(())
     }
 
@@ -1301,10 +1422,15 @@ impl AnimationButtonGroup {
         let len = u16::try_from(bytes.len()).map_err(|_| "Animation button label is too long")?;
         let payload = &mut self.records[4].payload;
         let old_len = u16_at(payload, 22) as usize;
+        let mut suffix = payload[24 + old_len..].to_vec();
         if old_len % 2 != bytes.len() % 2 {
-            return Err("Animation button label byte parity differs".into());
+            if suffix.len() != if old_len % 2 == 0 { 2 } else { 1 }
+                || suffix.iter().any(|byte| *byte != 0)
+            {
+                return Err("Animation button label byte parity differs".into());
+            }
+            suffix = vec![0; if bytes.len() % 2 == 0 { 2 } else { 1 }];
         }
-        let suffix = payload[24 + old_len..].to_vec();
         payload.truncate(22);
         payload.extend_from_slice(&len.to_le_bytes());
         payload.extend_from_slice(bytes);
@@ -1597,6 +1723,7 @@ mod tests {
                     direction: Forward,
                     speed: 24.,
                     once: false,
+                    ..AnimationSettings::default()
                 },
             ),
             (
@@ -1606,6 +1733,7 @@ mod tests {
                     direction: Backward,
                     speed: 24.,
                     once: false,
+                    ..AnimationSettings::default()
                 },
             ),
             (
@@ -1614,6 +1742,7 @@ mod tests {
                     direction: Random,
                     speed: 24.,
                     once: false,
+                    ..AnimationSettings::default()
                 },
             ),
             (
@@ -1622,6 +1751,7 @@ mod tests {
                     direction: Bidirectional,
                     speed: 4.,
                     once: false,
+                    ..AnimationSettings::default()
                 },
             ),
             (
@@ -1630,6 +1760,7 @@ mod tests {
                     direction: Bidirectional,
                     speed: 80.,
                     once: false,
+                    ..AnimationSettings::default()
                 },
             ),
             (
@@ -1639,6 +1770,7 @@ mod tests {
                     direction: Forward,
                     speed: 24.,
                     once: true,
+                    ..AnimationSettings::default()
                 },
             ),
         ] {
@@ -1656,6 +1788,69 @@ mod tests {
                     .unwrap(),
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn native_parameter_animation_numbers_and_discrete_mode_round_trip() {
+        for (value, encoded) in [
+            (0.5, 1.),
+            (1., 4.),
+            (2., 16.),
+            (2.5, 20.),
+            (-3., -24.),
+            (7., 112.),
+            (100., 25_600.),
+        ] {
+            assert_eq!(encode_parameter_number(value), Some(encoded));
+            assert_eq!(decode_parameter_number(encoded), Some(value));
+        }
+        for (bytes, expected) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_rate2.gsp")
+                    .as_slice(),
+                AnimationSettings {
+                    direction: AnimationDirection::Bidirectional,
+                    speed: 2.,
+                    once: false,
+                    parameter: Some(ParameterAnimationSettings::default()),
+                },
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_discrete.gsp")
+                    .as_slice(),
+                AnimationSettings {
+                    direction: AnimationDirection::Bidirectional,
+                    speed: 2.,
+                    once: false,
+                    parameter: Some(ParameterAnimationSettings {
+                        discrete: true,
+                        step: 0.5,
+                        min: -3.,
+                        max: 7.,
+                    }),
+                },
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_animation_parameter_custom_continuous.gsp"
+                )
+                .as_slice(),
+                AnimationSettings {
+                    direction: AnimationDirection::Bidirectional,
+                    speed: 2.5,
+                    once: false,
+                    parameter: Some(ParameterAnimationSettings {
+                        discrete: false,
+                        step: 1.,
+                        min: -3.,
+                        max: 7.,
+                    }),
+                },
+            ),
+        ] {
+            let group = AnimationButtonGroup::parse(&action_group(bytes)).unwrap();
+            assert_eq!(group.settings().unwrap(), expected);
         }
     }
 

@@ -1,7 +1,8 @@
 use crate::action_records::{
-    AnimationButtonGroup, AnimationSettings, HideShowButtonGroup, LinkPageButtonGroup,
-    LinkUrlButtonGroup, MovementButtonGroup, MovementSpeed, PresentationButtonGroup,
-    PresentationMode, ScrollButtonGroup, ScrollPlacement, VisibilityAction,
+    AnimationButtonGroup, AnimationSettings, BROKEN_PAGE_LINK_TARGET, HideShowButtonGroup,
+    LinkPageButtonGroup, LinkUrlButtonGroup, MovementButtonGroup, MovementSpeed,
+    PresentationButtonGroup, PresentationMode, ScrollButtonGroup, ScrollPlacement,
+    VisibilityAction,
 };
 use crate::coordinate_measure_records::{
     self, CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
@@ -55,7 +56,7 @@ impl Kind {
                 | Kind::RatioScaledPolygon(_, _, _, _, _)
         )
     }
-    fn is_measurement(&self) -> bool {
+    pub fn is_measurement(&self) -> bool {
         matches!(
             self,
             Kind::SegmentLength(_)
@@ -85,6 +86,23 @@ impl Kind {
                 | Kind::LinkUrlButton { .. }
                 | Kind::LinkPageButton { .. }
         )
+    }
+    pub fn animation_button_source_label(&self) -> Option<&'static str> {
+        match self {
+            Kind::Segment(_, _) => Some("Animate Segment"),
+            Kind::Line(_, _) => Some("Animate Line"),
+            Kind::Ray(_, _) => Some("Animate Ray"),
+            Kind::Circle(_, _) => Some("Animate Circle"),
+            Kind::Polygon(vertices) => Some(match vertices.len() {
+                3 => "Animate Triangle",
+                4 => "Animate Quadrilateral",
+                5 => "Animate Pentagon",
+                6 => "Animate Hexagon",
+                7.. => "Animate Polygon",
+                _ => return None,
+            }),
+            _ => None,
+        }
     }
     pub fn dependencies(&self) -> Vec<usize> {
         if let Kind::HideShowButton { targets, .. } = self {
@@ -142,6 +160,8 @@ impl Kind {
             | Kind::FunctionDefinition(_)
             | Kind::Unsupported(_) => vec![],
             Kind::PointOnSegment(host, _)
+            | Kind::PointOnRay(host, _)
+            | Kind::PointOnLine(host, _)
             | Kind::ValueTable(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
@@ -396,6 +416,8 @@ impl Kind {
                 Kind::ValueTablePair(m(first), m(second), group.clone())
             }
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
+            Kind::PointOnRay(a, t) => Kind::PointOnRay(m(a), t),
+            Kind::PointOnLine(a, t) => Kind::PointOnLine(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::Locus(ref refs, samples) => {
@@ -677,6 +699,8 @@ pub enum Kind {
     ValueTable(usize, TableGroup),
     ValueTablePair(usize, usize, TableGroup),
     PointOnSegment(usize, f64),
+    PointOnRay(usize, f64),
+    PointOnLine(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
     GraphHorizontalUnit(usize, f64),
@@ -875,6 +899,29 @@ pub fn records(b: &[u8]) -> Result<Vec<Record>, String> {
     }
     Ok(out)
 }
+fn page_title_slots(
+    b: &[u8],
+    rs: &[Record],
+) -> Result<Vec<(Option<usize>, usize, Option<String>)>, String> {
+    let mut slots = Vec::new();
+    for (start, _) in rs.iter().enumerate().filter(|(_, r)| r.kind == 0x03e8) {
+        let trailer = (start + 1..rs.len())
+            .find(|&index| matches!(rs[index].kind, 0x03e8 | 0x03e9))
+            .filter(|&index| rs[index].kind == 0x03e9)
+            .ok_or("Missing page trailer")?;
+        let title = (start + 1..trailer).find(|&index| rs[index].kind == 0x044c);
+        let name = title.map(|index| {
+            let payload = &b[rs[index].data.clone()];
+            let end = payload
+                .iter()
+                .position(|byte| *byte == 0)
+                .unwrap_or(payload.len());
+            String::from_utf8_lossy(&payload[..end]).into_owned()
+        });
+        slots.push((title, trailer, name));
+    }
+    Ok(slots)
+}
 fn put_record(out: &mut Vec<u8>, kind: u32, data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
@@ -888,6 +935,8 @@ fn is_multi_page_addition_kind(kind: &Kind) -> bool {
         kind,
         Kind::Free(_)
             | Kind::PointOnSegment(_, _)
+            | Kind::PointOnRay(_, _)
+            | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
             | Kind::Segment(_, _)
@@ -916,9 +965,20 @@ fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointDistance(_, _)
             | Kind::AngleMeasurement(_, _, _)
             | Kind::PointRatio(_, _, _)
+            | Kind::HideShowButton { .. }
+            | Kind::AnimationButton { .. }
+            | Kind::MovementButton { .. }
+            | Kind::ScrollButton { .. }
             | Kind::LinkPageButton { .. }
             | Kind::LinkUrlButton { .. }
     )
+}
+fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
+    is_multi_page_addition_kind(kind)
+        && !matches!(
+            kind,
+            Kind::LinkPageButton { .. } | Kind::LinkUrlButton { .. }
+        )
 }
 fn polygon_subtype(vertex_count: usize) -> Option<u16> {
     49u16.checked_add(u16::try_from(vertex_count).ok()?)
@@ -1050,6 +1110,8 @@ fn is_point_kind(kind: &Kind) -> bool {
         kind,
         Kind::Free(_)
             | Kind::PointOnSegment(_, _)
+            | Kind::PointOnRay(_, _)
+            | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
             | Kind::GraphHorizontalUnit(_, _)
@@ -1278,6 +1340,8 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
     match kind {
         Kind::Free(_)
         | Kind::PointOnSegment(_, _)
+        | Kind::PointOnRay(_, _)
+        | Kind::PointOnLine(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
         | Kind::PathLiteralPoint(_, _)
@@ -1552,6 +1616,24 @@ fn three_point_arc_geometry(
     Some((center, radius, first, sweep))
 }
 #[derive(Clone, Debug)]
+pub struct DocumentSnapshot {
+    objects: Vec<Object>,
+    snap_points: Vec<bool>,
+    grid_dotted: Vec<bool>,
+    grid_form: Vec<GridForm>,
+    page_names: Vec<Option<String>>,
+    angle_unit_radians: bool,
+    marked_coordinate_system: Vec<Option<usize>>,
+    frame_styles: BTreeMap<usize, (GridForm, bool)>,
+    run_font_families: Vec<String>,
+    last_moved_object: Option<usize>,
+    page_count: usize,
+    active_page: usize,
+    safe_structure: bool,
+    partial_view: bool,
+    source: Option<(Vec<u8>, usize, bool)>,
+}
+#[derive(Clone, Debug)]
 pub struct Document {
     pub objects: Vec<Object>,
     pub path: Option<PathBuf>,
@@ -1563,6 +1645,7 @@ pub struct Document {
     pub snap_points: Vec<bool>,
     pub grid_dotted: Vec<bool>,
     pub grid_form: Vec<GridForm>,
+    pub page_names: Vec<Option<String>>,
     pub angle_unit_radians: bool,
     pub marked_coordinate_system: Vec<Option<usize>>,
     pub frame_styles: BTreeMap<usize, (GridForm, bool)>,
@@ -1572,28 +1655,8 @@ pub struct Document {
     last_moved_object: Option<usize>,
     safe_structure: bool,
     image_read_only: bool,
-    pub undo: Vec<(
-        Vec<Object>,
-        Vec<bool>,
-        Vec<bool>,
-        Vec<GridForm>,
-        bool,
-        Vec<Option<usize>>,
-        BTreeMap<usize, (GridForm, bool)>,
-        Vec<String>,
-        Option<usize>,
-    )>,
-    pub redo: Vec<(
-        Vec<Object>,
-        Vec<bool>,
-        Vec<bool>,
-        Vec<GridForm>,
-        bool,
-        Vec<Option<usize>>,
-        BTreeMap<usize, (GridForm, bool)>,
-        Vec<String>,
-        Option<usize>,
-    )>,
+    pub undo: Vec<DocumentSnapshot>,
+    pub redo: Vec<DocumentSnapshot>,
 }
 impl Document {
     pub fn new() -> Self {
@@ -1616,6 +1679,12 @@ impl Document {
     }
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
         let rs = records(b)?;
+        let title_slots = page_title_slots(b, &rs)?;
+        let title_offsets: BTreeSet<usize> = title_slots
+            .iter()
+            .filter_map(|(title, _, _)| title.map(|index| rs[index].start))
+            .collect();
+        let page_names: Vec<_> = title_slots.into_iter().map(|(_, _, name)| name).collect();
         let has_picture_resource = rs.iter().any(|record| record.kind == 0x0514);
         let image_file = has_picture_resource
             .then(|| ImageFile::parse(b))
@@ -1660,6 +1729,7 @@ impl Document {
             }
             if rs[i].kind != 0x7d0 {
                 if !safe_outside.contains(&rs[i].kind)
+                    && !title_offsets.contains(&rs[i].start)
                     && !(rs[i].kind == 0x0514 && !image_read_only)
                 {
                     safe = false;
@@ -1714,17 +1784,18 @@ impl Document {
                     locus_range = Some(d.to_vec());
                 }
                 match r.kind {
-                    0x07d5 if code == 0 || labeled_polygon => match LabelAux::parse(d) {
-                        Ok(value) if code == 0 => label = Some(value),
+                    0x07d5 if matches!(code, 0 | 15) || labeled_polygon => match LabelAux::parse(d)
+                    {
+                        Ok(value) if matches!(code, 0 | 15) => label = Some(value),
                         Ok(_) => {}
                         Err(_) => safe = false,
                     },
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
-                    0x07d8 if code == 0 || labeled_polygon => {
+                    0x07d8 if matches!(code, 0 | 15) || labeled_polygon => {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
-                        if labeled_polygon && !text_style {
+                        if (labeled_polygon || code == 15) && !text_style {
                             safe = false;
                         }
                     }
@@ -1829,6 +1900,7 @@ impl Document {
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
+                    && !(code == 15 && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(labeled_polygon && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
@@ -2089,7 +2161,7 @@ impl Document {
                         Kind::PlottedPoint(*source, *frame, plot.mode, plot.stored)
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _) if host == *second)) => {
+                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnSegment(host, _) | Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) | Kind::PointOnArc(host, _) | Kind::PointOnCircle(host, _, _) if host == *second)) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -2268,7 +2340,7 @@ impl Document {
                     (0, None, []) if link_page_group.is_some() => {
                         let group = link_page_group.as_ref().unwrap();
                         match group.label_utf8() {
-                            Ok(label) if group.target_page() < total_pages.max(1) => {
+                            Ok(label) => {
                                 Kind::LinkPageButton {
                                     target_page: group.target_page(),
                                     target_button_ordinal: group.target_button_ordinal(),
@@ -2362,6 +2434,20 @@ impl Document {
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnSegment(*host, f64_at(payload, 4))
+                            }
+                            (Some(Kind::Ray(_, _)), Some((payload, _)))
+                                if payload.len() == 12
+                                    && payload[..4] == [15, 0, 13, 0]
+                                    && f64_at(payload, 4).is_finite() =>
+                            {
+                                Kind::PointOnRay(*host, f64_at(payload, 4))
+                            }
+                            (Some(Kind::Line(_, _)), Some((payload, _)))
+                                if payload.len() == 12
+                                    && payload[..4] == [15, 0, 12, 0]
+                                    && f64_at(payload, 4).is_finite() =>
+                            {
+                                Kind::PointOnLine(*host, f64_at(payload, 4))
                             }
                             (
                                 Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _) | Kind::RatioScaledCircle(_, _, _, _, _)),
@@ -2677,7 +2763,9 @@ impl Document {
                     _ => Kind::Unsupported(code),
                 }
             };
-            if matches!(kind, Kind::Unsupported(_)) {
+            if matches!(kind, Kind::Unsupported(_))
+                || matches!(kind, Kind::LinkPageButton { target_page, .. } if target_page >= total_pages.max(1))
+            {
                 safe = false;
             }
             let function_name = if matches!(kind, Kind::FunctionDefinition(_)) {
@@ -2781,13 +2869,30 @@ impl Document {
                 grid_dotted[page] = dotted;
             }
         }
+        let active_page = rs
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .and_then(|record| {
+                let count = u16::from_le_bytes(
+                    b[record.data.start + 2..record.data.start + 4]
+                        .try_into()
+                        .ok()?,
+                ) as usize;
+                let index = u16::from_le_bytes(
+                    b[record.data.start + 16..record.data.start + 18]
+                        .try_into()
+                        .ok()?,
+                ) as usize;
+                (count == page_count && index < count).then_some(index)
+            })
+            .unwrap_or(0);
         Ok(Self {
             objects,
             path,
             selected: BTreeSet::new(),
             dirty: false,
             partial_view: !safe,
-            active_page: 0,
+            active_page,
             page_count: page_count.max(1),
             snap_points: if snap_points.is_empty() {
                 vec![false]
@@ -2804,6 +2909,7 @@ impl Document {
             } else {
                 grid_form
             },
+            page_names,
             angle_unit_radians,
             marked_coordinate_system,
             frame_styles,
@@ -2817,74 +2923,520 @@ impl Document {
             redo: Vec::new(),
         })
     }
+    fn snapshot(&self) -> DocumentSnapshot {
+        DocumentSnapshot {
+            objects: self.objects.clone(),
+            snap_points: self.snap_points.clone(),
+            grid_dotted: self.grid_dotted.clone(),
+            grid_form: self.grid_form.clone(),
+            page_names: self.page_names.clone(),
+            angle_unit_radians: self.angle_unit_radians,
+            marked_coordinate_system: self.marked_coordinate_system.clone(),
+            frame_styles: self.frame_styles.clone(),
+            run_font_families: self.run_font_families.clone(),
+            last_moved_object: self.last_moved_object,
+            page_count: self.page_count,
+            active_page: self.active_page,
+            safe_structure: self.safe_structure,
+            partial_view: self.partial_view,
+            source: None,
+        }
+    }
+    fn restore_snapshot(&mut self, snapshot: DocumentSnapshot) -> DocumentSnapshot {
+        let mut previous = self.snapshot();
+        let page_count_changed = self.page_count != snapshot.page_count;
+        self.objects = snapshot.objects;
+        self.snap_points = snapshot.snap_points;
+        self.grid_dotted = snapshot.grid_dotted;
+        self.grid_form = snapshot.grid_form;
+        self.page_names = snapshot.page_names;
+        self.angle_unit_radians = snapshot.angle_unit_radians;
+        self.marked_coordinate_system = snapshot.marked_coordinate_system;
+        self.frame_styles = snapshot.frame_styles;
+        self.run_font_families = snapshot.run_font_families;
+        self.last_moved_object = snapshot.last_moved_object;
+        self.page_count = snapshot.page_count;
+        self.active_page = snapshot.active_page;
+        self.safe_structure = snapshot.safe_structure;
+        self.partial_view = snapshot.partial_view;
+        if let Some((source, count, read_only)) = snapshot.source {
+            previous.source = Some((
+                std::mem::replace(&mut self.original, source),
+                std::mem::replace(&mut self.source_count, count),
+                std::mem::replace(&mut self.image_read_only, read_only),
+            ));
+        }
+        if page_count_changed {
+            self.selected.clear();
+        }
+        self.dirty = true;
+        previous
+    }
     pub fn checkpoint(&mut self) {
-        self.undo.push((
-            self.objects.clone(),
-            self.snap_points.clone(),
-            self.grid_dotted.clone(),
-            self.grid_form.clone(),
-            self.angle_unit_radians,
-            self.marked_coordinate_system.clone(),
-            self.frame_styles.clone(),
-            self.run_font_families.clone(),
-            self.last_moved_object,
+        self.undo.push(self.snapshot());
+        self.redo.clear();
+        self.dirty = true;
+    }
+    fn checkpoint_structure(&mut self) {
+        let mut snapshot = self.snapshot();
+        snapshot.source = Some((
+            self.original.clone(),
+            self.source_count,
+            self.image_read_only,
         ));
+        self.undo.push(snapshot);
         self.redo.clear();
         self.dirty = true;
     }
     pub fn undo(&mut self) {
-        if let Some((
-            objects,
-            snap_points,
-            grid_dotted,
-            grid_form,
-            radians,
-            marked,
-            styles,
-            families,
-            last_moved_object,
-        )) = self.undo.pop()
-        {
-            self.redo.push((
-                std::mem::replace(&mut self.objects, objects),
-                std::mem::replace(&mut self.snap_points, snap_points),
-                std::mem::replace(&mut self.grid_dotted, grid_dotted),
-                std::mem::replace(&mut self.grid_form, grid_form),
-                std::mem::replace(&mut self.angle_unit_radians, radians),
-                std::mem::replace(&mut self.marked_coordinate_system, marked),
-                std::mem::replace(&mut self.frame_styles, styles),
-                std::mem::replace(&mut self.run_font_families, families),
-                std::mem::replace(&mut self.last_moved_object, last_moved_object),
-            ));
-            self.dirty = true;
+        if let Some(snapshot) = self.undo.pop() {
+            let previous = self.restore_snapshot(snapshot);
+            self.redo.push(previous);
         }
     }
     pub fn redo(&mut self) {
-        if let Some((
-            objects,
-            snap_points,
-            grid_dotted,
-            grid_form,
-            radians,
-            marked,
-            styles,
-            families,
-            last_moved_object,
-        )) = self.redo.pop()
-        {
-            self.undo.push((
-                std::mem::replace(&mut self.objects, objects),
-                std::mem::replace(&mut self.snap_points, snap_points),
-                std::mem::replace(&mut self.grid_dotted, grid_dotted),
-                std::mem::replace(&mut self.grid_form, grid_form),
-                std::mem::replace(&mut self.angle_unit_radians, radians),
-                std::mem::replace(&mut self.marked_coordinate_system, marked),
-                std::mem::replace(&mut self.frame_styles, styles),
-                std::mem::replace(&mut self.run_font_families, families),
-                std::mem::replace(&mut self.last_moved_object, last_moved_object),
-            ));
-            self.dirty = true;
+        if let Some(snapshot) = self.redo.pop() {
+            let previous = self.restore_snapshot(snapshot);
+            self.undo.push(previous);
         }
+    }
+    pub fn add_blank_page(&mut self) -> Result<usize, String> {
+        if self.page_count >= 32768 {
+            return Err("Too many pages for a Sketchpad document".into());
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.page_count += 1;
+        candidate.active_page = candidate.page_count - 1;
+        candidate.snap_points.push(false);
+        candidate.grid_dotted.push(false);
+        candidate.grid_form.push(GridForm::Square);
+        candidate.page_names.push(None);
+        candidate.marked_coordinate_system.push(None);
+        candidate.safe_structure = false;
+        candidate.partial_view = true;
+        candidate.selected.clear();
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        let mut survivors: Vec<_> = candidate
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect();
+        survivors
+            .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
+        candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
+        *self = candidate;
+        Ok(self.page_count)
+    }
+    pub fn copy_page(&mut self, page: usize) -> Result<usize, String> {
+        if page >= self.page_count {
+            return Err("Page does not exist".into());
+        }
+        if self.page_count >= 32768 {
+            return Err("Too many pages for a Sketchpad document".into());
+        }
+        let bytes = self.encode()?;
+        let parsed = Self::from_bytes(&bytes, None)?;
+        let rs = records(&bytes)?;
+        if rs.iter().any(|record| record.kind == 0x0514) {
+            return Err("Cannot copy a page from a document with pictures".into());
+        }
+        let metadata: Vec<_> = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .collect();
+        let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x03e8).collect();
+        let end = rs
+            .last()
+            .filter(|record| record.kind == 0x0385)
+            .ok_or("Missing document end record")?;
+        if metadata.len() != self.page_count
+            || preambles.len() != self.page_count
+            || (0..self.page_count).any(|index| {
+                metadata[index].start >= preambles[index].start
+                    || index > 0 && metadata[index].start <= preambles[index - 1].start
+            })
+        {
+            return Err("Document page blocks are inconsistent".into());
+        }
+        let last_trailer = rs
+            .iter()
+            .rev()
+            .find(|record| record.kind == 0x03e9)
+            .ok_or("Missing final page trailer")?;
+        if rs.iter().any(|record| {
+            record.kind == 0x044c && record.start > last_trailer.start && record.start < end.start
+        }) {
+            return Err("Custom tool records refer to document pages".into());
+        }
+        let start = metadata[page].start;
+        let finish = metadata
+            .get(page + 1)
+            .map_or(end.start, |record| record.start);
+        let mut expanded = bytes[..end.start].to_vec();
+        expanded.extend_from_slice(&bytes[start..finish]);
+        expanded.extend_from_slice(&bytes[end.start..]);
+        let new_page = self.page_count;
+        let new_count = new_page + 1;
+        let header = rs
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing document page header")?;
+        expanded[header.data.start + 2..header.data.start + 4]
+            .copy_from_slice(&(new_count as u16).to_le_bytes());
+        expanded[header.data.start + 16..header.data.start + 18]
+            .copy_from_slice(&(new_page as u16).to_le_bytes());
+        expanded[header.data.start + 24..header.data.start + 28]
+            .copy_from_slice(&((new_count + 1) as u32).to_le_bytes());
+        let mut result = Self::from_bytes(&expanded, self.path.clone())?;
+        let source_objects: Vec<_> = parsed
+            .objects
+            .iter()
+            .filter(|object| object.page == page)
+            .collect();
+        if result.page_count != new_count
+            || result.active_page != new_page
+            || result.page_names[..new_page] != parsed.page_names
+            || result.page_names[new_page] != parsed.page_names[page]
+            || result.objects.len() != parsed.objects.len() + source_objects.len()
+            || result.objects[..parsed.objects.len()] != parsed.objects
+        {
+            return Err("Copied page changes the existing document".into());
+        }
+        let mut ids = vec![0; parsed.objects.len() + 1];
+        for (index, object) in source_objects.iter().enumerate() {
+            ids[object.id] = parsed.objects.len() + index + 1;
+        }
+        for (index, object) in source_objects.iter().enumerate() {
+            let expected = object.kind.remap_checked(&ids)?;
+            let copied = &result.objects[parsed.objects.len() + index];
+            if copied.page != new_page
+                || copied.kind != expected
+                || copied.visible != object.visible
+                || copied.tracing != object.tracing
+                || copied.deleted != object.deleted
+                || copied.label != object.label
+                || copied.visual_style != object.visual_style
+                || copied.text_style_override != object.text_style_override
+                || copied.rich_text_override != object.rich_text_override
+                || copied.function_anchor != object.function_anchor
+                || copied.function_name != object.function_name
+            {
+                return Err("Copied page changes a source object".into());
+            }
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint_structure();
+        result.undo = candidate.undo;
+        result.dirty = true;
+        *self = result;
+        Ok(new_count)
+    }
+    pub fn remove_page(&mut self, page: usize) -> Result<(), String> {
+        if self.page_count <= 1 || page >= self.page_count {
+            return Err("Choose a page in a document with at least two pages".into());
+        }
+        let mut bytes = self.encode()?;
+        let parsed = Self::from_bytes(&bytes, None)?;
+        let rs = records(&bytes)?;
+        if rs.iter().any(|record| record.kind == 0x0514) {
+            return Err("Cannot remove a page from a document with pictures".into());
+        }
+        let metadata: Vec<_> = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .collect();
+        let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x03e8).collect();
+        let end = rs
+            .last()
+            .filter(|record| record.kind == 0x0385)
+            .ok_or("Missing document end record")?;
+        if metadata.len() != self.page_count
+            || preambles.len() != self.page_count
+            || (0..self.page_count).any(|index| {
+                metadata[index].start >= preambles[index].start
+                    || index > 0 && metadata[index].start <= preambles[index - 1].start
+            })
+        {
+            return Err("Document page blocks are inconsistent".into());
+        }
+        let last_trailer = rs
+            .iter()
+            .rev()
+            .find(|record| record.kind == 0x03e9)
+            .ok_or("Missing final page trailer")?;
+        if rs.iter().any(|record| {
+            record.kind == 0x044c && record.start > last_trailer.start && record.start < end.start
+        }) {
+            return Err("Custom tool records refer to document pages".into());
+        }
+        let mut broken_page_links = 0;
+        for object in &parsed.objects {
+            if object.page == page {
+                continue;
+            }
+            if let Kind::LinkPageButton { target_page, .. } = &object.kind {
+                if *target_page < self.page_count && *target_page >= page {
+                    let header = object.header_offset.ok_or("Missing Page Link header")?;
+                    let group = rs
+                        .iter()
+                        .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                        .ok_or("Missing Page Link group")?;
+                    let action = rs[group + 1..]
+                        .iter()
+                        .take_while(|record| record.kind != 0x07d7)
+                        .find(|record| record.kind == 0x0906 && record.data.len() == 24)
+                        .ok_or("Missing Page Link action")?;
+                    if u16::from_le_bytes(
+                        bytes[action.data.start + 14..action.data.start + 16]
+                            .try_into()
+                            .unwrap(),
+                    ) as usize
+                        != *target_page
+                    {
+                        return Err("Page Link target differs from its record".into());
+                    }
+                    // Native Sketchpad keeps a Page Link to a deleted page visible,
+                    // but invalidates its destination. Its saved target field is
+                    // 0xbd66 in both the two- and three-page cases observed here.
+                    let updated = if *target_page == page {
+                        broken_page_links += 1;
+                        BROKEN_PAGE_LINK_TARGET as u16
+                    } else {
+                        (*target_page - 1) as u16
+                    };
+                    bytes[action.data.start + 14..action.data.start + 16]
+                        .copy_from_slice(&updated.to_le_bytes());
+                }
+            }
+        }
+        let cut_start = metadata[page].start;
+        let cut_end = metadata
+            .get(page + 1)
+            .map_or(end.start, |record| record.start);
+        let mut contracted = bytes[..cut_start].to_vec();
+        contracted.extend_from_slice(&bytes[cut_end..]);
+        let new_count = self.page_count - 1;
+        let new_active = if self.active_page > page {
+            self.active_page - 1
+        } else {
+            self.active_page.min(new_count - 1)
+        };
+        let contracted_records = records(&contracted)?;
+        let header = contracted_records
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing document page header")?;
+        contracted[header.data.start + 2..header.data.start + 4]
+            .copy_from_slice(&(new_count as u16).to_le_bytes());
+        contracted[header.data.start + 16..header.data.start + 18]
+            .copy_from_slice(&(new_active as u16).to_le_bytes());
+        contracted[header.data.start + 24..header.data.start + 28]
+            .copy_from_slice(&((new_count + 1) as u32).to_le_bytes());
+        let page_marker = (new_count * 2 - 1) as u16;
+        for record in contracted_records
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+        {
+            contracted[record.data.start + 6..record.data.start + 8]
+                .copy_from_slice(&page_marker.to_le_bytes());
+            contracted[record.data.start + 8..record.data.start + 10]
+                .copy_from_slice(&page_marker.to_le_bytes());
+        }
+        let mut result = Self::from_bytes(&contracted, self.path.clone())?;
+        if result.page_count != new_count
+            || result.objects.len()
+                != parsed
+                    .objects
+                    .iter()
+                    .filter(|object| object.page != page)
+                    .count()
+            || new_count == 1
+                && result.partial_view
+                && (broken_page_links == 0
+                    || result
+                        .objects
+                        .iter()
+                        .any(|object| matches!(object.kind, Kind::Unsupported(_))))
+            || parsed
+                .objects
+                .iter()
+                .filter(|object| object.page != page)
+                .zip(&result.objects)
+                .any(|(before, after)| {
+                    matches!(before.kind, Kind::LinkPageButton { target_page, .. } if target_page == page)
+                        && !matches!(after.kind, Kind::LinkPageButton { target_page: BROKEN_PAGE_LINK_TARGET, .. })
+                })
+        {
+            return Err("Removing the page would leave an unsupported document".into());
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint_structure();
+        result.undo = candidate.undo;
+        result.dirty = true;
+        *self = result;
+        Ok(())
+    }
+    pub fn move_page(&mut self, from: usize, to: usize) -> Result<(), String> {
+        if from >= self.page_count || to >= self.page_count {
+            return Err("Choose two pages in this document".into());
+        }
+        if from == to {
+            return Ok(());
+        }
+        let mut bytes = self.encode()?;
+        let parsed = Self::from_bytes(&bytes, None)?;
+        let rs = records(&bytes)?;
+        if rs.iter().any(|record| record.kind == 0x0514) {
+            return Err("Cannot reorder pages in a document with pictures".into());
+        }
+        let metadata: Vec<_> = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .collect();
+        let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x03e8).collect();
+        let end = rs
+            .last()
+            .filter(|record| record.kind == 0x0385)
+            .ok_or("Missing document end record")?;
+        if metadata.len() != self.page_count
+            || preambles.len() != self.page_count
+            || (0..self.page_count).any(|index| {
+                metadata[index].start >= preambles[index].start
+                    || index > 0 && metadata[index].start <= preambles[index - 1].start
+            })
+        {
+            return Err("Document page blocks are inconsistent".into());
+        }
+        let last_trailer = rs
+            .iter()
+            .rev()
+            .find(|record| record.kind == 0x03e9)
+            .ok_or("Missing final page trailer")?;
+        if rs.iter().any(|record| {
+            record.kind == 0x044c && record.start > last_trailer.start && record.start < end.start
+        }) {
+            return Err("Custom tool records refer to document pages".into());
+        }
+        let mut order: Vec<usize> = (0..self.page_count).collect();
+        let moved = order.remove(from);
+        order.insert(to, moved);
+        let mut new_page = vec![0; self.page_count];
+        for (position, &old_page) in order.iter().enumerate() {
+            new_page[old_page] = position;
+        }
+        for object in &parsed.objects {
+            if let Kind::LinkPageButton { target_page, .. } = &object.kind {
+                if *target_page >= self.page_count {
+                    continue;
+                }
+                let header = object.header_offset.ok_or("Missing Page Link header")?;
+                let group = rs
+                    .iter()
+                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing Page Link group")?;
+                let action = rs[group + 1..]
+                    .iter()
+                    .take_while(|record| record.kind != 0x07d7)
+                    .find(|record| record.kind == 0x0906 && record.data.len() == 24)
+                    .ok_or("Missing Page Link action")?;
+                if u16::from_le_bytes(
+                    bytes[action.data.start + 14..action.data.start + 16]
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+                    != *target_page
+                {
+                    return Err("Page Link target differs from its record".into());
+                }
+                bytes[action.data.start + 14..action.data.start + 16]
+                    .copy_from_slice(&(new_page[*target_page] as u16).to_le_bytes());
+            }
+        }
+        let mut reordered = bytes[..metadata[0].start].to_vec();
+        for &old_page in &order {
+            let start = metadata[old_page].start;
+            let finish = metadata
+                .get(old_page + 1)
+                .map_or(end.start, |record| record.start);
+            reordered.extend_from_slice(&bytes[start..finish]);
+        }
+        reordered.extend_from_slice(&bytes[end.start..]);
+        let reordered_records = records(&reordered)?;
+        let header = reordered_records
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing document page header")?;
+        reordered[header.data.start + 16..header.data.start + 18]
+            .copy_from_slice(&(new_page[self.active_page] as u16).to_le_bytes());
+        let mut result = Self::from_bytes(&reordered, self.path.clone())?;
+        if result.page_count != self.page_count
+            || result.objects.len() != parsed.objects.len()
+            || result.page_names
+                != order
+                    .iter()
+                    .map(|&old| parsed.page_names[old].clone())
+                    .collect::<Vec<_>>()
+        {
+            return Err("Reordered pages do not preserve the document".into());
+        }
+        let mut ids = vec![0; parsed.objects.len() + 1];
+        let mut expected = Vec::with_capacity(parsed.objects.len());
+        for (position, &old_page) in order.iter().enumerate() {
+            for object in parsed
+                .objects
+                .iter()
+                .filter(|object| object.page == old_page)
+            {
+                ids[object.id] = expected.len() + 1;
+                expected.push((position, object));
+            }
+        }
+        for (index, (page, object)) in expected.into_iter().enumerate() {
+            let mut kind = object.kind.remap_checked(&ids)?;
+            if let Kind::LinkPageButton { target_page, .. } = &mut kind {
+                if *target_page < new_page.len() {
+                    *target_page = new_page[*target_page];
+                }
+            }
+            if result.objects[index].page != page || result.objects[index].kind != kind {
+                return Err("Reordered pages change a surviving object".into());
+            }
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint_structure();
+        result.undo = candidate.undo;
+        result.dirty = true;
+        *self = result;
+        Ok(())
+    }
+    pub fn set_page_name(&mut self, page: usize, name: &str) -> Result<(), String> {
+        if page >= self.page_count {
+            return Err("Page does not exist".into());
+        }
+        if name.as_bytes().contains(&0) || name.len() > 255 {
+            return Err("Page name must be at most 255 bytes and contain no NUL".into());
+        }
+        let desired = (!name.is_empty()).then(|| name.to_owned());
+        if self.page_names[page] == desired {
+            return Ok(());
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.page_names[page] = desired;
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        let mut survivors: Vec<_> = candidate
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect();
+        survivors
+            .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
+        candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
+        *self = candidate;
+        Ok(())
     }
     pub fn add(&mut self, kind: Kind) -> usize {
         self.checkpoint();
@@ -3483,6 +4035,18 @@ impl Document {
         self.set_parameter_value(id, value as f64)
     }
     pub fn set_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
+        self.update_parameter_value(id, value, true)
+    }
+    pub fn animate_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
+        let displayed = ((value * 100.).round() / 100.).clamp(-99.99, 99.99);
+        self.update_parameter_value(id, displayed, false)
+    }
+    fn update_parameter_value(
+        &mut self,
+        id: usize,
+        value: f64,
+        checkpoint: bool,
+    ) -> Result<(), String> {
         if self.partial_view || self.page_count != 1 || id == 0 {
             return Err("Cannot edit a parameter in this sketch".into());
         }
@@ -3516,7 +4080,9 @@ impl Document {
                 }
             }
         }
-        self.checkpoint();
+        if checkpoint {
+            self.checkpoint();
+        }
         self.objects[id - 1].kind = Kind::Parameter(group);
         for (index, source, table) in single_tables {
             self.objects[index].kind = Kind::ValueTable(source, table);
@@ -4952,7 +5518,7 @@ impl Document {
             ValueEquationKind::PointValue => {
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
-                    Kind::Segment(_, _) => {
+                    Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Line(_, _) => {
                         let (a, b, _) = self.line_points(second)?;
                         value_equation_records::segment_point_value(point, screen(a), screen(b))
                     }
@@ -4964,6 +5530,12 @@ impl Document {
                         (host == second)
                             .then(|| value_equation_records::circle_point_value(x, y))
                             .flatten()
+                    }
+                    Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
+                        let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind else {
+                            return None;
+                        };
+                        (host == second && t.is_finite()).then_some(EquationValue::PointValue(t))
                     }
                     _ => None,
                 }
@@ -5202,7 +5774,7 @@ impl Document {
         if clipboard.is_empty() {
             return Err("Clipboard is empty".into());
         }
-        if !self.safe_structure || self.page_count != 1 {
+        if self.page_count == 1 && !self.safe_structure {
             return Err("Pasting objects in this document cannot be saved safely".into());
         }
         let mut candidate = self.clone();
@@ -5308,7 +5880,18 @@ impl Document {
         candidate.selected.extend(created.iter().copied());
         let encoded = candidate.encode()?;
         let reparsed = Self::from_bytes(&encoded, None)?;
-        candidate.validate_reparsed(&reparsed)?;
+        if candidate.has_pending_multi_page_additions() {
+            let mut survivors: Vec<_> = candidate
+                .objects
+                .iter()
+                .filter(|object| !object.deleted)
+                .collect();
+            survivors
+                .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
+            candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
+        } else {
+            candidate.validate_reparsed(&reparsed)?;
+        }
         *self = candidate;
         Ok(created)
     }
@@ -5322,7 +5905,7 @@ impl Document {
         if removed.is_empty() {
             return Ok(vec![]);
         }
-        if !self.safe_structure || self.page_count != 1 {
+        if self.page_count == 1 && !self.safe_structure {
             return Err("Deleting objects in this document cannot be saved safely".into());
         }
         if removed
@@ -5366,7 +5949,18 @@ impl Document {
         candidate.selected.clear();
         let encoded = candidate.encode()?;
         let reparsed = Self::from_bytes(&encoded, None)?;
-        candidate.validate_reparsed(&reparsed)?;
+        if candidate.page_count > 1 {
+            let mut survivors: Vec<_> = candidate
+                .objects
+                .iter()
+                .filter(|object| !object.deleted)
+                .collect();
+            survivors
+                .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
+            candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
+        } else {
+            candidate.validate_reparsed(&reparsed)?;
+        }
         *self = candidate;
         Ok(removed.into_iter().collect())
     }
@@ -5498,8 +6092,18 @@ impl Document {
     pub fn add_hide_show_button(&mut self, target: usize) -> Result<usize, String> {
         self.add_hide_show_button_for_targets(&[target])
     }
-    pub fn add_hide_show_button_for_targets(&mut self, targets: &[usize]) -> Result<usize, String> {
-        if targets.is_empty() || self.partial_view || self.page_count != 1 {
+    pub fn can_add_hide_show_button_for_targets(&self, targets: &[usize]) -> Result<(), String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
+        if targets.is_empty() || !multi_page_append && (self.partial_view || self.page_count != 1) {
             return Err("A Hide/Show button needs visible supported objects on this page".into());
         }
         for (index, &target) in targets.iter().enumerate() {
@@ -5527,6 +6131,10 @@ impl Document {
                 );
             }
         }
+        Ok(())
+    }
+    pub fn add_hide_show_button_for_targets(&mut self, targets: &[usize]) -> Result<usize, String> {
+        self.can_add_hide_show_button_for_targets(targets)?;
         let row = self
             .objects
             .iter()
@@ -5571,7 +6179,47 @@ impl Document {
         speed: MovementSpeed,
         follow: bool,
     ) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || source == destination {
+        self.can_add_movement_button(source, destination)?;
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
+                    )
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::MovementButton {
+            source,
+            destination,
+            speed,
+            follow,
+            label: "Move to Point".into(),
+            anchor: (10, y),
+        }))
+    }
+    pub fn can_add_movement_button(&self, source: usize, destination: usize) -> Result<(), String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
+        if !multi_page_append && (self.partial_view || self.page_count != 1)
+            || source == destination
+        {
             return Err("A Movement button needs two distinct points on this page".into());
         }
         let moving = self
@@ -5599,52 +6247,14 @@ impl Document {
                 "A Movement button needs a free source point and a destination point".into(),
             );
         }
-        let row = self
-            .objects
-            .iter()
-            .filter(|object| {
-                object.page == self.active_page
-                    && !object.deleted
-                    && matches!(
-                        object.kind,
-                        Kind::HideShowButton { .. }
-                            | Kind::AnimationButton { .. }
-                            | Kind::MovementButton { .. }
-                            | Kind::ScrollButton { .. }
-                            | Kind::PresentationButton { .. }
-                    )
-            })
-            .count();
-        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
-        Ok(self.add(Kind::MovementButton {
-            source,
-            destination,
-            speed,
-            follow,
-            label: "Move to Point".into(),
-            anchor: (10, y),
-        }))
+        Ok(())
     }
     pub fn add_scroll_button(
         &mut self,
         target: usize,
         placement: ScrollPlacement,
     ) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 {
-            return Err("A Scroll button needs a point on this page".into());
-        }
-        let object = self
-            .objects
-            .get(target.checked_sub(1).ok_or("Invalid Scroll target")?)
-            .ok_or("Invalid Scroll target")?;
-        if object.deleted
-            || !object.visible
-            || object.page != self.active_page
-            || !is_point_kind(&object.kind)
-            || self.position(target).is_none()
-        {
-            return Err("A Scroll button needs a visible point on this page".into());
-        }
+        self.can_add_scroll_button(target)?;
         let row = self
             .objects
             .iter()
@@ -5668,6 +6278,34 @@ impl Document {
             label: "Scroll".into(),
             anchor: (10, y),
         }))
+    }
+    pub fn can_add_scroll_button(&self, target: usize) -> Result<(), String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
+        if !multi_page_append && (self.partial_view || self.page_count != 1) {
+            return Err("A Scroll button needs a point on this page".into());
+        }
+        let object = self
+            .objects
+            .get(target.checked_sub(1).ok_or("Invalid Scroll target")?)
+            .ok_or("Invalid Scroll target")?;
+        if object.deleted
+            || !object.visible
+            || object.page != self.active_page
+            || !is_point_kind(&object.kind)
+            || self.position(target).is_none()
+        {
+            return Err("A Scroll button needs a visible point on this page".into());
+        }
+        Ok(())
     }
     pub fn add_presentation_button_for_targets(
         &mut self,
@@ -5816,13 +6454,22 @@ impl Document {
             Kind::Free(_) | Kind::PointOnCircle(_, _, _) => {
                 crate::action_records::AnimationDirection::Forward
             }
-            Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _) => {
-                crate::action_records::AnimationDirection::Bidirectional
-            }
+            Kind::Parameter(_)
+            | Kind::PointOnSegment(_, _)
+            | Kind::PointOnRay(_, _)
+            | Kind::PointOnLine(_, _)
+            | Kind::PointOnArc(_, _) => crate::action_records::AnimationDirection::Bidirectional,
             _ => return None,
         };
         Some(AnimationSettings {
             direction,
+            speed: if matches!(object.kind, Kind::Parameter(_)) {
+                1.
+            } else {
+                24.
+            },
+            parameter: matches!(object.kind, Kind::Parameter(_))
+                .then_some(crate::action_records::ParameterAnimationSettings::default()),
             ..AnimationSettings::default()
         })
     }
@@ -5837,39 +6484,20 @@ impl Document {
         &mut self,
         targets_and_settings: &[(usize, AnimationSettings)],
     ) -> Result<usize, String> {
-        if targets_and_settings.is_empty() || self.partial_view || self.page_count != 1 {
-            return Err("An Animation button needs animatable points on this page".into());
-        }
-        for (index, &(target, settings)) in targets_and_settings.iter().enumerate() {
-            settings.validate()?;
-            let object = self
-                .objects
-                .get(target.checked_sub(1).ok_or("Invalid button target")?)
-                .ok_or("Invalid button target")?;
-            if targets_and_settings[..index]
-                .iter()
-                .any(|(id, _)| *id == target)
-                || object.deleted
-                || !object.visible
-                || object.page != self.active_page
-                || !matches!(
-                    object.kind,
-                    Kind::Free(_)
-                        | Kind::PointOnSegment(_, _)
-                        | Kind::PointOnCircle(_, _, _)
-                        | Kind::PointOnArc(_, _)
-                )
-            {
-                return Err(
-                    "An Animation button needs distinct animatable points on this page".into(),
-                );
-            }
-            if matches!(object.kind, Kind::Free(_))
-                && settings.direction != crate::action_records::AnimationDirection::Forward
-            {
-                return Err("A free-point Animation button has no direction setting".into());
-            }
-        }
+        self.add_animation_button_for_targets_with_settings_and_label(targets_and_settings, None)
+    }
+    pub fn add_animation_button_for_targets_with_settings_and_label(
+        &mut self,
+        targets_and_settings: &[(usize, AnimationSettings)],
+        label: Option<&str>,
+    ) -> Result<usize, String> {
+        self.can_add_animation_button_for_targets_with_settings_and_label(
+            targets_and_settings,
+            label,
+        )?;
+        let has_parameter = targets_and_settings
+            .iter()
+            .any(|(target, _)| matches!(self.objects[target - 1].kind, Kind::Parameter(_)));
         let row = self
             .objects
             .iter()
@@ -5886,19 +6514,102 @@ impl Document {
                     )
             })
             .count();
-        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        let mut y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        for object in &self.objects {
+            if object.page == self.active_page && !object.deleted {
+                if let Kind::Parameter(group) = &object.kind {
+                    let (_, (_, bottom)) = group.bbox();
+                    y = y.max(bottom.saturating_add(3));
+                }
+            }
+        }
+        if has_parameter {
+            y = y.max(47);
+        }
         Ok(self.add(Kind::AnimationButton {
             targets: targets_and_settings
                 .iter()
                 .map(|(target, _)| *target)
                 .collect(),
-            label: "Animate Point".into(),
+            label: label.map(str::to_owned).unwrap_or_else(|| {
+                if has_parameter {
+                    "Animate Parameter".into()
+                } else {
+                    "Animate Point".into()
+                }
+            }),
             anchor: (10, y),
             settings: targets_and_settings
                 .iter()
                 .map(|(_, settings)| *settings)
                 .collect(),
         }))
+    }
+    pub fn can_add_animation_button_for_targets_with_settings_and_label(
+        &self,
+        targets_and_settings: &[(usize, AnimationSettings)],
+        label: Option<&str>,
+    ) -> Result<(), String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
+        if targets_and_settings.is_empty()
+            || !multi_page_append && (self.partial_view || self.page_count != 1)
+        {
+            return Err("An Animation button needs animatable objects on this page".into());
+        }
+        if label.is_some_and(|value| value.is_empty() || value.len() > 64 || !value.is_ascii()) {
+            return Err("Animation button label must contain 1–64 ASCII characters".into());
+        }
+        for (index, &(target, settings)) in targets_and_settings.iter().enumerate() {
+            settings.validate()?;
+            let object = self
+                .objects
+                .get(target.checked_sub(1).ok_or("Invalid button target")?)
+                .ok_or("Invalid button target")?;
+            if targets_and_settings[..index]
+                .iter()
+                .any(|(id, _)| *id == target)
+                || object.deleted
+                || object.page != self.active_page
+                || !matches!(
+                    object.kind,
+                    Kind::Free(_)
+                        | Kind::Parameter(_)
+                        | Kind::PointOnSegment(_, _)
+                        | Kind::PointOnRay(_, _)
+                        | Kind::PointOnLine(_, _)
+                        | Kind::PointOnCircle(_, _, _)
+                        | Kind::PointOnArc(_, _)
+                )
+            {
+                return Err(
+                    "An Animation button needs distinct animatable objects on this page".into(),
+                );
+            }
+            if matches!(object.kind, Kind::Free(_))
+                && settings.direction != crate::action_records::AnimationDirection::Forward
+            {
+                return Err("A free-point Animation button has no direction setting".into());
+            }
+            if matches!(object.kind, Kind::Parameter(_)) != settings.parameter.is_some() {
+                return Err("Animation settings do not match the target kind".into());
+            }
+        }
+        let has_parameter = targets_and_settings
+            .iter()
+            .any(|(target, _)| matches!(self.objects[target - 1].kind, Kind::Parameter(_)));
+        if has_parameter && targets_and_settings.len() != 1 {
+            return Err("Multi-target parameter Animation buttons are not supported".into());
+        }
+        Ok(())
     }
     pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
         let button = self
@@ -6069,10 +6780,10 @@ impl Document {
                         y: point.y,
                     })
                 }
-                Kind::PointOnSegment(host, t) => {
-                    let (a, b, LineMode::Segment) = d.line_points(*host)? else {
-                        return None;
-                    };
+                Kind::PointOnSegment(host, t)
+                | Kind::PointOnRay(host, t)
+                | Kind::PointOnLine(host, t) => {
+                    let (a, b, _) = d.line_points(*host)?;
                     Some(Point {
                         x: a.x + (b.x - a.x) * t,
                         y: a.y + (b.y - a.y) * t,
@@ -7209,9 +7920,11 @@ impl Document {
                 }
                 Kind::DistanceVerticalUnit(x_axis, step, true)
             }
-            Some(Kind::PointOnSegment(host, _)) => {
+            Some(Kind::PointOnSegment(host, _))
+            | Some(Kind::PointOnRay(host, _))
+            | Some(Kind::PointOnLine(host, _)) => {
                 let host = *host;
-                let Some((a, b, LineMode::Segment)) = self.line_points(host) else {
+                let Some((a, b, mode)) = self.line_points(host) else {
                     return false;
                 };
                 let dx = b.x - a.x;
@@ -7221,7 +7934,11 @@ impl Document {
                     return false;
                 }
                 let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
-                Kind::PointOnSegment(host, t.clamp(0., 1.))
+                match mode {
+                    LineMode::Segment => Kind::PointOnSegment(host, t.clamp(0., 1.)),
+                    LineMode::Ray => Kind::PointOnRay(host, t.max(0.)),
+                    LineMode::Line => Kind::PointOnLine(host, t),
+                }
             }
             Some(Kind::PointOnCircle(host, _, _)) => {
                 let host = *host;
@@ -7252,8 +7969,8 @@ impl Document {
     }
     pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
         match self.objects.get(host.checked_sub(1)?)?.kind {
-            Kind::Segment(_, _) => {
-                let (a, b, _) = self.line_points(host)?;
+            Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Line(_, _) => {
+                let (a, b, mode) = self.line_points(host)?;
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
                 let length_sq = dx * dx + dy * dy;
@@ -7261,7 +7978,11 @@ impl Document {
                     return None;
                 }
                 let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq;
-                Some(Kind::PointOnSegment(host, t.clamp(0., 1.)))
+                Some(match mode {
+                    LineMode::Segment => Kind::PointOnSegment(host, t.clamp(0., 1.)),
+                    LineMode::Ray => Kind::PointOnRay(host, t.max(0.)),
+                    LineMode::Line => Kind::PointOnLine(host, t),
+                })
             }
             Kind::Circle(_, _)
             | Kind::CircleBySegment(_, _)
@@ -7354,6 +8075,223 @@ impl Document {
         records(&out)?;
         Ok(out)
     }
+    fn encode_multi_page_deletions(&self) -> Result<Vec<u8>, String> {
+        if self.page_count < 2
+            || self
+                .objects
+                .iter()
+                .any(|object| !is_multi_page_deletion_kind(&object.kind))
+        {
+            return Err("Deleting these multi-page objects cannot be saved safely".into());
+        }
+        let mut unmarked = self.clone();
+        for object in &mut unmarked.objects {
+            object.deleted = false;
+        }
+        let bytes = if unmarked.has_pending_multi_page_additions() {
+            unmarked.encode_multi_page_additions()?
+        } else {
+            unmarked.encode_multi_page_state()?
+        };
+        let mut ordered: Vec<_> = self.objects.iter().collect();
+        ordered.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        let mut page_objects = vec![Vec::new(); self.page_count];
+        for object in ordered {
+            page_objects
+                .get_mut(object.page)
+                .ok_or("Object belongs to a missing page")?
+                .push(object);
+        }
+        let mut local_ids = Vec::with_capacity(self.page_count);
+        let mut survivor_counts = Vec::with_capacity(self.page_count);
+        for objects in &page_objects {
+            let mut ids = vec![0u32; objects.len() + 1];
+            let mut survivors = 0u32;
+            for (index, object) in objects.iter().enumerate() {
+                if !object.deleted {
+                    survivors = survivors.checked_add(1).ok_or("Too many objects on page")?;
+                    ids[index + 1] = survivors;
+                }
+            }
+            local_ids.push(ids);
+            survivor_counts.push(survivors);
+        }
+        let rs = records(&bytes)?;
+        let mut out = bytes[..4].to_vec();
+        let mut current_page = None;
+        let mut pages_seen = 0;
+        let mut group_ordinal = 0;
+        let mut inside_group = false;
+        let mut dropping = false;
+        for (index, record) in rs.iter().enumerate() {
+            let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
+            let mut raw = bytes[record.start..end].to_vec();
+            match record.kind {
+                0x03e8 => {
+                    if current_page.is_some()
+                        || inside_group
+                        || record.data.len() < 28
+                        || pages_seen >= self.page_count
+                    {
+                        return Err("Invalid page preamble during deletion".into());
+                    }
+                    current_page = Some(pages_seen);
+                    group_ordinal = 0;
+                    if u32_at(&bytes, record.data.start + 24) as usize
+                        != page_objects[pages_seen].len()
+                    {
+                        return Err("Page object count differs from its preamble".into());
+                    }
+                    raw[32..36].copy_from_slice(&survivor_counts[pages_seen].to_le_bytes());
+                    pages_seen += 1;
+                }
+                0x07d0 => {
+                    if inside_group {
+                        return Err("Nested object group during deletion".into());
+                    }
+                    let page = current_page.ok_or("Object group outside page")?;
+                    let object = page_objects[page]
+                        .get(group_ordinal)
+                        .ok_or("Too many object groups on page")?;
+                    group_ordinal += 1;
+                    inside_group = true;
+                    dropping = object.deleted;
+                }
+                0x07d2 if inside_group && !dropping => {
+                    let page = current_page.ok_or("Object references outside page")?;
+                    let payload = &bytes[record.data.clone()];
+                    if payload.len() < 4
+                        || (payload.len() - 4) % 4 != 0
+                        || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                    {
+                        return Err("Invalid page-local references during deletion".into());
+                    }
+                    for reference in 0..(payload.len() - 4) / 4 {
+                        let old = u32_at(payload, 4 + reference * 4) as usize;
+                        let new = *local_ids[page]
+                            .get(old)
+                            .filter(|&&id| id > 0)
+                            .ok_or("Surviving object refers to a deleted object")?;
+                        raw[12 + reference * 4..16 + reference * 4]
+                            .copy_from_slice(&new.to_le_bytes());
+                    }
+                }
+                0x07d2 if !inside_group => {
+                    return Err("Object references outside group".into());
+                }
+                0x07d7 => {
+                    if !inside_group {
+                        return Err("Object terminator outside group".into());
+                    }
+                }
+                0x03e9 => {
+                    let page = current_page.ok_or("Page trailer without preamble")?;
+                    if inside_group || group_ordinal != page_objects[page].len() {
+                        return Err("Object group count mismatch on page".into());
+                    }
+                    current_page = None;
+                }
+                0x232d => {
+                    let page = current_page.ok_or("Page link outside page")?;
+                    if record.data.len() != 4 {
+                        return Err("Invalid page link during deletion".into());
+                    }
+                    let old = u32_at(&bytes, record.data.start) as usize;
+                    let new = *local_ids[page]
+                        .get(old)
+                        .filter(|&&id| id > 0)
+                        .ok_or("Page link refers to a deleted object")?;
+                    raw[8..12].copy_from_slice(&new.to_le_bytes());
+                }
+                0x2328 if !inside_group => continue,
+                _ => {}
+            }
+            if inside_group
+                && !matches!(
+                    record.kind,
+                    0x07d0 | 0x07d2 | 0x07d3 | 0x07d5 | 0x07d7 | 0x07d8 | 0x0899 | 0x0903
+                )
+            {
+                return Err("Object group has unsupported deletion records".into());
+            }
+            if !dropping {
+                out.extend_from_slice(&raw);
+            }
+            if record.kind == 0x07d7 {
+                inside_group = false;
+                dropping = false;
+            }
+        }
+        if pages_seen != self.page_count || current_page.is_some() || inside_group {
+            return Err("Incomplete multi-page document during deletion".into());
+        }
+        records(&out)?;
+        Ok(out)
+    }
+    fn encode_added_pages(&self) -> Result<Vec<u8>, String> {
+        let rs = records(&self.original)?;
+        let old_count = rs.iter().filter(|record| record.kind == 0x03e8).count();
+        if old_count == 0
+            || self.page_count <= old_count
+            || self.page_count > 32768
+            || self.image_read_only
+        {
+            return Err("Cannot add pages to this document".into());
+        }
+        let header = rs
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing document page header")?;
+        let end = rs
+            .last()
+            .filter(|record| record.kind == 0x0385)
+            .ok_or("Missing document end record")?;
+        let page_metadata: Vec<_> = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .collect();
+        if page_metadata.len() != old_count
+            || u16::from_le_bytes(
+                self.original[header.data.start + 2..header.data.start + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize
+                != old_count
+        {
+            return Err("Document page metadata is inconsistent".into());
+        }
+        let blank = include_bytes!("../assets/blank_page_records.bin");
+        let mut expanded = self.original[..end.start].to_vec();
+        for _ in old_count..self.page_count {
+            expanded.extend_from_slice(blank);
+        }
+        expanded.extend_from_slice(&self.original[end.start..]);
+        let expanded_records = records(&expanded)?;
+        let expanded_header = expanded_records
+            .iter()
+            .find(|record| record.kind == 0x0384 && record.data.len() == 28)
+            .ok_or("Missing expanded document header")?;
+        let header_start = expanded_header.data.start;
+        expanded[header_start + 2..header_start + 4]
+            .copy_from_slice(&(self.page_count as u16).to_le_bytes());
+        expanded[header_start + 16..header_start + 18]
+            .copy_from_slice(&(self.active_page as u16).to_le_bytes());
+        expanded[header_start + 24..header_start + 28]
+            .copy_from_slice(&((self.page_count + 1) as u32).to_le_bytes());
+        let page_marker = (self.page_count * 2 - 1) as u16;
+        for record in expanded_records
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+        {
+            expanded[record.data.start + 6..record.data.start + 8]
+                .copy_from_slice(&page_marker.to_le_bytes());
+            expanded[record.data.start + 8..record.data.start + 10]
+                .copy_from_slice(&page_marker.to_le_bytes());
+        }
+        let mut working = self.clone();
+        working.original = expanded;
+        working.encode()
+    }
     pub fn can_save(&self) -> Result<(), String> {
         // An untouched source document can be copied byte for byte even when
         // its geometry cannot yet be evaluated by this port. Revalidate once
@@ -7361,8 +8299,19 @@ impl Document {
         if !self.dirty {
             return Ok(());
         }
+        if self.page_count
+            > records(&self.original)?
+                .iter()
+                .filter(|record| record.kind == 0x03e8)
+                .count()
+        {
+            self.encode_added_pages()?;
+            return Ok(());
+        }
         if self.page_count > 1 {
-            if self.has_pending_multi_page_additions() {
+            if self.objects.iter().any(|object| object.deleted) {
+                self.encode_multi_page_deletions()?;
+            } else if self.has_pending_multi_page_additions() {
                 self.encode_multi_page_additions()?;
             } else {
                 self.encode_multi_page_state()?;
@@ -7502,6 +8451,8 @@ impl Document {
                 return Err(format!("Invalid point label in object {}", o.id));
             }
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
+                || matches!(o.kind, Kind::PointOnRay(_, t) if !t.is_finite() || t < 0.)
+                || matches!(o.kind, Kind::PointOnLine(_, t) if !t.is_finite())
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
                 || matches!(o.kind, Kind::PolarTranslatedPoint(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
                 || matches!(o.kind, Kind::PolarTranslatedSegment(_, a, u, d) if !a.is_finite() || !u.is_finite() || !d.is_finite() || u <= 0.)
@@ -7850,7 +8801,7 @@ impl Document {
             {
                 let hosts_match = match kind {
                     ValueEquationKind::PointValue => {
-                        matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second)
+                        matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) | Kind::PointOnArc(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second)
                     }
                     ValueEquationKind::LineEquation => {
                         matches!(
@@ -7946,6 +8897,16 @@ impl Document {
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
             {
                 return Err(format!("Invalid segment host in point {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PointOnRay(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Ray(_, _))))
+            {
+                return Err(format!("Invalid ray host in point {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::PointOnLine(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Line(_, _))))
+            {
+                return Err(format!("Invalid line host in point {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnCircle(host, _, _) if self.circle_points(host).is_none())
@@ -9041,8 +10002,17 @@ impl Document {
                         put_record(&mut groups, 0x0899, &coordinates);
                         put_record(&mut groups, 0x07d7, &[]);
                     }
-                    Kind::PointOnSegment(host, t) | Kind::PointOnArc(host, t) => {
-                        if !t.is_finite() || !(0.0..=1.0).contains(t) {
+                    Kind::PointOnSegment(host, t)
+                    | Kind::PointOnRay(host, t)
+                    | Kind::PointOnLine(host, t)
+                    | Kind::PointOnArc(host, t) => {
+                        if !t.is_finite()
+                            || matches!(
+                                object.kind,
+                                Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _)
+                            ) && !(0.0..=1.0).contains(t)
+                            || matches!(object.kind, Kind::PointOnRay(_, _)) && *t < 0.
+                        {
                             return Err("Invalid path-point parameter".into());
                         }
                         let host_object = self
@@ -9052,6 +10022,10 @@ impl Document {
                         if host_object.page != page
                             || matches!(object.kind, Kind::PointOnSegment(_, _))
                                 && !matches!(host_object.kind, Kind::Segment(_, _))
+                            || matches!(object.kind, Kind::PointOnRay(_, _))
+                                && !matches!(host_object.kind, Kind::Ray(_, _))
+                            || matches!(object.kind, Kind::PointOnLine(_, _))
+                                && !matches!(host_object.kind, Kind::Line(_, _))
                             || matches!(object.kind, Kind::PointOnArc(_, _))
                                 && !is_arc_kind(&host_object.kind)
                         {
@@ -9076,10 +10050,12 @@ impl Document {
                         references.extend_from_slice(&1u32.to_le_bytes());
                         references.extend_from_slice(&local_host.to_le_bytes());
                         put_record(&mut groups, 0x07d2, &references);
-                        let code = if matches!(object.kind, Kind::PointOnArc(_, _)) {
-                            67
-                        } else {
-                            14
+                        let code = match object.kind {
+                            Kind::PointOnLine(_, _) => 12,
+                            Kind::PointOnRay(_, _) => 13,
+                            Kind::PointOnSegment(_, _) => 14,
+                            Kind::PointOnArc(_, _) => 67,
+                            _ => unreachable!(),
                         };
                         let mut constraint = vec![15, 0, code, 0];
                         constraint.extend_from_slice(&t.to_le_bytes());
@@ -9514,28 +10490,152 @@ impl Document {
                         groups.extend_from_slice(&group.encode());
                         if let Some(ordinal) = target_button_ordinal {
                             let destination = &self.objects[destination_buttons[ordinal - 1] - 1];
-                            let header = destination
-                                .header_offset
-                                .ok_or("Missing destination button header")?;
-                            let header_index = rs
-                                .iter()
-                                .position(|record| {
-                                    record.kind == 0x07d0 && record.data.start == header
-                                })
-                                .ok_or("Missing destination button group")?;
-                            let action = rs[header_index + 1..]
-                                .iter()
-                                .take_while(|record| record.kind != 0x07d7)
-                                .find(|record| record.kind == 0x0906 && record.data.len() >= 20)
-                                .ok_or("Missing destination button action")?;
-                            out[action.data.start + 18..action.data.start + 20]
-                                .copy_from_slice(&1u16.to_le_bytes());
+                            if destination.id <= self.source_count {
+                                let header = destination
+                                    .header_offset
+                                    .ok_or("Missing destination button header")?;
+                                let header_index = rs
+                                    .iter()
+                                    .position(|record| {
+                                        record.kind == 0x07d0 && record.data.start == header
+                                    })
+                                    .ok_or("Missing destination button group")?;
+                                let action = rs[header_index + 1..]
+                                    .iter()
+                                    .take_while(|record| record.kind != 0x07d7)
+                                    .find(|record| record.kind == 0x0906 && record.data.len() >= 20)
+                                    .ok_or("Missing destination button action")?;
+                                out[action.data.start + 18..action.data.start + 20]
+                                    .copy_from_slice(&1u16.to_le_bytes());
+                            }
                         }
                     }
                     Kind::LinkUrlButton { url, label, anchor } => {
                         let mut group =
                             LinkUrlButtonGroup::from_original_template(url, label, *anchor)?;
                         group.set_page_object_index(existing + added_index)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::HideShowButton {
+                        targets,
+                        action,
+                        label,
+                        anchor,
+                    } => {
+                        if targets.is_empty()
+                            || targets.iter().any(|target| {
+                                self.objects
+                                    .get(target.saturating_sub(1))
+                                    .is_none_or(|source| {
+                                        source.deleted
+                                            || source.page != page
+                                            || matches!(source.kind, Kind::Unsupported(_))
+                                    })
+                            })
+                        {
+                            return Err("Invalid Hide/Show targets on this page".into());
+                        }
+                        let ids = targets
+                            .iter()
+                            .map(|&target| self.multi_page_local_reference(page, object.id, target))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group = HideShowButtonGroup::from_original_template_targets(
+                            &ids, label, *anchor,
+                        )?;
+                        group.set_action(*action);
+                        group.set_hidden(!object.visible);
+                        let destination_buttons = self.link_destination_buttons(page);
+                        let linked = self.objects.iter().any(|source| {
+                            matches!(
+                                source.kind,
+                                Kind::LinkPageButton {
+                                    target_page,
+                                    target_button_ordinal: Some(ordinal),
+                                    ..
+                                } if target_page == page
+                                    && ordinal.checked_sub(1)
+                                        .and_then(|index| destination_buttons.get(index))
+                                        == Some(&object.id)
+                            )
+                        });
+                        group.set_link_destination(linked);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::AnimationButton {
+                        targets,
+                        label,
+                        anchor,
+                        settings,
+                    } => {
+                        if targets.is_empty() || targets.len() != settings.len() {
+                            return Err("Invalid Animation targets on this page".into());
+                        }
+                        let ids = targets
+                            .iter()
+                            .map(|&target| self.multi_page_local_reference(page, object.id, target))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group = AnimationButtonGroup::from_original_template_targets(
+                            &ids, label, *anchor,
+                        )?;
+                        group.set_settings_list(settings)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::MovementButton {
+                        source,
+                        destination,
+                        speed,
+                        follow,
+                        label,
+                        anchor,
+                    } => {
+                        if source == destination
+                            || !self
+                                .objects
+                                .get(source.saturating_sub(1))
+                                .is_some_and(|point| matches!(point.kind, Kind::Free(_)))
+                            || self.position(*destination).is_none()
+                        {
+                            return Err("Invalid Movement points on this page".into());
+                        }
+                        let local_source =
+                            self.multi_page_local_reference(page, object.id, *source)?;
+                        let local_destination =
+                            self.multi_page_local_reference(page, object.id, *destination)?;
+                        let mut group = MovementButtonGroup::from_original_template(
+                            local_source,
+                            local_destination,
+                            label,
+                            *anchor,
+                        )?;
+                        group.set_speed(*speed);
+                        group.set_follows_destination(*follow);
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::ScrollButton {
+                        target,
+                        placement,
+                        label,
+                        anchor,
+                    } => {
+                        if !self
+                            .objects
+                            .get(target.saturating_sub(1))
+                            .is_some_and(|point| is_point_kind(&point.kind))
+                            || self.position(*target).is_none()
+                        {
+                            return Err("Invalid Scroll point on this page".into());
+                        }
+                        let local_target =
+                            self.multi_page_local_reference(page, object.id, *target)?;
+                        let mut group = ScrollButtonGroup::from_original_template(
+                            local_target,
+                            label,
+                            *anchor,
+                        )?;
+                        group.set_placement(*placement);
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
                     }
@@ -9609,6 +10709,16 @@ impl Document {
                 {
                     expected.kind = current.kind.clone();
                 }
+                (Kind::PointOnRay(old_host, _), Kind::PointOnRay(host, t))
+                    if old_host == host && t.is_finite() && *t >= 0. =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnLine(old_host, _), Kind::PointOnLine(host, t))
+                    if old_host == host && t.is_finite() =>
+                {
+                    expected.kind = current.kind.clone();
+                }
                 (Kind::PointOnArc(old_host, _), Kind::PointOnArc(host, t))
                     if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
                 {
@@ -9677,6 +10787,8 @@ impl Document {
                 && matches!(
                     current.kind,
                     Kind::PointOnSegment(_, _)
+                        | Kind::PointOnRay(_, _)
+                        | Kind::PointOnLine(_, _)
                         | Kind::PointOnArc(_, _)
                         | Kind::PointOnCircle(_, _, _)
                 )
@@ -9691,6 +10803,19 @@ impl Document {
                         }
                         out.get_mut(at + 4..at + 12)
                             .ok_or("Short segment-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnRay(_, t) | Kind::PointOnLine(_, t) => {
+                        let code = if matches!(current.kind, Kind::PointOnRay(_, _)) {
+                            13
+                        } else {
+                            12
+                        };
+                        if out.get(at..at + 4) != Some(&[15, 0, code, 0]) {
+                            return Err("Invalid straight-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short straight-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnArc(_, t) => {
@@ -9750,8 +10875,57 @@ impl Document {
         Ok(out)
     }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
+        let bytes = self.encode_core()?;
+        self.encode_page_names(bytes)
+    }
+    fn encode_page_names(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let slots = page_title_slots(&bytes, &rs)?;
+        if slots.len() != self.page_count || self.page_names.len() != self.page_count {
+            return Err("Page name count mismatch".into());
+        }
+        for page in (0..self.page_count).rev() {
+            let (title, trailer, actual) = &slots[page];
+            let desired = &self.page_names[page];
+            if actual == desired {
+                continue;
+            }
+            let mut replacement = Vec::new();
+            if let Some(name) = desired {
+                if name.as_bytes().contains(&0) || name.len() > 255 {
+                    return Err("Invalid page name".into());
+                }
+                let mut payload = name.as_bytes().to_vec();
+                payload.push(0);
+                if payload.len() % 2 != 0 {
+                    payload.push(0);
+                }
+                put_record(&mut replacement, 0x044c, &payload);
+            }
+            let (start, end) = if let Some(index) = title {
+                (rs[*index].start, rs[*index + 1].start)
+            } else {
+                (rs[*trailer].start, rs[*trailer].start)
+            };
+            bytes.splice(start..end, replacement);
+        }
+        records(&bytes)?;
+        Ok(bytes)
+    }
+    fn encode_core(&self) -> Result<Vec<u8>, String> {
         if !self.dirty {
             return Ok(self.original.clone());
+        }
+        if self.page_count
+            > records(&self.original)?
+                .iter()
+                .filter(|record| record.kind == 0x03e8)
+                .count()
+        {
+            return self.encode_added_pages();
+        }
+        if self.page_count > 1 && self.objects.iter().any(|object| object.deleted) {
+            return self.encode_multi_page_deletions();
         }
         if self.has_pending_multi_page_additions() {
             return self.encode_multi_page_additions();
@@ -9835,6 +11009,12 @@ impl Document {
                         out[i + 4..i + 12].copy_from_slice(&step.to_le_bytes());
                     }
                     Kind::PointOnSegment(_, t) if out.get(i..i + 4) == Some(&[15, 0, 14, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnRay(_, t) if out.get(i..i + 4) == Some(&[15, 0, 13, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnLine(_, t) if out.get(i..i + 4) == Some(&[15, 0, 12, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
@@ -10582,7 +11762,40 @@ impl Document {
                     u32::try_from(first).map_err(|_| "Too many objects")?,
                     u32::try_from(second).map_err(|_| "Too many objects")?,
                 ];
-                let mut group = value_equation_records::encode_group(kind, references)?;
+                let mut group = if kind == ValueEquationKind::PointValue
+                    && matches!(
+                        self.objects
+                            .get(second.saturating_sub(1))
+                            .map(|object| &object.kind),
+                        Some(Kind::Ray(_, _) | Kind::Line(_, _))
+                    ) {
+                    value_equation_records::encode_straight_point_value_group(references)?
+                } else if kind == ValueEquationKind::PointValue
+                    && matches!(
+                        self.objects
+                            .get(second.saturating_sub(1))
+                            .map(|object| &object.kind),
+                        Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
+                    )
+                {
+                    let Some(Kind::PointOnArc(host, parameter)) = self
+                        .objects
+                        .get(first.saturating_sub(1))
+                        .map(|object| &object.kind)
+                    else {
+                        return Err("Value of Point requires a point on its arc".into());
+                    };
+                    if *host != second {
+                        return Err("Value of Point arc references differ".into());
+                    }
+                    value_equation_records::encode_arc_point_value_group(
+                        references,
+                        matches!(self.objects[second - 1].kind, Kind::ThreePointArc(_, _, _)),
+                        *parameter,
+                    )?
+                } else {
+                    value_equation_records::encode_group(kind, references)?
+                };
                 if kind == ValueEquationKind::PointValue {
                     Self::place_measurement(&mut group, 64, &mut measurement_row)?;
                 }
@@ -10710,6 +11923,8 @@ impl Document {
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
+                | Kind::PointOnRay(host, _)
+                | Kind::PointOnLine(host, _)
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _) => (15, vec![host]),
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
@@ -10952,6 +12167,16 @@ impl Document {
                 match o.kind {
                     Kind::PointOnSegment(_, t) => {
                         let mut payload = vec![15, 0, 14, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PointOnRay(_, t) | Kind::PointOnLine(_, t) => {
+                        let code = if matches!(o.kind, Kind::PointOnRay(_, _)) {
+                            13
+                        } else {
+                            12
+                        };
+                        let mut payload = vec![15, 0, code, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
@@ -11507,6 +12732,7 @@ impl Document {
             || reparsed.snap_points != self.snap_points
             || reparsed.grid_dotted != self.grid_dotted
             || reparsed.grid_form != self.grid_form
+            || reparsed.page_names != self.page_names
             || reparsed.angle_unit_radians != self.angle_unit_radians
             || reparsed.page_count != self.page_count
             || reparsed.marked_coordinate_system
@@ -11550,29 +12776,37 @@ impl Document {
         }
         Ok(())
     }
-    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
-        let reordered_additions = self.has_pending_multi_page_additions();
-        let data = self.encode()?;
-        let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
-        let had_deletion = self.objects.iter().any(|o| o.deleted);
-        if reordered_additions {
+    fn validate_reparsed_document(&self, reparsed: &Self) -> Result<(), String> {
+        if self.has_pending_multi_page_additions() {
             let mut survivors: Vec<_> = self
                 .objects
                 .iter()
                 .filter(|object| !object.deleted)
                 .collect();
             survivors.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
-            self.validate_reparsed_in_order(&reparsed, survivors, true)?;
+            self.validate_reparsed_in_order(reparsed, survivors, true)
         } else if self.page_count > 1 {
             let survivors = self
                 .objects
                 .iter()
                 .filter(|object| !object.deleted)
                 .collect();
-            self.validate_reparsed_in_order(&reparsed, survivors, true)?;
+            self.validate_reparsed_in_order(reparsed, survivors, true)
         } else {
-            self.validate_reparsed(&reparsed)?;
+            self.validate_reparsed(reparsed)
         }
+    }
+    pub fn verify_roundtrip(&self) -> Result<(), String> {
+        let bytes = self.encode()?;
+        let reparsed = Self::from_bytes(&bytes, None)?;
+        self.validate_reparsed_document(&reparsed)
+    }
+    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
+        let reordered_additions = self.has_pending_multi_page_additions();
+        let data = self.encode()?;
+        let reparsed = Self::from_bytes(&data, Some(path.to_path_buf()))?;
+        let had_deletion = self.objects.iter().any(|o| o.deleted);
+        self.validate_reparsed_document(&reparsed)?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let stem = path.file_name().ok_or("Invalid path")?.to_string_lossy();
         let mut n = 0;
@@ -11601,6 +12835,7 @@ impl Document {
         self.objects = reparsed.objects.clone();
         self.marked_coordinate_system = reparsed.marked_coordinate_system;
         self.frame_styles = reparsed.frame_styles;
+        self.page_names = reparsed.page_names;
         if had_deletion || reordered_additions {
             self.selected.clear();
         }
@@ -11621,6 +12856,374 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn blank_pages_roundtrip_with_geometry_and_undo() {
+        let native = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let native_records = records(native).unwrap();
+        let second_page = native_records
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .nth(1)
+            .unwrap()
+            .start;
+        let end = native_records.last().unwrap().start;
+        assert_eq!(
+            &native[second_page..end],
+            include_bytes!("../assets/blank_page_records.bin")
+        );
+        let mut document = Document::new();
+        document.add(Kind::Free(Point { x: 120., y: 180. }));
+        assert_eq!(document.add_blank_page(), Ok(2));
+        assert_eq!(document.active_page, 1);
+        document.add(Kind::Free(Point { x: 240., y: 280. }));
+        assert_eq!(document.add_blank_page(), Ok(3));
+        document.undo();
+        assert_eq!(document.page_count, 2);
+        assert_eq!(document.active_page, 1);
+        document.redo();
+        assert_eq!(document.page_count, 3);
+        let encoded = document.encode().unwrap();
+        let mut reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert_eq!(reopened.page_count, 3);
+        assert_eq!(reopened.active_page, 2);
+        assert_eq!(reopened.objects.len(), 2);
+        assert_eq!(reopened.objects[0].page, 0);
+        assert_eq!(reopened.objects[1].page, 1);
+        assert_eq!(reopened.objects[0].kind, document.objects[0].kind);
+        assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+        assert_eq!(reopened.encode().unwrap(), encoded);
+        assert_eq!(reopened.add_blank_page(), Ok(4));
+        reopened.add(Kind::Free(Point { x: 200., y: 160. }));
+        let four_pages = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+        assert_eq!(four_pages.page_count, 4);
+        assert_eq!(four_pages.active_page, 3);
+        assert_eq!(four_pages.objects[2].page, 3);
+    }
+    #[test]
+    fn native_two_page_document_can_gain_a_page() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        assert_eq!(document.add_blank_page(), Ok(3));
+        document.add(Kind::Free(Point { x: 310., y: 220. }));
+        let encoded = document.encode().unwrap();
+        let reopened = Document::from_bytes(&encoded, None).unwrap();
+        assert_eq!(reopened.page_count, 3);
+        assert_eq!(reopened.objects.len(), 2);
+        assert_eq!(reopened.objects[0].page, 0);
+        assert_eq!(reopened.objects[1].page, 2);
+        assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+    }
+    #[test]
+    fn page_names_roundtrip_and_undo() {
+        let native = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_review_native.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(native.page_names, vec![None, Some("Review".into())]);
+        let native = Document::from_bytes(
+            include_bytes!("../tests/fixtures/three_page_alpha_native.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(native.page_names, vec![None, None, Some("Alpha".into())]);
+        let mut document = Document::new();
+        document.set_page_name(0, "Front").unwrap();
+        assert_eq!(document.page_names, vec![Some("Front".into())]);
+        assert!(
+            !Document::from_bytes(&document.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+        document.undo();
+        assert_eq!(document.page_names, vec![None]);
+        document.redo();
+        assert_eq!(document.page_names, vec![Some("Front".into())]);
+        document.add_blank_page().unwrap();
+        document.set_page_name(1, "Review").unwrap();
+        let named_bytes = document.encode().unwrap();
+        let review = records(&named_bytes)
+            .unwrap()
+            .into_iter()
+            .find(|record| {
+                record.kind == 0x044c && named_bytes[record.data.clone()].starts_with(b"Review")
+            })
+            .unwrap();
+        assert_eq!(&named_bytes[review.data], b"Review\0\0");
+        let named = Document::from_bytes(&named_bytes, None).unwrap();
+        assert_eq!(
+            named.page_names,
+            vec![Some("Front".into()), Some("Review".into())]
+        );
+        let mut renamed = named.clone();
+        renamed.set_page_name(0, "Overview").unwrap();
+        renamed.set_page_name(1, "").unwrap();
+        let reopened = Document::from_bytes(&renamed.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.page_names, vec![Some("Overview".into()), None]);
+        assert_eq!(reopened.page_count, 2);
+    }
+    #[test]
+    fn removing_pages_preserves_survivors_and_undo() {
+        let base = include_bytes!("../tests/fixtures/two_page_blank_native.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.remove_page(1).unwrap();
+        assert_eq!(document.page_count, 1);
+        assert_eq!(document.objects.len(), 1);
+        assert_eq!(document.objects[0].page, 0);
+        let removed = document.encode().unwrap();
+        assert_eq!(removed.len(), 1836);
+        assert_eq!(Document::from_bytes(&removed, None).unwrap().page_count, 1);
+        document.undo();
+        assert_eq!(document.page_count, 2);
+        assert_eq!(document.encode().unwrap(), base);
+        document.redo();
+        assert_eq!(document.encode().unwrap(), removed);
+
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.remove_page(0).unwrap();
+        assert_eq!(document.page_count, 1);
+        assert!(document.objects.is_empty());
+        assert_eq!(
+            Document::from_bytes(&document.encode().unwrap(), None)
+                .unwrap()
+                .page_count,
+            1
+        );
+
+        let mut document = Document::new();
+        document.add(Kind::Free(Point { x: 120., y: 180. }));
+        document.add_blank_page().unwrap();
+        document.add(Kind::Free(Point { x: 240., y: 280. }));
+        document.add_blank_page().unwrap();
+        document.add(Kind::Free(Point { x: 320., y: 220. }));
+        document.set_page_name(2, "Last").unwrap();
+        document.remove_page(1).unwrap();
+        assert_eq!(document.page_count, 2);
+        assert_eq!(document.page_names, vec![None, Some("Last".into())]);
+        assert_eq!(document.objects.len(), 2);
+        assert_eq!(document.objects[0].page, 0);
+        assert_eq!(document.objects[1].page, 1);
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.objects.len(), 2);
+        document.undo();
+        assert_eq!(document.page_count, 3);
+        assert_eq!(document.objects.len(), 3);
+        document.redo();
+        assert_eq!(document.page_count, 2);
+    }
+    #[test]
+    fn removing_page_remaps_surviving_page_links() {
+        let mut document = Document::new();
+        document.add_blank_page().unwrap();
+        document.add_blank_page().unwrap();
+        document.active_page = 0;
+        document.add_link_page_button(2).unwrap();
+        document.remove_page(1).unwrap();
+        assert_eq!(document.page_count, 2);
+        assert!(matches!(
+            document.objects[0].kind,
+            Kind::LinkPageButton { target_page: 1, .. }
+        ));
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(matches!(
+            reopened.objects[0].kind,
+            Kind::LinkPageButton { target_page: 1, .. }
+        ));
+        let before = document.encode().unwrap();
+        document.remove_page(1).unwrap();
+        assert_eq!(document.page_count, 1);
+        assert!(document.partial_view);
+        assert!(matches!(
+            document.objects[0].kind,
+            Kind::LinkPageButton {
+                target_page: 0xbd66,
+                ..
+            }
+        ));
+        assert_eq!(
+            Document::from_bytes(&document.encode().unwrap(), None)
+                .unwrap()
+                .objects[0]
+                .kind,
+            document.objects[0].kind
+        );
+        document.undo();
+        assert_eq!(document.encode().unwrap(), before);
+    }
+    #[test]
+    fn removing_link_destination_invalidates_link_like_native_sketchpad() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/one_page_removed_targeted_link_native.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/two_page_removed_targeted_link_native.gsp")
+                .as_slice(),
+        ] {
+            let native = Document::from_bytes(bytes, None).unwrap();
+            assert!(native.partial_view);
+            assert!(matches!(
+                native.objects[1].kind,
+                Kind::LinkPageButton {
+                    target_page: 0xbd66,
+                    ..
+                }
+            ));
+            assert_eq!(native.encode().unwrap(), bytes);
+            let action = records(bytes)
+                .unwrap()
+                .into_iter()
+                .find(|record| record.kind == 0x0906 && record.data.len() == 24)
+                .unwrap();
+            assert_eq!(
+                &bytes[action.data.start + 14..action.data.start + 16],
+                &0xbd66u16.to_le_bytes()
+            );
+        }
+        let mut document = Document::new();
+        document.add(Kind::Free(Point { x: 120., y: 180. }));
+        document.add_blank_page().unwrap();
+        document.add(Kind::Free(Point { x: 240., y: 180. }));
+        document.add_blank_page().unwrap();
+        document.add(Kind::Free(Point { x: 320., y: 180. }));
+        document.active_page = 0;
+        document.add_link_page_button(1).unwrap();
+        let before = document.encode().unwrap();
+        document.remove_page(1).unwrap();
+        assert_eq!(document.page_count, 2);
+        assert!(matches!(
+            document.objects[1].kind,
+            Kind::LinkPageButton {
+                target_page: 0xbd66,
+                ..
+            }
+        ));
+        assert_eq!(document.position(3), Some(Point { x: 320., y: 180. }));
+        let generated = document.encode().unwrap();
+        let action = records(&generated)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x0906 && record.data.len() == 24)
+            .unwrap();
+        assert_eq!(
+            &generated[action.data.start + 14..action.data.start + 16],
+            &0xbd66u16.to_le_bytes()
+        );
+        document.undo();
+        assert_eq!(document.encode().unwrap(), before);
+        document.redo();
+        assert_eq!(document.encode().unwrap(), generated);
+        document.move_page(0, 1).unwrap();
+        assert!(matches!(
+            document.objects[2].kind,
+            Kind::LinkPageButton {
+                target_page: 0xbd66,
+                ..
+            }
+        ));
+    }
+    #[test]
+    fn moving_pages_preserves_geometry_names_and_links() {
+        let base = include_bytes!("../tests/fixtures/three_page_from_new_port.gsp");
+        let mut document = Document::from_bytes(base, None).unwrap();
+        document.move_page(2, 0).unwrap();
+        assert_eq!(document.active_page, 0);
+        assert_eq!(document.page_count, 3);
+        assert_eq!(
+            document
+                .objects
+                .iter()
+                .map(|object| object.page)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            document.objects[0].kind,
+            Kind::Free(Point { x: 320., y: 220. })
+        );
+        assert_eq!(
+            document.objects[1].kind,
+            Kind::Free(Point { x: 120., y: 180. })
+        );
+        assert_eq!(
+            document.objects[2].kind,
+            Kind::Free(Point { x: 240., y: 280. })
+        );
+        let reordered = document.encode().unwrap();
+        document.undo();
+        assert_eq!(document.encode().unwrap(), base);
+        document.redo();
+        assert_eq!(document.encode().unwrap(), reordered);
+
+        let mut document = Document::new();
+        document.set_page_name(0, "First").unwrap();
+        document.add_blank_page().unwrap();
+        document.set_page_name(1, "Second").unwrap();
+        document.add_blank_page().unwrap();
+        document.set_page_name(2, "Third").unwrap();
+        document.active_page = 0;
+        document.add_link_page_button(2).unwrap();
+        document.move_page(2, 0).unwrap();
+        assert_eq!(
+            document.page_names,
+            vec![
+                Some("Third".into()),
+                Some("First".into()),
+                Some("Second".into())
+            ]
+        );
+        assert_eq!(document.objects[0].page, 1);
+        assert!(matches!(
+            document.objects[0].kind,
+            Kind::LinkPageButton { target_page: 0, .. }
+        ));
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.page_names, document.page_names);
+        assert!(matches!(
+            reopened.objects[0].kind,
+            Kind::LinkPageButton { target_page: 0, .. }
+        ));
+    }
+    #[test]
+    fn copying_native_pages_preserves_geometry_and_undo() {
+        let base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        for (source_page, expected_kinds) in [(0, 1), (1, 3)] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            assert_eq!(document.copy_page(source_page), Ok(3));
+            assert_eq!(document.active_page, 2);
+            assert_eq!(document.objects.len(), 4 + expected_kinds);
+            let copied = document.encode().unwrap();
+            let reopened = Document::from_bytes(&copied, None).unwrap();
+            assert_eq!(reopened.page_count, 3);
+            assert_eq!(reopened.objects.len(), 4 + expected_kinds);
+            assert_eq!(reopened.encode().unwrap(), copied);
+            document.undo();
+            assert_eq!(document.encode().unwrap(), base);
+            document.redo();
+            assert_eq!(document.encode().unwrap(), copied);
+        }
+    }
+    #[test]
+    fn copying_page_preserves_name_and_page_link_target() {
+        let mut document = Document::new();
+        document.set_page_name(0, "Source").unwrap();
+        document.add_blank_page().unwrap();
+        document.active_page = 0;
+        document.add_link_page_button(1).unwrap();
+        assert_eq!(document.copy_page(0), Ok(3));
+        assert_eq!(
+            document.page_names,
+            vec![Some("Source".into()), None, Some("Source".into())]
+        );
+        assert_eq!(document.objects.len(), 2);
+        assert_eq!(document.objects[1].page, 2);
+        assert!(matches!(
+            document.objects[1].kind,
+            Kind::LinkPageButton { target_page: 1, .. }
+        ));
+        let bytes = document.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert_eq!(reopened.page_names, document.page_names);
+        assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+    }
     #[test]
     fn source_point_style_undoes_and_survives_save() {
         let mut document = Document::from_bytes(
@@ -12452,6 +14055,96 @@ mod tests {
         );
     }
     #[test]
+    fn three_target_hide_show_button_matches_native_click() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_hide_show_three_points_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_hide_show_three_points_port.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_hide_show_three_points_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[3].kind.dependencies(), vec![1, 2, 3]);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let mut generated = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_hide_show_three_points_port.gsp"),
+            None,
+        )
+        .unwrap();
+        generated.activate_hide_show_button(4).unwrap();
+        assert!(generated.objects[..3].iter().all(|object| !object.visible));
+        assert!(matches!(
+            generated.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+        let wine = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/action_hide_show_three_points_port_clicked_by_wine.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(wine.objects[..3].iter().all(|object| !object.visible));
+        assert!(matches!(
+            wine.objects[3].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+    }
+    #[test]
+    fn mixed_target_hide_show_button_matches_native_click() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_hide_show_mixed_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_hide_show_mixed_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_hide_show_mixed_port_clicked_by_wine.gsp")
+                .as_slice(),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[6].kind.dependencies(), vec![4, 5, 6]);
+            assert_eq!(doc.encode().unwrap(), bytes);
+        }
+        let mut generated = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_hide_show_mixed_port.gsp"),
+            None,
+        )
+        .unwrap();
+        generated.activate_hide_show_button(7).unwrap();
+        assert!(generated.objects[..3].iter().all(|object| object.visible));
+        assert!(generated.objects[3..6].iter().all(|object| !object.visible));
+        assert!(matches!(
+            generated.objects[6].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+        let wine = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_hide_show_mixed_port_clicked_by_wine.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            generated
+                .objects
+                .iter()
+                .map(|object| object.visible)
+                .collect::<Vec<_>>(),
+            wine.objects
+                .iter()
+                .map(|object| object.visible)
+                .collect::<Vec<_>>()
+        );
+    }
+    #[test]
     fn animation_button_imports_click_state_and_generated_file_round_trips() {
         for bytes in [
             include_bytes!("../tests/fixtures/action_animation_original.gsp").as_slice(),
@@ -12498,6 +14191,46 @@ mod tests {
             reopened.objects[pasted_button - 1].kind,
             Kind::AnimationButton { .. }
         ));
+    }
+
+    #[test]
+    fn ray_and_line_animation_buttons_match_native_defaults() {
+        use crate::action_records::AnimationDirection;
+        for (base, native) in [
+            (
+                include_bytes!("../tests/fixtures/point_on_ray_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_ray_original.gsp").as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/point_on_line_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/action_animation_line_original.gsp").as_slice(),
+            ),
+        ] {
+            let imported = Document::from_bytes(native, None).unwrap();
+            assert!(!imported.partial_view);
+            assert_eq!(imported.encode().unwrap(), native);
+            assert!(matches!(
+                &imported.objects[4].kind,
+                Kind::AnimationButton { targets, settings, .. }
+                    if targets == &[4]
+                        && settings.len() == 1
+                        && settings[0].direction == AnimationDirection::Bidirectional
+                        && settings[0].speed == 24.
+            ));
+            let mut generated = Document::from_bytes(base, None).unwrap();
+            let button = generated.add_animation_button(4).unwrap();
+            assert_eq!(button, 5);
+            let encoded = generated.encode().unwrap();
+            let reopened = Document::from_bytes(&encoded, None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.encode().unwrap(), encoded);
+        }
+        let clicked =
+            include_bytes!("../tests/fixtures/action_animation_ray_port_clicked_by_wine.gsp");
+        let clicked_doc = Document::from_bytes(clicked, None).unwrap();
+        assert!(!clicked_doc.partial_view);
+        assert_eq!(clicked_doc.encode().unwrap(), clicked);
+        assert!(matches!(clicked_doc.objects[3].kind, Kind::PointOnRay(3, t) if t != 0.3));
     }
 
     #[test]
@@ -12663,6 +14396,270 @@ mod tests {
                 document.objects[4].kind,
                 Kind::PresentationButton { mode: actual, .. } if actual == mode
             ));
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+    }
+    #[test]
+    fn parameter_animation_button_uses_native_settings_and_anchor() {
+        use crate::action_records::AnimationDirection;
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_parameter_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_parameter_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_parameter_port_clicked_by_wine.gsp")
+                .as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::AnimationButton {
+                targets,
+                anchor,
+                settings,
+                ..
+            } = &document.objects[1].kind
+            else {
+                panic!("Expected Animation button")
+            };
+            assert_eq!(targets, &[1]);
+            assert_eq!(*anchor, (10, 47));
+            assert_eq!(
+                settings,
+                &[AnimationSettings {
+                    direction: AnimationDirection::Bidirectional,
+                    speed: 1.,
+                    once: false,
+                    parameter: Some(crate::action_records::ParameterAnimationSettings::default(),),
+                }]
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/parameter_animated_native_saved.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!document.partial_view);
+        let Kind::Parameter(group) = &document.objects[0].kind else {
+            panic!("Expected animated parameter")
+        };
+        assert!((group.value() - 1.957).abs() < 1e-12);
+        let clicked = Document::from_bytes(
+            include_bytes!("../tests/fixtures/action_animation_parameter_port_clicked_by_wine.gsp"),
+            None,
+        )
+        .unwrap();
+        let Kind::Parameter(group) = &clicked.objects[0].kind else {
+            panic!("Expected clicked parameter")
+        };
+        assert!((group.value() - 1.).abs() > 0.01);
+        for (bytes, rate, discrete, step, min, max) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_rate2.gsp")
+                    .as_slice(),
+                2.,
+                false,
+                1.,
+                -100.,
+                100.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_parameter_native_discrete.gsp")
+                    .as_slice(),
+                2.,
+                true,
+                0.5,
+                -3.,
+                7.,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_animation_parameter_custom_continuous.gsp"
+                )
+                .as_slice(),
+                2.5,
+                false,
+                1.,
+                -3.,
+                7.,
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::AnimationButton { settings, .. } = &document.objects[1].kind else {
+                panic!("Expected parameter button")
+            };
+            assert_eq!(settings[0].speed, rate);
+            let options = settings[0].parameter.unwrap();
+            assert_eq!(
+                (options.discrete, options.step, options.min, options.max),
+                (discrete, step, min, max)
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let clicked = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/action_animation_parameter_custom_port_clicked_by_wine.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(!clicked.partial_view);
+        assert!(matches!(&clicked.objects[0].kind, Kind::Parameter(group) if group.value() == 3.));
+        let mut mixed = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_parameter_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let point = mixed.add(Kind::Free(Point { x: 200., y: 150. }));
+        let settings = [
+            (1, mixed.animation_button_default_settings(1).unwrap()),
+            (
+                point,
+                mixed.animation_button_default_settings(point).unwrap(),
+            ),
+        ];
+        assert!(
+            mixed
+                .add_animation_button_for_targets_with_settings(&settings)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn indirect_segment_and_circle_animation_buttons_keep_native_targets() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_native.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_port.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_circle_native.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_circle_port.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_hidden_native.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp")
+                .as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::AnimationButton {
+                targets,
+                anchor,
+                settings,
+                ..
+            } = &document.objects[3].kind
+            else {
+                panic!("Expected Animation button")
+            };
+            assert_eq!(targets, &[2, 1]);
+            assert_eq!(*anchor, (10, 5));
+            assert_eq!(settings.len(), 2);
+            assert!(settings.iter().all(|setting| {
+                setting.direction == crate::action_records::AnimationDirection::Forward
+                    && setting.speed == 24.
+                    && !setting.once
+                    && setting.parameter.is_none()
+            }));
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn line_ray_and_polygon_animation_buttons_keep_native_targets() {
+        for (bytes, expected) in [
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_line_native.gsp")
+                    .as_slice(),
+                &[2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_line_port.gsp")
+                    .as_slice(),
+                &[2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_ray_native.gsp")
+                    .as_slice(),
+                &[2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_ray_port.gsp")
+                    .as_slice(),
+                &[2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_polygon_native.gsp")
+                    .as_slice(),
+                &[3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_polygon_port.gsp")
+                    .as_slice(),
+                &[3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_quadrilateral_native.gsp")
+                    .as_slice(),
+                &[4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_quadrilateral_port.gsp")
+                    .as_slice(),
+                &[4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_pentagon_native.gsp")
+                    .as_slice(),
+                &[5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_pentagon_port.gsp")
+                    .as_slice(),
+                &[5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_hexagon_native.gsp")
+                    .as_slice(),
+                &[6, 5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_hexagon_port.gsp")
+                    .as_slice(),
+                &[6, 5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_heptagon_native.gsp")
+                    .as_slice(),
+                &[7, 6, 5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_heptagon_port.gsp")
+                    .as_slice(),
+                &[7, 6, 5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!("../tests/fixtures/action_animation_indirect_hexagon_port_clicked_by_wine.gsp")
+                    .as_slice(),
+                &[6, 5, 4, 3, 2, 1][..],
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/action_animation_indirect_quadrilateral_port_clicked_by_wine.gsp"
+                )
+                .as_slice(),
+                &[4, 3, 2, 1][..],
+            ),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::AnimationButton {
+                targets, settings, ..
+            } = &document.objects.last().unwrap().kind
+            else {
+                panic!("Expected Animation button")
+            };
+            assert_eq!(targets, expected);
+            assert_eq!(settings.len(), expected.len());
             assert_eq!(document.encode().unwrap(), bytes);
         }
     }
@@ -13222,12 +15219,417 @@ mod tests {
     }
 
     #[test]
+    fn multi_page_hide_show_buttons_append_with_page_local_targets() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_hide_show_second_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_second_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_second_port_clicked_by_wine.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_both_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_immediate_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_new_hide_show_link_port.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/two_page_new_hide_show_link_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert_eq!(document.page_count, 2);
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let native = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_hide_show_second_native.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(native.objects[5].kind.dependencies(), vec![5, 4]);
+        let local_targets = |bytes: &[u8]| {
+            let references = records(bytes)
+                .unwrap()
+                .into_iter()
+                .filter(|record| record.kind == 0x07d2)
+                .last()
+                .unwrap();
+            bytes[references.data]
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            local_targets(include_bytes!(
+                "../tests/fixtures/two_page_hide_show_second_native.gsp"
+            )),
+            vec![2, 4, 3]
+        );
+        assert_eq!(
+            local_targets(include_bytes!(
+                "../tests/fixtures/two_page_hide_show_second_port.gsp"
+            )),
+            vec![2, 1, 3]
+        );
+
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut second = Document::from_bytes(base, None).unwrap();
+        second.active_page = 1;
+        assert_eq!(second.add_hide_show_button_for_targets(&[2, 4]).unwrap(), 6);
+        assert!(second.add_hide_show_button_for_targets(&[1]).is_err());
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_hide_show_{}.gsp",
+            std::process::id()
+        ));
+        second.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_second_port.gsp")
+        );
+        second.activate_hide_show_button(6).unwrap();
+        assert!(!second.objects[1].visible);
+        assert!(!second.objects[3].visible);
+        assert!(second.objects[0].visible);
+        assert!(second.objects[2].visible);
+        assert!(second.objects[4].visible);
+
+        let mut both = Document::from_bytes(base, None).unwrap();
+        both.active_page = 1;
+        both.add_hide_show_button_for_targets(&[2, 4]).unwrap();
+        both.active_page = 0;
+        both.add_hide_show_button_for_targets(&[1]).unwrap();
+        both.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_hide_show_both_port.gsp")
+        );
+        assert_eq!(both.objects[1].kind.dependencies(), vec![1]);
+        assert_eq!(both.objects[6].kind.dependencies(), vec![3, 5]);
+
+        let mut linked = Document::from_bytes(base, None).unwrap();
+        linked.active_page = 0;
+        linked.add_hide_show_button_for_targets(&[1]).unwrap();
+        linked.active_page = 1;
+        linked.add_link_page_button_with_target(0, Some(1)).unwrap();
+        linked.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_new_hide_show_link_port.gsp")
+        );
+        let wine = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/two_page_new_hide_show_link_port_clicked_by_wine.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        assert!(!wine.objects[0].visible);
+        assert!(matches!(
+            wine.objects[1].kind,
+            Kind::HideShowButton {
+                action: VisibilityAction::Show,
+                ..
+            }
+        ));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn multi_page_animation_buttons_append_with_page_local_targets() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_animation_point_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_point_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_segment_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_segment_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_segment_port_clicked_by_wine.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_both_port.gsp").as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert_eq!(document.page_count, 2);
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let local_targets = |bytes: &[u8]| {
+            let references = records(bytes)
+                .unwrap()
+                .into_iter()
+                .filter(|record| record.kind == 0x07d2)
+                .last()
+                .unwrap();
+            bytes[references.data]
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_animation_segment_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_animation_segment_port.gsp").as_slice(),
+        ] {
+            assert_eq!(local_targets(bytes), vec![2, 2, 1]);
+        }
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut point = Document::from_bytes(base, None).unwrap();
+        point.active_page = 1;
+        let point_settings = point.animation_button_default_settings(5).unwrap();
+        assert_eq!(
+            point
+                .add_animation_button_with_settings(5, point_settings)
+                .unwrap(),
+            6
+        );
+        assert!(
+            point
+                .add_animation_button_with_settings(1, point_settings)
+                .is_err()
+        );
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_animation_{}.gsp",
+            std::process::id()
+        ));
+        point.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_animation_point_port.gsp")
+        );
+
+        let mut both = Document::from_bytes(base, None).unwrap();
+        both.active_page = 1;
+        both.add_animation_button_with_settings(5, point_settings)
+            .unwrap();
+        both.active_page = 0;
+        let first_settings = both.animation_button_default_settings(1).unwrap();
+        both.add_animation_button_with_settings(1, first_settings)
+            .unwrap();
+        both.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_animation_both_port.gsp")
+        );
+        assert_eq!(both.objects[1].kind.dependencies(), vec![1]);
+        assert_eq!(both.objects[6].kind.dependencies(), vec![6]);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn multi_page_movement_buttons_append_with_page_local_points() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_movement_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_movement_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_movement_port_clicked_by_wine.gsp")
+                .as_slice(),
+            include_bytes!("../tests/fixtures/two_page_movement_both_port.gsp").as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert_eq!(document.page_count, 2);
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let local_targets = |bytes: &[u8]| {
+            let references = records(bytes)
+                .unwrap()
+                .into_iter()
+                .filter(|record| record.kind == 0x07d2)
+                .last()
+                .unwrap();
+            bytes[references.data]
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_movement_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_movement_port.gsp").as_slice(),
+        ] {
+            assert_eq!(local_targets(bytes), vec![2, 1, 2]);
+        }
+        let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
+        let mut second = Document::from_bytes(base, None).unwrap();
+        second.active_page = 1;
+        assert_eq!(
+            second
+                .add_movement_button(2, 3, MovementSpeed::Medium, true)
+                .unwrap(),
+            6
+        );
+        assert!(second.can_add_movement_button(1, 3).is_err());
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_movement_{}.gsp",
+            std::process::id()
+        ));
+        second.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_movement_port.gsp")
+        );
+
+        let mut both = Document::from_bytes(base, None).unwrap();
+        both.active_page = 1;
+        both.add_movement_button(2, 3, MovementSpeed::Medium, true)
+            .unwrap();
+        both.active_page = 0;
+        assert_eq!(both.add(Kind::Free(Point { x: 200., y: 200. })), 7);
+        both.add_movement_button(1, 7, MovementSpeed::Instant, false)
+            .unwrap();
+        both.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_movement_both_port.gsp")
+        );
+        assert_eq!(both.objects[2].kind.dependencies(), vec![1, 2]);
+        assert_eq!(both.objects[7].kind.dependencies(), vec![4, 5]);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn multi_page_point_additions_refuse_cross_page_hosts() {
         let base = include_bytes!("../tests/fixtures/two_page_segment_constrained_native.gsp");
         let mut document = Document::from_bytes(base, None).unwrap();
         document.active_page = 0;
         document.add(Kind::PointOnSegment(4, 0.5));
         assert!(document.can_save().is_err());
+    }
+
+    #[test]
+    fn points_on_lines_and_rays_match_native_groups_and_move() {
+        let group = |bytes: &[u8]| {
+            let rs = records(bytes).unwrap();
+            let start = rs
+                .iter()
+                .rfind(|record| record.kind == 0x07d0)
+                .unwrap()
+                .start;
+            let end = rs
+                .iter()
+                .rfind(|record| record.kind == 0x07d7)
+                .unwrap()
+                .data
+                .end;
+            bytes[start..end].to_vec()
+        };
+        for (base, native, kind, moved, expected) in [
+            (
+                include_bytes!("../tests/fixtures/line.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/point_on_line_native.gsp").as_slice(),
+                Kind::PointOnLine(3, 0.3),
+                Point { x: 243., y: 212. },
+                Kind::PointOnLine(3, -0.5),
+            ),
+            (
+                include_bytes!("../tests/fixtures/ray.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/point_on_ray_native.gsp").as_slice(),
+                Kind::PointOnRay(3, 0.3),
+                Point { x: 603., y: 234.5 },
+                Kind::PointOnRay(3, 1.75),
+            ),
+        ] {
+            let imported = Document::from_bytes(native, None).unwrap();
+            assert!(!imported.partial_view);
+            assert_eq!(imported.objects[3].kind, kind);
+            assert_eq!(imported.encode().unwrap(), native);
+
+            let mut document = Document::from_bytes(base, None).unwrap();
+            assert_eq!(document.add(kind), 4);
+            let encoded = document.encode().unwrap();
+            assert_eq!(group(&encoded), group(native));
+            assert!(document.move_point(4, moved));
+            assert_eq!(document.objects[3].kind, expected);
+            let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+            assert_eq!(reopened.objects[3].kind, expected);
+            assert_eq!(reopened.position(4), Some(moved));
+        }
+    }
+
+    #[test]
+    fn multi_page_points_on_lines_and_rays_reopen() {
+        for (base, kind) in [
+            (
+                include_bytes!("../tests/fixtures/two_page_line_native.gsp").as_slice(),
+                Kind::PointOnLine(5, -0.5),
+            ),
+            (
+                include_bytes!("../tests/fixtures/two_page_ray_native.gsp").as_slice(),
+                Kind::PointOnRay(5, 1.5),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            assert_eq!(document.add(kind.clone()), 6);
+            let encoded = document.encode().unwrap();
+            let reopened = Document::from_bytes(&encoded, None).unwrap();
+            assert_eq!(reopened.objects[5].kind, kind);
+            assert_eq!(reopened.objects[5].page, 1);
+            assert_eq!(reopened.encode().unwrap(), encoded);
+        }
+    }
+    #[test]
+    fn native_ray_and_line_point_values_follow_moved_points() {
+        for (native, moved, expected) in [
+            (
+                include_bytes!("../tests/fixtures/point_on_line_value_native.gsp").as_slice(),
+                Point { x: 243., y: 212. },
+                -0.5,
+            ),
+            (
+                include_bytes!("../tests/fixtures/point_on_ray_value_native.gsp").as_slice(),
+                Point { x: 603., y: 234.5 },
+                1.75,
+            ),
+        ] {
+            let mut document = Document::from_bytes(native, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(matches!(
+                document.objects[4].kind,
+                Kind::ValueEquation {
+                    kind: ValueEquationKind::PointValue,
+                    first: 4,
+                    second: 3
+                }
+            ));
+            assert!(
+                matches!(document.value_equation_value(5), Some(EquationValue::PointValue(value)) if (value - 0.3).abs() < 1e-12)
+            );
+            assert_eq!(document.encode().unwrap(), native);
+            assert!(document.move_point(4, moved));
+            let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+            assert!(
+                matches!(reopened.value_equation_value(5), Some(EquationValue::PointValue(value)) if (value - expected).abs() < 1e-12)
+            );
+        }
+    }
+    #[test]
+    fn native_arc_point_values_follow_moved_points() {
+        for (native, point_id, moved, expected) in [
+            (
+                include_bytes!("../tests/fixtures/point_on_arc_value_native.gsp").as_slice(),
+                5,
+                Point {
+                    x: 209.17111318359585,
+                    y: 469.68286247339006,
+                },
+                0.4,
+            ),
+            (
+                include_bytes!("../tests/fixtures/point_on_circle_arc_value_native.gsp").as_slice(),
+                7,
+                Point {
+                    x: 436.54086027855686,
+                    y: 167.14548117567242,
+                },
+                0.8,
+            ),
+        ] {
+            let mut document = Document::from_bytes(native, None).unwrap();
+            assert!(!document.partial_view);
+            let measurement = point_id + 1;
+            assert!(matches!(
+                document.objects[measurement - 1].kind,
+                Kind::ValueEquation {
+                    kind: ValueEquationKind::PointValue,
+                    first,
+                    second: _
+                } if first == point_id
+            ));
+            assert_eq!(document.encode().unwrap(), native);
+            assert!(document.move_point(point_id, moved));
+            let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+            assert!(
+                matches!(reopened.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (value - expected).abs() < 1e-12)
+            );
+        }
     }
 
     #[test]
@@ -13677,6 +16079,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
 
         let mut document = Document::from_bytes(base, None).unwrap();
+        document.active_page = 0;
         let a = document.add(Kind::Free(Point { x: 170., y: 170. }));
         let b = document.add(Kind::Free(Point { x: 220., y: 90. }));
         document.add(Kind::Polygon(vec![1, a, b]));
@@ -13767,6 +16170,182 @@ mod tests {
         assert!(document.can_save().is_err());
     }
     #[test]
+    fn multi_page_paste_remaps_dependencies_on_same_and_earlier_pages() {
+        fn pasted(base: &[u8], selected: usize, destination: usize, expected: &[u8], count: usize) {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = 1;
+            document.selected.insert(selected);
+            let clipboard = document.copy_selected().unwrap();
+            document.active_page = destination;
+            assert_eq!(document.paste(&clipboard).unwrap().len(), count);
+            document.verify_roundtrip().unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_paste_{}_{}_{}.gsp",
+                std::process::id(),
+                selected,
+                destination
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            assert_eq!(Document::from_bytes(expected, None).unwrap().page_count, 2);
+            std::fs::remove_file(path).unwrap();
+        }
+        let segment_base = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        pasted(
+            segment_base,
+            4,
+            1,
+            include_bytes!("../tests/fixtures/two_page_pasted_segment_same_page_port.gsp"),
+            3,
+        );
+        pasted(
+            segment_base,
+            4,
+            0,
+            include_bytes!("../tests/fixtures/two_page_pasted_segment_first_page_port.gsp"),
+            3,
+        );
+        pasted(
+            include_bytes!("../tests/fixtures/two_page_line_point_port.gsp"),
+            6,
+            0,
+            include_bytes!("../tests/fixtures/two_page_pasted_line_point_first_page_port.gsp"),
+            4,
+        );
+        pasted(
+            include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp"),
+            10,
+            0,
+            include_bytes!("../tests/fixtures/two_page_pasted_perimeter_first_page_port.gsp"),
+            5,
+        );
+
+        let mut source = Document::new();
+        let parameter = source.add_default_parameter((10, 5)).unwrap();
+        source.selected.insert(parameter);
+        let clipboard = source.copy_selected().unwrap();
+        let mut destination = Document::from_bytes(segment_base, None).unwrap();
+        destination.active_page = 1;
+        assert!(destination.paste(&clipboard).is_err());
+        assert_eq!(destination.objects.len(), 4);
+        assert!(!destination.dirty);
+    }
+    #[test]
+    fn multi_page_clear_remaps_survivors_and_removes_dependents() {
+        fn cleared(base: &[u8], page: usize, selected: usize, removed: &[usize], expected: &[u8]) {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            document.active_page = page;
+            document.selected.insert(selected);
+            assert_eq!(document.clear_selected().unwrap(), removed);
+            let path = std::env::temp_dir().join(format!(
+                "sketchpad_rs_multi_page_clear_{}_{}.gsp",
+                std::process::id(),
+                selected
+            ));
+            document.save_to(&path).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+            std::fs::remove_file(path).unwrap();
+        }
+        let segment = include_bytes!("../tests/fixtures/two_page_segment_native.gsp");
+        cleared(
+            segment,
+            1,
+            4,
+            &[4],
+            include_bytes!("../tests/fixtures/two_page_segment_cleared_port.gsp"),
+        );
+        cleared(
+            segment,
+            1,
+            2,
+            &[2, 4],
+            include_bytes!("../tests/fixtures/two_page_point_and_segment_cleared_port.gsp"),
+        );
+        cleared(
+            include_bytes!("../tests/fixtures/two_page_pasted_segment_first_page_port.gsp"),
+            0,
+            1,
+            &[1],
+            include_bytes!("../tests/fixtures/two_page_first_point_cleared_port.gsp"),
+        );
+        cleared(
+            include_bytes!("../tests/fixtures/two_page_one_host_measurements_port.gsp"),
+            1,
+            5,
+            &[5, 10, 14],
+            include_bytes!("../tests/fixtures/two_page_polygon_measurements_cleared_port.gsp"),
+        );
+        cleared(
+            include_bytes!("../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp"),
+            1,
+            4,
+            &[4, 5, 6],
+            include_bytes!("../tests/fixtures/two_page_midpoint_circle_cleared_port.gsp"),
+        );
+
+        let mut document = Document::from_bytes(segment, None).unwrap();
+        document.active_page = 1;
+        document.selected.insert(4);
+        document.clear_selected().unwrap();
+        document.undo();
+        assert_eq!(document.encode().unwrap(), segment);
+        document.redo();
+        assert_eq!(
+            document.encode().unwrap(),
+            include_bytes!("../tests/fixtures/two_page_segment_cleared_port.gsp")
+        );
+
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        document.active_page = 1;
+        let first = document.add(Kind::Free(Point { x: 120., y: 180. }));
+        let second = document.add(Kind::Free(Point { x: 300., y: 180. }));
+        let segment = document.add(Kind::Segment(first, second));
+        document.selected.insert(first);
+        assert_eq!(document.clear_selected().unwrap(), vec![first, segment]);
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_clear_new_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_unsaved_chain_cleared_port.gsp")
+        );
+        std::fs::remove_file(path).unwrap();
+
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_segment_native.gsp"),
+            None,
+        )
+        .unwrap();
+        document.active_page = 1;
+        document.selected.insert(4);
+        let clipboard = document.copy_selected().unwrap();
+        assert_eq!(document.clear_selected().unwrap(), vec![4]);
+        assert_eq!(document.paste(&clipboard).unwrap(), vec![5, 6, 7]);
+        let path = std::env::temp_dir().join(format!(
+            "sketchpad_rs_multi_page_cut_paste_{}.gsp",
+            std::process::id()
+        ));
+        document.save_to(&path).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            include_bytes!("../tests/fixtures/two_page_cut_pasted_segment_port.gsp")
+        );
+        std::fs::remove_file(path).unwrap();
+
+        let source = include_bytes!("../tests/fixtures/action_link_page_port_generated.gsp");
+        let mut document = Document::from_bytes(source, None).unwrap();
+        document.selected.insert(1);
+        assert!(document.clear_selected().is_err());
+        assert_eq!(document.encode().unwrap(), source);
+        assert!(!document.dirty);
+    }
+    #[test]
     fn multi_page_state_writer_refuses_geometry_changes() {
         let base = include_bytes!(
             "../tests/fixtures/action_link_page_activate_hide_show_port_generated.gsp"
@@ -13826,7 +16405,7 @@ mod tests {
             assert!(matches!(
                 doc.objects[4].kind,
                 Kind::AnimationButton { ref settings, .. }
-                    if settings.len() == 1 && settings[0] == AnimationSettings { direction, speed, once }
+                    if settings.len() == 1 && settings[0] == AnimationSettings { direction, speed, once, parameter: None }
             ));
             assert_eq!(doc.encode().unwrap(), bytes);
         }
@@ -13839,6 +16418,7 @@ mod tests {
             direction: AnimationDirection::Backward,
             speed: 80.,
             once: true,
+            ..AnimationSettings::default()
         };
         let id = doc.add_animation_button_with_settings(4, settings).unwrap();
         let encoded = doc.encode().unwrap();
@@ -13863,7 +16443,7 @@ mod tests {
             let native = Document::from_bytes(bytes, None).unwrap();
             assert!(!native.partial_view);
             assert!(
-                matches!(native.objects[button-1].kind, Kind::AnimationButton { ref targets, ref settings, .. } if targets == &[target] && settings == &[AnimationSettings { direction: AnimationDirection::Forward, speed: 24., once: false }])
+                matches!(native.objects[button-1].kind, Kind::AnimationButton { ref targets, ref settings, .. } if targets == &[target] && settings == &[AnimationSettings { direction: AnimationDirection::Forward, speed: 24., once: false, parameter: None }])
             );
             assert_eq!(native.encode().unwrap(), bytes);
         }
@@ -13963,6 +16543,121 @@ mod tests {
         assert!(
             matches!(&reopened.objects[5].kind, Kind::AnimationButton { settings, .. } if settings == &expected_settings)
         );
+    }
+    #[test]
+    fn three_point_animation_button_imports_edits_and_copies() {
+        use crate::action_records::AnimationDirection;
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_three_points_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_three_points_port.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_animation_three_points_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            assert!(matches!(
+                &document.objects[6].kind,
+                Kind::AnimationButton { targets, settings, .. }
+                    if targets == &[4, 5, 6]
+                        && settings == &[AnimationSettings::default(); 3]
+            ));
+            assert!(
+                records(bytes)
+                    .unwrap()
+                    .iter()
+                    .any(|record| record.kind == 0x07d3 && record.data.len() == 100)
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/animation_button_three_points_base.gsp"),
+            None,
+        )
+        .unwrap();
+        let settings = [
+            AnimationSettings::default(),
+            AnimationSettings {
+                direction: AnimationDirection::Backward,
+                speed: 4.,
+                once: false,
+                ..AnimationSettings::default()
+            },
+            AnimationSettings {
+                direction: AnimationDirection::Forward,
+                speed: 80.,
+                once: true,
+                ..AnimationSettings::default()
+            },
+        ];
+        let button = document
+            .add_animation_button_for_targets_with_settings(&[
+                (4, settings[0]),
+                (5, settings[1]),
+                (6, settings[2]),
+            ])
+            .unwrap();
+        let generated = document.encode().unwrap();
+        assert_eq!(
+            generated,
+            include_bytes!("../tests/fixtures/action_animation_three_points_settings_port.gsp")
+        );
+        let reopened = Document::from_bytes(&generated, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(
+            &reopened.objects[button - 1].kind,
+            Kind::AnimationButton { targets, settings: actual, .. }
+                if targets == &[4, 5, 6] && actual == &settings
+        ));
+        document.selected.insert(button);
+        let clipboard = document.copy_selected().unwrap();
+        let mut destination = Document::new();
+        let pasted = destination.paste(&clipboard).unwrap();
+        assert_eq!(pasted.last(), Some(&7));
+        assert_eq!(destination.objects[6].kind.dependencies(), vec![4, 5, 6]);
+        assert!(
+            !Document::from_bytes(&destination.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn mixed_point_animation_button_keeps_per_target_defaults() {
+        use crate::action_records::AnimationDirection;
+        for bytes in [
+            include_bytes!("../tests/fixtures/action_animation_mixed_points_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/action_animation_mixed_points_port.gsp").as_slice(),
+            include_bytes!(
+                "../tests/fixtures/action_animation_mixed_points_port_clicked_by_wine.gsp"
+            )
+            .as_slice(),
+        ] {
+            let document = Document::from_bytes(bytes, None).unwrap();
+            assert!(!document.partial_view);
+            let Kind::AnimationButton {
+                targets, settings, ..
+            } = &document.objects[9].kind
+            else {
+                panic!("Expected Animation button")
+            };
+            let mut defaults = targets
+                .iter()
+                .copied()
+                .zip(settings.iter().map(|setting| setting.direction))
+                .collect::<Vec<_>>();
+            defaults.sort_by_key(|(target, _)| *target);
+            assert_eq!(
+                defaults,
+                vec![
+                    (1, AnimationDirection::Forward),
+                    (5, AnimationDirection::Bidirectional),
+                    (9, AnimationDirection::Forward),
+                ]
+            );
+            assert_eq!(document.encode().unwrap(), bytes);
+        }
     }
     #[test]
     fn polygon_perimeter_matches_original_and_updates_after_drag() {

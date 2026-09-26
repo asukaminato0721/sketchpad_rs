@@ -1,7 +1,8 @@
 //! Headless probes for comparing original Sketchpad files with port output.
 
 use sketchpad_rs::action_records::{
-    AnimationDirection, MovementSpeed, PresentationMode, ScrollPlacement,
+    AnimationDirection, MovementSpeed, ParameterAnimationSettings, PresentationMode,
+    ScrollPlacement,
 };
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::{Clipboard, Document, Kind, Point, Record, TextStyleCommand, records};
@@ -562,12 +563,17 @@ fn replay(path: &str) -> Result<(), String> {
                         .get(first.saturating_sub(1))
                         .map(|object| &object.kind)
                     {
-                        Some(Kind::PointOnSegment(host, _) | Kind::PointOnCircle(host, _, _)) => {
-                            *host
-                        }
+                        Some(
+                            Kind::PointOnSegment(host, _)
+                            | Kind::PointOnRay(host, _)
+                            | Kind::PointOnLine(host, _)
+                            | Kind::PointOnArc(host, _)
+                            | Kind::PointOnCircle(host, _, _),
+                        ) => *host,
                         _ => {
                             return Err(
-                                "point_value requires a point on a segment or circle".into()
+                                "point_value requires a point on a segment, ray, line, circle, or arc"
+                                    .into(),
                             );
                         }
                     };
@@ -841,6 +847,76 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_animation_button_with_settings(target, settings)?;
                     println!("line {}: animation_button -> object {id}", index + 1);
                 }
+                "animation_button_from" => {
+                    let source: usize = rest.parse().map_err(|_| "invalid animation source")?;
+                    let kind = document
+                        .objects
+                        .get(source.checked_sub(1).ok_or("invalid animation source")?)
+                        .map(|object| &object.kind)
+                        .ok_or("invalid animation source")?;
+                    let label = kind
+                        .animation_button_source_label()
+                        .ok_or("expected a supported geometric source")?;
+                    let mut targets = kind.dependencies();
+                    targets.reverse();
+                    let values = targets
+                        .into_iter()
+                        .map(|id| {
+                            document
+                                .animation_button_default_settings(id)
+                                .map(|settings| (id, settings))
+                                .ok_or("invalid animation source point".to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let id = document.add_animation_button_for_targets_with_settings_and_label(
+                        &values,
+                        Some(label),
+                    )?;
+                    println!("line {}: animation_button_from -> object {id}", index + 1);
+                }
+                "animation_parameter_button" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if !(7..=8).contains(&parts.len()) {
+                        return Err("expected target direction rate continuous|discrete step min max [once|repeat]".into());
+                    }
+                    let target: usize = parts[0].parse().map_err(|_| "invalid parameter target")?;
+                    let mut settings = document
+                        .animation_button_default_settings(target)
+                        .ok_or("invalid parameter target")?;
+                    if settings.parameter.is_none() {
+                        return Err("target is not a parameter".into());
+                    }
+                    settings.direction = match parts[1] {
+                        "forward" => AnimationDirection::Forward,
+                        "backward" => AnimationDirection::Backward,
+                        "bidirectional" => AnimationDirection::Bidirectional,
+                        "random" => AnimationDirection::Random,
+                        _ => return Err("invalid animation direction".into()),
+                    };
+                    settings.speed = parts[2].parse().map_err(|_| "invalid parameter rate")?;
+                    settings.parameter = Some(ParameterAnimationSettings {
+                        discrete: match parts[3] {
+                            "continuous" => false,
+                            "discrete" => true,
+                            _ => return Err("expected continuous or discrete".into()),
+                        },
+                        step: parts[4].parse().map_err(|_| "invalid parameter step")?,
+                        min: parts[5].parse().map_err(|_| "invalid parameter minimum")?,
+                        max: parts[6].parse().map_err(|_| "invalid parameter maximum")?,
+                    });
+                    if let Some(travel) = parts.get(7) {
+                        settings.once = match *travel {
+                            "once" => true,
+                            "repeat" => false,
+                            _ => return Err("expected once or repeat".into()),
+                        };
+                    }
+                    let id = document.add_animation_button_with_settings(target, settings)?;
+                    println!(
+                        "line {}: animation_parameter_button -> object {id}",
+                        index + 1
+                    );
+                }
                 "animation_button_multi" => {
                     let mut targets = Vec::new();
                     for spec in rest.split_whitespace() {
@@ -942,6 +1018,47 @@ fn replay(path: &str) -> Result<(), String> {
                 "link_url_button" => {
                     let id = document.add_link_url_button(rest)?;
                     println!("line {}: link_url_button -> object {id}", index + 1);
+                }
+                "add_page" if rest.is_empty() => {
+                    let page = document.add_blank_page()?;
+                    println!("line {}: add_page -> page {page}", index + 1);
+                }
+                "copy_page" => {
+                    let page: usize = rest.parse().map_err(|_| "invalid page number")?;
+                    if page == 0 {
+                        return Err("page numbers start at 1".into());
+                    }
+                    let added = document.copy_page(page - 1)?;
+                    println!("line {}: copy_page -> page {added}", index + 1);
+                }
+                "rename_page" => {
+                    let (page, name) = rest
+                        .split_once(char::is_whitespace)
+                        .ok_or("expected page number and name")?;
+                    let page: usize = page.parse().map_err(|_| "invalid page number")?;
+                    if page == 0 {
+                        return Err("page numbers start at 1".into());
+                    }
+                    document.set_page_name(page - 1, name.trim())?;
+                }
+                "remove_page" => {
+                    let page: usize = rest.parse().map_err(|_| "invalid page number")?;
+                    if page == 0 {
+                        return Err("page numbers start at 1".into());
+                    }
+                    document.remove_page(page - 1)?;
+                }
+                "move_page" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    let [from, to] = parts.as_slice() else {
+                        return Err("expected source and destination page numbers".into());
+                    };
+                    let from: usize = from.parse().map_err(|_| "invalid source page")?;
+                    let to: usize = to.parse().map_err(|_| "invalid destination page")?;
+                    if from == 0 || to == 0 {
+                        return Err("page numbers start at 1".into());
+                    }
+                    document.move_page(from - 1, to - 1)?;
                 }
                 "page" => {
                     let page: usize = rest.parse().map_err(|_| "invalid page number")?;
@@ -1157,7 +1274,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
                     let kind = document
                         .constrained_point(host, Point { x, y })
-                        .ok_or("host must be a nondegenerate segment or circle")?;
+                        .ok_or("host must be a nondegenerate straight path, circle, or arc")?;
                     let id = document.add(kind);
                     println!("line {}: point_on -> object {id}", index + 1);
                 }
@@ -1679,6 +1796,8 @@ fn replay(path: &str) -> Result<(), String> {
                                 | Kind::GraphVerticalUnit(_, _)
                                 | Kind::DistanceVerticalUnit(_, _, _)
                                 | Kind::PointOnSegment(_, _)
+                                | Kind::PointOnRay(_, _)
+                                | Kind::PointOnLine(_, _)
                                 | Kind::PointOnCircle(_, _, _)
                                 | Kind::PointOnArc(_, _)
                         )
@@ -1793,24 +1912,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "show_all" if rest.is_empty() => document.show_all_hidden(),
                 "undo" if rest.is_empty() => document.undo(),
                 "redo" if rest.is_empty() => document.redo(),
-                "check" if rest.is_empty() => {
-                    let bytes = document.encode()?;
-                    let reopened = Document::from_bytes(&bytes, None)?;
-                    if reopened.objects.len() != document.objects.len()
-                        || reopened
-                            .objects
-                            .iter()
-                            .zip(&document.objects)
-                            .any(|(saved, current)| {
-                                saved.kind != current.kind
-                                    || saved.page != current.page
-                                    || saved.visible != current.visible
-                                    || saved.visual_style != current.visual_style
-                            })
-                    {
-                        return Err("reopened objects differ".into());
-                    }
-                }
+                "check" if rest.is_empty() => document.verify_roundtrip()?,
                 _ => return Err(format!("unknown or malformed command: {command}")),
             }
             Ok(())
