@@ -54,8 +54,9 @@ dialog sets Slow, Medium, Fast, or Instant speed and whether to follow a moving
 destination. Clicking the button moves the source point; clicking again stops
 an active movement.
 
-Edit > Action Buttons > Scroll takes one selected point. Its dialog places the
-point at the canvas corner or center when the button is clicked.
+Edit > Action Buttons > Scroll takes one selected point, including on a
+supported existing multi-page page. Its dialog places the point at the canvas
+corner or center when the button is clicked.
 
 Edit > Action Buttons > Presentation takes selected action buttons in selection
 order. Its dialog chooses simultaneous or sequential activation. Sequential

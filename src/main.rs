@@ -3866,9 +3866,8 @@ impl Editor {
                                     && object.kind.is_action_button()
                             }))
                             .collect::<Vec<_>>();
-                        if ui.add_enabled(!presentation_targets.is_empty()
-                            && presentation_targets.len() == self.selection_order.len()
-                            && !self.doc.partial_view,
+                        if ui.add_enabled(presentation_targets.len() == self.selection_order.len()
+                            && self.doc.can_add_presentation_button_for_targets(&presentation_targets).is_ok(),
                             egui::Button::new("Presentation")).clicked()
                         {
                             self.presentation_button_dialog = Some(PresentationButtonDraft {
@@ -7559,6 +7558,35 @@ mod tests {
         let click = sketchpad_rs::render::action_button_rect(&v, *anchor, label).center();
         editor.click(&v, click, false);
         assert_eq!(editor.center, Point { x: 150., y: 120. });
+    }
+
+    #[test]
+    fn page_two_scroll_button_moves_only_the_view() {
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/two_page_scroll_port.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        editor.doc.active_page = 1;
+        editor.scale = 1.;
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+            scale: 1.,
+            center: editor.center,
+        };
+        let Kind::ScrollButton { label, anchor, .. } = &editor.doc.objects[5].kind else {
+            panic!("Expected Scroll button")
+        };
+        let click = editor
+            .action_button_rect(&viewport, *anchor, label)
+            .center();
+        assert!(editor.doc.can_add_scroll_button(2).is_ok());
+        let saved = editor.doc.encode().unwrap();
+        editor.click(&viewport, click, false);
+        assert_eq!(editor.center, Point { x: 311., y: 261. });
+        assert_eq!(editor.doc.encode().unwrap(), saved);
     }
 
     #[test]
