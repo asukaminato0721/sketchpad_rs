@@ -10,7 +10,8 @@ establish the iteration definition, rather than treating the HTM as an iteration
 oracle.
 
 Both pages contain a code 89 definition with four seeds and four simultaneous
-mapping branches. Its 24-byte `090a` record has six initial zero bytes, a `u16`
+mapping branches. Its 24-byte `090a` record has four initial zero bytes, a `u16`
+image-level flag at offset 4 (0 for all levels, 1 for the final level only), a `u16`
 seed count at offset 6, a `u32` branch count at offset 8, an opaque native word at
 12, cached depth at 16, and four final zero bytes. References are:
 
@@ -40,6 +41,10 @@ per generation; this preserves the appearance of these opaque segment bindings.
 
 The implemented family accepts distinct free-point seeds, vector-translated
 point construction graphs, and segment/vector-translated-segment bindings.
+The bounded extensions in [midpoint evidence](mapped_midpoint_iteration_analysis.md)
+and [calculated-angle evidence](mapped_calculated_angle_iteration_analysis.md)
+also accept midpoint graphs, rotations driven by pure parameter degree formulas,
+and explicitly selected carried-point bindings.
 It retains the native carried list, including point prerequisites. Fixed depths
 and existing scalar iteration-depth sources work. Undefined depths suppress the
 copies while remaining savable. Seed drags, live depth edits, SVG/canvas drawing,
@@ -62,10 +67,13 @@ Construction is available through `Document::add_mapped_point_iteration` and
 `tests/mapped_point_iteration_replay.txt`: comma-separated seed/carried IDs,
 semicolon-separated branches, then fixed depth or `value:PARAMETER_ID`.
 There is no new desktop dialog for specifying general simultaneous mappings.
-Numeric state mappings, non-vector construction graphs, carried polygons/circles,
-and carried-point bindings remain outside this family. Limits are 2–16 seeds,
+Numeric state mappings, other construction graphs, and generic carried
+polygons/circles remain outside this family. Limits are 2–16 seeds,
 1–8 branches, depth 1–128; evaluation suppresses a sequence exceeding 20,000
-unique states in one generation or 100,000 total segment copies.
+unique states in one generation or 100,000 generated states across all levels.
+The final-level display mode still computes and bounds the complete substitution
+chain. The optional visible-binding list follows the depth in the replay command;
+the sidebar can switch a supported mapped iteration between all and final levels.
 
 The edited replay changes n from 2 to 4 and B from (140,180) to (150,170).
 Native displays the shallow chain through (350,210), confirming both dependency

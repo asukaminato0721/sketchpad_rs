@@ -636,3 +636,312 @@ fn native_length_threshold_expression_uses_centimeter_magnitudes() {
         Some(difference.numeric_value(6).unwrap() - 2.)
     );
 }
+
+#[test]
+fn native_empty_calculation_attribute_keeps_live_math_and_strict_layout() {
+    let unlabeled = include_bytes!("fixtures/numeric_empty_calculation_attribute_native.bin");
+    let labeled = include_bytes!("fixtures/numeric_labeled_empty_calculation_attribute_native.bin");
+    for raw in [unlabeled.as_slice(), labeled.as_slice()] {
+        let mut group = ParameterCalculationGroup::parse(raw).unwrap();
+        if raw == unlabeled.as_slice() {
+            assert_eq!(group.display_mode(), 1);
+            assert!(group.caption_suppressed());
+        }
+        let marker = payload(raw, 0x232e);
+        assert!(marker.is_empty());
+        group.set_precision(4).unwrap();
+        group.set_anchor((100, 150)).unwrap();
+        group = group.remap_source(3).unwrap();
+        assert_eq!(group.sources(), [3]);
+        assert!(payload(group.as_bytes(), 0x232e).is_empty());
+        assert_eq!(payload(group.as_bytes(), 0x07d8), payload(raw, 0x07d8));
+    }
+    let bytes =
+        include_bytes!("fixtures/numeric_empty_calculation_attribute_xy_native_verified.gsp");
+    let mut document = Document::from_bytes(bytes, None).unwrap();
+    assert!(!document.partial_view);
+    assert!(document.can_save().is_ok());
+    assert!(sketchpad_rs::render::number_lines_for_object(&document, 11).is_none());
+    assert!(document.numeric_value(11).unwrap().abs() < 1e-10);
+    document.set_parameter_value(1, 1.25).unwrap();
+    assert!((document.numeric_value(11).unwrap() - 1.).abs() < 1e-12);
+    let point = document.position(12).unwrap();
+    assert!((point.x - (200. + 37.79527559055118)).abs() < 1e-8);
+    assert!((point.y - (250. - 2.25 * 37.79527559055118)).abs() < 1e-10);
+    let saved = document.encode().unwrap();
+    assert_eq!(object_group(&saved, 11), object_group(bytes, 11));
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.position(12), Some(point));
+    let value_only = Document::from_bytes(
+        include_bytes!(
+            "fixtures/numeric_empty_calculation_attribute_value_only_native_verified.gsp"
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(!value_only.partial_view);
+    let Kind::ParameterCalculation(_, group) = &value_only.objects[10].kind else {
+        panic!("expected numeric calculation");
+    };
+    assert_eq!(group.display_mode(), 1);
+    assert!(!group.caption_suppressed());
+    assert_eq!(
+        sketchpad_rs::render::number_lines_for_object(&value_only, 11)
+            .unwrap()
+            .1,
+        ["0.00"]
+    );
+    let color = Document::from_bytes(
+        include_bytes!("fixtures/numeric_measured_literal_threshold_native_verified.gsp"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        sketchpad_rs::render::number_lines_for_object(&color, 14)
+            .unwrap()
+            .1,
+        ["Color = 0.33"]
+    );
+
+    document.selected.insert(12);
+    let clipboard = document.copy_selected().unwrap();
+    let copied = *document.paste(&clipboard).unwrap().last().unwrap();
+    let Kind::NumericCoordinatePoint(copied_calculation, _, _) = document.objects[copied - 1].kind
+    else {
+        panic!("expected copied numeric point");
+    };
+    assert!(sketchpad_rs::render::number_lines_for_object(&document, copied_calculation).is_none());
+    let copied_saved = document.encode().unwrap();
+    assert!(payload(&object_group(&copied_saved, copied_calculation), 0x232e).is_empty());
+    let copied_reopened = Document::from_bytes(&copied_saved, None).unwrap();
+    assert!(!copied_reopened.partial_view);
+    assert!((copied_reopened.numeric_value(copied_calculation).unwrap() - 1.).abs() < 1e-12);
+    assert_eq!(copied_reopened.position(copied), document.position(copied));
+
+    let rs = records(bytes).unwrap();
+    let auxiliary = rs.iter().find(|r| r.kind == 0x232e).unwrap();
+    let object_start = rs
+        .iter()
+        .filter(|r| r.kind == 0x07d0)
+        .nth(10)
+        .unwrap()
+        .start;
+    let font = rs
+        .iter()
+        .find(|r| r.kind == 0x07d8 && r.start > object_start)
+        .unwrap();
+    let mut nonempty = bytes.to_vec();
+    nonempty[auxiliary.start..auxiliary.start + 4].copy_from_slice(&1_u32.to_le_bytes());
+    nonempty.splice(auxiliary.data.start..auxiliary.data.start, [7, 0]);
+    let mut displaced = bytes.to_vec();
+    let marker = displaced
+        .drain(auxiliary.start..auxiliary.data.end)
+        .collect::<Vec<_>>();
+    displaced.splice(font.start..font.start, marker);
+    let mut duplicate = bytes.to_vec();
+    duplicate.splice(
+        auxiliary.start..auxiliary.start,
+        bytes[auxiliary.start..auxiliary.data.end].iter().copied(),
+    );
+    for invalid in [nonempty, displaced, duplicate] {
+        let rejected = Document::from_bytes(&invalid, None).unwrap();
+        assert!(rejected.partial_view);
+        assert!(matches!(rejected.objects[10].kind, Kind::Unsupported(48)));
+        assert_eq!(rejected.encode().unwrap(), invalid);
+    }
+}
+
+#[test]
+fn native_typed_parameters_preserve_unit_words_domains_and_caches() {
+    let bytes = include_bytes!("fixtures/numeric_typed_parameters_native_verified.gsp");
+    let mut document = Document::from_bytes(bytes, None).unwrap();
+    assert!(!document.partial_view);
+    for (id, unit, text, domain) in [
+        (1, NumericUnit::Degrees, "1.00°", (0., 360.)),
+        (2, NumericUnit::Length, "1.00 cm", (0., 100.)),
+        (3, NumericUnit::Scalar, "1.00", (-100., 100.)),
+    ] {
+        let Kind::Parameter(group) = &document.objects[id - 1].kind else {
+            panic!("expected typed parameter");
+        };
+        assert_eq!(group.unit(), unit);
+        assert_eq!(document.objects[id - 1].kind.numeric_unit(), Some(unit));
+        assert_eq!(group.value_text(), text);
+        assert_eq!(group.value(), 1.);
+        let range = group.animation_domain();
+        assert!((range.0 - domain.0).abs() < 1e-10);
+        assert!((range.1 - domain.1).abs() < 1e-10);
+    }
+    assert_eq!(document.unitless_numeric_value(1), None);
+    assert_eq!(document.unitless_numeric_value(2), None);
+    assert!(!document.objects[0].kind.is_iteration_depth_value());
+    assert!(!document.objects[1].kind.is_iteration_depth_value());
+    assert!(document.tabulate_default_parameter(1, (10, 200)).is_err());
+    assert!(document.tabulate_default_pair((10, 200)).is_err());
+    document.set_parameter_value(1, 45.).unwrap();
+    document.set_parameter_value(2, 2.51).unwrap();
+    let sine = document
+        .add_parameter_calculation(1, "sin(t[1])", (10, 120))
+        .unwrap();
+    let length = document
+        .add_parameter_calculation(2, "t[2]*2", (10, 150))
+        .unwrap();
+    assert!((document.numeric_value(sine).unwrap() - 0.5_f64.sqrt()).abs() < 1e-12);
+    assert_eq!(
+        document.objects[length - 1].kind.numeric_unit(),
+        Some(NumericUnit::Length)
+    );
+    assert!((document.numeric_value(length).unwrap() - 5.02).abs() < 1e-12);
+    let frame = document
+        .add_default_coordinate_system(sketchpad_rs::document::Point { x: 200., y: 250. })
+        .unwrap();
+    let point = document.add(Kind::NumericCoordinatePoint(2, sine, frame));
+    let degree_point = document.add(Kind::NumericCoordinatePoint(2, 1, frame));
+    assert!(
+        (document.position(degree_point).unwrap().y - (250. - 45. * 37.79527559055118)).abs()
+            < 1e-10
+    );
+    assert!(document.plot_parameter_on_path(2, None).is_err());
+    assert!(
+        document
+            .construct_parameter_locus(1, point, 0., 1., 17)
+            .is_err()
+    );
+    let position = document.position(point).unwrap();
+    assert!((position.x - (200. + 2.51 * 37.79527559055118)).abs() < 1e-10);
+    let encoded = document.encode().unwrap();
+    for id in [1, 2] {
+        let original = object_group(bytes, id);
+        let edited = object_group(&encoded, id);
+        for kind in [0x07d0, 0x07d5, 0x07d8] {
+            assert_eq!(payload(&edited, kind), payload(&original, kind));
+        }
+        // Native caches can disagree with the current value; editing the value
+        // words must not rewrite the animation domain, custom step, or caches.
+        let before = payload(&original, 0x0907);
+        let after = payload(&edited, 0x0907);
+        assert_eq!(&after[52..92], &before[52..92]);
+        assert_eq!(&after[after.len() - 2..], &before[before.len() - 2..]);
+    }
+    let reopened = Document::from_bytes(&encoded, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.position(point), Some(position));
+    assert_eq!(reopened.numeric_value(1), Some(45.));
+    assert_eq!(reopened.numeric_value(2), Some(2.51));
+
+    let mut degree = ParameterGroup::parse(&object_group(bytes, 1)).unwrap();
+    let before = payload(degree.as_bytes(), 0x0907);
+    degree.set_value(0.5123).unwrap();
+    assert_eq!(degree.precision(), 4);
+    assert_eq!(&payload(degree.as_bytes(), 0x0907)[52..92], &before[52..92]);
+    let mut length = ParameterGroup::parse(&object_group(bytes, 2)).unwrap();
+    let before = payload(length.as_bytes(), 0x0907);
+    length.set_value(2.511).unwrap();
+    let after = payload(length.as_bytes(), 0x0907);
+    assert_eq!(length.precision(), 3);
+    assert_eq!(
+        f64::from_le_bytes(after[52..60].try_into().unwrap()),
+        0.001 * 37.79527559055118
+    );
+    assert_eq!(&after[60..92], &before[60..92]);
+
+    for (id, wrong_subtype) in [(1, 80_u16), (2, 81_u16)] {
+        let mut invalid = object_group(bytes, id);
+        invalid[16..18].copy_from_slice(&wrong_subtype.to_le_bytes());
+        assert!(ParameterGroup::parse(&invalid).is_err());
+    }
+}
+
+#[test]
+fn native_typed_parameter_clipboard_preserves_units_and_live_dependencies() {
+    let bytes = include_bytes!("fixtures/numeric_typed_parameters_copied_native_verified.gsp");
+    let mut document = Document::from_bytes(bytes, None).unwrap();
+    assert!(!document.partial_view);
+    assert_eq!(document.objects.len(), 22);
+    assert_eq!(document.encode().unwrap(), bytes);
+    let Kind::NumericCoordinatePoint(x, y, _) = document.objects[21].kind else {
+        panic!("expected copied measured coordinate point");
+    };
+    assert_eq!(
+        document.objects[x - 1].kind.numeric_unit(),
+        Some(NumericUnit::Length)
+    );
+    assert_eq!(
+        document.objects[y - 1].kind.numeric_unit(),
+        Some(NumericUnit::Degrees)
+    );
+    assert_eq!(document.numeric_value(x), Some(2.51));
+    assert_eq!(document.numeric_value(y), Some(0.5));
+    let before = document.position(22).unwrap();
+    document.set_parameter_value(y, 1.5).unwrap();
+    let after = document.position(22).unwrap();
+    assert!((after.y - before.y + 37.79527559055118).abs() < 1e-10);
+    assert_eq!(document.numeric_value(1), Some(0.5));
+    let encoded = document.encode().unwrap();
+    assert_eq!(
+        Document::from_bytes(&encoded, None).unwrap().position(22),
+        Some(after)
+    );
+}
+
+#[test]
+fn native_angle_suffixes_keep_degree_semantics_and_preserve_literal_encoding() {
+    // Native 0102 displays 4.50°, sin=.08 and sqrt=2.12; it does not
+    // denote squared degrees. Native 0100 stores radians and displays degrees.
+    let alternate = include_bytes!("fixtures/numeric_alternate_degree_parameter_native.bin");
+    let mut degree = ParameterGroup::parse(alternate).unwrap();
+    assert_eq!(degree.unit(), NumericUnit::Degrees);
+    assert_eq!(degree.value(), 30.);
+    assert_eq!(degree.value_text(), "30°");
+    let before = payload(alternate, 0x0907);
+    degree.set_value(4.5).unwrap();
+    assert_eq!(degree.value_text(), "4.5°");
+    let after = payload(degree.as_bytes(), 0x0907);
+    assert_eq!(&after[52..92], &before[52..92]);
+    assert_eq!(&after[after.len() - 2..], &0x0102_u16.to_le_bytes());
+
+    let bytes = include_bytes!("fixtures/numeric_alternate_degree_parameter_native_verified.gsp");
+    let alternate_document = Document::from_bytes(bytes, None).unwrap();
+    assert!(!alternate_document.partial_view);
+    assert_eq!(alternate_document.encode().unwrap(), bytes);
+    assert_eq!(alternate_document.numeric_value(1), Some(4.5));
+    assert_eq!(
+        alternate_document.objects[3].kind.numeric_unit(),
+        Some(NumericUnit::Scalar)
+    );
+    assert!((alternate_document.numeric_value(4).unwrap() - 4.5_f64.sqrt()).abs() < 1e-12);
+    assert!(
+        (alternate_document.position(13).unwrap().y - (250. - 4.5 * 37.79527559055118)).abs()
+            < 1e-10
+    );
+
+    let radians = include_bytes!("fixtures/numeric_radian_parameter_native.bin");
+    let mut angle = ParameterGroup::parse(radians).unwrap();
+    assert!((angle.value() - 180. / 3.1415926535898).abs() < 1e-12);
+    assert_eq!(angle.value_text(), "57.30°");
+    let before = payload(radians, 0x0907);
+    angle.set_value(3.5).unwrap();
+    assert!((angle.value() - 3.5).abs() < 1e-12);
+    assert_eq!(angle.precision(), 2);
+    assert_eq!(angle.value_text(), "3.50°");
+    assert!((angle.animation_domain().1 - 360.).abs() < 1e-10);
+    let after = payload(angle.as_bytes(), 0x0907);
+    assert_eq!(&after[52..92], &before[52..92]);
+    assert_eq!(&after[after.len() - 2..], &0x0100_u16.to_le_bytes());
+
+    let bytes = include_bytes!("fixtures/numeric_radian_parameter_native_verified.gsp");
+    let mut document = Document::from_bytes(bytes, None).unwrap();
+    assert!(!document.partial_view);
+    assert_eq!(document.encode().unwrap(), bytes);
+    assert!((document.numeric_value(4).unwrap() - 1_f64.sin()).abs() < 1e-12);
+    assert!((document.numeric_value(5).unwrap() - 360. / 3.1415926535898).abs() < 1e-12);
+    document.set_parameter_value(1, 3.5).unwrap();
+    assert!((document.numeric_value(5).unwrap() - 7.).abs() < 1e-12);
+    let expected_y = 250. - 3.5 * 37.79527559055118;
+    assert!((document.position(13).unwrap().y - expected_y).abs() < 1e-10);
+    let encoded = document.encode().unwrap();
+    let reopened = Document::from_bytes(&encoded, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.position(13), document.position(13));
+}

@@ -226,6 +226,7 @@ impl Document {
                         tracing: object.tracing,
                         midpoint_host: object.midpoint_host,
                         visual_style: object.visual_style,
+                        interior_order: object.interior_order,
                         text_style: self.text_font_state(id),
                         label: object.label.clone(),
                         rich_text: self.text_rich_template(id),
@@ -260,6 +261,7 @@ impl Document {
             tracing,
             midpoint_host,
             visual_style,
+            interior_order,
             text_style,
             label,
             rich_text,
@@ -334,6 +336,8 @@ impl Document {
                 function_name = Some(next);
             }
             let id = candidate.objects.len() + 1;
+            let interior_order = interior_order.or_else(|| remapped.is_polygon().then(||
+                if matches!(remapped, Kind::Polygon(_)) { 0 } else { 1 }));
             candidate.objects.push(Object {
                 id,
                 page: candidate.active_page,
@@ -347,6 +351,7 @@ impl Document {
                 header_offset: None,
                 label: label.clone(),
                 visual_style: *visual_style,
+                interior_order,
                 text_style_override: text_style.clone(),
                 rich_text_override: rich_text.clone(),
                 function_anchor,

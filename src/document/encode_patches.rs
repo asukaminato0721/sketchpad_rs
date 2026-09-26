@@ -326,6 +326,26 @@ impl Document {
         }
         Ok(bytes)
     }
+    pub(super) fn patch_mapped_iteration_image_levels(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let mut objects = self.objects.iter().filter(|o| !o.deleted);
+        let mut current = None;
+        for record in rs {
+            if record.kind == 0x07d0 {
+                current = Some(objects.next().ok_or("Object group count mismatch")?);
+            } else if record.kind == 0x090a
+                && let Some(object) = current
+                && let Kind::MappedPointIteration { final_only, .. } = object.kind
+            {
+                if record.data.len() != 24 { return Err("Invalid mapped iteration definition".into()); }
+                bytes[record.data.start + 4..record.data.start + 6]
+                    .copy_from_slice(&u16::from(final_only).to_le_bytes());
+            }
+        }
+        if objects.next().is_some() { return Err("Object group count mismatch".into()); }
+        Ok(bytes)
+    }
+
     pub(super) fn patch_visual_styles(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
         let survivors: Vec<_> = self
@@ -339,6 +359,22 @@ impl Document {
                 .get(ordinal)
                 .ok_or("Object group count mismatch")?;
             ordinal += 1;
+            if object.kind.is_polygon() {
+                let payload = bytes.get_mut(record.data.clone())
+                    .filter(|payload| matches!(payload.len(), 16 | 28) && payload[6..8] == [4, 0])
+                    .ok_or("Invalid polygon drawing-order header")?;
+                match (payload.len(), object.interior_order) {
+                    (28, Some(order)) => payload[20..24].copy_from_slice(&order.to_le_bytes()),
+                    (16, None) => {},
+                    _ => return Err("Polygon drawing order is unavailable in this header".into()),
+                }
+            } else if let Some(order) = object.interior_order {
+                let payload = &bytes[record.data.clone()];
+                if payload.len() != 28 || payload[6..8] != [4, 0]
+                    || payload[20..24] != order.to_le_bytes() {
+                    return Err("Cannot change drawing order of an unsupported interior".into());
+                }
+            }
             if let Some(style) = object.visual_style {
                 let styled_binding = match object.kind {
                     Kind::IterationBinding(source, parent) => {

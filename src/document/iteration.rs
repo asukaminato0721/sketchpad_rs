@@ -82,7 +82,8 @@ pub(super) fn supported_point_parameter_iteration(
             .filter(|o| !o.deleted)
     };
     get(seed).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
-        && get(parameter).is_some_and(|o|matches!(o.kind,Kind::Parameter(_)))
+        && get(parameter).is_some_and(|o|matches!(o.kind,Kind::Parameter(_))
+            && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
         && supported_point_iteration_mapping(objects,seed,image)
         && get(calculation).is_some_and(|o|matches!(o.kind,Kind::ParameterCalculation(source,ref group) if calculation_source_ids(source, group).contains(&parameter) && group.unit()==NumericUnit::Scalar))
         && get(label).is_some_and(|o|matches!(o.kind,Kind::PointNumericLabel(host,value) if host==image && value==calculation))
@@ -111,7 +112,7 @@ pub(super) fn supported_branch_polygon_mapping(
         && segments.iter().all(|id| get(*id).is_some_and(|o| matches!(o.kind, Kind::Segment(a,b) if a != b && [seed,first,second].contains(&a) && [seed,first,second].contains(&b))))
 }
 
-/// Native simultaneous free-point mappings using vectors, midpoints, and segments.
+/// Native simultaneous free-point mappings using vectors, midpoints, and pure calculated angles.
 pub(super) fn supported_mapped_point_iteration(
     objects: &[Object],
     seeds: &[usize],
@@ -155,6 +156,15 @@ pub(super) fn supported_mapped_point_iteration(
                 pending.extend([a, b, c])
             }
             Kind::Segment(a, b) | Kind::Midpoint(a, b) => pending.extend([a, b]),
+            Kind::CalculatedAngleRotatedPoint(source, center, angle)
+                if get(angle).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Degrees)) => {
+                pending.extend([source, center, angle]);
+            }
+            // Only pure parameter formulas are supported as mapped numeric inputs.
+            Kind::Parameter(_) | Kind::Calculation(_) => {}
+            Kind::ParameterCalculation(source, ref group) => {
+                pending.extend(calculation_source_ids(source, group));
+            }
             _ => return false,
         }
     }
@@ -190,11 +200,12 @@ impl Document {
                 .is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind,
                     Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))))
         {
-            return Err("Select simultaneous free-point vector or midpoint mappings and carried point/segment bindings; depth must be 1–128".into());
+            return Err("Select supported simultaneous free-point mappings and carried point/segment bindings; depth must be 1–128".into());
         }
         self.checkpoint();
         let id = self.append_object(Kind::MappedPointIteration {
             seeds: seeds.to_vec(), branches: branches.to_vec(), carried: carried.to_vec(), depth,
+            final_only: false,
         });
         for source in bindings {
             let style = self.objects[*source - 1].visual_style;
@@ -202,6 +213,26 @@ impl Document {
             self.objects[binding - 1].visual_style = style;
         }
         Ok(id)
+    }
+
+    pub fn set_mapped_iteration_final_only(&mut self, id: usize, final_only: bool) -> Result<(), String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot edit iteration image levels in this sketch safely".into());
+        }
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid iteration ID")?)
+            .filter(|o| !o.deleted && o.page == self.active_page)
+            .ok_or("Select an iteration on the active page")?;
+        let Kind::MappedPointIteration { final_only: old, .. } = object.kind else {
+            return Err("Select a supported mapped iteration".into());
+        };
+        if old == final_only { return Ok(()); }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let Kind::MappedPointIteration { final_only: value, .. } = &mut candidate.objects[id - 1].kind else { unreachable!() };
+        *value = final_only;
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(())
     }
 
     fn mapped_segment_iteration_images(&self, source: usize, iteration: usize) -> Option<Vec<(Point, Point)>> {
@@ -228,6 +259,7 @@ impl Document {
             branches,
             carried,
             depth,
+            final_only,
         } = &object.kind
         else {
             return None;
@@ -243,7 +275,8 @@ impl Document {
         let mut level = vec![initial];
         let mut sample = self.clone();
         let mut result = Vec::new();
-        for _ in 0..depth {
+        let mut generated = 0;
+        for step in 0..depth {
             let mut next = Vec::new();
             let mut seen = BTreeSet::new();
             for state in &level {
@@ -268,14 +301,17 @@ impl Document {
                 }
             }
             // Avoid exponential resource use on mappings with no coincident states.
-            if next.len() > 20_000 || result.len() + next.len() > 100_000 {
+            if next.len() > 20_000 || generated + next.len() > 100_000 {
                 return None;
             }
-            for state in &next {
-                for (id, point) in seeds.iter().zip(state) {
-                    sample.objects[*id - 1].kind = Kind::Free(*point);
+            generated += next.len();
+            if !*final_only || step + 1 == depth {
+                for state in &next {
+                    for (id, point) in seeds.iter().zip(state) {
+                        sample.objects[*id - 1].kind = Kind::Free(*point);
+                    }
+                    result.push(evaluate(&sample, source)?);
                 }
-                result.push(evaluate(&sample, source)?);
             }
             level = next;
         }

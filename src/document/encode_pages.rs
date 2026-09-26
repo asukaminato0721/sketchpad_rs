@@ -361,6 +361,8 @@ impl Document {
                     .ok_or("Polygon has too many vertices")?
                     .to_le_bytes(),
             );
+            object_header[20..24].copy_from_slice(&object.interior_order
+                .ok_or("Missing polygon drawing order")?.to_le_bytes());
         }
         put_record(groups, 0x07d0, &object_header);
         if is_point_kind(&object.kind) {
@@ -1418,6 +1420,9 @@ impl Document {
             if saved.visual_style.is_some() && current.visual_style.is_some() {
                 expected.visual_style = current.visual_style;
             }
+            if saved.kind.is_polygon() && current.interior_order.is_some() {
+                expected.interior_order = current.interior_order;
+            }
             if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
                 if !point.x.is_finite() || !point.y.is_finite() {
                     return Err("Multi-page point coordinates must be finite".into());
@@ -1486,6 +1491,17 @@ impl Document {
                 return Err("Multi-page state edit changes unsupported object data".into());
             }
             let header = current.header_offset.ok_or("Missing object header")?;
+            if saved.interior_order != current.interior_order {
+                if !saved.kind.is_polygon() {
+                    return Err("Cannot change drawing order of an unsupported interior".into());
+                }
+                if !rs.iter().any(|record| record.kind == 0x07d0
+                    && record.data.start == header && record.data.len() == 28) {
+                    return Err("Polygon drawing order is unavailable in this header".into());
+                }
+                out[header + 20..header + 24].copy_from_slice(&current.interior_order
+                    .ok_or("Missing polygon drawing order")?.to_le_bytes());
+            }
             if saved.tracing != current.tracing {
                 let record = rs
                     .iter()

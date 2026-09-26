@@ -5,7 +5,7 @@ triangle across a vertical segment. The bundled `tests/fixtures/reflection.gsp`
 contains a reflected quadrilateral. Both use code 34 with references
 `[source polygon, mirror]`, category 4, and a polygon subtype equal to
 `49 + vertex count` (52 for the triangle, 53 for the quadrilateral). Header
-offset 20 contains a 32-bit transform flag of 1. The reflected header keeps
+offset 20 contains a signed 32-bit interior drawing order of 1. The reflected header keeps
 the source polygon's fill color.
 
 The port evaluates each reflected vertex from the source polygon and the

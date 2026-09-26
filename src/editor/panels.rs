@@ -37,7 +37,9 @@ impl Editor {
 impl Editor {
     pub(super) fn tools_ui(&mut self, root: &mut egui::Ui) {
         egui::Panel::left("tools").min_size(110.).show(root, |ui| {
-            ui.heading("Tools");
+            if self.show_toolbox {
+                ui.heading("Tools");
+            }
             if self.doc.page_count > 1 {
                 ui.horizontal(|ui| {
                     if ui
@@ -78,22 +80,24 @@ impl Editor {
                 });
                 ui.separator();
             }
-            for (tool, name) in [
-                (Tool::Select, "Select"),
-                (Tool::Point, "Point"),
-                (Tool::Segment, "Segment"),
-                (Tool::Circle, "Circle"),
-                (Tool::Text, "Text"),
-            ] {
-                if ui.selectable_label(self.tool == tool, name).clicked() {
-                    self.tool = tool;
-                    self.pending = None;
+            if self.show_toolbox {
+                for (tool, name) in [
+                    (Tool::Select, "Select"),
+                    (Tool::Point, "Point"),
+                    (Tool::Segment, "Segment"),
+                    (Tool::Circle, "Circle"),
+                    (Tool::Text, "Text"),
+                ] {
+                    if ui.selectable_label(self.tool == tool, name).clicked() {
+                        self.tool = tool;
+                        self.pending = None;
+                    }
                 }
-            }
-            if self.tool == Tool::Text {
-                ui.label("New text");
-                ui.text_edit_multiline(&mut self.text_draft);
-                ui.label("Click the sketch to place it.");
+                if self.tool == Tool::Text {
+                    ui.label("New text");
+                    ui.text_edit_multiline(&mut self.text_draft);
+                    ui.label("Click the sketch to place it.");
+                }
             }
             if self.marked_center.is_some()
                 || self.marked_mirror.is_some()
@@ -136,6 +140,29 @@ impl Editor {
                 }
             }
             if let Some(id) = self.doc.selected.iter().next().copied() {
+                let iteration_id = match self.doc.objects[id - 1].kind {
+                    Kind::MappedPointIteration { .. } => Some(id),
+                    Kind::IterationBinding(_, parent) => Some(parent),
+                    _ => None,
+                };
+                if let Some(iteration_id) = iteration_id
+                    && let Some(object) = self.doc.objects.get(iteration_id - 1)
+                    && let Kind::MappedPointIteration { mut final_only, .. } = object.kind
+                {
+                    ui.separator();
+                    if ui
+                        .checkbox(&mut final_only, "Show only final iteration")
+                        .changed()
+                    {
+                        self.status = match self
+                            .doc
+                            .set_mapped_iteration_final_only(iteration_id, final_only)
+                        {
+                            Ok(()) => "Updated iteration images".into(),
+                            Err(error) => error,
+                        };
+                    }
+                }
                 if self.inspected != Some(id) {
                     self.inspected = Some(id);
                     self.edit_buffer = match &self.doc.objects[id - 1].kind {

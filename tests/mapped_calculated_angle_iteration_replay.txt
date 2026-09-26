@@ -1,0 +1,16 @@
+new
+point 250 180
+point 430 180
+segment 1 2
+named_parameter N 5 10 30
+calculate_parameter 4 180°/N
+rotate_value 1 2 5
+iterate_mapped 1,2 2,6 3,6 value:4 6,3
+check
+save /tmp/sketchpad_mapped_calculated_angle_iteration.gsp
+open tests/fixtures/mapped_calculated_angle_iteration_native_verified.gsp
+parameter_value 4 5
+move 1 487 325
+color 8 #0e96d2
+check
+save /tmp/sketchpad_mapped_calculated_angle_iteration_edited.gsp

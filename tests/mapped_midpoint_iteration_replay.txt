@@ -1,0 +1,21 @@
+new
+point 200 100
+point 100 300
+point 400 250
+segment 1 2
+segment 2 3
+segment 3 1
+midpoint 1 2
+midpoint 2 3
+midpoint 3 1
+iterate_mapped 1,2,3 8,9,7 4,5,6,7,8,9 2 4,5,6,7,8,9
+check
+save /tmp/sketchpad_mapped_midpoint_triangle.gsp
+open /tmp/sketchpad_mapped_midpoint_triangle.gsp
+check
+open tests/fixtures/mapped_midpoint_triangle_native_verified.gsp
+point_style 14 thick
+color 14 #0e96d2
+move 1 800 200
+check
+save /tmp/sketchpad_mapped_midpoint_triangle_edited.gsp

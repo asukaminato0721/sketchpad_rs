@@ -1,0 +1,17 @@
+new
+point 100 100
+point 200 100
+point 200 160
+point 100 160
+polygon 1 2 3 4
+named_parameter p 0.5 20 20
+angle 4 1 2
+rotate_value 5 1 7
+dilate_value 8 1 6
+translate_vector 9 1 2
+rotate_value 10 1 7
+dilate_value 9 1 6
+save /tmp/polygon_transform_chains_generated_port.gsp
+parameter_value 6 0.75
+move 2 220 110
+save /tmp/polygon_transform_chains_edited_port.gsp

@@ -281,6 +281,14 @@ pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
     })
 }
 
+// Reorder only polygon fill slots; preserve all other drawing and picking order.
+fn ordered_polygon_fills(doc: &Document) -> Vec<&crate::document::Object> {
+    let mut polygons: Vec<_> = doc.objects.iter()
+        .filter(|o| doc.is_displayed(o.id) && o.kind.is_polygon()).collect();
+    polygons.sort_by_key(|o| o.interior_order.unwrap_or(0));
+    polygons
+}
+
 pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
     doc.mapped_point_binding_images(id).is_some_and(|images| {
         images.into_iter().any(|point| vp.screen(point).distance(at) < 11.)
@@ -917,6 +925,7 @@ pub fn svg_page_with_button_offset(
         )
         .unwrap();
     }
+    let mut polygon_fills = ordered_polygon_fills(doc).into_iter();
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
@@ -1009,7 +1018,8 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
-        if let Some(points) = doc.polygon_points(o.id) {
+        let polygon_object = if o.kind.is_polygon() { polygon_fills.next().unwrap() } else { o };
+        if let Some(points) = doc.polygon_points(polygon_object.id) {
             let vertices = points
                 .into_iter()
                 .map(|point| {
@@ -1022,11 +1032,11 @@ pub fn svg_page_with_button_offset(
                 svg,
                 "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
                 vertices,
-                match o.visual_style {
+                match polygon_object.visual_style {
                     Some(VisualStyle::Polygon { color, .. }) => css_color(color),
                     _ => "#f6ad60".into(),
                 },
-                match o.visual_style {
+                match polygon_object.visual_style {
                     Some(VisualStyle::Polygon { opacity, .. }) => f64::from(opacity) / 65535.,
                     _ => 0.5,
                 }
@@ -1743,6 +1753,7 @@ impl GeometryRenderer {
             }
         }
         // Draw paths first and points last.
+        let mut polygon_fills = ordered_polygon_fills(doc).into_iter();
         for o in &doc.objects {
             if !doc.is_displayed(o.id) {
                 continue;
@@ -1940,12 +1951,13 @@ impl GeometryRenderer {
                 | Kind::AngleRotatedPolygon(_, _, _, _, _)
                 | Kind::ScaledPolygon(_, _, _)
                 | Kind::RatioScaledPolygon(_, _, _, _, _) => {
-                    if let Some(points) = doc.polygon_points(o.id) {
+                    let polygon_object = polygon_fills.next().unwrap();
+                    if let Some(points) = doc.polygon_points(polygon_object.id) {
                         let screen = points
                             .into_iter()
                             .map(|point| vp.screen(point))
                             .collect::<Vec<_>>();
-                        let fill = match o.visual_style {
+                        let fill = match polygon_object.visual_style {
                             Some(VisualStyle::Polygon { color, opacity }) => {
                                 rgba(color, f32::from(opacity) / 65535.)
                             }
@@ -2041,6 +2053,41 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polygon_fills_follow_signed_native_rank_and_keep_other_draw_slots() {
+        let mut doc = Document::new();
+        for p in [Point { x: 100., y: 100. }, Point { x: 300., y: 100. }, Point { x: 200., y: 300. }] {
+            doc.add(Kind::Free(p));
+        }
+        let orange = doc.add(Kind::Polygon(vec![1, 2, 3]));
+        let line = doc.add(Kind::Segment(1, 2));
+        let green = doc.add(Kind::Polygon(vec![1, 2, 3]));
+        let blue = doc.add(Kind::Polygon(vec![1, 2, 3]));
+        for (id, rank, color) in [
+            (orange, 0, RgbColor { red: 255, green: 128, blue: 0 }),
+            (green, -1, RgbColor { red: 0, green: 255, blue: 0 }),
+            (blue, 0, RgbColor { red: 0, green: 0, blue: 255 }),
+        ] {
+            doc.objects[id - 1].interior_order = Some(rank);
+            doc.objects[id - 1].visual_style = Some(VisualStyle::Polygon { color, opacity: 32767 });
+        }
+        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [green, orange, blue]);
+        let vp = Viewport { rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.)), scale: 1., center: Point { x: 200., y: 200. } };
+        let svg = svg_page(&doc, &vp).unwrap();
+        let green_at = svg.find("fill=\"#00ff00\"").unwrap();
+        let orange_at = svg.find("fill=\"#ff8000\"").unwrap();
+        let blue_at = svg.find("fill=\"#0000ff\"").unwrap();
+        let line_at = svg.find("<line x1=").unwrap();
+        assert!(green_at < line_at && line_at < orange_at && orange_at < blue_at);
+        assert_eq!(doc.objects[line - 1].kind, Kind::Segment(1, 2));
+        doc.objects[green - 1].visible = false;
+        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [orange, blue]);
+        doc.objects[green - 1].visible = true;
+        doc.objects[orange - 1].interior_order = Some(i32::MAX);
+        doc.objects[green - 1].interior_order = Some(i32::MIN);
+        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [green, blue, orange]);
+    }
     #[test]
     fn styled_point_curve_samples_keep_dash_phase_and_undefined_breaks() {
         let vp=Viewport {rect:Rect::from_min_size(Pos2::ZERO,egui::vec2(300.,300.)),scale:1.,center:Point{x:0.,y:0.}};

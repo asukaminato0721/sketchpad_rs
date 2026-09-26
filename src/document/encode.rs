@@ -1,5 +1,5 @@
 use super::calculations::calculation_source_ids;
-use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, straight_kind_mode};
+use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count, straight_kind_mode};
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
 use super::{Document, IterationDepth, Kind, LineMode};
 use crate::action_records::{
@@ -18,7 +18,7 @@ use crate::{
 
 impl Document {
     pub fn encode(&self) -> Result<Vec<u8>, String> {
-        let bytes = self.encode_core()?;
+        let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
         self.encode_page_names(self.patch_active_page(self.patch_measurement_precisions(bytes)?)?)
     }
     fn encode_core(&self) -> Result<Vec<u8>, String> {
@@ -494,7 +494,7 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
-            if let Kind::MappedPointIteration { ref seeds, ref branches, ref carried, depth } = o.kind {
+            if let Kind::MappedPointIteration { ref seeds, ref branches, ref carried, depth, final_only } = o.kind {
                 let mut header = *include_bytes!("../../assets/mapped_point_iteration_header.bin");
                 header[..2].copy_from_slice(&(if matches!(depth, IterationDepth::Fixed(_)) { 76u16 } else { 89u16 }).to_le_bytes());
                 if !o.visible { header[2] |= 1; }
@@ -506,6 +506,7 @@ impl Document {
                 for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
                 put_record(&mut added, 0x07d2, &refs);
                 let mut definition = *include_bytes!("../../assets/mapped_point_iteration_definition.bin");
+                definition[4..6].copy_from_slice(&u16::from(final_only).to_le_bytes());
                 definition[6..8].copy_from_slice(&(seeds.len() as u16).to_le_bytes());
                 definition[8..12].copy_from_slice(&(branches.len() as u32).to_le_bytes());
                 definition[16..20].copy_from_slice(&self.numeric_iteration_depth(depth).unwrap_or(0).to_le_bytes());
@@ -1614,10 +1615,8 @@ impl Document {
                 | Kind::ScaledPolygon(source, _, _)
                 | Kind::RatioScaledPolygon(source, _, _, _, _) = o.kind
                 {
-                    let vertex_count = match &self.objects[source - 1].kind {
-                        Kind::Polygon(vertices) => vertices.len(),
-                        _ => return Err("Reflected interior requires a polygon".into()),
-                    };
+                    let vertex_count = polygon_vertex_count(&self.objects, source)
+                        .ok_or("Interior transform requires a supported polygon source")?;
                     h[8..10].copy_from_slice(
                         &polygon_subtype(vertex_count)
                             .ok_or("Polygon has too many vertices")?
@@ -1645,6 +1644,10 @@ impl Document {
             }
             if !o.visible {
                 h[2] = 1;
+            }
+            if o.kind.is_polygon() {
+                h[20..24].copy_from_slice(&o.interior_order
+                    .ok_or("Missing polygon drawing order")?.to_le_bytes());
             }
             put_record(&mut added, 0x7d0, &h);
             if let Some(label) = &o.label {

@@ -13,6 +13,9 @@ impl Document {
         let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).map(|o| &o.kind) else {
             return Err("Select a supported parameter".into());
         };
+        if parameter.unit() != crate::table_records::NumericUnit::Scalar {
+            return Err("This table supports scalar parameters".into());
+        }
         let group = if parameter.name() == "t[1]" {
             TableGroup::for_source_value(
                 u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
@@ -39,10 +42,10 @@ impl Document {
             .objects
             .iter()
             .filter_map(|object| match &object.kind {
-                Kind::Parameter(group) if !object.deleted && group.name() == "t[1]" => {
+                Kind::Parameter(group) if !object.deleted && group.name() == "t[1]" && group.unit() == crate::table_records::NumericUnit::Scalar => {
                     Some((object.id, 1, group.value()))
                 }
-                Kind::Parameter(group) if !object.deleted && group.name() == "t[2]" => {
+                Kind::Parameter(group) if !object.deleted && group.name() == "t[2]" && group.unit() == crate::table_records::NumericUnit::Scalar => {
                     Some((object.id, 2, group.value()))
                 }
                 _ => None,

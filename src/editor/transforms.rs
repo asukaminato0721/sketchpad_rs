@@ -31,7 +31,8 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
-            Some(Kind::Polygon(_))
+            Some(kind) if matches!(kind, Kind::Polygon(_))
+                || (self.translation_mode == TranslationMode::MarkedVector && kind.is_polygon())
         );
         if self.doc.position(source).is_none()
             && !source_is_segment
@@ -672,7 +673,9 @@ impl Editor {
             source_kind,
             Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
         ) && self.doc.circle_points(source).is_some();
-        let source_polygon = matches!(source_kind, Some(Kind::Polygon(_)))
+        let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
+            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
+                && kind.is_polygon()))
             && self.doc.polygon_points(source).is_some();
         if !(source_point || source_segment || source_circle || source_polygon)
             || self.doc.position(center).is_none()

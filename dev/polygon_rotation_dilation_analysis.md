@@ -5,7 +5,7 @@ Native fixtures `tests/fixtures/fixed_rotation_polygon_original.gsp`,
 and `ratio_dilation_polygon_original.gsp` establish the four polygon variants.
 Their object codes are 27, 28, 30, and 32. Each header uses category 4,
 subtype `49 + vertex count` (52 for a triangle), the source polygon's fill
-color, transform flag 1 at offset 20, and marker bytes `51 5c` at offsets
+color, interior drawing order 1 at offset 20, and marker bytes `51 5c` at offsets
 18–19. References use the same order as the point variants: source and center
 for fixed transforms, followed by three defining points for marked transforms.
 Fixed rotation and dilation use the same 36-byte and 12-byte constraint payloads

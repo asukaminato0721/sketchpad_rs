@@ -280,7 +280,7 @@ impl Kind {
         {
             return vec![*source, *center, *angle];
         }
-        if let Kind::MappedPointIteration { seeds, branches, carried, depth } = self {
+        if let Kind::MappedPointIteration { seeds, branches, carried, depth, .. } = self {
             let mut parents = seeds.clone();
             parents.extend(branches.iter().flatten().copied());
             parents.extend(carried);
@@ -467,12 +467,13 @@ impl Kind {
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
-        if let Kind::MappedPointIteration { seeds, branches, carried, depth } = self {
+        if let Kind::MappedPointIteration { seeds, branches, carried, depth, final_only } = self {
             return Kind::MappedPointIteration {
                 seeds: seeds.iter().map(|id| m(*id)).collect(),
                 branches: branches.iter().map(|branch| branch.iter().map(|id| m(*id)).collect()).collect(),
                 carried: carried.iter().map(|id| m(*id)).collect(),
                 depth: match depth { IterationDepth::Fixed(n) => IterationDepth::Fixed(*n), IterationDepth::Value(id) => IterationDepth::Value(m(*id)) },
+                final_only: *final_only,
             };
         }
         if let Kind::BranchingPolygonIteration {
@@ -1347,6 +1348,9 @@ pub(super) fn polygon_vertex_count(objects: &[Object], mut id: usize) -> Option<
         }
         let source = match &object.kind {
             Kind::Polygon(vertices) => {
+                if vertices.len() < 3 {
+                    return None;
+                }
                 super::records::polygon_subtype(vertices.len())?;
                 return Some(vertices.len());
             }

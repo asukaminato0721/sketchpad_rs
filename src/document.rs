@@ -189,6 +189,7 @@ pub enum Kind {
         branches: Vec<Vec<usize>>,
         carried: Vec<usize>,
         depth: IterationDepth,
+        final_only: bool,
     },
     IterationValues(usize, usize),
     PointRatio(usize, usize, usize),
@@ -299,6 +300,7 @@ pub struct Object {
     pub header_offset: Option<usize>,
     pub label: Option<LabelAux>,
     pub visual_style: Option<VisualStyle>,
+    pub interior_order: Option<i32>,
     pub text_style_override: Option<FontState>,
     pub rich_text_override: Option<text_object::RichTextTemplate>,
     pub function_anchor: Option<(i16, i16)>,
@@ -320,6 +322,7 @@ struct ClipboardObject {
     tracing: bool,
     midpoint_host: Option<usize>,
     visual_style: Option<VisualStyle>,
+    interior_order: Option<i32>,
     text_style: Option<FontState>,
     label: Option<LabelAux>,
     rich_text: Option<text_object::RichTextTemplate>,
@@ -439,10 +442,18 @@ impl Document {
             None
         };
         let measurement_precision = kind.has_measurement_precision().then_some(2);
+        let interior_order = if matches!(kind, Kind::Polygon(_)) {
+            Some(0)
+        } else if kind.is_polygon() {
+            Some(1)
+        } else {
+            None
+        };
         self.objects.push(Object {
             id,
             page: self.active_page,
             visual_style,
+            interior_order,
             kind,
             visible: true,
             tracing: false,

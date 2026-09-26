@@ -1732,7 +1732,7 @@ fn replay(path: &str) -> Result<(), String> {
                             .objects
                             .get(ids[0].saturating_sub(1))
                             .map(|o| &o.kind),
-                        Some(Kind::Polygon(_))
+                        Some(kind) if kind.is_polygon()
                     ) {
                         Kind::VectorTranslatedPolygon(ids[0], ids[1], ids[2])
                     } else {

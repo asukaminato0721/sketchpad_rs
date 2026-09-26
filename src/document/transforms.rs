@@ -39,7 +39,7 @@ impl Document {
             Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedCircle(source, center, angle)
             }
-            Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {
+            Some(kind) if kind.is_polygon() && self.polygon_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedPolygon(source, center, angle)
             }
             _ => return Err("Select a point, segment, circle, or polygon interior".into()),
@@ -81,7 +81,7 @@ impl Document {
             Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedRatioScaledCircle(source, center, ratio)
             }
-            Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {
+            Some(kind) if kind.is_polygon() && self.polygon_points(source).is_some() => {
                 Kind::CalculatedRatioScaledPolygon(source, center, ratio)
             }
             _ => return Err("Select a point, segment, circle, or polygon interior".into()),

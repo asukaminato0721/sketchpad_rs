@@ -185,6 +185,7 @@ fn mapped_iteration_ant_native_import_and_mapping_graph() {
             branches,
             carried,
             depth,
+            ..
         } = &object.kind
         else {
             unreachable!()
@@ -408,7 +409,7 @@ fn mapped_midpoint_triangle_native_point_bindings_and_simultaneous_geometry() {
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
     assert!(
-        matches!(&doc.objects[9].kind, Kind::MappedPointIteration { seeds, branches, carried, depth }
+        matches!(&doc.objects[9].kind, Kind::MappedPointIteration { seeds, branches, carried, depth, .. }
         if seeds == &[1,2,3] && branches == &[vec![8,9,7]] && carried == &[4,5,6,7,8,9]
             && *depth == IterationDepth::Fixed(3))
     );
@@ -569,4 +570,320 @@ fn mapped_midpoint_triangle_authors_explicit_bindings_and_keeps_prerequisites_di
         .is_err()
     );
     assert_eq!(doc.objects.len(), before);
+}
+
+#[test]
+fn mapped_calculated_angle_native_parameter_updates_and_point_segment_bindings() {
+    let full_bytes = include_bytes!(
+        "../../../tests/fixtures/mapped_calculated_angle_iteration_full_native_verified.gsp"
+    );
+    let full = Document::from_bytes(full_bytes, None).unwrap();
+    assert!(full.partial_view);
+    assert!(matches!(
+        full.objects[6].kind,
+        Kind::MappedPointIteration { .. }
+    ));
+    assert_eq!(full.objects[10].kind, Kind::Unsupported(73));
+    assert_eq!(full.encode().unwrap(), full_bytes);
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/mapped_calculated_angle_iteration_native_verified.gsp"
+    );
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.objects.len(), 9);
+    assert_eq!(doc.encode().unwrap(), bytes);
+    assert!(
+        matches!(&doc.objects[6].kind,Kind::MappedPointIteration{seeds,branches,carried,depth,..}
+        if seeds==&[1,2]&&branches==&[vec![2,6]]&&carried==&[3,6]&&*depth==IterationDepth::Value(4))
+    );
+    assert_eq!(doc.objects[7].kind, Kind::IterationBinding(6, 7));
+    assert_eq!(doc.objects[8].kind, Kind::IterationBinding(3, 7));
+    for n in [17., 5.] {
+        doc.set_parameter_value(4, n).unwrap();
+        let theta = (180. / n).to_radians();
+        let lines = doc.branch_segment_iteration_images(9).unwrap();
+        assert_eq!(lines.len(), n as usize);
+        assert_eq!(lines[0].0, Point { x: 687., y: 345. });
+        assert!((lines[0].1.x - (687. - 180. * theta.cos())).abs() < 1e-9);
+        assert!((lines[0].1.y - (345. + 180. * theta.sin())).abs() < 1e-9);
+        assert!(
+            lines
+                .iter()
+                .all(|(a, b)| (a.distance(*b) - 180.).abs() < 1e-9)
+        );
+        assert_eq!(
+            doc.mapped_point_binding_images(8).unwrap().len(),
+            n as usize
+        );
+        doc.verify_roundtrip().unwrap();
+    }
+    doc.move_point(1, Point { x: 487., y: 325. });
+    doc.selected.insert(8);
+    doc.set_selected_color(RgbColor {
+        red: 14,
+        green: 150,
+        blue: 210,
+    })
+    .unwrap();
+    let saved = doc.encode().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_MAPPED_ANGLE_FIXTURE").is_some() {
+        fs::write("/tmp/mapped_calculated_angle_iteration_edited.gsp", &saved).unwrap();
+    }
+    assert_eq!(
+        saved.as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/mapped_calculated_angle_iteration_edited_native_verified.gsp"
+        )
+    );
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert_eq!(
+        reopened.branch_segment_iteration_images(9),
+        doc.branch_segment_iteration_images(9)
+    );
+    doc.selected.clear();
+    doc.selected.insert(7);
+    let clip = doc.copy_selected().unwrap();
+    let pasted = doc.paste(&clip).unwrap();
+    let parent = pasted
+        .iter()
+        .copied()
+        .find(|id| matches!(doc.objects[*id - 1].kind, Kind::MappedPointIteration { .. }))
+        .unwrap();
+    assert_eq!(
+        doc.objects
+            .iter()
+            .filter(|o| matches!(o.kind,Kind::IterationBinding(_,p)if p==parent))
+            .count(),
+        2
+    );
+    doc.verify_roundtrip().unwrap();
+    let mut undefined = reopened;
+    undefined.set_parameter_value(4, 0.).unwrap();
+    assert!(undefined.branch_segment_iteration_images(9).is_none());
+    assert!(undefined.encode().is_ok());
+}
+
+#[test]
+fn mapped_calculated_angle_authored_pure_formula_guard_and_live_depth() {
+    let mut doc = Document::new();
+    let a = doc.add(Kind::Free(Point { x: 250., y: 180. }));
+    let b = doc.add(Kind::Free(Point { x: 430., y: 180. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let n = doc.add_named_parameter("N", 5., (10, 30)).unwrap();
+    let angle = doc
+        .add_parameter_calculation(n, "180°/N", (10, 60))
+        .unwrap();
+    let image = doc.add_calculated_angle_rotation(a, b, angle).unwrap();
+    let iteration = doc
+        .add_mapped_point_iteration_with_bindings(
+            &[a, b],
+            &[vec![b, image]],
+            &[segment, image],
+            &[image, segment],
+            IterationDepth::Value(n),
+        )
+        .unwrap();
+    assert_eq!(iteration, 7);
+    assert_eq!(doc.point_iteration_images(8).unwrap().len(), 5);
+    doc.verify_roundtrip().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_MAPPED_ANGLE_FIXTURE").is_some() {
+        fs::write(
+            "/tmp/mapped_calculated_angle_iteration_generated.gsp",
+            doc.encode().unwrap(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        doc.encode().unwrap().as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/mapped_calculated_angle_iteration_generated_native_verified.gsp"
+        )
+    );
+    let measured = doc.add(Kind::AngleMeasurement(a, b, image));
+    let measured_image = doc.add_calculated_angle_rotation(a, b, measured).unwrap();
+    let count = doc.objects.len();
+    assert!(
+        doc.add_mapped_point_iteration_with_bindings(
+            &[a, b],
+            &[vec![b, measured_image]],
+            &[segment, measured_image],
+            &[segment],
+            IterationDepth::Fixed(2)
+        )
+        .is_err()
+    );
+    assert_eq!(doc.objects.len(), count);
+}
+
+#[test]
+fn mapped_iteration_final_level_flag_matches_native_and_preserves_raw_definition() {
+    let original = include_bytes!(
+        "../../../tests/fixtures/mapped_midpoint_triangle_generated_native_verified.gsp"
+    );
+    let final_bytes = include_bytes!(
+        "../../../tests/fixtures/mapped_midpoint_triangle_final_native_verified.gsp"
+    );
+    let mut doc = Document::from_bytes(original, None).unwrap();
+    let all_lines = doc.branch_segment_iteration_images(11).unwrap();
+    let all_points = doc.point_iteration_images(14).unwrap();
+    assert_eq!(all_lines.len(), 2);
+    assert_eq!(all_points.len(), 2);
+    doc.set_mapped_iteration_final_only(10, true).unwrap();
+    assert_eq!(
+        doc.branch_segment_iteration_images(11).unwrap(),
+        vec![*all_lines.last().unwrap()]
+    );
+    assert_eq!(
+        doc.point_iteration_images(14).unwrap(),
+        vec![*all_points.last().unwrap()]
+    );
+    assert_eq!(doc.encode().unwrap(), final_bytes);
+    let reopened = Document::from_bytes(final_bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert!(matches!(
+        reopened.objects[9].kind,
+        Kind::MappedPointIteration {
+            final_only: true,
+            ..
+        }
+    ));
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), original);
+    doc.redo();
+    assert_eq!(doc.encode().unwrap(), final_bytes);
+    doc.selected.insert(10);
+    let clip = doc.copy_selected().unwrap();
+    let pasted = doc.paste(&clip).unwrap();
+    let parent = pasted
+        .iter()
+        .copied()
+        .find(|id| {
+            matches!(
+                doc.objects[*id - 1].kind,
+                Kind::MappedPointIteration {
+                    final_only: true,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    let binding=doc.objects.iter().find(|o|matches!(o.kind,Kind::IterationBinding(source,p)if p==parent&&doc.line_points(source).is_some())).unwrap().id;
+    assert_eq!(
+        doc.branch_segment_iteration_images(binding).unwrap().len(),
+        1
+    );
+    doc.verify_roundtrip().unwrap();
+    let mut unknown = final_bytes.to_vec();
+    let definition = records(&unknown)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.kind == 0x090a)
+        .unwrap();
+    unknown[definition.data.start + 4] = 2;
+    let mut unsupported = Document::from_bytes(&unknown, None).unwrap();
+    assert_eq!(unsupported.objects[9].kind, Kind::Unsupported(76));
+    assert_eq!(unsupported.encode().unwrap(), unknown);
+    assert!(
+        unsupported
+            .set_mapped_iteration_final_only(10, false)
+            .is_err()
+    );
+}
+
+#[test]
+fn mapped_iteration_final_level_keeps_all_branches_and_live_depth() {
+    let final_bytes =
+        include_bytes!("../../../tests/fixtures/mapped_branches_final_native_verified.gsp");
+    let mut doc = Document::from_bytes(final_bytes, None).unwrap();
+    let parent = doc
+        .objects
+        .iter()
+        .find(|o| matches!(o.kind, Kind::MappedPointIteration { .. }))
+        .unwrap()
+        .id;
+    let binding = parent + 1;
+    assert_eq!(
+        doc.branch_segment_iteration_images(binding).unwrap().len(),
+        4
+    );
+    doc.set_mapped_iteration_final_only(parent, false).unwrap();
+    assert_eq!(
+        doc.branch_segment_iteration_images(binding).unwrap().len(),
+        9
+    );
+    assert_eq!(
+        doc.encode().unwrap(),
+        include_bytes!("../../../tests/fixtures/mapped_point_iteration_branches_verified.gsp")
+    );
+    let (mut live, parent, binding) = {
+        let mut d = Document::new();
+        let n = d.add_named_parameter("n", 2., (10, 10)).unwrap();
+        let a = d.add(Kind::Free(Point { x: 100., y: 160. }));
+        let b = d.add(Kind::Free(Point { x: 140., y: 180. }));
+        let image = d.add(Kind::VectorTranslatedPoint(b, a, b));
+        let segment = d.add(Kind::Segment(a, b));
+        let parent = d
+            .add_mapped_point_iteration(
+                &[a, b],
+                &[vec![b, image]],
+                &[segment, image],
+                IterationDepth::Value(n),
+            )
+            .unwrap();
+        (d, parent, parent + 1)
+    };
+    live.set_mapped_iteration_final_only(parent, true).unwrap();
+    assert_eq!(
+        live.branch_segment_iteration_images(binding).unwrap(),
+        vec![(Point { x: 180., y: 200. }, Point { x: 220., y: 220. })]
+    );
+    live.set_parameter_value(1, 4.).unwrap();
+    assert_eq!(
+        live.branch_segment_iteration_images(binding).unwrap(),
+        vec![(Point { x: 260., y: 240. }, Point { x: 300., y: 260. })]
+    );
+    live.verify_roundtrip().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_FINAL_ITERATION_FIXTURE").is_some() {
+        fs::write("/tmp/mapped_final_level_live.gsp", live.encode().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn numeric_iteration_parameter_seed_remains_scalar_until_typed_native_proof() {
+    for parameter in [1, 2, 3] {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"),
+            None,
+        )
+        .unwrap();
+        let seed = doc.add(Kind::Free(Point { x: 100., y: 160. }));
+        let image = doc.add(Kind::PolarTranslatedPoint(seed, 0., 37.79527559055118, 1.));
+        let group =
+            crate::table_records::ParameterCalculationGroup::from_expression_with_source_unit(
+                parameter as u32,
+                "v",
+                "v/v",
+                (10, 100),
+                doc.objects[parameter - 1].kind.numeric_unit().unwrap(),
+            )
+            .unwrap();
+        let calculation = doc.add(Kind::ParameterCalculation(parameter, group));
+        let label = doc.add(Kind::PointNumericLabel(image, calculation));
+        let before = doc.objects.len();
+        let result = doc.add_point_parameter_iteration(
+            seed,
+            parameter,
+            image,
+            calculation,
+            label,
+            IterationDepth::Fixed(2),
+        );
+        if parameter == 3 {
+            assert!(result.is_ok());
+            doc.verify_roundtrip().unwrap();
+        } else {
+            assert!(result.is_err());
+            assert_eq!(doc.objects.len(), before);
+        }
+    }
 }

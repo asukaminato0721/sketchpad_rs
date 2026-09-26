@@ -1,0 +1,13 @@
+new
+point 100 100
+point 300 100
+point 300 200
+point 100 200
+polygon 1 2 3 4
+named_parameter p 0.5 50 20
+calculate_parameter 6 p/2
+plot_path 7 5
+segment 1 8
+save /tmp/numeric_polygon_path_generated_port.gsp
+parameter_value 6 -0.5
+save /tmp/numeric_polygon_path_negative_port.gsp

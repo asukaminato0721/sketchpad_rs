@@ -80,8 +80,8 @@ impl Document {
         if object.deleted
             || object.page != self.active_page
             || !(1..=256).contains(&table_group.rows())
-            || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]")
-            || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]")
+            || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[2]" && group.unit() == crate::table_records::NumericUnit::Scalar)
+            || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(group)) if group.name() == "t[1]" && group.unit() == crate::table_records::NumericUnit::Scalar)
         {
             return Err("Select the supported t[2], t[1] table".into());
         }

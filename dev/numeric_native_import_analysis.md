@@ -147,9 +147,25 @@ displays t1=1.00°,t2=1.00cm,t3=1.00. Its numeric words are respectively
 use native pixels (step0.3779527559055118=0.01cm,domain0..3779.5275590551178).
 The degree persisted cache is0.78539816339745 despite its displayed1.00° value:
 cache fields must remain opaque and cannot supply current parameter values.
-Typed support therefore needs separate value words, display units, animation
-conversion, header validation, unit inference, and authored/edited native probes.
-Simply accepting suffix tokens or reading cached doubles would be incorrect.
+Bounded typed support now separates value words, display units, animation
+conversion, header validation, and unit inference. Actual setters preserve the
+opaque cache fields. A 13-object edited document and its 22-object clipboard
+result open/save byte-identically in native Sketchpad (3,476 and 4,526 bytes).
+Native numeric XY points use the displayed centimeter/degree magnitudes:
+t1=0.50° plots y=0.5, rather than the internally stored radian magnitude.
+Typed parameters are rejected from scalar-only path plotting, iteration depth,
+parameter traces, and current scalar table schemas. Their corresponding
+regressions cover live calculations, units, precision, domains, and copies.
+Separate native probes establish that suffix0x0100 stores radians while
+displaying degrees: inputwords[1,0x0100] gives57.30°,sin=.84,and
+t1×2=114.59°. The public value therefore converts radians to degrees, and
+setters apply the inverse conversion while preserving suffix0x0100.
+Suffix0x0102 is another decimal-degree input representation, not squared
+degrees: 4.5 displays4.50°,sin=.08,and its numeric XY point hasy4.5.
+Its setter retains0x0102. Both variants retain the actual native radian
+animation step/domain and opaque cached values. These meanings come from
+live native calculation/display probes, rather than from the suffix bits or
+persisted caches.
 
 The 3,313 remaining calculation record-layout failures are precisely native
 empty0x232e records immediately after the font and before the terminator

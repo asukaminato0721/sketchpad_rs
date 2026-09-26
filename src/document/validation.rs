@@ -4,7 +4,7 @@ use super::iteration::{
     supported_point_parameter_iteration,
 };
 use super::kind::{
-    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, value_plot_path_accepts, straight_kind_mode,
+    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, value_plot_path_accepts, polygon_vertex_count, straight_kind_mode,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -139,7 +139,7 @@ impl Document {
                         Kind::CalculatedRatioScaledPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedRatioScaledSegment(..) => is_segment_kind(&p.kind),
                         Kind::CalculatedRatioScaledCircle(..) => p.kind.is_circle(),
-                        _ => matches!(p.kind, Kind::Polygon(_)),
+                        _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
                     if [*source, *center, *ratio].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
                         || !self.objects.get(center.saturating_sub(1)).is_some_and(|p| !p.deleted && is_point_kind(&p.kind))
@@ -158,7 +158,7 @@ impl Document {
                         Kind::CalculatedAngleRotatedPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedAngleRotatedSegment(..) => is_segment_kind(&p.kind),
                         Kind::CalculatedAngleRotatedCircle(..) => p.kind.is_circle(),
-                        _ => matches!(p.kind, Kind::Polygon(_)),
+                        _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
                     if [*source, *center, *angle].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
                         || !self.objects.get(center.saturating_sub(1)).is_some_and(|p| !p.deleted && is_point_kind(&p.kind))
@@ -175,7 +175,7 @@ impl Document {
                         || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
                         || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
                 }
-                Kind::MappedPointIteration { seeds, branches, carried, depth } => {
+                Kind::MappedPointIteration { seeds, branches, carried, depth, .. } => {
                     let valid_depth = match depth {
                         IterationDepth::Fixed(n) => (1..=128).contains(n),
                         IterationDepth::Value(id) => *id > 0 && *id < o.id && self.objects.get(id - 1).is_some_and(|p| !p.deleted && p.kind.is_iteration_depth_value()),
@@ -299,7 +299,7 @@ impl Document {
                     if group.source_id() as usize != *source
                         || !self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
                             match &o.kind {
-                                Kind::Parameter(parameter) => match group.named_label_value() {
+                                Kind::Parameter(parameter) if parameter.unit() == NumericUnit::Scalar => match group.named_label_value() {
                                     Some((name, _)) => name == parameter.name(),
                                     None => parameter.name() == "t[1]",
                                 },
@@ -313,8 +313,8 @@ impl Document {
                 Kind::ValueTablePair(first, second, group) => {
                     TableGroup::parse_pair(group.as_bytes())?;
                     if group.pair_source_ids() != Some([*first as u32, *second as u32])
-                        || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[1]")
-                        || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]")
+                        || !matches!(self.objects.get(second - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[1]" && parameter.unit() == NumericUnit::Scalar)
+                        || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]" && parameter.unit() == NumericUnit::Scalar)
                     {
                         return Err("Unsupported two-column table source".into());
                     }
@@ -1040,7 +1040,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::VectorTranslatedPolygon(source, start, end)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
+                    if polygon_vertex_count(&self.objects, source).is_none()
                     || self.position(start).is_none() || self.position(end).is_none()
                     || self.polygon_points(o.id).is_none())
             {
@@ -1383,6 +1383,7 @@ impl Document {
                         || saved.visible != current.visible
                         || saved.label != current.label
                         || saved.visual_style != current.visual_style
+                        || saved.interior_order != current.interior_order
                         || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
                         || current.function_anchor.is_some()
                             && saved.function_anchor != current.function_anchor

@@ -1060,6 +1060,10 @@ impl Editor {
                         self.show_motion_controller = !self.show_motion_controller;
                         ui.close();
                     }
+                    if ui.button(if self.show_toolbox { "Hide Toolbox" } else { "Show Toolbox" }).clicked() {
+                        self.show_toolbox = !self.show_toolbox;
+                        ui.close();
+                    }
                     if ui.button("Fit Sketch").clicked() {
                         self.fit();
                         ui.close();

@@ -6,7 +6,7 @@ use super::iteration::{
 use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
     is_locus_straight_kind, is_plot_path_kind, is_value_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
-    straight_kind_mode,
+    polygon_vertex_count, straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
 use super::{Document, IterationDepth, Kind, LineMode, Object, Point};
@@ -409,7 +409,7 @@ impl Document {
             let mapped_iteration = (|| {
                 if !matches!(code, 76 | 89) || h[6..10] != [14, 0, 64, 0] { return None; }
                 let data = iteration_definition.as_ref()?;
-                if data.len() != 24 || data[..6] != [0; 6] || data[20..24] != [0; 4] { return None; }
+                if data.len() != 24 || data[..4] != [0; 4] || !matches!(&data[4..6], [0, 0] | [1, 0]) || data[20..24] != [0; 4] { return None; }
                 let count = usize::from(u16::from_le_bytes(data[6..8].try_into().ok()?));
                 let branches_count = u32_at(data, 8) as usize;
                 if !(2..=16).contains(&count) || !(1..=8).contains(&branches_count) { return None; }
@@ -429,7 +429,7 @@ impl Document {
                     if !(1..=128).contains(&value) { return None; }
                     IterationDepth::Fixed(value)
                 };
-                Some(Kind::MappedPointIteration { seeds, branches, carried, depth })
+                Some(Kind::MappedPointIteration { seeds, branches, carried, depth, final_only: data[4..6] == [1, 0] })
             })();
             let kind = if refs
                 .iter()
@@ -801,7 +801,7 @@ impl Document {
                         match TableGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(table) if source.checked_sub(page_base) == Some(table.source_id() as usize)
                                 && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| match &o.kind {
-                                    Kind::Parameter(parameter) => match table.named_label_value() {
+                                    Kind::Parameter(parameter) if parameter.unit() == NumericUnit::Scalar => match table.named_label_value() {
                                         Some((name, _)) => name == parameter.name(),
                                         None => parameter.name() == "t[1]",
                                     },
@@ -811,9 +811,9 @@ impl Document {
                         }
                     }
                     (91, None, [first, second]) if objects.get(first - 1).is_some_and(|o| {
-                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[2]")
+                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[2]" && group.unit() == NumericUnit::Scalar)
                     }) && objects.get(second - 1).is_some_and(|o| {
-                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[1]")
+                        o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[1]" && group.unit() == NumericUnit::Scalar)
                     }) => {
                         match TableGroup::parse_pair(&b[group_start..rs[i].data.end]) {
                             Ok(table) if table.pair_source_ids() == Some([
@@ -1103,7 +1103,7 @@ impl Document {
                             } else if h[8..10] == [4, 0] && is_point_kind(&objects[origin - 1].kind) {
                                 Kind::PolarTranslatedPoint(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
                             } else if matches!(&objects[origin - 1].kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])))
-                                && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] {
+                                && h.len() == 28 && h[6..8] == [4, 0] {
                                 let distance = f64_at(payload, 40);
                                 // Sketchpad's native polygon-locus save replaces the unit
                                 // scale with the translated pixel distance in this cache form.
@@ -1139,7 +1139,7 @@ impl Document {
                             } else if h[8..10] == [4, 0] && is_point_kind(&objects[source - 1].kind) {
                                 Kind::FixedRectangularTranslatedPoint(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
                             } else if matches!(&objects[source - 1].kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])))
-                                && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] {
+                                && h.len() == 28 && h[6..8] == [4, 0] {
                                 Kind::FixedRectangularTranslatedPolygon(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
                             } else {
                                 Kind::Unsupported(code)
@@ -1187,7 +1187,7 @@ impl Document {
                     (18 | 19, _, [source, distance])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
                             && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value())
-                            && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => match &constraint_payload {
+                            && h.len() == 28 && h[6..8] == [4, 0] => match &constraint_payload {
                         Some((payload, _)) if payload.len() == 28
                             && payload[..4] == [code as u8, 0, 0, 0]
                             && u32_at(payload, 20) == 1
@@ -1221,7 +1221,7 @@ impl Document {
                                     (Kind::Segment(_, _), [14, 0]) => Kind::MarkedDistanceTranslatedSegment(*source, *distance, f64_at(payload, 20)),
                                     (Kind::Circle(_, _) | Kind::CircleBySegment(_, _), [28, 0]) => Kind::MarkedDistanceTranslatedCircle(*source, *distance, f64_at(payload, 20)),
                                     (Kind::Polygon(vertices), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                        && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::MarkedDistanceTranslatedPolygon(*source, *distance, f64_at(payload, 20)),
+                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::MarkedDistanceTranslatedPolygon(*source, *distance, f64_at(payload, 20)),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1249,7 +1249,7 @@ impl Document {
                     (20, None, [source, horizontal, vertical])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
                             && [horizontal, vertical].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value()))
-                            && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => {
+                            && h.len() == 28 && h[6..8] == [4, 0] => {
                         Kind::RectangularMarkedTranslatedPolygon(*source, *horizontal, *vertical)
                     }
                     (16, _, [source, start, end])
@@ -1259,8 +1259,8 @@ impl Document {
                             (kind, [4, 0]) if is_point_kind(kind) => Kind::VectorTranslatedPoint(*source, *start, *end),
                             (kind, [14, 0]) if is_segment_kind(kind) => Kind::VectorTranslatedSegment(*source, *start, *end),
                             (kind, [28, 0]) if kind.is_circle() => Kind::VectorTranslatedCircle(*source, *start, *end),
-                            (Kind::Polygon(vertices), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::VectorTranslatedPolygon(*source, *start, *end),
+                            (kind, _) if kind.is_polygon() && h[6..8] == [4, 0]
+                                && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::VectorTranslatedPolygon(*source, *start, *end),
                             _ => Kind::Unsupported(code),
                         }
                     },
@@ -1271,7 +1271,7 @@ impl Document {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedAngleRotatedPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
-                            (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
+                            (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1282,7 +1282,7 @@ impl Document {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
-                            (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
+                            (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1294,7 +1294,7 @@ impl Document {
                             (Some(Kind::Segment(_, _)), [14, 0]) => Kind::AngleRotatedSegment(*source, *center, *first, *vertex, *last),
                             (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::AngleRotatedCircle(*source, *center, *first, *vertex, *last),
                             (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::AngleRotatedPolygon(*source, *center, *first, *vertex, *last),
+                                && h.len() == 28 && h[6..8] == [4, 0] => Kind::AngleRotatedPolygon(*source, *center, *first, *vertex, *last),
                             _ => Kind::Unsupported(code),
                         },
                     (32, _, [source, center, origin, base, target])
@@ -1314,7 +1314,7 @@ impl Document {
                     (32, _, [source, center, origin, base, target])
                         if objects.get(source.saturating_sub(1)).is_some_and(|object| matches!(&object.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
                             && [center, origin, base, target].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind)))
-                            && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::RatioScaledPolygon(*source, *center, *origin, *base, *target),
+                            && h.len() == 28 && h[6..8] == [4, 0] => Kind::RatioScaledPolygon(*source, *center, *origin, *base, *target),
                     (34, _, [source, mirror])
                         if objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
                             && objects.get(mirror - 1).is_some_and(|o| is_straight_kind(&o.kind)) =>
@@ -1334,7 +1334,7 @@ impl Document {
                     (34, _, [source, mirror])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
                             && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
-                            && h[20..24] == [1, 0, 0, 0] => Kind::ReflectedPolygon(*source, *mirror),
+                            && h.len() == 28 && h[6..8] == [4, 0] => Kind::ReflectedPolygon(*source, *mirror),
                     (30, _, [source, center])
                         if objects.get(center - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
@@ -1346,7 +1346,7 @@ impl Document {
                                     Some(kind) if kind.is_circle() => Kind::ScaledCircle(*source, *center, factor),
                                     Some(Kind::Segment(_, _)) if h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
                                     Some(Kind::Polygon(vertices)) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                        && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::ScaledPolygon(*source, *center, factor),
+                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::ScaledPolygon(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1366,7 +1366,7 @@ impl Document {
                                     (Some(Kind::Segment(_, _)), [14, 0]) => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                        && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),
+                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1502,6 +1502,8 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style,
+                interior_order: (h.len() == 28 && h[6..8] == [4, 0]).then(||
+                    i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,
                 function_anchor,

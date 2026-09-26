@@ -1,0 +1,10 @@
+# Coincident native polygons establish rank ordering without geometry changes.
+new
+point 100 100
+point 300 100
+point 100 240
+polygon 1 2 3
+named_parameter p 1 30 20
+dilate_value 4 1 5
+color 6 00ff00
+save /tmp/polygon_order_original_port.gsp

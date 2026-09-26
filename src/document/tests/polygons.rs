@@ -401,3 +401,193 @@ fn marked_ratio_circle_dilation_imports_and_tracks_ratio_points() {
             .partial_view
     );
 }
+
+#[test]
+fn native_polygon_order_is_signed_presentation_preserved_by_edits_and_copy() {
+    let original = include_bytes!("../../../tests/fixtures/polygon_order_original_native.gsp");
+    let swapped = include_bytes!("../../../tests/fixtures/polygon_order_swapped_native.gsp");
+    let negative = include_bytes!("../../../tests/fixtures/polygon_order_negative_native.gsp");
+    for (bytes, ranks) in [(original.as_slice(), [0,1]), (swapped.as_slice(), [1,0]), (negative.as_slice(), [0,-1])] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.objects[3].interior_order, Some(ranks[0]));
+        assert_eq!(doc.objects[5].interior_order, Some(ranks[1]));
+        assert_eq!(doc.polygon_points(4), doc.polygon_points(6));
+        assert_eq!(doc.encode().unwrap(), bytes);
+    }
+    let mut doc = Document::from_bytes(original, None).unwrap();
+    doc.objects[3].interior_order = Some(1);
+    doc.objects[5].interior_order = Some(0);
+    doc.dirty = true;
+    assert_eq!(doc.encode().unwrap(), swapped.as_slice());
+    doc.objects[3].interior_order = Some(0);
+    doc.objects[5].interior_order = Some(-1);
+    assert_eq!(doc.encode().unwrap(), negative.as_slice());
+    doc.selected.insert(6);
+    let clipboard = doc.copy_selected().unwrap();
+    let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
+    assert_eq!(doc.objects[copied - 1].interior_order, Some(-1));
+    let source = match doc.objects[copied - 1].kind {
+        Kind::CalculatedRatioScaledPolygon(source, _, _) => source,
+        ref kind => panic!("Unexpected copied interior: {kind:?}"),
+    };
+    assert_eq!(doc.objects[source - 1].interior_order, Some(0));
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.objects[copied - 1].interior_order, Some(-1));
+    assert_eq!(reopened.objects[source - 1].interior_order, Some(0));
+    let native_copy = Document::from_bytes(include_bytes!("../../../tests/fixtures/polygon_order_copied_native.gsp"), None).unwrap();
+    assert_eq!(native_copy.objects[10].interior_order, Some(0));
+    assert_eq!(native_copy.objects[11].interior_order, Some(1));
+}
+
+#[test]
+fn native_calculated_rotation_of_vector_polygon_keeps_count_rank_and_live_sources() {
+    let bytes = include_bytes!("../../../tests/fixtures/polygon_rotation_of_vector_corpus_native.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.objects[21].kind, Kind::VectorTranslatedPolygon(7,15,21));
+    assert_eq!(doc.objects[22].kind, Kind::CalculatedAngleRotatedPolygon(22,21,17));
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, 23), Some(4));
+    assert_eq!(doc.objects[21].interior_order, Some(1));
+    assert_eq!(doc.objects[22].interior_order, Some(2));
+    assert_eq!(doc.encode().unwrap(), bytes);
+    let before = doc.polygon_points(23).unwrap();
+    doc.set_parameter_value(6, 2.).unwrap();
+    assert_ne!(doc.polygon_points(23).unwrap(), before);
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.polygon_points(23), doc.polygon_points(23));
+    assert_eq!(reopened.objects[22].interior_order, Some(2));
+    doc.selected.insert(23);
+    let clipboard = doc.copy_selected().unwrap();
+    let pasted = *doc.paste(&clipboard).unwrap().last().unwrap();
+    assert_eq!(doc.objects[pasted - 1].interior_order, Some(2));
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, pasted), Some(4));
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.polygon_points(pasted), doc.polygon_points(pasted));
+}
+
+#[test]
+fn polygon_vertex_count_rejects_unsupported_cyclic_and_cross_page_chains() {
+    let mut doc = Document::new();
+    for (x,y) in [(0.,0.),(100.,0.),(0.,100.)] {
+        doc.add(Kind::Free(Point { x,y }));
+    }
+    doc.add(Kind::Polygon(vec![1,2,3]));
+    let translated = doc.add(Kind::VectorTranslatedPolygon(4,1,2));
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, translated), Some(3));
+    let valid = doc.objects.clone();
+    doc.objects[4].kind = Kind::VectorTranslatedPolygon(5,1,2);
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, translated), None);
+    doc.objects = valid.clone();
+    doc.objects[3].page = 1;
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, translated), None);
+    doc.objects = valid.clone();
+    doc.objects[3].deleted = true;
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, translated), None);
+    doc.objects = valid;
+    doc.objects[3].kind = Kind::Unsupported(8);
+    assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, translated), None);
+}
+
+#[test]
+fn legacy_clock_polygon_headers_have_no_rank_and_stay_short_after_geometry_edits() {
+    let clock = include_bytes!("../../../tests/fixtures/legacy_clock_original.gsp");
+    let source = Document::from_bytes(clock, None).unwrap();
+    assert_eq!(source.objects.len(), 161);
+    assert_eq!(source.objects[78].interior_order, None);
+    assert_eq!(source.encode().unwrap(), clock);
+    // Actual Clock79 header and reference record, rebound only to four known
+    // points so its dirty writer can be verified independently of old families.
+    let bytes = include_bytes!("../../../tests/fixtures/legacy_polygon_rank_original.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.objects[4].kind, Kind::Polygon(vec![1,2,3,4]));
+    assert_eq!(doc.objects[4].interior_order, None);
+    let header = doc.objects[4].header_offset.unwrap();
+    let raw_header = bytes[header..header + 16].to_vec();
+    assert!(doc.move_point(1, Point { x: 110., y: 110. }));
+    let edited = doc.encode().unwrap();
+    assert_eq!(edited, include_bytes!("../../../tests/fixtures/legacy_polygon_rank_edited_native_verified.gsp"));
+    assert_eq!(&edited[header..header + 16], raw_header);
+    let rs = records(&edited).unwrap();
+    assert_eq!(rs.iter().find(|record| record.data.start == header).unwrap().data.len(), 16);
+    let reopened = Document::from_bytes(&edited, None).unwrap();
+    assert_eq!(reopened.objects[4].interior_order, None);
+    assert_eq!(reopened.polygon_points(5), doc.polygon_points(5));
+    doc.objects[4].interior_order = Some(0);
+    assert!(doc.encode().is_err());
+}
+
+#[test]
+fn authored_polygon_transform_chains_preserve_native_subtypes_and_live_geometry() {
+    for bytes in [
+        include_bytes!("../../../tests/fixtures/polygon_transform_chains_generated_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/polygon_transform_chains_edited_verified.gsp").as_slice(),
+    ] {
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.objects[8].kind, Kind::CalculatedRatioScaledPolygon(8,1,6));
+        assert_eq!(doc.objects[9].kind, Kind::VectorTranslatedPolygon(9,1,2));
+        assert_eq!(doc.objects[10].kind, Kind::CalculatedAngleRotatedPolygon(10,1,7));
+        assert_eq!(doc.objects[11].kind, Kind::CalculatedRatioScaledPolygon(9,1,6));
+        assert_eq!(doc.encode().unwrap(), bytes);
+        for id in 8..=12 {
+            assert_eq!(super::super::kind::polygon_vertex_count(&doc.objects, id), Some(4));
+            assert_eq!(doc.polygon_points(id).unwrap().len(), 4);
+            assert_eq!(doc.objects[id - 1].interior_order, Some(1));
+        }
+        let before = doc.polygon_points(11).unwrap();
+        doc.set_parameter_value(6, 0.6).unwrap();
+        assert_ne!(doc.polygon_points(11).unwrap(), before);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.polygon_points(11), doc.polygon_points(11));
+        doc.selected.insert(11);
+        doc.selected.insert(12);
+        let clipboard = doc.copy_selected().unwrap();
+        let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.polygon_points(copied), doc.polygon_points(copied));
+        assert_eq!(reopened.objects[copied - 1].interior_order, Some(1));
+        doc.selected.clear();
+        doc.selected.insert(6);
+        let removed = doc.clear_selected().unwrap();
+        assert!(removed.contains(&11));
+        assert!(removed.contains(&12));
+    }
+}
+
+#[test]
+fn supported_polygon_transform_families_accept_native_signed_drawing_orders() {
+    for path in [
+        "reflection_polygon_original.gsp",
+        "fixed_rotation_polygon_original.gsp",
+        "angle_rotation_polygon_original.gsp",
+        "fixed_dilation_polygon_original.gsp",
+        "ratio_dilation_polygon_original.gsp",
+        "vector_translation_polygon_original.gsp",
+        "polar_translation_polygon_original.gsp",
+        "rectangular_translation_polygon_original.gsp",
+        "marked_distance_polygon_translation_original.gsp",
+        "rectangular_marked_polygon_original.gsp",
+        "rectangular_mixed_polygon_horizontal_original.gsp",
+        "rectangular_mixed_polygon_vertical_original.gsp",
+    ] {
+        let mut doc = Document::open(Path::new(&format!("tests/fixtures/{path}"))).unwrap();
+        let polygons = doc.objects.iter().filter(|o| o.kind.is_polygon())
+            .map(|o| (o.id, o.kind.clone(), doc.polygon_points(o.id))).collect::<Vec<_>>();
+        assert!(polygons.len() >= 2, "{path}");
+        for (index, (id, _, _)) in polygons.iter().enumerate() {
+            doc.objects[*id - 1].interior_order = Some(if index == 0 { 7 } else { -3 });
+        }
+        doc.dirty = true;
+        let saved = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view, "{path}");
+        for (id, kind, points) in polygons {
+            assert_eq!(reopened.objects[id - 1].kind, kind, "{path}");
+            assert_eq!(reopened.objects[id - 1].interior_order, doc.objects[id - 1].interior_order, "{path}");
+            assert_eq!(reopened.polygon_points(id), points, "{path}");
+        }
+        assert_eq!(reopened.encode().unwrap(), saved, "{path}");
+    }
+}

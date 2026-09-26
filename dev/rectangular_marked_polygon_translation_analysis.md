@@ -7,7 +7,7 @@ horizontal and code 19 for fixed vertical, with references to the source
 polygon and the remaining marked measurement. Both mixed variants have the
 same 28-byte constraint payload structure as the corresponding point modes.
 All three headers use category 4, subtype `49 + vertex count`, source fill
-color, marker bytes `51 5c`, and transform flag 1 at offset 20. Native
+color, marker bytes `51 5c`, and interior drawing order 1 at offset 20. Native
 creation also adds a trailing `0x2328` selection record.
 
 The port evaluates the source vertices with the current measurements. Native

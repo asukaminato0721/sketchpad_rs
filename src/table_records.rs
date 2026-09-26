@@ -326,7 +326,10 @@ impl ParameterGroup {
         };
         let value_words = match unit {
             NumericUnit::Length if words.last() == Some(&0x0201) => &words[..words.len() - 1],
-            NumericUnit::Degrees if words.last() == Some(&0x0101) => &words[..words.len() - 1],
+            // Native angle parameters retain their input suffix separately from
+            // their displayed unit. 0100 stores radians; 0101 and 0102 display
+            // decimal degrees. The animation domain always stores radians.
+            NumericUnit::Degrees if matches!(words.last(), Some(0x0100 | 0x0101 | 0x0102)) => &words[..words.len() - 1],
             NumericUnit::Scalar => words.as_slice(),
             _ => return Err("Parameter value units disagree with its header".into()),
         };
@@ -408,6 +411,13 @@ impl ParameterGroup {
             _ => 1.,
         }
     }
+    fn value_suffix(&self) -> Option<u16> {
+        if self.unit() == NumericUnit::Scalar {
+            return None;
+        }
+        let rs = records(&self.bytes, 0).unwrap();
+        Some(u16::from_le_bytes(self.bytes[rs[1].end - 2..rs[1].end].try_into().unwrap()))
+    }
     pub fn value(&self) -> f64 {
         if let Some(value) = self.evaluation_value {
             return f64::from_le_bytes(value);
@@ -419,7 +429,12 @@ impl ParameterGroup {
             .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
             .collect::<Vec<_>>();
         let count = words.len() - usize::from(self.unit() != NumericUnit::Scalar);
-        value_from_words(&words[..count]).unwrap()
+        let value = value_from_words(&words[..count]).unwrap();
+        if self.value_suffix() == Some(0x0100) {
+            value / self.native_unit_scale()
+        } else {
+            value
+        }
     }
 
     pub fn value_text(&self) -> String {
@@ -441,6 +456,11 @@ impl ParameterGroup {
             .position(|word| *word == 10)
             .map_or(0, |at| words.len() - at - 1);
         let precision = self.precision().max(fractional_digits.min(5));
+        if self.value_suffix() == Some(0x0100) {
+            // Public parameter values and display precision are degrees. Only
+            // the preserved literal encoding uses radians.
+            words = decimal_words(value * self.native_unit_scale())?;
+        }
         let old_value = self.value();
         let extra = |value: f64| {
             let text = value.abs().to_string();
@@ -460,7 +480,7 @@ impl ParameterGroup {
         }
         match self.unit() {
             NumericUnit::Length => words.push(0x0201),
-            NumericUnit::Degrees => words.push(0x0101),
+            NumericUnit::Degrees => words.push(self.value_suffix().unwrap()),
             _ => {}
         }
         for word in &words {

@@ -3,7 +3,7 @@
 Native fixtures `tests/fixtures/polar_translation_polygon_original.gsp`
 and `rectangular_translation_polygon_original.gsp` use codes 21 and 17.
 Both reference the source polygon alone. Their headers use category 4,
-subtype `49 + vertex count`, the source fill color, transform flag 1 at
+subtype `49 + vertex count`, the source fill color, interior drawing order 1 at
 offset 20, and ordinary marker bytes `39 20`. The fixed polar variant uses
 the same 60-byte constraint payload as a point translation. The rectangular
 variant uses the same 52-byte payload. Native creation adds a trailing

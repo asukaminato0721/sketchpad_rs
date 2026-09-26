@@ -3,7 +3,7 @@
 The native fixture `tests/fixtures/marked_distance_polygon_translation_original.gsp`
 uses code 24 with references `[source polygon, distance measurement]`.
 Its header has category 4, subtype `49 + vertex count`, source fill color,
-marker bytes `51 5c`, and transform flag 1 at offset 20. The 36-byte angle
+marker bytes `51 5c`, and interior drawing order 1 at offset 20. The 36-byte angle
 constraint matches marked-distance point, segment, and circle translation.
 Native creation adds a trailing `0x2328` selection record.
 
