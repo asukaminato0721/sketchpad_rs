@@ -461,6 +461,11 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::PointDistance(a, b));
                     println!("line {}: distance -> object {id}", index + 1);
                 }
+                "distance_to_line" => {
+                    let (point, host) = two_ids(rest)?;
+                    let id = document.add(Kind::PointLineDistance(point, host));
+                    println!("line {}: distance_to_line -> object {id}", index + 1);
+                }
                 "coordinate_system" => {
                     let values = rest.split_whitespace().collect::<Vec<_>>();
                     let origin = match values.as_slice() {
@@ -1880,6 +1885,12 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     let id = document.add(kind);
                     println!("line {}: dilate -> object {id}", index + 1);
+                }
+                "dilate_value" => {
+                    let ids = rest.split_whitespace().map(|p| p.parse::<usize>().map_err(|_| "invalid dilation ID")).collect::<Result<Vec<_>, _>>()?;
+                    let [source, center, ratio] = ids.as_slice() else { return Err("expected SOURCE CENTER RATIO_VALUE".into()); };
+                    let id = document.add_calculated_ratio_dilation(*source, *center, *ratio)?;
+                    println!("line {}: dilate_value -> object {id}", index + 1);
                 }
                 "dilate_marked_ratio" => {
                     let ids = rest

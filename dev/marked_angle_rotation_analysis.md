@@ -30,7 +30,7 @@ rotation of points; segment and circle extensions are documented in
 
 ## Direct measured angle values
 
-Transform > Mark Angle now accepts a selected three-point angle or arc-angle measurement directly, in addition to a degree-valued calculation. The numeric angle uses code 29 with references `[source point, center point, numeric angle]`, distinct from the five-reference code-28 three-point mapping. Import, creation, save validation, and the iteration mapping predicate accept any supported degree-valued numeric kind. The numeric measurement remains an external input during iteration, including an arc whose endpoint is the seed.
+Transform > Mark Angle now accepts a selected three-point angle or arc-angle measurement directly, in addition to a degree-valued calculation. The numeric angle uses code 29 with references `[source object, center point, numeric angle]`, distinct from the five-reference code-28 three-point mapping. Import, creation, save validation, and the iteration mapping predicate accept any supported degree-valued numeric kind. Point, segment, circle, and polygon-interior rotations use this format; see `dev/rotation_shapes_analysis.md` for the shape records. The numeric measurement remains an external input during iteration, including an arc whose endpoint is the seed.
 
 `tests/replay_measured_angle_rotation.txt` creates a 90° measured-angle segment iteration, edits its angle to 135°, and creates a circle iteration driven by a measured arc angle before and after changing the arc endpoint. The circle has live depth n=3.5, truncated to three steps. All four generated original/edited files open, display their corresponding orbits, and save byte-identically in Sketchpad 5.
 

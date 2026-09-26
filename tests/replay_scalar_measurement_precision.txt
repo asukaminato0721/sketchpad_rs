@@ -1,0 +1,27 @@
+open tests/fixtures/coordinate_measure_port_generated.gsp
+slope 3
+measurement_precision 11 0
+measurement_precision 12 3
+measurement_precision 13 5
+measurement_precision 14 4
+calculate_parameter 11 v*2
+save tests/fixtures/scalar_precision_coordinates_port.gsp
+move 2 275 175
+move 4 199 135
+save tests/fixtures/scalar_precision_coordinates_edited_port.gsp
+new
+point 100 180
+point 200 180
+segment 1 2
+point_on 3 125 180
+point_value 4
+measurement_precision 5 5
+calculate_parameter 5 v*4
+calculate_parameter 5 round(v*4)
+point 250 230
+translate_rectangular_fixed 8 .5 0
+iterate_point_live 8 9 7
+save tests/fixtures/scalar_precision_point_value_iteration_port.gsp
+move 4 167.5 180
+measurement_precision 5 0
+save tests/fixtures/scalar_precision_point_value_iteration_edited_port.gsp

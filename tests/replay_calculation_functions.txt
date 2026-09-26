@@ -1,0 +1,52 @@
+new
+named_parameter n 30 10 30
+calculate_parameter 1 sin(n)
+calculate_parameter 1 cos(n)
+calculate_parameter 1 tan(n)
+calculate_parameter 1 abs(n-33)
+calculate_parameter 1 sqrt(n+6)
+calculate_parameter 1 ln(n-29)
+calculate_parameter 1 log(n+70)
+calculate_parameter 1 sgn(n-33)
+calculate_parameter 1 round(n*0.15)
+calculate_parameter 1 trunc(n*0.15)
+number_move 2 10 60
+number_move 3 10 95
+number_move 4 10 130
+number_move 5 10 165
+number_move 6 10 200
+number_move 7 190 60
+number_move 8 190 95
+number_move 9 190 130
+number_move 10 190 165
+number_move 11 190 200
+save tests/fixtures/calculation_functions_scalar_port.gsp
+parameter_value 1 60
+save tests/fixtures/calculation_functions_scalar_edited_port.gsp
+new
+point 100 160
+point 140 160
+point 100 120
+angle 2 1 3
+calculate_parameter 4 sin(v)
+calculate_parameter 4 cos(v/2)
+calculate_parameter 4 abs(v-120°)
+save tests/fixtures/calculation_functions_angle_port.gsp
+new
+point 100 160
+point 140 160
+segment 1 2
+length 3
+calculate_parameter 4 abs(v-v*2)
+save tests/fixtures/calculation_functions_length_port.gsp
+
+new
+named_parameter n 30 10 30
+calculate_parameter 1 ln(n-29)
+calculate_parameter 1 log(n+70)
+calculate_parameter 1 sgn(n-33)
+calculate_parameter 1 round(n*0.15)
+calculate_parameter 1 trunc(n*0.15)
+save tests/fixtures/calculation_functions_rounding_port.gsp
+parameter_value 1 -30
+save tests/fixtures/calculation_functions_scalar_negative_port.gsp

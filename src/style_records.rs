@@ -33,7 +33,7 @@ fn is_point_header(payload: &[u8]) -> bool {
     matches!(
         (code, subtype),
         (
-            0 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 34,
+            0 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
             4
         ) | (0, 41)
             | (1, 11)
@@ -102,7 +102,7 @@ fn is_circle_header(payload: &[u8]) -> bool {
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     matches!(
         (code, subtype),
-        (3 | 4 | 16 | 17 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 28)
+        (3 | 4 | 16 | 17 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34, 28)
     )
 }
 
@@ -131,7 +131,7 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     code == 8
         || (matches!(
             code,
-            16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 30 | 32 | 34
+            16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
         ) && subtype >= 52
             && payload[6..8] == [4, 0])
 }
@@ -184,7 +184,7 @@ fn is_segment_header(payload: &[u8]) -> bool {
                 u16::from_le_bytes([payload[0], payload[1]]),
                 u16::from_le_bytes([payload[8], payload[9]])
             ),
-            (2 | 16 | 17 | 21 | 24 | 27 | 28 | 30 | 32 | 34, 14)
+            (2 | 16 | 17 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34, 14)
         )
 }
 

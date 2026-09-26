@@ -63,6 +63,8 @@ impl Kind {
                 | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                 | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                 | Kind::RotatedPolygon(_, _, _)
+                | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                | Kind::CalculatedRatioScaledPolygon(_, _, _)
                 | Kind::AngleRotatedPolygon(_, _, _, _, _)
                 | Kind::ScaledPolygon(_, _, _)
                 | Kind::RatioScaledPolygon(_, _, _, _, _)
@@ -73,6 +75,7 @@ impl Kind {
             self,
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
+        | Kind::PointLineDistance(_, _)
                 | Kind::PointRatio(_, _, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
@@ -92,6 +95,7 @@ impl Kind {
             self,
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
+        | Kind::PointLineDistance(_, _)
                 | Kind::PointRatio(_, _, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
@@ -218,7 +222,14 @@ impl Kind {
         if let Kind::RayIteration(seed, image, ray, parameter) = self {
             return vec![*parameter, *seed, *image, *ray];
         }
-        if let Kind::CalculatedAngleRotatedPoint(source, center, angle) = self {
+        if let Kind::CalculatedAngleRotatedPoint(source, center, angle)
+        | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+        | Kind::CalculatedAngleRotatedCircle(source, center, angle)
+        | Kind::CalculatedAngleRotatedPolygon(source, center, angle)
+        | Kind::CalculatedRatioScaledPoint(source, center, angle)
+        | Kind::CalculatedRatioScaledSegment(source, center, angle)
+        | Kind::CalculatedRatioScaledCircle(source, center, angle)
+        | Kind::CalculatedRatioScaledPolygon(source, center, angle) = self {
             return vec![*source, *center, *angle];
         }
         if let Kind::BranchingPolygonIteration {
@@ -300,7 +311,8 @@ impl Kind {
             | Kind::ReflectedCircle(a, b)
             | Kind::ReflectedSegment(a, b)
             | Kind::ReflectedPolygon(a, b)
-            | Kind::PointDistance(a, b) => vec![a, b],
+            | Kind::PointDistance(a, b)
+            | Kind::PointLineDistance(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
             | Kind::DistanceAxis(a, b, _)
             | Kind::CoordinateSystem(a, b)
@@ -359,7 +371,14 @@ impl Kind {
             }
             Kind::Polygon(_)
             | Kind::BranchingPolygonIteration { .. }
-            | Kind::CalculatedAngleRotatedPoint(_, _, _) => unreachable!(),
+            | Kind::CalculatedAngleRotatedPoint(_, _, _)
+            | Kind::CalculatedRatioScaledPoint(_, _, _)
+            | Kind::CalculatedAngleRotatedSegment(_, _, _)
+            | Kind::CalculatedRatioScaledSegment(_, _, _)
+            | Kind::CalculatedAngleRotatedCircle(_, _, _)
+            | Kind::CalculatedRatioScaledCircle(_, _, _)
+            | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+            | Kind::CalculatedRatioScaledPolygon(_, _, _) => unreachable!(),
             Kind::SegmentIteration(_, _, _, _)
             | Kind::CircleIteration(_, _, _, _)
             | Kind::PointIteration(_, _, _) => unreachable!(),
@@ -643,6 +662,7 @@ impl Kind {
             Kind::ArcLength(a) => Kind::ArcLength(m(a)),
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
+            Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
             Kind::PolarTranslatedPoint(a, angle, units, distance) => {
                 Kind::PolarTranslatedPoint(m(a), angle, units, distance)
@@ -780,9 +800,16 @@ impl Kind {
             Kind::ScaledSegment(a, b, factor) => Kind::ScaledSegment(m(a), m(b), factor),
             Kind::ScaledPolygon(a, b, factor) => Kind::ScaledPolygon(m(a), m(b), factor),
             Kind::RotatedPoint(a, b, angle) => Kind::RotatedPoint(m(a), m(b), angle),
+            Kind::CalculatedRatioScaledPoint(a, b, value) => Kind::CalculatedRatioScaledPoint(m(a), m(b), m(value)),
+            Kind::CalculatedRatioScaledSegment(a, b, value) => Kind::CalculatedRatioScaledSegment(m(a), m(b), m(value)),
+            Kind::CalculatedRatioScaledCircle(a, b, value) => Kind::CalculatedRatioScaledCircle(m(a), m(b), m(value)),
+            Kind::CalculatedRatioScaledPolygon(a, b, value) => Kind::CalculatedRatioScaledPolygon(m(a), m(b), m(value)),
             Kind::CalculatedAngleRotatedPoint(a, b, value) => {
                 Kind::CalculatedAngleRotatedPoint(m(a), m(b), m(value))
             }
+            Kind::CalculatedAngleRotatedSegment(a, b, value) => Kind::CalculatedAngleRotatedSegment(m(a), m(b), m(value)),
+            Kind::CalculatedAngleRotatedCircle(a, b, value) => Kind::CalculatedAngleRotatedCircle(m(a), m(b), m(value)),
+            Kind::CalculatedAngleRotatedPolygon(a, b, value) => Kind::CalculatedAngleRotatedPolygon(m(a), m(b), m(value)),
             Kind::RotatedSegment(a, b, angle) => Kind::RotatedSegment(m(a), m(b), angle),
             Kind::RotatedCircle(a, b, angle) => Kind::RotatedCircle(m(a), m(b), angle),
             Kind::RotatedPolygon(a, b, angle) => Kind::RotatedPolygon(m(a), m(b), angle),
@@ -955,6 +982,7 @@ pub enum Kind {
     ArcLength(usize),
     AngleMeasurement(usize, usize, usize),
     PointDistance(usize, usize),
+    PointLineDistance(usize, usize),
     PointNumericLabel(usize, usize),
     PointParameterIteration(usize, usize, usize, usize, usize, IterationDepth),
     BranchingPolygonIteration {
@@ -1004,7 +1032,14 @@ pub enum Kind {
     ScaledSegment(usize, usize, f64),
     ScaledPolygon(usize, usize, f64),
     RotatedPoint(usize, usize, f64),
+    CalculatedRatioScaledPoint(usize, usize, usize),
+    CalculatedRatioScaledSegment(usize, usize, usize),
+    CalculatedRatioScaledCircle(usize, usize, usize),
+    CalculatedRatioScaledPolygon(usize, usize, usize),
     CalculatedAngleRotatedPoint(usize, usize, usize),
+    CalculatedAngleRotatedSegment(usize, usize, usize),
+    CalculatedAngleRotatedCircle(usize, usize, usize),
+    CalculatedAngleRotatedPolygon(usize, usize, usize),
     RotatedSegment(usize, usize, f64),
     RotatedCircle(usize, usize, f64),
     RotatedPolygon(usize, usize, f64),
@@ -1203,6 +1238,7 @@ fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::ArcAngle(_)
             | Kind::ArcLength(_)
             | Kind::PointDistance(_, _)
+            | Kind::PointLineDistance(_, _)
             | Kind::AngleMeasurement(_, _, _)
             | Kind::PointRatio(_, _, _)
             | Kind::HideShowButton { .. }
@@ -1283,6 +1319,11 @@ fn header(kind: u16) -> [u8; 28] {
             30, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        33 => {
+            let mut h = header(32);
+            h[0] = 33;
+            h
+        },
         32 => [
             32, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
@@ -1291,6 +1332,11 @@ fn header(kind: u16) -> [u8; 28] {
             27, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0xdf, 0x3f, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
         ],
+        29 => {
+            let mut h = header(28);
+            h[0] = 29;
+            h
+        },
         28 => [
             28, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0x21, 2, 0xff, 0, 0, 0, 0xff, 0xff, 0x51, 0x5c, 0xc1,
             0xbd, 0xf0, 0xff, 0, 0, 0, 0,
@@ -1322,6 +1368,24 @@ fn header(kind: u16) -> [u8; 28] {
         _ => unreachable!(),
     }
 }
+fn is_segment_kind(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(_, _)
+            | Kind::PolarTranslatedSegment(_, _, _, _)
+            | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+            | Kind::VectorTranslatedSegment(_, _, _)
+            | Kind::MarkedDistanceTranslatedSegment(_, _, _)
+            | Kind::AngleRotatedSegment(_, _, _, _, _)
+            | Kind::RotatedSegment(_, _, _)
+            | Kind::CalculatedAngleRotatedSegment(_, _, _)
+            | Kind::CalculatedRatioScaledSegment(_, _, _)
+            | Kind::ScaledSegment(_, _, _)
+            | Kind::RatioScaledSegment(_, _, _, _, _)
+            | Kind::ReflectedSegment(_, _)
+    )
+}
+
 fn is_straight_kind(kind: &Kind) -> bool {
     matches!(
         kind,
@@ -1332,6 +1396,8 @@ fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::MarkedDistanceTranslatedSegment(_, _, _)
             | Kind::AngleRotatedSegment(_, _, _, _, _)
             | Kind::RotatedSegment(_, _, _)
+            | Kind::CalculatedAngleRotatedSegment(_, _, _)
+            | Kind::CalculatedRatioScaledSegment(_, _, _)
             | Kind::ScaledSegment(_, _, _)
             | Kind::RatioScaledSegment(_, _, _, _, _)
             | Kind::ReflectedSegment(_, _)
@@ -1344,6 +1410,16 @@ fn is_straight_kind(kind: &Kind) -> bool {
             | Kind::CircleAxis(_, _)
             | Kind::DistanceAxis(_, _, _)
     )
+}
+
+fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
+    if is_segment_kind(kind) {
+        Some(LineMode::Segment)
+    } else if matches!(kind, Kind::Ray(_, _)) {
+        Some(LineMode::Ray)
+    } else if is_straight_kind(kind) {
+        Some(LineMode::Line)
+    } else { None }
 }
 
 fn is_point_kind(kind: &Kind) -> bool {
@@ -1371,6 +1447,7 @@ fn is_point_kind(kind: &Kind) -> bool {
             | Kind::ScaledPoint(_, _, _)
             | Kind::RotatedPoint(_, _, _)
             | Kind::CalculatedAngleRotatedPoint(_, _, _)
+            | Kind::CalculatedRatioScaledPoint(_, _, _)
             | Kind::AngleRotatedPoint(_, _, _, _, _)
             | Kind::RatioScaledPoint(_, _, _, _, _)
             | Kind::Midpoint(_, _)
@@ -1483,6 +1560,7 @@ fn is_distance_value_kind(kind: &Kind) -> bool {
         kind,
         Kind::SegmentLength(_)
             | Kind::PointDistance(_, _)
+            | Kind::PointLineDistance(_, _)
             | Kind::PolygonPerimeter(_)
             | Kind::CircleCircumference(_)
             | Kind::CircleRadius(_)
@@ -1502,6 +1580,8 @@ fn is_circle_kind(kind: &Kind) -> bool {
             | Kind::MarkedDistanceTranslatedCircle(_, _, _)
             | Kind::AngleRotatedCircle(_, _, _, _, _)
             | Kind::RotatedCircle(_, _, _)
+            | Kind::CalculatedAngleRotatedCircle(_, _, _)
+            | Kind::CalculatedRatioScaledCircle(_, _, _)
             | Kind::ReflectedCircle(_, _)
             | Kind::ScaledCircle(_, _, _)
             | Kind::RatioScaledCircle(_, _, _, _, _)
@@ -1605,6 +1685,7 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::ScaledPoint(_, _, _)
         | Kind::RotatedPoint(_, _, _)
         | Kind::CalculatedAngleRotatedPoint(_, _, _)
+        | Kind::CalculatedRatioScaledPoint(_, _, _)
         | Kind::AngleRotatedPoint(_, _, _, _, _)
         | Kind::RatioScaledPoint(_, _, _, _, _)
         | Kind::Midpoint(_, _)
@@ -1621,6 +1702,8 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::MarkedDistanceTranslatedSegment(_, _, _)
         | Kind::AngleRotatedSegment(_, _, _, _, _)
         | Kind::RotatedSegment(_, _, _)
+        | Kind::CalculatedAngleRotatedSegment(_, _, _)
+        | Kind::CalculatedRatioScaledSegment(_, _, _)
         | Kind::ScaledSegment(_, _, _)
         | Kind::RatioScaledSegment(_, _, _, _, _)
         | Kind::ReflectedSegment(_, _)
@@ -1637,6 +1720,8 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::MarkedDistanceTranslatedCircle(_, _, _)
         | Kind::AngleRotatedCircle(_, _, _, _, _)
         | Kind::RotatedCircle(_, _, _)
+        | Kind::CalculatedAngleRotatedCircle(_, _, _)
+        | Kind::CalculatedRatioScaledCircle(_, _, _)
         | Kind::ReflectedCircle(_, _)
         | Kind::ScaledCircle(_, _, _)
         | Kind::RatioScaledCircle(_, _, _, _, _)
@@ -1651,6 +1736,8 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
         | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
         | Kind::RotatedPolygon(_, _, _)
+        | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+        | Kind::CalculatedRatioScaledPolygon(_, _, _)
         | Kind::AngleRotatedPolygon(_, _, _, _, _)
         | Kind::ScaledPolygon(_, _, _)
         | Kind::RatioScaledPolygon(_, _, _, _, _) => Some(VisualStyle::Polygon {
@@ -1682,6 +1769,14 @@ fn reflect_point(point: Point, a: Point, b: Point) -> Option<Point> {
         y: 2. * projected.y - point.y,
     };
     (reflected.x.is_finite() && reflected.y.is_finite()).then_some(reflected)
+}
+
+fn scale_point_about(source: Point, center: Point, factor: f64) -> Option<Point> {
+    let result = Point {
+        x: center.x + factor * (source.x - center.x),
+        y: center.y + factor * (source.y - center.y),
+    };
+    (result.x.is_finite() && result.y.is_finite()).then_some(result)
 }
 
 fn ratio_of_points(a: Point, b: Point, c: Point) -> Option<f64> {
@@ -1743,12 +1838,17 @@ fn supported_point_iteration_mapping(objects: &[Object], seed: usize, image: usi
         Kind::ReflectedPoint(source, mirror) => {
             source == seed && get(mirror).is_some_and(|o| is_straight_kind(&o.kind))
         }
+        Kind::CalculatedRatioScaledPoint(source, center, ratio) => {
+            source == seed
+                && point(center)
+                && get(ratio)
+                    .is_some_and(|o| numeric_kind_unit(&o.kind) == Some(NumericUnit::Scalar))
+        }
         Kind::CalculatedAngleRotatedPoint(source, center, angle) => {
             source == seed
                 && point(center)
-                && get(angle).is_some_and(|o| {
-                    numeric_kind_unit(&o.kind) == Some(NumericUnit::Degrees)
-                })
+                && get(angle)
+                    .is_some_and(|o| numeric_kind_unit(&o.kind) == Some(NumericUnit::Degrees))
         }
         Kind::RotatedPoint(source, center, angle) => {
             source == seed && point(center) && angle.is_finite()
@@ -1816,6 +1916,7 @@ fn numeric_kind_unit(kind: &Kind) -> Option<NumericUnit> {
         },
         Kind::SegmentLength(_)
         | Kind::PointDistance(_, _)
+        | Kind::PointLineDistance(_, _)
         | Kind::PolygonPerimeter(_)
         | Kind::CircleCircumference(_)
         | Kind::CircleRadius(_)
@@ -2250,12 +2351,14 @@ impl Document {
                         });
                         point_offset = Some(r.data.start);
                     }
-                    0x0903 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
+                    0x0903 if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
                         let sample: &[u8] = match code {
                             36 => &include_bytes!("../assets/length_measurement_group.bin")[60..92],
                             37 => {
                                 &include_bytes!("../assets/distance_measurement_group.bin")[64..96]
                             }
+                            38 => &include_bytes!("../assets/point_line_distance_measurement_group.bin")
+                                [64..96],
                             39 => {
                                 &include_bytes!("../assets/perimeter_measurement_group.bin")[60..92]
                             }
@@ -2290,12 +2393,14 @@ impl Document {
                             measurement_precision = Some(precision);
                         }
                     }
-                    0x07d8 if matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
+                    0x07d8 if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) => {
                         let sample: &[u8] = match code {
                             36 => {
                                 &include_bytes!("../assets/length_measurement_group.bin")[100..102]
                             }
                             37 => &include_bytes!("../assets/distance_measurement_group.bin")
+                                [104..106],
+                            38 => &include_bytes!("../assets/point_line_distance_measurement_group.bin")
                                 [104..106],
                             39 => &include_bytes!("../assets/perimeter_measurement_group.bin")
                                 [100..102],
@@ -2356,7 +2461,7 @@ impl Document {
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !(code == 15 && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(labeled_polygon && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !(matches!(code, 36 | 37 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
+                    && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
@@ -2552,13 +2657,8 @@ impl Document {
                         Kind::CoordinateSystem(x_axis, y_axis)
                     }
                     GraphObject::Slope { line, coordinates }
-                        if objects.get(line - 1).is_some_and(|o| {
-                            matches!(
-                                o.kind,
-                                Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _)
-                            )
-                        }) && objects
-                            .get(coordinates - 1)
+                        if objects.get(line.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
+                            && objects.get(coordinates.saturating_sub(1))
                             .is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) =>
                     {
                         Kind::SlopeMeasurement(line, coordinates)
@@ -2969,7 +3069,7 @@ impl Document {
                     }
                     (36, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_segment_kind(&o.kind)) =>
                     {
                         Kind::SegmentLength(*host)
                     }
@@ -2979,6 +3079,13 @@ impl Document {
                             && objects.get(b - 1).is_some_and(|o| is_point_kind(&o.kind)) =>
                     {
                         Kind::PointDistance(*a, *b)
+                    }
+                    (38, _, [point, host])
+                        if measurement_format && measurement_style
+                            && objects.get(point.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind)) =>
+                    {
+                        Kind::PointLineDistance(*point, *host)
                     }
                     (47, _, [a, b, c])
                         if measurement_format && measurement_style
@@ -3036,31 +3143,34 @@ impl Document {
                     }
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
-                            (Some(Kind::Segment(_, _)), Some((payload, _)))
-                                if payload.len() == 12
+                            (Some(kind), Some((payload, _)))
+                                if straight_kind_mode(kind) == Some(LineMode::Segment)
+                                    && payload.len() == 12
                                     && payload[..4] == [15, 0, 14, 0]
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnSegment(*host, f64_at(payload, 4))
                             }
-                            (Some(Kind::Ray(_, _)), Some((payload, _)))
-                                if payload.len() == 12
+                            (Some(kind), Some((payload, _)))
+                                if straight_kind_mode(kind) == Some(LineMode::Ray)
+                                    && payload.len() == 12
                                     && payload[..4] == [15, 0, 13, 0]
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnRay(*host, f64_at(payload, 4))
                             }
-                            (Some(Kind::Line(_, _)), Some((payload, _)))
-                                if payload.len() == 12
+                            (Some(kind), Some((payload, _)))
+                                if straight_kind_mode(kind) == Some(LineMode::Line)
+                                    && payload.len() == 12
                                     && payload[..4] == [15, 0, 12, 0]
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnLine(*host, f64_at(payload, 4))
                             }
                             (
-                                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _) | Kind::RatioScaledCircle(_, _, _, _, _)),
+                                Some(kind),
                                 Some((payload, _)),
-                            ) if payload.len() == 20
+                            ) if is_circle_kind(kind) && payload.len() == 20
                                 && payload[..4] == [15, 0, 28, 0]
                                 && f64_at(payload, 4).is_finite()
                                 && f64_at(payload, 12).is_finite() =>
@@ -3230,10 +3340,28 @@ impl Document {
                             _ => Kind::Unsupported(code),
                         }
                     },
-                    (29, None, [source,center,angle]) if h[6..10]==[1,0,4,0]
-                        && objects.get(source.saturating_sub(1)).is_some_and(|o|is_point_kind(&o.kind))
-                        && objects.get(center.saturating_sub(1)).is_some_and(|o|is_point_kind(&o.kind))
-                        && objects.get(angle.saturating_sub(1)).is_some_and(|o|numeric_kind_unit(&o.kind)==Some(NumericUnit::Degrees)) => Kind::CalculatedAngleRotatedPoint(*source,*center,*angle),
+                    (29, None, [source, center, angle])
+                        if objects.get(center.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(angle.saturating_sub(1)).is_some_and(|o| numeric_kind_unit(&o.kind) == Some(NumericUnit::Degrees)) => {
+                        match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
+                            (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedAngleRotatedPoint(*source, *center, *angle),
+                            (Some(Kind::Segment(_, _)), [14, 0]) if h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
+                            (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) if h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
+                            (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
+                    (33, None, [source, center, angle])
+                        if objects.get(center.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
+                            && objects.get(angle.saturating_sub(1)).is_some_and(|o| numeric_kind_unit(&o.kind) == Some(NumericUnit::Scalar)) => {
+                        match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
+                            (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
+                            (Some(Kind::Segment(_, _)), [14, 0]) if h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
+                            (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) if h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
+                            (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
                     (28, _, [source, center, first, vertex, last])
                         if [center, first, vertex, last].iter().all(|&&id| {
                             objects.get(id - 1).is_some_and(|object| is_point_kind(&object.kind))
@@ -4126,19 +4254,89 @@ impl Document {
         if self.partial_view
             || !self.safe_structure
             || self.page_count != 1
-            || self.position(source).is_none()
             || self.position(center).is_none()
             || !self.objects.get(angle.saturating_sub(1)).is_some_and(|o| {
-                !o.deleted
-                    && numeric_kind_unit(&o.kind) == Some(NumericUnit::Degrees)
+                !o.deleted && numeric_kind_unit(&o.kind) == Some(NumericUnit::Degrees)
             })
             || self.numeric_value(angle).is_none()
         {
-            return Err("Select a point, rotation center, and a degree-valued measurement or calculation".into());
+            return Err(
+                "Select a shape, rotation center, and a degree-valued measurement or calculation"
+                    .into(),
+            );
         }
+        let kind = match self
+            .objects
+            .get(source.saturating_sub(1))
+            .filter(|o| !o.deleted)
+            .map(|o| &o.kind)
+        {
+            Some(kind) if is_point_kind(kind) && self.position(source).is_some() => {
+                Kind::CalculatedAngleRotatedPoint(source, center, angle)
+            }
+            Some(Kind::Segment(_, _)) if self.line_points(source).is_some() => {
+                Kind::CalculatedAngleRotatedSegment(source, center, angle)
+            }
+            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+                if self.circle_points(source).is_some() =>
+            {
+                Kind::CalculatedAngleRotatedCircle(source, center, angle)
+            }
+            Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {
+                Kind::CalculatedAngleRotatedPolygon(source, center, angle)
+            }
+            _ => return Err("Select a point, segment, circle, or polygon interior".into()),
+        };
         self.checkpoint();
-        Ok(self.append_object(Kind::CalculatedAngleRotatedPoint(source, center, angle)))
+        Ok(self.append_object(kind))
     }
+
+    pub fn add_calculated_ratio_dilation(
+        &mut self,
+        source: usize,
+        center: usize,
+        ratio: usize,
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || !self.safe_structure
+            || self.page_count != 1
+            || self.position(center).is_none()
+            || !self.objects.get(ratio.saturating_sub(1)).is_some_and(|o| {
+                !o.deleted && numeric_kind_unit(&o.kind) == Some(NumericUnit::Scalar)
+            })
+            || self.numeric_value(ratio).is_none()
+        {
+            return Err(
+                "Select a shape, dilation center, and a scalar value"
+                    .into(),
+            );
+        }
+        let kind = match self
+            .objects
+            .get(source.saturating_sub(1))
+            .filter(|o| !o.deleted)
+            .map(|o| &o.kind)
+        {
+            Some(kind) if is_point_kind(kind) && self.position(source).is_some() => {
+                Kind::CalculatedRatioScaledPoint(source, center, ratio)
+            }
+            Some(Kind::Segment(_, _)) if self.line_points(source).is_some() => {
+                Kind::CalculatedRatioScaledSegment(source, center, ratio)
+            }
+            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+                if self.circle_points(source).is_some() =>
+            {
+                Kind::CalculatedRatioScaledCircle(source, center, ratio)
+            }
+            Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {
+                Kind::CalculatedRatioScaledPolygon(source, center, ratio)
+            }
+            _ => return Err("Select a point, segment, circle, or polygon interior".into()),
+        };
+        self.checkpoint();
+        Ok(self.append_object(kind))
+    }
+
     pub fn add_branching_polygon_iteration(
         &mut self,
         seed: usize,
@@ -4452,6 +4650,7 @@ impl Document {
             Kind::ArcAngle(_) => self.arc_angle_degrees(id),
             Kind::SegmentLength(_) => self.segment_length_cm(id),
             Kind::PointDistance(_, _) => self.point_distance_cm(id),
+            Kind::PointLineDistance(_, _) => self.point_line_distance_cm(id),
             Kind::PolygonPerimeter(_) => self.perimeter_cm(id),
             Kind::CircleCircumference(_) => self.circle_circumference_cm(id),
             Kind::CircleRadius(_) => self.circle_radius_cm(id),
@@ -4485,7 +4684,7 @@ impl Document {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let name = match object.kind {
             Kind::SegmentLength(_) => "Length",
-            Kind::PointDistance(_, _) => "Distance",
+            Kind::PointDistance(_, _) | Kind::PointLineDistance(_, _) => "Distance",
             Kind::PointRatio(_, _, _) => "Ratio",
             Kind::PolygonPerimeter(_) => "Perimeter",
             Kind::CircleCircumference(_) => "Circumference",
@@ -5263,6 +5462,8 @@ impl Document {
         | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
         | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
         | Kind::RotatedPolygon(source, _, _)
+        | Kind::CalculatedAngleRotatedPolygon(source, _, _)
+        | Kind::CalculatedRatioScaledPolygon(source, _, _)
         | Kind::AngleRotatedPolygon(source, _, _, _, _)
         | Kind::ScaledPolygon(source, _, _)
         | Kind::RatioScaledPolygon(source, _, _, _, _) = kind
@@ -5683,6 +5884,7 @@ impl Document {
         let measurement = match self.objects.get(source.checked_sub(1)?)?.kind {
             Kind::SegmentLength(_) => self.segment_length_cm(*source)?,
             Kind::PointDistance(_, _) => self.point_distance_cm(*source)?,
+            Kind::PointLineDistance(_, _) => self.point_line_distance_cm(*source)?,
             Kind::PolygonPerimeter(_) => self.perimeter_cm(*source)?,
             Kind::CircleCircumference(_) => self.circle_circumference_cm(*source)?,
             Kind::CircleRadius(_) => self.circle_radius_cm(*source)?,
@@ -5766,6 +5968,7 @@ impl Document {
                 | Kind::MeasuredCalculation(_, _)
                 | Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
+        | Kind::PointLineDistance(_, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
                 | Kind::CircleRadius(_)
@@ -5826,6 +6029,7 @@ impl Document {
                 (first, second)
             }
             Kind::PointDistance(first, second) => (first, second),
+            Kind::PointLineDistance(_, _) => return Some("Distance".into()),
             Kind::PolygonPerimeter(_) => return Some("Perimeter".into()),
             Kind::CircleCircumference(_) => return Some("Circumference".into()),
             Kind::CircleRadius(_) => return Some("Radius".into()),
@@ -6905,6 +7109,7 @@ impl Document {
                 point(center)?,
                 marked_rotation_theta(point(first)?, point(vertex)?, point(last)?)?,
             )?,
+            Kind::CalculatedRatioScaledPoint(_, center, ratio) => scale_point_about(current, point(center)?, self.unitless_numeric_value(ratio)?)?,
             Kind::ScaledPoint(_, center, factor) => {
                 let c = point(center)?;
                 Point {
@@ -7458,11 +7663,11 @@ impl Document {
             ValueEquationKind::PointValue => {
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
-                    Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Line(_, _) => {
+                    ref kind if is_straight_kind(kind) => {
                         let (a, b, _) = self.line_points(second)?;
                         value_equation_records::segment_point_value(point, screen(a), screen(b))
                     }
-                    Kind::Circle(_, _) => {
+                    ref kind if is_circle_kind(kind) => {
                         let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind
                         else {
                             return None;
@@ -8871,6 +9076,10 @@ impl Document {
                         y: center.y + factor * (source.y - center.y),
                     })
                 }
+                Kind::CalculatedRatioScaledPoint(source, center, ratio) => {
+                    let source = go(d, *source, seen)?;
+                    scale_point_about(source, go(d, *center, seen)?, d.unitless_numeric_value(*ratio)?)
+                }
                 Kind::CalculatedAngleRotatedPoint(source, center, angle) => {
                     let source = go(d, *source, seen)?;
                     let center = go(d, *center, seen)?;
@@ -8944,6 +9153,7 @@ impl Document {
                 self.parameter_calculation_value(id)?
             }
             Kind::PointDistance(_, _) => self.point_distance_cm(id)?,
+            Kind::PointLineDistance(_, _) => self.point_line_distance_cm(id)?,
             Kind::PolygonPerimeter(_) => self.perimeter_cm(id)?,
             Kind::CircleCircumference(_) => self.circle_circumference_cm(id)?,
             Kind::CircleRadius(_) => self.circle_radius_cm(id)?,
@@ -8953,6 +9163,27 @@ impl Document {
         let pixels = cm * 37.79527559055118;
         (pixels.is_finite() && pixels >= 0.).then_some(pixels)
     }
+    pub fn point_line_distance_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::PointLineDistance(point, host) = object.kind else {
+            return None;
+        };
+        let point = self.position(point)?;
+        let (a, b, _) = self.line_points(host)?;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let length = dx.hypot(dy);
+        if !length.is_finite() || length == 0. {
+            return None;
+        }
+        let distance = ((point.x - a.x) * (dy / length) - (point.y - a.y) * (dx / length)).abs()
+            / 37.79527559055118;
+        distance.is_finite().then_some(distance)
+    }
+
     pub fn point_distance_cm(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
@@ -9088,6 +9319,16 @@ impl Document {
                     .into_iter()
                     .map(|point| rotate_point_about(point, center, theta))
                     .collect()
+            }
+            Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
+                let center = self.position(*center)?;
+                let factor = self.unitless_numeric_value(*ratio)?;
+                self.polygon_points(*source)?.into_iter().map(|point| scale_point_about(point, center, factor)).collect()
+            }
+            Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
+                let center = self.position(*center)?;
+                let theta = self.numeric_value(*angle)?.to_radians();
+                self.polygon_points(*source)?.into_iter().map(|point| rotate_point_about(point, center, theta)).collect()
             }
             Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
                 let center = self.position(*center)?;
@@ -9348,6 +9589,18 @@ impl Document {
                         mode,
                     ))
                 }
+                Kind::CalculatedRatioScaledSegment(source, center, ratio) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let factor = d.unitless_numeric_value(ratio)?;
+                    Some((scale_point_about(a, center, factor)?, scale_point_about(b, center, factor)?, mode))
+                }
+                Kind::CalculatedAngleRotatedSegment(source, center, angle) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let center = d.position(center)?;
+                    let theta = d.numeric_value(angle)?.to_radians();
+                    Some((rotate_point_about(a, center, theta)?, rotate_point_about(b, center, theta)?, mode))
+                }
                 Kind::AngleRotatedSegment(source, center, first, vertex, last) => {
                     let (a, b, mode) = go(d, source, seen)?;
                     let center = d.position(center)?;
@@ -9555,6 +9808,19 @@ impl Document {
                 y: center.y - step * radians.sin(),
             };
             return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::CalculatedRatioScaledCircle(source, center, ratio) = self.objects.get(id.checked_sub(1)?)?.kind {
+            let (source_center, radius) = self.circle_points(source)?;
+            let center = self.position(center)?;
+            let factor = self.unitless_numeric_value(ratio)?;
+            let scaled = scale_point_about(source_center, center, factor)?;
+            let radius = radius * factor.abs();
+            return (radius.is_finite() && radius > 0.).then_some((scaled, radius));
+        }
+        if let Kind::CalculatedAngleRotatedCircle(source, center, angle) = self.objects.get(id.checked_sub(1)?)?.kind {
+            let (source_center, radius) = self.circle_points(source)?;
+            let center = self.position(center)?;
+            return Some((rotate_point_about(source_center, center, self.numeric_value(angle)?.to_radians())?, radius));
         }
         if let Kind::AngleRotatedCircle(source, center, first, vertex, last) =
             self.objects.get(id.checked_sub(1)?)?.kind
@@ -9953,7 +10219,7 @@ impl Document {
     }
     pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
         match self.objects.get(host.checked_sub(1)?)?.kind {
-            Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Line(_, _) => {
+            ref kind if is_straight_kind(kind) => {
                 let (a, b, mode) = self.line_points(host)?;
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
@@ -9968,11 +10234,7 @@ impl Document {
                     LineMode::Line => Kind::PointOnLine(host, t),
                 })
             }
-            Kind::Circle(_, _)
-            | Kind::CircleBySegment(_, _)
-            | Kind::ReflectedCircle(_, _)
-            | Kind::ScaledCircle(_, _, _)
-            | Kind::RatioScaledCircle(_, _, _, _, _) => {
+            ref kind if is_circle_kind(kind) => {
                 let (center, _) = self.circle_points(host)?;
                 let dx = p.x - center.x;
                 let dy = p.y - center.y;
@@ -10386,11 +10648,44 @@ impl Document {
                 }
             }
             match &o.kind {
-                Kind::CalculatedAngleRotatedPoint(source,center,angle)=>{
-                    if [*source,*center,*angle].iter().any(|id|*id==0||*id>=o.id)
-                        || !self.objects.get(source-1).is_some_and(|p|!p.deleted&&is_point_kind(&p.kind))
-                        || !self.objects.get(center-1).is_some_and(|p|!p.deleted&&is_point_kind(&p.kind))
-                        || !self.objects.get(angle-1).is_some_and(|p|!p.deleted&&numeric_kind_unit(&p.kind)==Some(NumericUnit::Degrees)) {return Err("Invalid calculated angle rotation parents".into());}
+                Kind::CalculatedRatioScaledPoint(source, center, ratio)
+                | Kind::CalculatedRatioScaledSegment(source, center, ratio)
+                | Kind::CalculatedRatioScaledCircle(source, center, ratio)
+                | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
+                    let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
+                        Kind::CalculatedRatioScaledPoint(..) => is_point_kind(&p.kind),
+                        Kind::CalculatedRatioScaledSegment(..) => matches!(p.kind, Kind::Segment(..)),
+                        Kind::CalculatedRatioScaledCircle(..) => matches!(p.kind, Kind::Circle(..) | Kind::CircleBySegment(..)),
+                        _ => matches!(p.kind, Kind::Polygon(_)),
+                    });
+                    if [*source, *center, *ratio].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
+                        || !self.objects.get(center.saturating_sub(1)).is_some_and(|p| !p.deleted && is_point_kind(&p.kind))
+                        || !self.objects.get(ratio.saturating_sub(1)).is_some_and(|p| !p.deleted && numeric_kind_unit(&p.kind) == Some(NumericUnit::Scalar)) {
+                        return Err("Invalid numeric-ratio dilation parents".into());
+                    }
+                    if i >= self.source_count && (self.unitless_numeric_value(*ratio).is_none() || self.position(*center).is_none()) {
+                        return Err("Undefined numeric-ratio dilation".into());
+                    }
+                }
+                Kind::CalculatedAngleRotatedPoint(source, center, angle)
+                | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+                | Kind::CalculatedAngleRotatedCircle(source, center, angle)
+                | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
+                    let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
+                        Kind::CalculatedAngleRotatedPoint(..) => is_point_kind(&p.kind),
+                        Kind::CalculatedAngleRotatedSegment(..) => matches!(p.kind, Kind::Segment(..)),
+                        Kind::CalculatedAngleRotatedCircle(..) => matches!(p.kind, Kind::Circle(..) | Kind::CircleBySegment(..)),
+                        _ => matches!(p.kind, Kind::Polygon(_)),
+                    });
+                    if [*source, *center, *angle].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
+                        || !self.objects.get(center.saturating_sub(1)).is_some_and(|p| !p.deleted && is_point_kind(&p.kind))
+                        || !self.objects.get(angle.saturating_sub(1)).is_some_and(|p| !p.deleted && numeric_kind_unit(&p.kind) == Some(NumericUnit::Degrees)) {
+                        return Err("Invalid numeric-angle rotation parents".into());
+                    }
+                    if i >= self.source_count && (self.numeric_value(*angle).is_none() || self.position(*center).is_none()
+                        || match o.kind { Kind::CalculatedAngleRotatedPoint(..) => self.position(o.id).is_none(), Kind::CalculatedAngleRotatedSegment(..) => self.line_points(o.id).is_none(), Kind::CalculatedAngleRotatedCircle(..) => self.circle_points(o.id).is_none(), _ => self.polygon_points(o.id).is_none() }) {
+                        return Err("Undefined numeric-angle rotation".into());
+                    }
                 }
                 Kind::RayIteration(seed,image,ray,value)=>{
                     if o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(value.saturating_sub(1)).is_some_and(|o|!o.deleted&&iteration_depth_kind(&o.kind))
@@ -10724,6 +11019,14 @@ impl Document {
             {
                 return Err(format!("Invalid points in distance measurement {}", o.id));
             }
+            if matches!(o.kind, Kind::PointLineDistance(_, _))
+                && self.point_line_distance_cm(o.id).is_none()
+            {
+                return Err(format!(
+                    "Invalid host in point-to-line distance measurement {}",
+                    o.id
+                ));
+            }
             if matches!(o.kind, Kind::PointRatio(_, _, _)) && self.ratio_value(o.id).is_none() {
                 return Err(format!("Invalid points in ratio measurement {}", o.id));
             }
@@ -10844,10 +11147,11 @@ impl Document {
                 }
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind {
-                if !matches!(
-                    self.objects.get(line.saturating_sub(1)).map(|o| &o.kind),
-                    Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))
-                ) || self.line_points(line).is_none()
+                if !self
+                    .objects
+                    .get(line.saturating_sub(1))
+                    .is_some_and(|o| is_straight_kind(&o.kind))
+                    || self.line_points(line).is_none()
                     || self.graph_frame(frame).is_none()
                 {
                     return Err(format!("Invalid slope measurement {}", o.id));
@@ -11373,6 +11677,7 @@ impl Document {
                         | Kind::ScaledPoint(_, _, _)
                         | Kind::RotatedPoint(_, _, _)
                         | Kind::CalculatedAngleRotatedPoint(_, _, _)
+                        | Kind::CalculatedRatioScaledPoint(_, _, _)
                         | Kind::AngleRotatedPoint(_, _, _, _, _)
                         | Kind::RatioScaledPoint(_, _, _, _, _)
                 )
@@ -12110,11 +12415,11 @@ impl Document {
                             .ok_or("Missing point host")?;
                         if host_object.page != page
                             || matches!(object.kind, Kind::PointOnSegment(_, _))
-                                && !matches!(host_object.kind, Kind::Segment(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Segment)
                             || matches!(object.kind, Kind::PointOnRay(_, _))
-                                && !matches!(host_object.kind, Kind::Ray(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Ray)
                             || matches!(object.kind, Kind::PointOnLine(_, _))
-                                && !matches!(host_object.kind, Kind::Line(_, _))
+                                && straight_kind_mode(&host_object.kind) != Some(LineMode::Line)
                             || matches!(object.kind, Kind::PointOnArc(_, _))
                                 && !is_arc_kind(&host_object.kind)
                         {
@@ -12454,7 +12759,7 @@ impl Document {
                             .ok_or("Missing measurement host")?
                             .kind;
                         let template: &[u8] = match &object.kind {
-                            Kind::SegmentLength(_) if matches!(host_kind, Kind::Segment(_, _)) => {
+                            Kind::SegmentLength(_) if is_segment_kind(host_kind) => {
                                 include_bytes!("../assets/length_measurement_group.bin")
                             }
                             Kind::PolygonPerimeter(_) if host_kind.is_polygon() => {
@@ -12490,6 +12795,7 @@ impl Document {
                         groups.extend_from_slice(&group);
                     }
                     Kind::PointDistance(a, b)
+                    | Kind::PointLineDistance(a, b)
                     | Kind::AngleMeasurement(a, b, _)
                     | Kind::PointRatio(a, b, _) => {
                         let (parents, template, format_offset): (Vec<usize>, &[u8], usize) =
@@ -12497,6 +12803,11 @@ impl Document {
                                 Kind::PointDistance(_, _) => (
                                     vec![*a, *b],
                                     include_bytes!("../assets/distance_measurement_group.bin"),
+                                    64,
+                                ),
+                                Kind::PointLineDistance(_, _) => (
+                                    vec![*a, *b],
+                                    include_bytes!("../assets/point_line_distance_measurement_group.bin"),
                                     64,
                                 ),
                                 Kind::AngleMeasurement(_, _, c) => (
@@ -12511,11 +12822,12 @@ impl Document {
                                 ),
                                 _ => unreachable!(),
                             };
-                        if parents.iter().any(|id| {
-                            !self
-                                .objects
-                                .get(id.saturating_sub(1))
-                                .is_some_and(|parent| is_point_kind(&parent.kind))
+                        if parents.iter().enumerate().any(|(index, id)| {
+                            !self.objects.get(id.saturating_sub(1)).is_some_and(|parent| {
+                                if index == 1 && matches!(object.kind, Kind::PointLineDistance(_, _)) {
+                                    is_straight_kind(&parent.kind)
+                                } else { is_point_kind(&parent.kind) }
+                            })
                         }) {
                             return Err("Measurement needs point parents".into());
                         }
@@ -13549,17 +13861,6 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
-            if let Kind::CalculatedAngleRotatedPoint(source, center, angle) = o.kind {
-                let mut group = *include_bytes!("../assets/calculated_angle_rotation_group.bin");
-                group[48..52].copy_from_slice(&(source as u32).to_le_bytes());
-                group[52..56].copy_from_slice(&(center as u32).to_le_bytes());
-                group[56..60].copy_from_slice(&(angle as u32).to_le_bytes());
-                if !o.visible {
-                    group[10] |= 1;
-                }
-                added.extend_from_slice(&group);
-                continue;
-            }
             if let Kind::BranchingPolygonIteration {
                 seed,
                 first,
@@ -14229,12 +14530,9 @@ impl Document {
                     u32::try_from(second).map_err(|_| "Too many objects")?,
                 ];
                 let mut group = if kind == ValueEquationKind::PointValue
-                    && matches!(
-                        self.objects
-                            .get(second.saturating_sub(1))
-                            .map(|object| &object.kind),
-                        Some(Kind::Ray(_, _) | Kind::Line(_, _))
-                    ) {
+                    && self.objects.get(second.saturating_sub(1)).is_some_and(|object| {
+                        matches!(straight_kind_mode(&object.kind), Some(LineMode::Ray | LineMode::Line))
+                    }) {
                     value_equation_records::encode_straight_point_value_group(references)?
                 } else if kind == ValueEquationKind::PointValue
                     && matches!(
@@ -14281,8 +14579,12 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::PointDistance(a, b) = o.kind {
-                let mut group = *include_bytes!("../assets/distance_measurement_group.bin");
+            if let Kind::PointDistance(a, b) | Kind::PointLineDistance(a, b) = o.kind {
+                let mut group = if matches!(o.kind, Kind::PointLineDistance(_, _)) {
+                    *include_bytes!("../assets/point_line_distance_measurement_group.bin")
+                } else {
+                    *include_bytes!("../assets/distance_measurement_group.bin")
+                };
                 group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 64, &mut measurement_row)?;
@@ -14437,6 +14739,14 @@ impl Document {
                 | Kind::ScaledCircle(source, center, _)
                 | Kind::ScaledSegment(source, center, _)
                 | Kind::ScaledPolygon(source, center, _) => (30, vec![source, center]),
+                Kind::CalculatedRatioScaledPoint(source, center, ratio)
+                | Kind::CalculatedRatioScaledSegment(source, center, ratio)
+                | Kind::CalculatedRatioScaledCircle(source, center, ratio)
+                | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => (33, vec![source, center, ratio]),
+                Kind::CalculatedAngleRotatedPoint(source, center, angle)
+                | Kind::CalculatedAngleRotatedSegment(source, center, angle)
+                | Kind::CalculatedAngleRotatedCircle(source, center, angle)
+                | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => (29, vec![source, center, angle]),
                 Kind::RotatedPoint(source, center, _)
                 | Kind::RotatedSegment(source, center, _)
                 | Kind::RotatedCircle(source, center, _)
@@ -14507,6 +14817,8 @@ impl Document {
                     | Kind::MarkedDistanceTranslatedSegment(_, _, _)
                     | Kind::AngleRotatedSegment(_, _, _, _, _)
                     | Kind::RotatedSegment(_, _, _)
+                    | Kind::CalculatedAngleRotatedSegment(_, _, _)
+                    | Kind::CalculatedRatioScaledSegment(_, _, _)
                     | Kind::ScaledSegment(_, _, _)
                     | Kind::RatioScaledSegment(_, _, _, _, _)
                     | Kind::ReflectedSegment(_, _)
@@ -14519,6 +14831,8 @@ impl Document {
                         | Kind::MarkedDistanceTranslatedSegment(_, _, _)
                         | Kind::AngleRotatedSegment(_, _, _, _, _)
                         | Kind::RotatedSegment(_, _, _)
+                        | Kind::CalculatedAngleRotatedSegment(_, _, _)
+                        | Kind::CalculatedRatioScaledSegment(_, _, _)
                         | Kind::ScaledSegment(_, _, _)
                         | Kind::RatioScaledSegment(_, _, _, _, _)
                 ) {
@@ -14534,6 +14848,8 @@ impl Document {
                     | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                     | Kind::AngleRotatedCircle(_, _, _, _, _)
                     | Kind::RotatedCircle(_, _, _)
+                    | Kind::CalculatedAngleRotatedCircle(_, _, _)
+                    | Kind::CalculatedRatioScaledCircle(_, _, _)
             ) {
                 h = header(3);
                 h[0] = code as u8;
@@ -14543,6 +14859,8 @@ impl Document {
                         | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                         | Kind::AngleRotatedCircle(_, _, _, _, _)
                         | Kind::RotatedCircle(_, _, _)
+                        | Kind::CalculatedAngleRotatedCircle(_, _, _)
+                        | Kind::CalculatedRatioScaledCircle(_, _, _)
                 ) {
                     h[18] = 0x51;
                     h[19] = 0x5c;
@@ -14564,6 +14882,8 @@ impl Document {
                     | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                     | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                     | Kind::RotatedPolygon(_, _, _)
+                    | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                    | Kind::CalculatedRatioScaledPolygon(_, _, _)
                     | Kind::AngleRotatedPolygon(_, _, _, _, _)
                     | Kind::ScaledPolygon(_, _, _)
                     | Kind::RatioScaledPolygon(_, _, _, _, _)
@@ -14578,6 +14898,8 @@ impl Document {
                 | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
                 | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
                 | Kind::RotatedPolygon(source, _, _)
+                | Kind::CalculatedAngleRotatedPolygon(source, _, _)
+                | Kind::CalculatedRatioScaledPolygon(source, _, _)
                 | Kind::AngleRotatedPolygon(source, _, _, _, _)
                 | Kind::ScaledPolygon(source, _, _)
                 | Kind::RatioScaledPolygon(source, _, _, _, _) = o.kind
@@ -14783,6 +15105,8 @@ impl Document {
                         | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                         | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                         | Kind::RotatedPolygon(_, _, _)
+                        | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                        | Kind::CalculatedRatioScaledPolygon(_, _, _)
                         | Kind::AngleRotatedPolygon(_, _, _, _, _)
                         | Kind::ScaledPolygon(_, _, _)
                         | Kind::RatioScaledPolygon(_, _, _, _, _)
@@ -14836,6 +15160,8 @@ impl Document {
                     | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                     | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                     | Kind::RotatedPolygon(_, _, _)
+                    | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                    | Kind::CalculatedRatioScaledPolygon(_, _, _)
                     | Kind::AngleRotatedPolygon(_, _, _, _, _)
                     | Kind::ScaledPolygon(_, _, _)
                     | Kind::RatioScaledPolygon(_, _, _, _, _)
@@ -20200,6 +20526,198 @@ mod tests {
         );
     }
     #[test]
+    fn constructed_and_transformed_slope_measurements_feed_live_calculated_depth() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 180., y: 140. }));
+        let seed = doc.add(Kind::Free(Point { x: 60., y: 220. }));
+        let line = doc.add(Kind::Segment(a, b));
+        let frame = doc
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        let angle = doc.add_named_parameter("angle", 30., (10, 5)).unwrap();
+        let angle = doc
+            .add_parameter_calculation(angle, "angle*1°", (10, 40))
+            .unwrap();
+        let mirror_end = doc.add(Kind::Free(Point { x: 180., y: 180. }));
+        let mirror = doc.add(Kind::Line(a, mirror_end));
+        let hosts = [
+            (Kind::Parallel(seed, line), 0.5),
+            (Kind::Perpendicular(seed, line), -2.),
+            (Kind::RotatedSegment(line, a, 90.), -2.),
+            (
+                Kind::CalculatedAngleRotatedSegment(line, a, angle),
+                ((0.5_f64).atan() + 30_f64.to_radians()).tan(),
+            ),
+            (Kind::ScaledSegment(line, a, -0.5), 0.5),
+            (Kind::ReflectedSegment(line, mirror), -0.5),
+            (
+                Kind::PolarTranslatedSegment(line, 90., 37.79527559055118, 1.),
+                0.5,
+            ),
+        ];
+        for (kind, expected) in hosts {
+            let host = doc.add(kind);
+            let slope = doc.add(Kind::SlopeMeasurement(host, frame));
+            doc.set_measurement_precision(&[slope], 5).unwrap();
+            assert!((doc.slope_value(slope).unwrap() - expected).abs() < 1e-12);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.objects[slope - 1].kind,
+                Kind::SlopeMeasurement(host, frame)
+            );
+            assert_eq!(reopened.objects[slope - 1].measurement_precision, Some(5));
+        }
+        let host = doc.add(Kind::Parallel(seed, line));
+        let slope = doc.add(Kind::SlopeMeasurement(host, frame));
+        let depth = doc
+            .add_parameter_calculation(slope, "abs(v)*4", (10, 80))
+            .unwrap();
+        let image = doc.add(Kind::PolarTranslatedPoint(seed, 0., 37.79527559055118, 0.5));
+        let iteration = doc
+            .add_point_iteration_with_depth_value(seed, image, depth)
+            .unwrap();
+        assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 2);
+        assert!(doc.move_point(b, Point { x: 180., y: 100. }));
+        assert_eq!(doc.numeric_value(depth), Some(4.));
+        assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 4);
+        assert!(doc.move_point(b, Point { x: 100., y: 100. }));
+        assert_eq!(doc.numeric_value(slope), None);
+        assert_eq!(doc.numeric_value(depth), None);
+        assert_eq!(doc.point_iteration_images(iteration), None);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.numeric_value(slope), None);
+        assert!(doc.move_point(b, Point { x: 180., y: 140. }));
+        doc.selected.insert(slope);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        assert_eq!(
+            doc.numeric_value(*pasted.last().unwrap()),
+            doc.numeric_value(slope)
+        );
+        doc.selected.clear();
+        doc.selected.insert(host);
+        let removed = doc.clear_selected().unwrap();
+        assert!(
+            removed.contains(&slope) && removed.contains(&depth) && removed.contains(&iteration)
+        );
+    }
+
+    #[test]
+    fn point_line_distance_matches_native_supporting_lines_and_dependency_edits() {
+        for shape in ["segment", "ray", "line"] {
+            let bytes = std::fs::read(format!(
+                "tests/fixtures/point_line_distance_{shape}_native.gsp"
+            ))
+            .unwrap();
+            let mut doc = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[4].kind, Kind::PointLineDistance(3, 4));
+            assert_eq!(doc.encode().unwrap(), bytes);
+            let mut arithmetic = doc.clone();
+            let scaled = arithmetic
+                .add_measured_length_calculation(5, 2, (10, 40))
+                .unwrap();
+            let sum = arithmetic
+                .add_length_pair_calculation(5, scaled, false, (10, 70))
+                .unwrap();
+            let arithmetic = Document::from_bytes(&arithmetic.encode().unwrap(), None).unwrap();
+            assert!(!arithmetic.partial_view);
+            assert!((arithmetic.numeric_value(scaled).unwrap() - 3.175).abs() < 1e-12);
+            assert!((arithmetic.numeric_value(sum).unwrap() - 4.7625).abs() < 1e-12);
+            assert!(arithmetic.length_measurement_name(sum).is_some());
+            assert!((doc.numeric_value(5).unwrap() - 1.5875).abs() < 1e-12);
+            assert_eq!(doc.measurement_text(5).unwrap(), "Distance = 1.59 cm");
+            let calc = doc.add_parameter_calculation(5, "v*2", (10, 40)).unwrap();
+            assert!((doc.numeric_value(calc).unwrap() - 3.175).abs() < 1e-12);
+            doc.set_measurement_precision(&[5], 0).unwrap();
+            assert_eq!(doc.measurement_text(5).unwrap(), "Distance = 2 cm");
+            assert!((doc.numeric_value(calc).unwrap() - 3.175).abs() < 1e-12);
+            assert!(doc.move_point(3, Point { x: 250., y: 90. }));
+            assert!((doc.distance_value_pixels(5).unwrap() - 90.).abs() < 1e-12);
+            let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            reopened.selected.insert(5);
+            let clipboard = reopened.copy_selected().unwrap();
+            assert_eq!(clipboard.len(), 5);
+            let pasted = reopened.paste(&clipboard).unwrap();
+            assert_eq!(
+                reopened.numeric_value(*pasted.last().unwrap()),
+                reopened.numeric_value(5)
+            );
+            assert!(reopened.move_point(2, reopened.position(1).unwrap()));
+            assert_eq!(reopened.numeric_value(5), None);
+            assert_eq!(reopened.numeric_value(calc), None);
+            assert!(reopened.move_point(2, Point { x: 200., y: 180. }));
+            assert!(reopened.numeric_value(calc).is_some());
+            reopened.selected.clear();
+            reopened.selected.insert(4);
+            assert_eq!(reopened.clear_selected().unwrap(), vec![4, 5, calc]);
+        }
+    }
+    #[test]
+    fn point_line_distance_feeds_calculated_iteration_and_transformed_hosts() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 200., y: 180. }));
+        let seed = doc.add(Kind::Free(Point { x: 50., y: 120. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let transformed = doc.add(Kind::PolarTranslatedSegment(segment, 0., 20., 1.));
+        let distance = doc.add(Kind::PointLineDistance(seed, transformed));
+        assert!((doc.distance_value_pixels(distance).unwrap() - 60.).abs() < 1e-12);
+        let calc = doc
+            .add_parameter_calculation(distance, "v/2", (10, 40))
+            .unwrap();
+        let image = doc.add(Kind::MarkedDistanceTranslatedPoint(seed, calc, 0.));
+        let iteration = doc.add_point_iteration(seed, image, 3).unwrap();
+        let points = doc.point_iteration_images(iteration).unwrap();
+        assert_eq!(
+            points,
+            vec![
+                Point { x: 110., y: 120. },
+                Point { x: 140., y: 120. },
+                Point { x: 170., y: 120. }
+            ]
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.point_iteration_images(iteration), Some(points));
+        assert!(doc.move_point(seed, Point { x: 50., y: 90. }));
+        assert_eq!(
+            doc.point_iteration_images(iteration).unwrap().last(),
+            Some(&Point { x: 230., y: 90. })
+        );
+    }
+    #[test]
+    fn point_line_distance_preserves_multi_page_parent_references() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.active_page = 1;
+        let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 200., y: 180. }));
+        let point = doc.add(Kind::Free(Point { x: 250., y: 120. }));
+        let ray = doc.add(Kind::Ray(a, b));
+        let distance = doc.add(Kind::PointLineDistance(point, ray));
+        doc.set_measurement_precision(&[distance], 4).unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.partial_view, doc.partial_view);
+        assert_eq!(
+            reopened.objects[distance - 1].kind,
+            Kind::PointLineDistance(point, ray)
+        );
+        assert_eq!(
+            reopened.measurement_text(distance).unwrap(),
+            "Distance = 1.5875 cm"
+        );
+        assert_eq!(reopened.objects[distance - 1].page, 1);
+    }
+
+    #[test]
     fn point_distance_matches_original_and_updates_after_edit() {
         let original = Document::open(Path::new("tests/fixtures/wine_point_distance.gsp")).unwrap();
         assert_eq!(original.objects[5].kind, Kind::PointDistance(1, 2));
@@ -25328,6 +25846,425 @@ mod tests {
             Kind::ValueTable(1, group)
                 if group.default_values() == Some(vec![-2.5, 99.99])
         ));
+    }
+
+    #[test]
+    fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
+        for (native_bytes, bytes, edited, image, expected) in [
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_point_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_point_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_point_edited_port.gsp").as_slice(),
+                6,
+                Kind::CalculatedRatioScaledPoint(3, 2, 1),
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_segment_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_segment_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_segment_edited_port.gsp")
+                    .as_slice(),
+                7,
+                Kind::CalculatedRatioScaledSegment(6, 2, 1),
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_circle_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_circle_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_circle_edited_port.gsp").as_slice(),
+                7,
+                Kind::CalculatedRatioScaledCircle(6, 2, 1),
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_polygon_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_polygon_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_ratio_polygon_edited_port.gsp")
+                    .as_slice(),
+                7,
+                Kind::CalculatedRatioScaledPolygon(6, 2, 1),
+            ),
+        ] {
+            let native = Document::from_bytes(native_bytes, None).unwrap();
+            assert!(!native.partial_view);
+            assert_eq!(native.objects[image - 1].kind, expected);
+            assert_eq!(native.encode().unwrap(), native_bytes);
+            let group = |bytes: &[u8]| {
+                let records = records(bytes).unwrap();
+                let start = records
+                    .iter()
+                    .filter(|r| r.kind == 0x07d0)
+                    .nth(image - 1)
+                    .unwrap()
+                    .start;
+                let end = records
+                    .iter()
+                    .find(|r| r.start > start && r.kind == 0x07d7)
+                    .unwrap()
+                    .data
+                    .end;
+                bytes[start..end].to_vec()
+            };
+            assert_eq!(group(native_bytes), group(bytes));
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            match expected {
+                Kind::CalculatedRatioScaledPoint(..) => {
+                    assert_eq!(doc.position(image), Some(Point { x: 160., y: 180. }));
+                    assert_eq!(
+                        doc.point_iteration_images(7).unwrap(),
+                        vec![
+                            Point { x: 130., y: 180. },
+                            Point { x: 115., y: 180. },
+                            Point { x: 107.5, y: 180. }
+                        ]
+                    );
+                }
+                Kind::CalculatedRatioScaledSegment(..) => assert_eq!(
+                    doc.line_points(image),
+                    Some((
+                        Point { x: 160., y: 180. },
+                        Point { x: 160., y: 200. },
+                        LineMode::Segment
+                    ))
+                ),
+                Kind::CalculatedRatioScaledCircle(..) => assert_eq!(
+                    doc.circle_points(image),
+                    Some((Point { x: 160., y: 180. }, 20.))
+                ),
+                _ => assert_eq!(
+                    doc.polygon_points(image).unwrap(),
+                    vec![
+                        Point { x: 160., y: 180. },
+                        Point { x: 160., y: 200. },
+                        Point { x: 180., y: 200. }
+                    ]
+                ),
+            }
+            doc.set_parameter_value(1, -0.5).unwrap();
+            assert_eq!(doc.encode().unwrap(), edited);
+            if image == 6 {
+                assert_eq!(doc.position(image), Some(Point { x: 40., y: 180. }));
+                assert_eq!(
+                    doc.point_iteration_images(7).unwrap()[1],
+                    Point { x: 85., y: 180. }
+                );
+            }
+            doc.selected.insert(image);
+            let clipboard = doc.copy_selected().unwrap();
+            let pasted = doc.paste(&clipboard).unwrap();
+            let copied = *pasted
+                .iter()
+                .find(|id| {
+                    matches!(
+                        doc.objects[**id - 1].kind,
+                        Kind::CalculatedRatioScaledPoint(..)
+                            | Kind::CalculatedRatioScaledSegment(..)
+                            | Kind::CalculatedRatioScaledCircle(..)
+                            | Kind::CalculatedRatioScaledPolygon(..)
+                    )
+                })
+                .unwrap();
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.position(copied), doc.position(copied));
+            assert_eq!(reopened.line_points(copied), doc.line_points(copied));
+            assert_eq!(reopened.circle_points(copied), doc.circle_points(copied));
+            assert_eq!(reopened.polygon_points(copied), doc.polygon_points(copied));
+            doc.selected.clear();
+            doc.selected.insert(1);
+            assert!(doc.clear_selected().unwrap().contains(&image));
+            assert!(
+                !Document::from_bytes(&doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_ratio_calculations_drive_carried_circles_and_numeric_labels() {
+        let bytes =
+            include_bytes!("../tests/fixtures/numeric_ratio_calculated_circle_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(
+            doc.circle_iteration_images(10).unwrap(),
+            vec![
+                (Point { x: 190., y: 180. }, 22.5),
+                (Point { x: 167.5, y: 180. }, 16.875),
+                (
+                    Point {
+                        x: 150.625,
+                        y: 180.
+                    },
+                    12.65625
+                )
+            ]
+        );
+        doc.set_parameter_value(1, 0.25).unwrap();
+        doc.set_parameter_value(7, 4.8).unwrap();
+        assert_eq!(
+            doc.encode().unwrap(),
+            include_bytes!(
+                "../tests/fixtures/numeric_ratio_calculated_circle_iteration_edited_port.gsp"
+            )
+        );
+        assert_eq!(doc.circle_iteration_images(10).unwrap().len(), 4);
+        assert_eq!(
+            doc.circle_iteration_images(10).unwrap()[3],
+            (Point { x: 107.5, y: 180. }, 3.75)
+        );
+        let numeric = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_ratio_numeric_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!numeric.partial_view);
+        assert_eq!(
+            numeric.point_parameter_iteration_labels(9).unwrap(),
+            vec![
+                (Point { x: 130., y: 180. }, "4".into()),
+                (Point { x: 175., y: 180. }, "8".into()),
+                (Point { x: 242.5, y: 180. }, "16".into())
+            ]
+        );
+        let zero = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_ratio_circle_zero_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!zero.partial_view);
+        assert!(zero.circle_points(7).is_none());
+        let mut zero_new = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_ratio_circle_base_port.gsp"),
+            None,
+        )
+        .unwrap();
+        zero_new.set_parameter_value(1, 0.).unwrap();
+        zero_new.add_calculated_ratio_dilation(6, 2, 1).unwrap();
+        assert!(
+            !Document::from_bytes(&zero_new.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn measured_numeric_ratio_is_pinned_and_undefined_calculations_recover() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_ratio_measured_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(
+            doc.point_iteration_images(6).unwrap(),
+            vec![
+                Point { x: 130., y: 180. },
+                Point { x: 115., y: 180. },
+                Point { x: 107.5, y: 180. }
+            ]
+        );
+        doc.move_point(3, Point { x: 100., y: 180. });
+        assert!(doc.point_iteration_images(6).is_none());
+        doc.move_point(3, Point { x: 340., y: 180. });
+        assert_eq!(doc.point_iteration_images(6).unwrap().len(), 3);
+        let n = doc.add_named_parameter("n", 2., (200, 30)).unwrap();
+        let ratio = doc.add_parameter_calculation(n, "1/n", (200, 60)).unwrap();
+        let image = doc.add_calculated_ratio_dilation(1, 2, ratio).unwrap();
+        let iteration = doc.add_point_iteration(1, image, 3).unwrap();
+        doc.set_parameter_value(n, 0.).unwrap();
+        assert!(doc.position(image).is_none());
+        assert!(doc.point_iteration_images(iteration).is_none());
+        doc.set_parameter_value(n, 2.).unwrap();
+        assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 3);
+        let degrees = doc.add_calculation_expression("30°", (10, 130)).unwrap();
+        let count = doc.objects.len();
+        assert!(doc.add_calculated_ratio_dilation(1, 2, degrees).is_err());
+        assert_eq!(doc.objects.len(), count);
+        assert!(
+            !Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn numeric_angle_shapes_match_native_records_and_follow_edits() {
+        for (native_bytes, bytes, edited, expected) in [
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_segment_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_segment_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_segment_edited_port.gsp")
+                    .as_slice(),
+                Kind::CalculatedAngleRotatedSegment(9, 1, 5),
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_circle_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_circle_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_circle_edited_port.gsp").as_slice(),
+                Kind::CalculatedAngleRotatedCircle(9, 1, 5),
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_native.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_port.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_edited_port.gsp")
+                    .as_slice(),
+                Kind::CalculatedAngleRotatedPolygon(9, 1, 5),
+            ),
+        ] {
+            let native = Document::from_bytes(native_bytes, None).unwrap();
+            assert!(!native.partial_view);
+            assert_eq!(native.objects[9].kind, expected);
+            assert_eq!(native.encode().unwrap(), native_bytes);
+            let group = |bytes: &[u8]| {
+                let records = records(bytes).unwrap();
+                let start = records
+                    .iter()
+                    .filter(|r| r.kind == 0x07d0)
+                    .nth(9)
+                    .unwrap()
+                    .start;
+                let end = records
+                    .iter()
+                    .find(|r| r.start > start && r.kind == 0x07d7)
+                    .unwrap()
+                    .data
+                    .end;
+                bytes[start..end].to_vec()
+            };
+            assert_eq!(group(native_bytes), group(bytes));
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.objects[9].kind, expected);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            match expected {
+                Kind::CalculatedAngleRotatedSegment(..) => {
+                    let (a, b, mode) = doc.line_points(10).unwrap();
+                    assert_eq!(mode, LineMode::Segment);
+                    assert!(a.distance(Point { x: 160., y: 120. }) < 1e-10);
+                    assert!(b.distance(Point { x: 200., y: 120. }) < 1e-10);
+                }
+                Kind::CalculatedAngleRotatedCircle(..) => {
+                    let (center, radius) = doc.circle_points(10).unwrap();
+                    assert!(center.distance(Point { x: 160., y: 120. }) < 1e-10);
+                    assert_eq!(radius, 40.);
+                }
+                _ => {
+                    for (actual, expected) in doc.polygon_points(10).unwrap().iter().zip([
+                        Point { x: 160., y: 120. },
+                        Point { x: 200., y: 120. },
+                        Point { x: 200., y: 80. },
+                    ]) {
+                        assert!(actual.distance(expected) < 1e-10);
+                    }
+                }
+            }
+            doc.move_point(4, Point { x: 150., y: 110. });
+            doc.selected.insert(10);
+            doc.set_selected_color(RgbColor {
+                red: 40,
+                green: 80,
+                blue: 200,
+            })
+            .unwrap();
+            assert_eq!(doc.encode().unwrap(), edited);
+            let clipboard = doc.copy_selected().unwrap();
+            let pasted = doc.paste(&clipboard).unwrap();
+            let copied = *pasted
+                .iter()
+                .find(|id| {
+                    matches!(
+                        doc.objects[**id - 1].kind,
+                        Kind::CalculatedAngleRotatedSegment(..)
+                            | Kind::CalculatedAngleRotatedCircle(..)
+                            | Kind::CalculatedAngleRotatedPolygon(..)
+                    )
+                })
+                .unwrap();
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.objects[copied - 1].visual_style,
+                doc.objects[9].visual_style
+            );
+            assert_eq!(reopened.line_points(copied), doc.line_points(copied));
+            assert_eq!(reopened.circle_points(copied), doc.circle_points(copied));
+            assert_eq!(reopened.polygon_points(copied), doc.polygon_points(copied));
+            doc.selected.clear();
+            doc.selected.insert(5);
+            assert!(doc.clear_selected().unwrap().contains(&10));
+            assert!(
+                !Document::from_bytes(&doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn calculated_angles_rotate_shapes_and_undefined_sources_recover() {
+        let bytes = include_bytes!(
+            "../tests/fixtures/numeric_angle_calculated_segment_measurement_port.gsp"
+        );
+        let mut measured = Document::from_bytes(bytes, None).unwrap();
+        assert!(!measured.partial_view);
+        assert_eq!(measured.encode().unwrap(), bytes);
+        assert!((measured.numeric_value(13).unwrap() - 40. / 37.79527559055118).abs() < 1e-10);
+        measured.set_parameter_value(10, 8.).unwrap();
+        measured.move_point(7, Point { x: 220., y: 240. });
+        assert_eq!(
+            measured.encode().unwrap(),
+            include_bytes!(
+                "../tests/fixtures/numeric_angle_calculated_segment_measurement_edited_port.gsp"
+            )
+        );
+        assert!((measured.numeric_value(13).unwrap() - 60. / 37.79527559055118).abs() < 1e-10);
+        for family in 0..3 {
+            let mut doc = Document::from_bytes(
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_port.gsp"),
+                None,
+            )
+            .unwrap();
+            let source = match family {
+                0 => doc.add(Kind::Segment(6, 7)),
+                1 => doc.add(Kind::Circle(6, 7)),
+                _ => 9,
+            };
+            let parameter = doc.add_named_parameter("n", 4., (200, 30)).unwrap();
+            let angle = doc
+                .add_parameter_calculation(parameter, "360°/n", (200, 60))
+                .unwrap();
+            let transformed = doc.add_calculated_angle_rotation(source, 1, angle).unwrap();
+            let measurement = doc.add(match family {
+                0 => Kind::SegmentLength(transformed),
+                1 => Kind::CircleRadius(transformed),
+                _ => Kind::PolygonArea(transformed),
+            });
+            let value = doc.numeric_value(measurement).unwrap();
+            assert!(value > 0.);
+            let encoded = doc.encode().unwrap();
+            let mut doc = Document::from_bytes(&encoded, None).unwrap();
+            doc.set_parameter_value(parameter, 0.).unwrap();
+            assert!(doc.numeric_value(measurement).is_none());
+            assert!(doc.line_points(transformed).is_none());
+            assert!(doc.circle_points(transformed).is_none());
+            assert!(doc.polygon_points(transformed).is_none());
+            doc.set_parameter_value(parameter, 8.).unwrap();
+            assert!((doc.numeric_value(measurement).unwrap() - value).abs() < 1e-10);
+            assert!(
+                !Document::from_bytes(&doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+            let scalar = doc.add_calculation_expression("2", (10, 120)).unwrap();
+            let count = doc.objects.len();
+            assert!(
+                doc.add_calculated_angle_rotation(source, 1, scalar)
+                    .is_err()
+            );
+            assert_eq!(doc.objects.len(), count);
+        }
     }
 
     #[test]

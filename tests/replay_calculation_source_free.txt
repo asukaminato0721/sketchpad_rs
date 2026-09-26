@@ -1,0 +1,31 @@
+new
+calculate_at 10 30 pi+e
+calculate_at 10 65 1.25*4+0.5
+calculate_at 10 100 sqrt(2)^2
+calculate_at 10 135 sin(30°)
+calculate_at 10 170 asin(0.5)
+calculate_at 10 205 -0.5+2
+calculate_at 10 240 round(-4.5)
+save tests/fixtures/calculation_source_free_port.gsp
+new
+calculate_at 10 30 asin(.5)
+calculate_at 10 65 sqrt(25)
+point 250 180
+point 310 180
+rotate_value 4 3 1
+segment 4 5
+iterate_segment_live 4 5 6 2
+save tests/fixtures/calculation_source_free_rotation_iteration_port.gsp
+new
+calculate_at 10 30 -2^2
+calculate_at 10 65 (-2)^2
+calculate_at 10 100 2^-3
+calculate_at 10 135 sqrt(-1)
+calculate_at 10 170 asin(2)
+calculate_at 10 205 1/0
+save tests/fixtures/calculation_source_free_edges_port.gsp
+new
+calculate_at 10 30 -1/0
+calculate_at 10 65 ln(0)
+calculate_at 10 100 0/0
+save tests/fixtures/calculation_source_free_infinite_port.gsp

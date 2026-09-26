@@ -1,0 +1,30 @@
+new
+named_parameter n 4 10 5
+point 200 160
+point 250 160
+rotate 3 2 60
+ray 3 4
+iterate_ray 3 4 5 1
+check
+save tests/fixtures/ray_rotation_live_depth_port.gsp
+parameter_value 1 5
+move 2 210 170
+move 3 270 170
+check
+save tests/fixtures/ray_rotation_live_depth_moved_port.gsp
+new
+named_parameter n 5 10 5
+point 200 160
+point 250 160
+calculate_parameter 1 360°/n
+calculate_parameter 1 n-1
+rotate_value 3 2 4
+ray 3 6
+iterate_ray 3 6 7 5
+check
+save tests/fixtures/ray_calculated_rotation_live_depth_port.gsp
+parameter_value 1 6
+move 2 210 170
+move 3 270 170
+check
+save tests/fixtures/ray_calculated_rotation_live_depth_moved_port.gsp

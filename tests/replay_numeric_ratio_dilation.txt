@@ -1,0 +1,83 @@
+new
+named_parameter n 0.5 10 5
+point 100 180
+point 220 180
+point 220 220
+point 260 220
+save tests/fixtures/numeric_ratio_point_base_port.gsp
+dilate_value 3 2 1
+iterate 3 6 3
+save tests/fixtures/numeric_ratio_point_port.gsp
+parameter_value 1 -0.5
+save tests/fixtures/numeric_ratio_point_edited_port.gsp
+new
+named_parameter n 0.5 10 5
+point 100 180
+point 220 180
+point 220 220
+point 260 220
+segment 3 4
+save tests/fixtures/numeric_ratio_segment_base_port.gsp
+dilate_value 6 2 1
+save tests/fixtures/numeric_ratio_segment_port.gsp
+parameter_value 1 -0.5
+save tests/fixtures/numeric_ratio_segment_edited_port.gsp
+new
+named_parameter n 0.5 10 5
+point 100 180
+point 220 180
+point 220 220
+point 260 220
+circle 3 4
+save tests/fixtures/numeric_ratio_circle_base_port.gsp
+dilate_value 6 2 1
+save tests/fixtures/numeric_ratio_circle_port.gsp
+parameter_value 1 -0.5
+save tests/fixtures/numeric_ratio_circle_edited_port.gsp
+parameter_value 1 0
+save tests/fixtures/numeric_ratio_circle_zero_port.gsp
+new
+named_parameter n 0.5 10 5
+point 100 180
+point 220 180
+point 220 220
+point 260 220
+polygon 3 4 5
+save tests/fixtures/numeric_ratio_polygon_base_port.gsp
+dilate_value 6 2 1
+save tests/fixtures/numeric_ratio_polygon_port.gsp
+parameter_value 1 -0.5
+save tests/fixtures/numeric_ratio_polygon_edited_port.gsp
+new
+named_parameter n 0.5 10 5
+point 100 180
+point 220 180
+calculate_parameter 1 n+0.25
+dilate_value 3 2 4
+circle 3 5
+named_parameter d 3.5 200 5
+iterate_circle_live 3 5 6 7
+save tests/fixtures/numeric_ratio_calculated_circle_iteration_port.gsp
+parameter_value 1 0.25
+parameter_value 7 4.8
+save tests/fixtures/numeric_ratio_calculated_circle_iteration_edited_port.gsp
+new
+point 220 180
+point 100 180
+point 340 180
+ratio 2 3 1
+dilate_value 1 2 4
+iterate 1 5 3
+save tests/fixtures/numeric_ratio_measured_iteration_port.gsp
+new
+named_parameter n 0.5 10 5
+point 40 180
+point 80 180
+calculate_parameter 1 n+1
+dilate_value 3 2 4
+named_parameter x 1 250 5
+calculate_parameter 6 x*2
+numeric_precision 7 0
+attach_numeric_label 5 7
+iterate_numeric 3 6 5 7 8 3
+save tests/fixtures/numeric_ratio_numeric_iteration_port.gsp

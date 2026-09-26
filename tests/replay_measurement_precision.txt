@@ -1,0 +1,67 @@
+new
+point 160 180
+point 210 180
+segment 1 2
+length 3
+circle 1 2
+area 5
+radius 5
+point 190 150
+angle 2 1 8
+measurement_precision 4 0
+measurement_precision 6 3
+measurement_precision 7 5
+measurement_precision 9 4
+calculate_parameter 4 v*2
+save tests/fixtures/measurement_precision_basic_port.gsp
+move 2 220 180
+measurement_precision 4 1
+measurement_precision 6,7 4
+save tests/fixtures/measurement_precision_basic_edited_port.gsp
+new
+point 160 180
+point 210 180
+point 160 130
+polygon 1 2 3
+perimeter 4
+area 4
+circle 1 2
+circumference 7
+point 260 180
+ratio 1 2 9
+distance 1 2
+measurement_precision 5 0
+measurement_precision 6 1
+measurement_precision 8 3
+measurement_precision 10 4
+measurement_precision 11 5
+save tests/fixtures/measurement_precision_polygon_ratio_port.gsp
+new
+point 160 180
+point 190 150
+point 220 180
+arc3 1 2 3
+arc_angle 4
+arc_length 4
+measurement_precision 5 1
+measurement_precision 6 3
+save tests/fixtures/measurement_precision_arc_port.gsp
+new
+add_page
+page 2
+point 100 180
+point 150 180
+segment 1 2
+length 3
+measurement_precision 4 5
+page 1
+point 100 180
+point 150 180
+segment 5 6
+length 7
+measurement_precision 8 0
+save tests/fixtures/measurement_precision_two_page_port.gsp
+open tests/fixtures/measurement_precision_two_page_port.gsp
+page 2
+measurement_precision 8 3
+save tests/fixtures/measurement_precision_two_page_edited_port.gsp

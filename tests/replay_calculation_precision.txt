@@ -1,0 +1,30 @@
+new
+point 100 180
+point 200 180
+segment 1 2
+length 3
+point 200 230
+segment 2 5
+length 6
+calculate_length 4 2
+calculate_lengths 4 / 7 80
+named_parameter x 0.12345 10 120
+calculate_parameter 10 x*2
+calculate_at 10 220 1.25*4+0.125
+hide 4
+hide 7
+hide 10
+number_move 8 10 25
+number_move 9 10 75
+number_move 11 10 140
+numeric_precision 4,8 3
+numeric_precision 9 4
+numeric_precision 11 5
+numeric_precision 12 0
+save tests/fixtures/calculation_precision_port.gsp
+numeric_precision 4,8 5
+numeric_precision 9,11 0
+numeric_precision 12 5
+parameter_value 10 0.25
+move 2 230 180
+save tests/fixtures/calculation_precision_edited_port.gsp

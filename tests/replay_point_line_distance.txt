@@ -1,0 +1,45 @@
+new
+point 100 180
+point 200 180
+point 250 120
+segment 1 2
+distance_to_line 3 4
+save tests/fixtures/point_line_distance_segment_port.gsp
+measurement_precision 5 4
+move 3 250 90
+save tests/fixtures/point_line_distance_segment_edited_port.gsp
+new
+point 100 180
+point 200 180
+point 50 120
+ray 1 2
+distance_to_line 3 4
+save tests/fixtures/point_line_distance_ray_port.gsp
+new
+point 100 180
+point 200 180
+point 250 120
+line 1 2
+distance_to_line 3 4
+save tests/fixtures/point_line_distance_line_port.gsp
+new
+point 100 180
+point 200 180
+point 50 120
+segment 1 2
+distance_to_line 3 4
+calculate_parameter 5 v/2
+translate_marked_distance 3 6 0
+iterate 3 7 3
+save tests/fixtures/point_line_distance_iteration_port.gsp
+move 3 50 90
+save tests/fixtures/point_line_distance_iteration_edited_port.gsp
+open tests/fixtures/two_page_blank_native.gsp
+page 2
+point 100 180
+point 200 180
+point 250 120
+ray 2 3
+distance_to_line 4 5
+measurement_precision 6 4
+save tests/fixtures/point_line_distance_two_page_port.gsp

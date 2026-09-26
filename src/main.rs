@@ -227,6 +227,7 @@ struct Editor {
     marked_rectangular_distances: Option<(usize, usize)>,
     marked_angle: Option<MarkedAngle>,
     marked_ratio: Option<[usize; 3]>,
+    marked_ratio_value: Option<usize>,
     trace_marks: Vec<TraceMark>,
     animations: Vec<AnimationTrack>,
     movements: Vec<MovementTrack>,
@@ -323,6 +324,7 @@ impl Editor {
             marked_rectangular_distances: None,
             marked_angle: None,
             marked_ratio: None,
+            marked_ratio_value: None,
             trace_marks: Vec::new(),
             animations: Vec::new(),
             movements: Vec::new(),
@@ -591,6 +593,7 @@ impl Editor {
                     self.marked_rectangular_distances = None;
                     self.marked_angle = None;
                     self.marked_ratio = None;
+                    self.marked_ratio_value = None;
                     self.trace_marks.clear();
                     self.animations.clear();
                     self.movements.clear();
@@ -937,6 +940,8 @@ impl Editor {
                         | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                         | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                         | Kind::RotatedPolygon(_, _, _)
+                        | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                        | Kind::CalculatedRatioScaledPolygon(_, _, _)
                         | Kind::AngleRotatedPolygon(_, _, _, _, _)
                         | Kind::ScaledPolygon(_, _, _)
                         | Kind::RatioScaledPolygon(_, _, _, _, _) => {
@@ -1107,13 +1112,7 @@ impl Editor {
             return;
         };
         let segment = *segment;
-        if !matches!(
-            self.doc
-                .objects
-                .get(segment.saturating_sub(1))
-                .map(|o| &o.kind),
-            Some(Kind::Segment(_, _))
-        ) {
+        if !matches!(self.doc.line_points(segment), Some((_, _, LineMode::Segment))) {
             self.status = "Select one segment to measure".into();
             return;
         }
@@ -1212,18 +1211,12 @@ impl Editor {
             return;
         }
         let [line] = self.selection_order.as_slice() else {
-            self.status = "Select one segment, line, or ray to measure".into();
+            self.status = "Select one straight object to measure".into();
             return;
         };
         let line = *line;
-        if !matches!(
-            self.doc
-                .objects
-                .get(line.saturating_sub(1))
-                .map(|o| &o.kind),
-            Some(Kind::Segment(_, _) | Kind::Line(_, _) | Kind::Ray(_, _))
-        ) {
-            self.status = "Select one segment, line, or ray to measure".into();
+        if self.doc.line_points(line).is_none() {
+            self.status = "Select one straight object to measure".into();
             return;
         }
         let frame = match self.doc.active_coordinate_system() {
@@ -1240,6 +1233,7 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured slope of object {line}");
     }
+
     fn measure_value_equation(&mut self, equation: bool) {
         if self.doc.partial_view || self.doc.page_count != 1 {
             self.status = "This document cannot accept a measurement safely".into();
@@ -1308,25 +1302,31 @@ impl Editor {
             return;
         }
         let [a, b] = self.selection_order.as_slice() else {
-            self.status = "Select two points to measure".into();
+            self.status = "Select two points, or a point and a straight object".into();
             return;
         };
         let (a, b) = (*a, *b);
-        if self.doc.position(a).is_none() || self.doc.position(b).is_none() {
-            self.status = "Select two points to measure".into();
-            return;
-        }
+        let kind = match (self.doc.position(a), self.doc.position(b)) {
+            (Some(_), Some(_)) => Kind::PointDistance(a, b),
+            (Some(_), None) if self.doc.line_points(b).is_some() => Kind::PointLineDistance(a, b),
+            (None, Some(_)) if self.doc.line_points(a).is_some() => Kind::PointLineDistance(b, a),
+            _ => {
+                self.status = "Select two points, or a point and a straight object".into();
+                return;
+            }
+        };
         if [a, b]
             .iter()
             .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
         {
-            self.status = "Select points on the current page".into();
+            self.status = "Select objects on the current page".into();
             return;
         }
-        let id = self.doc.add(Kind::PointDistance(a, b));
+        let id = self.doc.add(kind);
         self.select_only(id);
         self.status = format!("Measured distance between {a} and {b}");
     }
+
     fn measure_coordinate(&mut self, kind: CoordinateMeasureKind) {
         if self.doc.partial_view || self.doc.page_count != 1 {
             self.status = "This document cannot accept a measurement safely".into();
@@ -1913,6 +1913,7 @@ impl Editor {
                     | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
                     | Kind::RotatedPoint(_, _, _)
                     | Kind::CalculatedAngleRotatedPoint(_, _, _)
+                    | Kind::CalculatedRatioScaledPoint(_, _, _)
                     | Kind::ScaledPoint(_, _, _)
                     | Kind::RatioScaledPoint(_, _, _, _, _)
                     | Kind::ReflectedPoint(_, _)
@@ -2717,6 +2718,18 @@ impl Editor {
         self.status = format!("Marked angle {}–{}–{}", angle[0], angle[1], angle[2]);
     }
     fn mark_ratio_selected(&mut self) {
+        if let [id] = self.selection_order.as_slice()
+            && self.doc.objects[*id - 1].kind.numeric_unit() == Some(sketchpad_rs::table_records::NumericUnit::Scalar)
+            && self.doc.numeric_value(*id).is_some() {
+            let id = *id;
+            self.marked_ratio_value = Some(id);
+            self.marked_ratio = None;
+            self.dilation_use_marked = true;
+            self.doc.selected.remove(&id);
+            self.selection_order.clear();
+            self.status = format!("Marked ratio value {id}");
+            return;
+        }
         let points = self
             .selection_order
             .iter()
@@ -2724,7 +2737,7 @@ impl Editor {
             .filter(|&id| self.doc.position(id).is_some())
             .collect::<Vec<_>>();
         if points.len() < 3 {
-            self.status = "Select three collinear points to mark a ratio".into();
+            self.status = "Select three collinear points or one scalar value to mark a ratio".into();
             return;
         }
         let ratio = [
@@ -2750,6 +2763,7 @@ impl Editor {
             return;
         }
         self.marked_ratio = Some(ratio);
+        self.marked_ratio_value = None;
         self.dilation_use_marked = true;
         for &id in &ratio {
             self.doc.selected.remove(&id);
@@ -2794,6 +2808,13 @@ impl Editor {
         }
         if self.doc.position(center).is_none() {
             self.status = "Select a point, segment, or circle, then a center point".into();
+            return;
+        }
+        if self.dilation_use_marked && let Some(ratio) = self.marked_ratio_value {
+            match self.doc.add_calculated_ratio_dilation(source, center, ratio) {
+                Ok(id) => { self.select_only(id); self.status = format!("Dilated object {id}"); }
+                Err(error) => self.status = error,
+            }
             return;
         }
         let kind = if self.dilation_use_marked {
@@ -2919,17 +2940,13 @@ impl Editor {
         if self.rotation_use_marked
             && let Some(MarkedAngle::Value(angle)) = self.marked_angle
         {
-            if !source_point {
-                self.status = "Select a point to rotate by a marked numeric angle".into();
-                return;
-            }
             match self
                 .doc
                 .add_calculated_angle_rotation(source, center, angle)
             {
                 Ok(id) => {
                     self.select_only(id);
-                    self.status = format!("Rotated point {id}");
+                    self.status = format!("Rotated object {id}");
                 }
                 Err(error) => self.status = error,
             }
@@ -5064,6 +5081,7 @@ impl Editor {
                 || self.marked_rectangular_distances.is_some()
                 || self.marked_angle.is_some()
                 || self.marked_ratio.is_some()
+                || self.marked_ratio_value.is_some()
             {
                 ui.separator();
                 if let Some(id) = self.marked_center {
@@ -5089,6 +5107,7 @@ impl Editor {
                 if let Some(MarkedAngle::Value(id)) = self.marked_angle {
                     ui.label(format!("Marked angle value: {id}"));
                 }
+                if let Some(id) = self.marked_ratio_value { ui.label(format!("Marked ratio value: {id}")); }
                 if let Some([origin, base, target]) = self.marked_ratio {
                     ui.label(format!("Marked ratio: {origin}–{base}–{target}"));
                 }
@@ -7160,10 +7179,11 @@ impl Editor {
             egui::Modal::new(egui::Id::new("dilation_ratio")).show(root.ctx(), |ui| {
                 ui.heading("Dilate object");
                 ui.radio_value(&mut use_marked, false, "Fixed ratio");
-                ui.add_enabled_ui(self.marked_ratio.is_some(), |ui| {
+                ui.add_enabled_ui(self.marked_ratio.is_some() || self.marked_ratio_value.is_some(), |ui| {
                     ui.radio_value(&mut use_marked, true, "Marked ratio");
                 });
                 if use_marked {
+                    if let Some(id) = self.marked_ratio_value { ui.label(format!("Value {id}")); }
                     if let Some([origin, base, target]) = self.marked_ratio {
                         ui.label(format!("Point {origin} → {base} → {target}"));
                     }
@@ -7563,6 +7583,181 @@ mod tests {
                 .unwrap()
                 .partial_view
         );
+    }
+
+    #[test]
+    fn measure_slope_accepts_constructed_and_transformed_lines() {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 180., y: 140. }));
+        let line = editor.doc.add(Kind::Segment(a, b));
+        for kind in [Kind::Parallel(a, line), Kind::RotatedSegment(line, a, 90.)] {
+            let host = editor.doc.add(kind);
+            editor.selection_order = vec![host];
+            editor.measure_slope();
+            let id = editor.doc.objects.last().unwrap().id;
+            assert!(
+                matches!(editor.doc.objects[id - 1].kind, Kind::SlopeMeasurement(parent, _) if parent == host)
+            );
+            assert!(editor.doc.slope_value(id).is_some());
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+        editor.selection_order = vec![a];
+        let count = editor.doc.objects.len();
+        editor.measure_slope();
+        assert_eq!(editor.doc.objects.len(), count);
+        assert!(editor.status.contains("straight object"));
+    }
+
+    #[test]
+    fn measure_distance_accepts_point_and_straight_object_in_either_order() {
+        for reversed in [false, true] {
+            let mut editor = Editor::new(Document::new());
+            let a = editor.doc.add(Kind::Free(Point { x: 100., y: 180. }));
+            let b = editor.doc.add(Kind::Free(Point { x: 200., y: 180. }));
+            let point = editor.doc.add(Kind::Free(Point { x: 250., y: 120. }));
+            let host = editor.doc.add(Kind::Segment(a, b));
+            editor.selection_order = if reversed {
+                vec![host, point]
+            } else {
+                vec![point, host]
+            };
+            editor.measure_distance();
+            assert_eq!(
+                editor.doc.objects.last().unwrap().kind,
+                Kind::PointLineDistance(point, host)
+            );
+            assert_eq!(
+                editor.doc.measurement_text(5).unwrap(),
+                "Distance = 1.59 cm"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_values_can_be_marked_for_point_and_shape_dilation() {
+        for family in 0..4 {
+            let mut doc = Document::from_bytes(
+                include_bytes!("../tests/fixtures/numeric_ratio_polygon_base_port.gsp"),
+                None,
+            )
+            .unwrap();
+            let source = match family {
+                0 => 3,
+                1 => doc.add(Kind::Segment(3, 4)),
+                2 => doc.add(Kind::Circle(3, 4)),
+                _ => 6,
+            };
+            let mut editor = Editor::new(doc);
+            editor.doc.selected.insert(1);
+            editor.selection_order = vec![1];
+            editor.mark_ratio_selected();
+            assert_eq!(editor.marked_ratio_value, Some(1));
+            assert!(editor.marked_ratio.is_none());
+            editor.doc.selected.extend([source, 2]);
+            editor.selection_order = vec![source, 2];
+            editor.dilate_selected();
+            let image = *editor.doc.selected.iter().next().unwrap();
+            assert_eq!(
+                editor.doc.objects[image - 1].kind,
+                match family {
+                    0 => Kind::CalculatedRatioScaledPoint(source, 2, 1),
+                    1 => Kind::CalculatedRatioScaledSegment(source, 2, 1),
+                    2 => Kind::CalculatedRatioScaledCircle(source, 2, 1),
+                    _ => Kind::CalculatedRatioScaledPolygon(source, 2, 1),
+                }
+            );
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: 1.,
+                center: Point { x: 200., y: 150. },
+            };
+            let pick = match family {
+                0 => Point { x: 160., y: 180. },
+                1 => Point { x: 160., y: 190. },
+                2 => Point { x: 140., y: 180. },
+                _ => Point { x: 165., y: 195. },
+            };
+            assert_eq!(editor.hit(&viewport, viewport.screen(pick)), Some(image));
+            if family == 0 {
+                editor.doc.selected.insert(source);
+                editor.selection_order = vec![image, source];
+                editor.iterate_selected(3);
+                let iteration = *editor.doc.selected.iter().next().unwrap();
+                assert_eq!(
+                    editor.doc.point_iteration_images(iteration).unwrap().len(),
+                    3
+                );
+            }
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn selected_shapes_rotate_by_marked_numeric_angles() {
+        for family in 0..3 {
+            let mut doc = Document::from_bytes(
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_port.gsp"),
+                None,
+            )
+            .unwrap();
+            let source = match family {
+                0 => doc.add(Kind::Segment(6, 7)),
+                1 => doc.add(Kind::Circle(6, 7)),
+                _ => 9,
+            };
+            let mut editor = Editor::new(doc);
+            editor.selection_order = vec![5];
+            editor.doc.selected.insert(5);
+            editor.mark_angle_selected();
+            editor.selection_order = vec![source, 1];
+            editor.doc.selected.extend([source, 1]);
+            editor.rotate_selected();
+            let transformed = *editor.doc.selected.iter().next().unwrap();
+            assert_eq!(
+                editor.doc.objects[transformed - 1].kind,
+                match family {
+                    0 => Kind::CalculatedAngleRotatedSegment(source, 1, 5),
+                    1 => Kind::CalculatedAngleRotatedCircle(source, 1, 5),
+                    _ => Kind::CalculatedAngleRotatedPolygon(source, 1, 5),
+                }
+            );
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: 1.,
+                center: Point { x: 200., y: 150. },
+            };
+            let pick = match family {
+                0 => Point { x: 180., y: 120. },
+                1 => Point { x: 120., y: 120. },
+                _ => Point { x: 180., y: 110. },
+            };
+            assert_eq!(
+                editor.hit(&viewport, viewport.screen(pick)),
+                Some(transformed)
+            );
+            if family == 0 {
+                editor.measure_length();
+                let measurement = *editor.doc.selected.iter().next().unwrap();
+                assert_eq!(
+                    editor.doc.objects[measurement - 1].kind,
+                    Kind::SegmentLength(transformed)
+                );
+            }
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
     }
 
     #[test]

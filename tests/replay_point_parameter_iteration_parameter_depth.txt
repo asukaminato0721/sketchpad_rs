@@ -1,0 +1,21 @@
+new
+point 130 180
+translate 1 0 0.79375
+named_parameter a 0 10 5
+calculate_parameter 3 a+1
+attach_numeric_label 2 4
+named_parameter n 4 10 65
+iterate_numeric_live 1 3 2 4 5 6
+check
+save tests/fixtures/point_parameter_iteration_parameter_depth_port.gsp
+parameter_value 6 6
+parameter_value 3 2
+move 1 100 200
+check
+save tests/fixtures/point_parameter_iteration_parameter_depth_edited_port.gsp
+open tests/fixtures/point_parameter_iteration_depth_parameter_native.gsp
+parameter_value 2 3
+parameter_value 3 2
+move 1 100 180
+check
+save tests/fixtures/point_parameter_iteration_parameter_depth_native_edited_port.gsp

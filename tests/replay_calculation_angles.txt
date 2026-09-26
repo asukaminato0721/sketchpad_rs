@@ -1,0 +1,17 @@
+new
+point 250 160
+point 200 160
+point 200 110
+angle 1 2 3
+arc3 1 2 3
+arc_angle 5
+calculate_parameter 4 v/2
+calculate_parameter 4 v+10°
+calculate_parameter 4 v/90°
+calculate_parameter 6 v/2
+rotate_value 1 2 7
+check
+save tests/fixtures/calculation_angles_port.gsp
+move 3 150 110
+check
+save tests/fixtures/calculation_angles_moved_port.gsp

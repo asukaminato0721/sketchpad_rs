@@ -1,0 +1,14 @@
+new
+point 350 180
+point 250 180
+rotate 1 2 60
+named_parameter a 0 10 5
+calculate_parameter 4 a+1
+attach_numeric_label 3 5
+iterate_numeric 1 4 3 5 6 3
+check
+save tests/fixtures/point_parameter_iteration_port.gsp
+parameter_value 4 2
+move 2 270 200
+check
+save tests/fixtures/point_parameter_iteration_edited_port.gsp

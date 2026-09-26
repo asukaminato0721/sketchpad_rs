@@ -1,0 +1,23 @@
+new
+named_parameter n 0.5 10 30
+calculate_parameter 1 asin(n)
+calculate_parameter 1 acos(n)
+calculate_parameter 1 atan(n)
+calculate_parameter 1 n+pi
+calculate_parameter 1 n+e
+calculate_parameter 1 sin(asin(n))
+save tests/fixtures/calculation_inverse_constants_port.gsp
+parameter_value 1 -0.5
+save tests/fixtures/calculation_inverse_constants_edited_port.gsp
+new
+named_parameter n 0.5 10 30
+calculate_parameter 1 asin(n)
+calculate_parameter 1 round(abs(n)*10)
+point 250 180
+point 310 180
+rotate_value 5 4 2
+segment 5 6
+iterate_segment_live 5 6 7 3
+save tests/fixtures/calculation_inverse_rotation_iteration_port.gsp
+parameter_value 1 1.2
+save tests/fixtures/calculation_inverse_rotation_undefined_port.gsp

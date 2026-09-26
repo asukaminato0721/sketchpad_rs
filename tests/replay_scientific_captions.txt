@@ -1,0 +1,48 @@
+new
+calculate_at 10 25 1000000+0
+calculate_at 10 60 999999.98765+0
+calculate_at 10 95 -1000000+0
+calculate_at 10 130 0.000001+0
+calculate_at 10 165 360000000°/2
+save tests/fixtures/scientific_calculation_port.gsp
+new
+calculate_at 10 25 1000000.00001+0
+calculate_at 10 60 1000001+0
+calculate_at 10 95 10000000+0
+calculate_at 10 130 -1000000.1+0
+named_parameter x 1000000 10 165
+named_parameter y 1000000.00001 10 200
+save tests/fixtures/scientific_boundary_port.gsp
+new
+calculate_at 10 25 9999999+0
+calculate_at 10 60 -9999999+0
+calculate_at 10 95 100000000+0
+calculate_at 10 130 1000000000+0
+calculate_at 10 165 tan(90°)
+save tests/fixtures/scientific_rounding_port.gsp
+new
+point 100 180
+point 200 180
+segment 1 2
+length 3
+calculate_length 4 99 10
+calculate_length 5 99 45
+calculate_length 6 99 80
+calculate_lengths 6 * 6 115
+calculate_parameter 4 v*1000000
+number_move 9 10 160
+hide 4
+hide 5
+hide 6
+save tests/fixtures/scientific_dimension_port.gsp
+move 2 250 180
+numeric_precision 7,8,9 4
+save tests/fixtures/scientific_dimension_edited_port.gsp
+new
+point 100 180
+point 25100 180
+circle 1 2
+area 3
+hide 2
+hide 3
+save tests/fixtures/scientific_area_port.gsp

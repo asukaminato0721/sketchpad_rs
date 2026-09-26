@@ -1,0 +1,24 @@
+open tests/fixtures/coordinate_measure_port_generated.gsp
+slope 3
+calculate_parameter 11 v+1
+calculate_parameter 12 v*2
+calculate_parameter 13 v/2
+calculate_parameter 14 v+1
+calculate_at 220 190 2+3
+calculate_parameter 19 v*2
+number_move 15 10 5
+number_move 16 10 38
+number_move 17 10 71
+number_move 18 10 135
+number_move 19 10 178
+number_move 20 10 211
+hide 10
+hide 11
+hide 12
+hide 13
+hide 14
+check
+save tests/fixtures/calculation_coordinates_port.gsp
+move 2 300 180
+check
+save tests/fixtures/calculation_coordinates_moved_port.gsp

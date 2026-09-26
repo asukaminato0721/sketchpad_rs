@@ -1,0 +1,11 @@
+new
+point 350 180
+point 250 180
+rotate 1 2 60
+segment 1 3
+iterate_segment 1 3 4 4
+check
+save tests/fixtures/rotated_segment_iteration_port.gsp
+move 2 270 200
+check
+save tests/fixtures/rotated_segment_iteration_center_moved_port.gsp

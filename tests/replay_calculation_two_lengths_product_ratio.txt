@@ -1,0 +1,8 @@
+open tests/fixtures/calculation_two_lengths_port.gsp
+calculate_lengths 4 * 8 166
+calculate_lengths 4 / 8 199
+check
+save tests/fixtures/calculation_two_lengths_product_ratio_port.gsp
+move 2 300 180
+check
+save tests/fixtures/calculation_two_lengths_product_ratio_moved_port.gsp

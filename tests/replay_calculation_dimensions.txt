@@ -1,0 +1,45 @@
+new
+point 100 180
+point 200 180
+segment 1 2
+length 3
+calculate_parameter 4 v*1.5+v/2
+calculate_parameter 4 v^2
+calculate_parameter 4 v^1
+calculate_parameter 4 (v*v)/v
+calculate_parameter 6 v/v
+translate_marked_distance 1 5 0
+hide 4
+number_move 5 10 5
+number_move 6 10 69
+number_move 7 10 102
+number_move 8 10 135
+number_move 9 10 199
+check
+save tests/fixtures/calculation_dimensions_port.gsp
+move 2 250 180
+check
+save tests/fixtures/calculation_dimensions_moved_port.gsp
+new
+point 200 160
+point 250 160
+point 250 110
+circle 1 2
+area 4
+polygon 1 2 3
+area 6
+calculate_parameter 5 v/2
+calculate_parameter 7 v*1.25
+calculate_parameter 8 v*1.5
+calculate_parameter 7 v/v
+hide 5
+hide 7
+number_move 8 10 5
+number_move 9 10 69
+number_move 10 10 102
+number_move 11 10 166
+check
+save tests/fixtures/calculation_areas_port.gsp
+move 2 275 160
+check
+save tests/fixtures/calculation_areas_moved_port.gsp

@@ -1,0 +1,28 @@
+new
+point 220 180
+point 160 180
+point 250 160
+point 200 160
+point 200 110
+angle 3 4 5
+save tests/fixtures/measured_angle_rotation_base_port.gsp
+rotate_value 1 2 6
+segment 1 7
+iterate_segment 1 7 8 3
+save tests/fixtures/measured_angle_segment_iteration_port.gsp
+move 5 150 110
+save tests/fixtures/measured_angle_segment_iteration_edited_port.gsp
+new
+point 220 180
+point 160 180
+point 208 144
+point 160 120
+arc3 1 3 4
+arc_angle 5
+rotate_value 1 2 6
+circle 1 7
+named_parameter n 3.5 200 25
+iterate_circle_live 1 7 8 9
+save tests/fixtures/measured_arc_angle_circle_iteration_port.gsp
+move 4 112 144
+save tests/fixtures/measured_arc_angle_circle_iteration_edited_port.gsp

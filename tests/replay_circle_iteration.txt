@@ -1,0 +1,19 @@
+new
+point 100 160
+translate_rectangular_fixed 1 0.5 0
+circle 1 2
+iterate_circle 1 2 3 3
+save tests/fixtures/circle_translation_fixed_depth_port.gsp
+
+new
+named_parameter n 5 10 30
+point 250 180
+point 310 180
+calculate_parameter 1 360°/n
+calculate_parameter 1 n-1
+rotate_value 3 2 4
+circle 3 6
+iterate_circle_live 3 6 7 5
+save tests/fixtures/circle_calculated_rotation_live_depth_port.gsp
+parameter_value 1 6
+save tests/fixtures/circle_calculated_rotation_live_depth_edited_port.gsp

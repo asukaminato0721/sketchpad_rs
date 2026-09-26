@@ -1,0 +1,37 @@
+new
+point 100 180
+point 180 140
+point 60 220
+segment 1 2
+coordinate_system 199 125
+show_grid off
+parallel 3 4
+perpendicular 3 4
+slope 11
+slope 12
+calculate_parameter 13 abs(v)*4
+translate_rectangular_fixed 3 0.5 0
+iterate_point_live 3 16 15
+save tests/fixtures/slope_constructed_iteration_port.gsp
+move 2 180 100
+save tests/fixtures/slope_constructed_iteration_edited_port.gsp
+new
+named_parameter a 30 10 5
+point 100 180
+point 180 140
+segment 2 3
+calculate_parameter 1 a*1°
+rotate_value 4 2 5
+coordinate_system 199 125
+show_grid off
+slope 6
+measurement_precision 13 4
+calculate_parameter 13 abs(v)*2
+translate_rectangular_fixed 3 0.5 0
+iterate_point_live 3 15 14
+number_move 1 240 5
+number_move 5 10 34
+number_move 14 10 80
+save tests/fixtures/slope_calculated_rotation_iteration_port.gsp
+parameter_value 1 -60
+save tests/fixtures/slope_calculated_rotation_iteration_edited_port.gsp

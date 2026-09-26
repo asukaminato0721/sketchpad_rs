@@ -1,0 +1,93 @@
+new
+point 120 180
+point 100 180
+distance 1 2
+translate_marked_distance 1 3 0
+iterate 1 4 3
+save tests/fixtures/marked_distance_iteration_port.gsp
+move 2 90 180
+save tests/fixtures/marked_distance_iteration_edited_port.gsp
+new
+point 100 220
+point 60 260
+point 80 260
+point 60 250
+distance 2 3
+distance 2 4
+translate_rectangular_marked 1 5 6
+segment 1 7
+iterate_segment 1 7 8 3
+save tests/fixtures/marked_rectangular_segment_iteration_port.gsp
+new
+point 100 220
+point 60 260
+point 70 260
+distance 2 3
+translate_rectangular_mixed 1 4 0.5 horizontal_fixed
+circle 1 5
+iterate_circle 1 5 6 3
+save tests/fixtures/mixed_horizontal_circle_iteration_port.gsp
+new
+point 100 220
+point 60 260
+point 80 260
+distance 2 3
+translate_rectangular_mixed 1 4 0.25 vertical_fixed
+ray 1 5
+named_parameter n 3.5 10 25
+iterate_ray 1 5 6 7
+save tests/fixtures/mixed_vertical_ray_iteration_port.gsp
+new
+point 220 180
+point 160 180
+point 190 150
+rotate_marked_angle 1 2 1 2 3
+iterate 1 4 3
+save tests/fixtures/marked_angle_seed_first_iteration_port.gsp
+new
+point 200 140
+point 160 180
+point 220 180
+rotate_marked_angle 1 2 3 2 1
+segment 1 4
+iterate_segment 1 4 5 3
+save tests/fixtures/marked_angle_seed_last_iteration_port.gsp
+new
+point 220 180
+point 100 180
+segment 1 2
+midpoint 1 2
+rotate 1 4 90
+iterate 1 5 3
+save tests/fixtures/rotation_derived_center_iteration_port.gsp
+new
+point 220 180
+point 100 180
+segment 1 2
+midpoint 1 2
+dilate 1 4 0.5
+iterate 1 5 3
+save tests/fixtures/dilation_derived_center_iteration_port.gsp
+new
+point 180 180
+point 100 180
+point 100 180
+point 200 180
+dilate_marked_ratio 1 2 3 4 1
+iterate 1 5 3
+save tests/fixtures/marked_ratio_seed_target_iteration_port.gsp
+new
+point 80 220
+point 60 260
+point 80 260
+distance 2 3
+calculate_parameter 4 v*2
+translate_marked_distance 1 5 0
+named_parameter x 1 200 25
+calculate_parameter 7 x*2
+numeric_precision 8 0
+attach_numeric_label 6 8
+iterate_numeric 1 7 6 8 9 3
+save tests/fixtures/marked_calculated_distance_numeric_iteration_port.gsp
+move 3 90 260
+save tests/fixtures/marked_calculated_distance_numeric_iteration_edited_port.gsp

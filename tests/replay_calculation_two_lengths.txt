@@ -1,0 +1,16 @@
+new
+point 150 180
+point 250 180
+segment 1 2
+length 3
+point 150 260
+point 350 260
+segment 5 6
+length 7
+calculate_lengths 4 + 8 100
+calculate_lengths 4 - 8 133
+check
+save tests/fixtures/calculation_two_lengths_port.gsp
+move 2 300 180
+check
+save tests/fixtures/calculation_two_lengths_moved_port.gsp

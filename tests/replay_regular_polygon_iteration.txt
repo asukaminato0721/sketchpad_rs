@@ -1,0 +1,21 @@
+new
+named_parameter n 5 10 5
+point 200 160
+calculate_parameter 1 n-1
+point 250 160
+calculate_parameter 1 360°/n
+rotate_value 4 2 5
+segment 4 6
+iterate_segment_live 4 6 7 3
+check
+save tests/fixtures/regular_polygon_iteration_port.gsp
+parameter_value 1 6
+move 2 210 170
+check
+save tests/fixtures/regular_polygon_iteration_edited_port.gsp
+open tests/fixtures/regular_polygon_iteration_native.gsp
+parameter_value 1 6
+move 2 200 160
+move 4 250 160
+check
+save tests/fixtures/regular_polygon_iteration_native_edited_port.gsp

@@ -1,0 +1,10 @@
+open tests/fixtures/measurement_precision_two_page_edited_port.gsp
+page 2
+save tests/fixtures/page_selection_second_page_port.gsp
+page 1
+save tests/fixtures/page_selection_first_page_port.gsp
+add_page
+undo
+redo
+point 150 180
+save tests/fixtures/page_selection_added_page_port.gsp

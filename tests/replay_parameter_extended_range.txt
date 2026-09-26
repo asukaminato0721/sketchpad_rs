@@ -1,0 +1,24 @@
+new
+named_parameter x 1000.12345 10 25
+named_parameter y -123456789.98765 10 60
+named_parameter z 12345678901234567890 10 95
+calculate_parameter 1 x*2
+calculate_parameter 2 y/1000000
+calculate_parameter 3 z/1000000000000000000
+number_move 4 10 135
+number_move 5 10 185
+number_move 6 250 135
+save tests/fixtures/parameter_extended_range_port.gsp
+parameter_value 1 0.1234567890123456
+parameter_value 2 -200000000.12345
+parameter_value 3 -12345678901234567890
+save tests/fixtures/parameter_extended_range_edited_port.gsp
+new
+point 30 180
+named_parameter n 2.75 10 25
+calculate_parameter 2 n*2
+translate_rectangular_fixed 1 .5 0
+iterate_point_live 1 4 3
+save tests/fixtures/iteration_fractional_calculation_depth_port.gsp
+parameter_value 2 3.9
+save tests/fixtures/iteration_fractional_calculation_depth_edited_port.gsp

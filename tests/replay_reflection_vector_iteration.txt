@@ -1,0 +1,105 @@
+new
+point 220 180
+point 150 80
+point 150 260
+line 2 3
+reflect 1 4
+iterate 1 5 3
+save tests/fixtures/reflection_point_iteration_port.gsp
+new
+point 220 180
+point 150 80
+point 150 260
+line 2 3
+reflect 1 4
+segment 1 5
+iterate_segment 1 5 6 3
+save tests/fixtures/reflection_segment_iteration_port.gsp
+move 2 120 80
+save tests/fixtures/reflection_segment_iteration_edited_port.gsp
+new
+point 170 180
+point 100 80
+point 100 260
+line 2 3
+reflect 1 4
+circle 1 5
+named_parameter n 3 10 25
+iterate_circle_live 1 5 6 7
+save tests/fixtures/reflection_circle_iteration_port.gsp
+new
+point 100 180
+point 60 240
+point 100 240
+translate_vector 1 2 3
+iterate 1 4 3
+save tests/fixtures/vector_point_iteration_port.gsp
+new
+point 100 180
+point 140 180
+translate_vector 1 1 2
+iterate 1 3 3
+save tests/fixtures/vector_seed_start_iteration_port.gsp
+new
+point 120 180
+point 100 180
+translate_vector 1 2 1
+iterate 1 3 2
+save tests/fixtures/vector_seed_end_iteration_port.gsp
+new
+point 120 180
+point 100 180
+point 130 180
+segment 1 2
+midpoint 1 2
+translate_vector 1 5 3
+iterate 1 6 3
+save tests/fixtures/vector_external_dependency_iteration_port.gsp
+new
+point 220 180
+point 100 180
+point 160 80
+segment 1 2
+midpoint 1 2
+line 5 3
+reflect 1 6
+iterate 1 7 3
+save tests/fixtures/reflection_external_dependency_iteration_port.gsp
+new
+point 120 180
+point 100 180
+translate_vector 1 2 1
+circle 1 3
+iterate_circle 1 3 4 2
+save tests/fixtures/vector_expanding_circle_iteration_port.gsp
+new
+point 100 180
+point 60 240
+point 100 240
+translate_vector 1 2 3
+ray 1 4
+named_parameter n 3.5 10 25
+iterate_ray 1 4 5 6
+save tests/fixtures/vector_ray_iteration_port.gsp
+move 3 110 220
+parameter_value 6 4
+save tests/fixtures/vector_ray_iteration_edited_port.gsp
+new
+point 100 180
+point 140 180
+translate_vector 1 1 2
+circle 1 3
+iterate_circle 1 3 4 3
+save tests/fixtures/vector_collapsed_circle_iteration_port.gsp
+new
+point 220 180
+point 150 80
+point 150 260
+line 2 3
+reflect 1 4
+named_parameter x 1 10 25
+calculate_parameter 6 x+2
+numeric_precision 7 0
+attach_numeric_label 5 7
+iterate_numeric 1 6 5 7 8 1
+save tests/fixtures/reflection_numeric_iteration_port.gsp

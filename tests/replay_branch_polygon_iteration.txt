@@ -1,0 +1,32 @@
+new
+point 80 220
+translate 1 90 1
+translate_rectangular_fixed 1 1 1
+polygon 1 2 3
+segment 1 2
+segment 2 3
+segment 3 1
+named_parameter n 3 10 5
+iterate_polygon_branch_live 1 2 3 4 8 5 6 7
+check
+save tests/fixtures/branch_polygon_iteration_port.gsp
+parameter_value 8 2
+move 1 100 200
+check
+save tests/fixtures/branch_polygon_iteration_edited_port.gsp
+open tests/fixtures/branch_polygon_iteration_native.gsp
+parameter_value 3 2
+move 1 80 200
+check
+save tests/fixtures/branch_polygon_iteration_native_edited_port.gsp
+new
+point 80 220
+translate 1 90 1
+translate_rectangular_fixed 1 1 1
+polygon 1 2 3
+segment 1 2
+segment 2 3
+segment 3 1
+iterate_polygon_branch 1 2 3 4 2 5 6 7
+check
+save tests/fixtures/branch_polygon_iteration_fixed_port.gsp

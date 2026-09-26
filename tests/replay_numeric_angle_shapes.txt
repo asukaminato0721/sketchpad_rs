@@ -1,0 +1,68 @@
+new
+point 160 180
+point 250 160
+point 200 160
+point 200 110
+angle 2 3 4
+point 220 180
+point 220 220
+point 260 220
+segment 6 7
+save tests/fixtures/numeric_angle_segment_base_port.gsp
+rotate_value 9 1 5
+save tests/fixtures/numeric_angle_segment_port.gsp
+move 4 150 110
+color 10 2850c8
+save tests/fixtures/numeric_angle_segment_edited_port.gsp
+new
+point 160 180
+point 250 160
+point 200 160
+point 200 110
+angle 2 3 4
+point 220 180
+point 220 220
+point 260 220
+circle 6 7
+save tests/fixtures/numeric_angle_circle_base_port.gsp
+rotate_value 9 1 5
+save tests/fixtures/numeric_angle_circle_port.gsp
+move 4 150 110
+color 10 2850c8
+save tests/fixtures/numeric_angle_circle_edited_port.gsp
+new
+point 160 180
+point 250 160
+point 200 160
+point 200 110
+angle 2 3 4
+point 220 180
+point 220 220
+point 260 220
+polygon 6 7 8
+save tests/fixtures/numeric_angle_polygon_base_port.gsp
+rotate_value 9 1 5
+save tests/fixtures/numeric_angle_polygon_port.gsp
+move 4 150 110
+color 10 2850c8
+save tests/fixtures/numeric_angle_polygon_edited_port.gsp
+new
+point 160 180
+point 250 160
+point 200 160
+point 200 110
+angle 2 3 4
+point 220 180
+point 220 220
+point 260 220
+segment 6 7
+named_parameter n 4 200 25
+calculate_parameter 10 360°/n
+number_move 11 200 90
+rotate_value 9 1 11
+length 12
+hide 5
+save tests/fixtures/numeric_angle_calculated_segment_measurement_port.gsp
+parameter_value 10 8
+move 7 220 240
+save tests/fixtures/numeric_angle_calculated_segment_measurement_edited_port.gsp

@@ -1858,6 +1858,8 @@ impl GeometryRenderer {
                 | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                 | Kind::AngleRotatedCircle(_, _, _, _, _)
                 | Kind::RotatedCircle(_, _, _)
+                | Kind::CalculatedAngleRotatedCircle(_, _, _)
+                | Kind::CalculatedRatioScaledCircle(_, _, _)
                 | Kind::ReflectedCircle(_, _)
                 | Kind::ScaledCircle(_, _, _)
                 | Kind::RatioScaledCircle(_, _, _, _, _) => {
@@ -1894,6 +1896,8 @@ impl GeometryRenderer {
                 | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
                 | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
                 | Kind::RotatedPolygon(_, _, _)
+                | Kind::CalculatedAngleRotatedPolygon(_, _, _)
+                | Kind::CalculatedRatioScaledPolygon(_, _, _)
                 | Kind::AngleRotatedPolygon(_, _, _, _, _)
                 | Kind::ScaledPolygon(_, _, _)
                 | Kind::RatioScaledPolygon(_, _, _, _, _) => {
@@ -2390,6 +2394,89 @@ mod tests {
         assert!(svg.contains(">−π</text>"));
         assert!(svg.contains(">π</text>"));
     }
+    #[test]
+    fn numeric_ratio_shapes_export_and_zero_circle_is_omitted() {
+        for (bytes, image, primitive, count) in [
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_point_port.gsp").as_slice(),
+                6,
+                "<circle ",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_segment_port.gsp").as_slice(),
+                7,
+                "<line ",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_circle_port.gsp").as_slice(),
+                7,
+                "<circle ",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_polygon_port.gsp").as_slice(),
+                7,
+                "<polygon ",
+                1,
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_ratio_circle_zero_port.gsp").as_slice(),
+                7,
+                "<circle ",
+                0,
+            ),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            for object in &mut doc.objects {
+                object.visible = object.id == image;
+            }
+            let vp = Viewport {
+                rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: 1.,
+                center: Point { x: 200., y: 150. },
+            };
+            assert_eq!(
+                svg_page(&doc, &vp).unwrap().matches(primitive).count(),
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_angle_shapes_export_with_saved_colors() {
+        for (bytes, primitive) in [
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_segment_edited_port.gsp")
+                    .as_slice(),
+                "<line ",
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_circle_edited_port.gsp").as_slice(),
+                "<circle ",
+            ),
+            (
+                include_bytes!("../tests/fixtures/numeric_angle_polygon_edited_port.gsp")
+                    .as_slice(),
+                "<polygon ",
+            ),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            for object in &mut doc.objects {
+                object.visible = object.id == 10;
+            }
+            let vp = Viewport {
+                rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
+                scale: 1.,
+                center: Point { x: 200., y: 150. },
+            };
+            let svg = svg_page(&doc, &vp).unwrap();
+            assert_eq!(svg.matches(primitive).count(), 1);
+            assert!(svg.contains("#2850c8"));
+        }
+    }
+
     #[test]
     fn svg_uses_saved_point_stroke_and_polygon_styles() {
         let doc = Document::from_bytes(
