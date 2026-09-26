@@ -558,3 +558,84 @@ have positive coordinate points and byte-identical native writer goldens,
 Their screenshots are `/tmp/numeric_scalar_{fraction,true_half,negative_half}_precision_after_setup.png`.
 The formatter implementation is coordinated separately; no π constant or
 angle evaluation rule is changed to compensate for display rounding.
+
+The subsequent drawing-scoped literal audit (`/tmp/numeric_cm_scene_audit.txt`)
+finds centimeter suffix0x0201 in actual main-scene calculations, including
+standard subtype48 groups with supported PointRatio sources. Logarithm-file
+objects86 and93 retain `[6000,1002,1001,1,0201]` and
+`[6000,1002,1001,0,10,8,0201]`: source×−1cm and source×−0.8cm.
+Triangle/rectangle-overlap object109 retains
+`[0,10,5,0201,1002,6000]`, subtype48, an exact empty0x232e after the font,
+mode1/flag2, and precision0. Its original parent94 remains an independent
+prerequisite; the isolated literal uses a known supported Scalar source.
+Piecewise-parameter-discussion object32 retains `[0,0201,1003,6000,1000,1]`,
+subtype51, named mode3, and a supported PointDistance source. Original groups
+are retained as `numeric_calculation_centimeter_{integer,decimal,empty,named}_original.bin`.
+
+Independent native isolates use declared font0 and visible anchors, with a
+Scalar−1.5 source for the standard integer/decimal groups. Native displays
+`source·(−1 厘米) =1.50 厘米` and `source·(−0.8 厘米) =1.20 厘米`, with
+code69 x=1.5 and1.2. Raising only the decimal result precision2→4 gives
+`1.2000 厘米`, retaining literal0.8. The first precision probe accidentally
+changed both calculation precisions and clipped the long result; the retained
+control changes only object5 and moves its anchor left, so the whole caption
+is positively visible. No offscreen caption is claimed as suppression.
+
+The empty0x232e group with Scalar3 evaluates0.5cm×3=1.5cm and plots x=1.5.
+Its original mode1/flag2 still suppresses the caption, consistently with the
+previous attribute proof. A separate visible mode0/flag0 control retains the
+empty record and displays `0.5 厘米·source =1.50 厘米`. Named subtype51 displays
+its stored name with Scalar1.00 for0cm/Length+1. A nonzero control changes
+only the literal0→1 and typed Length source1cm→0.5cm; native then displays
+Scalar3.00 and plots x=3, independently establishing centimeter division and
+unit cancellation beyond a zero numerator. All seven initial isolates reopen
+and save byte-identically: integer3,508 bytes; decimal, precision4, empty and
+empty-visible3,512 bytes; named3,594 bytes; named-nonzero3,598 bytes.
+Captures are `/tmp/numeric_cm_{integer,decimal,empty,empty_visible,named,named_ratio}_after_setup.png`
+and `/tmp/numeric_cm_precision4_final_after_setup.png`.
+
+Bounded support consumes0x0201 after an existing numeric decimal literal,
+retains the full numeric magnitude in centimeters, and supplies Length to
+quantity evaluation. Formula captions append ` cm` independently of the
+result header, labels, font, precision, or cache fields. The authored API
+accepts the explicit `cm` keyword. Existing dimensional arithmetic then
+produces native subtype48 for Scalar×Length and subtype51 for Length÷Length.
+Unsupported unit suffixes, suffix chains, incompatible source units, π/e
+centimeter constants, and source-free code0 centimeter calculations remain
+guarded; their separate native families are not inferred from code48.
+
+API proofs edit live sources and precision, move original captions, author
+new centimeter calculations and code69 points, copy both original/authored
+points with prerequisites, and independently edit the copied source.
+The standard decimal case shows original2.0000cm and copy0.6000cm, plus
+new authored1.25cm and copy0.38cm. The empty-record case shows original2cm
+and copy1cm while retaining the empty0x232e. The named division case shows
+original1.8000 and copy1.4000, with the same independently authored ratios.
+Positive original and shifted copied points appear in all three captures,
+`/tmp/numeric_cm_{decimal,empty_visible,named_ratio}_api_after_setup.png`.
+The complete28-object writer goldens reopen/save identically:5,220,5,206,
+and5,388 bytes. They are retained as
+`numeric_calculation_centimeter_{decimal,empty_visible,named_ratio}_edited_authored_copied_native_verified.gsp`.
+Regressions recreate all writer bytes, test full-precision values and live
+geometry separately from optional presentation, preserve opaque prefix fields
+through precision/anchor edits, and verify atomic rejection/undo history.
+
+A refreshed scene-only audit (`/tmp/numeric_remaining_literal_audit_after_cm.txt`)
+now reports no `Unexpected calculation token` or unsupported decimal-radian
+literal errors. A broader actual Unsupported48 audit is
+`/tmp/numeric_code48_remaining_scene.txt`: most groups parse successfully and
+remain blocked by their source/quantity prerequisites. The next concrete token
+family is0x7000/0x7001, for example actual Hengyang object23 words
+`[7000,6001,12]`; its meaning must be established independently rather than
+assumed to be a primitive calculator function. Separate bounded gaps include
+native references beyond600f (24 groups in one layout,18 in another) and a
+terminal decimal separator, e.g pursuit-problem object32 words
+`[2,4,0,10,1002,6000,1003,6001]`. These remain guarded. Audit counts exclude
+embedded-tool prototype canvases and do not replace the full coverage gate.
+
+Direct parameter-calculation captions now retain an infinite result from finite
+source inputs. The existing native-verified zero-angle ray fixture displays
+`360°/n = ∞°` at n=0 while suppressing the transformed ray. Caption evaluation
+therefore uses a separate raw-result path; public numeric values, dependent
+calculations, and geometry still require finite results. A renderer regression
+checks the infinite caption, undefined ray, and recovery to 90.00° at n=4.

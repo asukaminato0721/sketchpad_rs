@@ -26,7 +26,9 @@ const PARAMETER_CALCULATION_NATIVE: &[u8] =
 // Round the stored binary value directly. Multiplying by a floating decimal
 // scale can turn a value below a half into an exact half (for example 3/40).
 fn rounded_fixed_magnitude(value: f64, precision: usize) -> Option<u128> {
-    if !value.is_finite() || precision > 18 { return None; }
+    if !value.is_finite() || precision > 18 {
+        return None;
+    }
     let bits = value.abs().to_bits();
     let exponent = ((bits >> 52) & 0x7ff) as i32;
     let fraction = bits & ((1u64 << 52) - 1);
@@ -41,8 +43,12 @@ fn rounded_fixed_magnitude(value: f64, precision: usize) -> Option<u128> {
         return numerator.checked_mul(1u128.checked_shl(shift as u32)?);
     }
     let denominator_shift = (-shift) as u32;
-    if denominator_shift > 128 { return Some(0); }
-    if denominator_shift == 128 { return Some(u128::from(numerator >= (1u128 << 127))); }
+    if denominator_shift > 128 {
+        return Some(0);
+    }
+    if denominator_shift == 128 {
+        return Some(u128::from(numerator >= (1u128 << 127)));
+    }
     let quotient = numerator >> denominator_shift;
     let remainder = numerator & ((1u128 << denominator_shift) - 1);
     Some(quotient + u128::from(remainder >= (1u128 << (denominator_shift - 1))))
@@ -51,9 +57,15 @@ fn rounded_fixed_magnitude(value: f64, precision: usize) -> Option<u128> {
 fn format_fixed_numeric_value(value: f64, precision: usize) -> String {
     if let Some(magnitude) = rounded_fixed_magnitude(value, precision) {
         let sign = if value.is_sign_negative() { "-" } else { "" };
-        if precision == 0 { return format!("{sign}{magnitude}"); }
+        if precision == 0 {
+            return format!("{sign}{magnitude}");
+        }
         let factor = 10u128.pow(precision as u32);
-        return format!("{sign}{}.{:0precision$}", magnitude / factor, magnitude % factor);
+        return format!(
+            "{sign}{}.{:0precision$}",
+            magnitude / factor,
+            magnitude % factor
+        );
     }
     format!("{value:.precision$}")
 }
@@ -1030,7 +1042,7 @@ impl ParameterExpr {
         self.units(&[source])
     }
     fn units(&self, sources: &[NumericUnit]) -> Result<NumericUnit, String> {
-        use NumericUnit::{Degrees, Scalar};
+        use NumericUnit::{Degrees, Length, Scalar};
         match self {
             Self::Source(index) => sources
                 .get(*index)
@@ -1039,6 +1051,8 @@ impl ParameterExpr {
             Self::Neg(argument) | Self::Group(argument) => argument.units(sources),
             Self::Literal(_, text) => Ok(if text.ends_with('°') {
                 Degrees
+            } else if text.ends_with(" cm") {
+                Length
             } else {
                 Scalar
             }),
@@ -1249,6 +1263,7 @@ impl<'a> ParameterExprParser<'a> {
         if word <= 10 {
             let mut digits = 0;
             let mut text = String::new();
+            let mut terminal_decimal = false;
             while let Some(&digit @ 0..=9) = self.words.get(self.at) {
                 digits += 1;
                 text.push(char::from(b'0' + digit as u8));
@@ -1266,13 +1281,22 @@ impl<'a> ParameterExprParser<'a> {
                     self.at += 1;
                 }
                 if self.at == fraction_start {
-                    return Err("Decimal point needs fractional digits".into());
+                    if digits == 0 {
+                        return Err("Decimal point needs fractional digits".into());
+                    }
+                    // Actual source calculations retain a terminal separator
+                    // in their words but native captions omit it (240. -> 240).
+                    terminal_decimal = true;
+                    text.pop();
                 }
             }
             let mut value = text
                 .parse::<f64>()
                 .map_err(|_| "Invalid calculation literal")?;
             if self.words.get(self.at) == Some(&0x0100) {
+                if terminal_decimal {
+                    return Err("Unsupported radian calculation literal".into());
+                }
                 // These are the authentic decimal-radian literals observed in
                 // the corpus. Independent native controls establish the full
                 // degree value and these six-significant-digit captions; the
@@ -1287,8 +1311,16 @@ impl<'a> ParameterExprParser<'a> {
                 text = caption.into();
                 self.at += 1;
             } else if self.words.get(self.at) == Some(&0x0101) {
+                if terminal_decimal {
+                    return Err("Trailing degree calculation literals are not yet supported".into());
+                }
                 self.at += 1;
                 text.push('°');
+            } else if self.words.get(self.at) == Some(&0x0201) {
+                // Native centimeter literals retain their numeric magnitude;
+                // the suffix supplies Length independently of the result type.
+                self.at += 1;
+                text.push_str(" cm");
             }
             return Ok(ParameterExpr::Literal(value, text));
         }
@@ -1348,6 +1380,11 @@ fn calculation_words_for_sources(
         }) {
             words.push(0x0100);
             input = &input[3..];
+        } else if input.strip_prefix("cm").is_some_and(|rest| {
+            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }) {
+            words.push(0x0201);
+            input = &input[2..];
         } else if ch == 'π' || input.starts_with("pi") {
             words.push(13);
             input = &input[if ch == 'π' { ch.len_utf8() } else { 2 }..];
@@ -1608,12 +1645,24 @@ impl ParameterCalculationGroup {
         self.sources()[0]
     }
     pub fn value_for_sources(&self, values: &[f64], units: &[NumericUnit]) -> Option<f64> {
+        self.display_value_for_sources(values, units)
+            .filter(|value| value.is_finite())
+    }
+    /// Caption evaluation retains an infinite result from finite inputs.
+    /// Geometry and downstream numeric sources still use `value_for_sources`.
+    pub(crate) fn display_value_for_sources(
+        &self,
+        values: &[f64],
+        units: &[NumericUnit],
+    ) -> Option<f64> {
+        if values.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
         let tree = self.expression_tree().ok()?;
         if tree.units(units).ok()? != self.unit() {
             return None;
         }
-        let value = tree.eval_raw_values(values)?;
-        value.is_finite().then_some(value)
+        tree.eval_raw_values(values)
     }
     pub fn expression_for_sources(&self, names: &[&str]) -> String {
         self.expression_tree().unwrap().display_names(names)
@@ -1676,10 +1725,10 @@ impl ParameterCalculationGroup {
         let rs = records(&self.bytes, 0).unwrap();
         u16::from_le_bytes(self.bytes[rs[2].payload + 26..rs[2].payload + 28].try_into().unwrap())
     }
-    /// Native mode1 displays the numeric value or its assigned name. Its
-    /// flag2 caption suppression is separate from visibility's flag1 bit.
+    /// Native flag2 suppresses the caption in the supported display modes.
+    /// It is separate from visibility's flag1 bit.
     pub fn caption_suppressed(&self) -> bool {
-        self.display_mode() == 1 && self.bytes[10] & 2 != 0
+        self.bytes[10] & 2 != 0
     }
     pub fn precision(&self) -> usize {
         let rs = records(&self.bytes, 0).unwrap();
@@ -1687,11 +1736,17 @@ impl ParameterCalculationGroup {
         u16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()) as usize
     }
     pub fn value_text(&self, value: f64) -> String {
-        format!(
-            "{}{}",
-            format_numeric_value(value, self.precision()),
-            self.unit().suffix()
-        )
+        if value.is_nan() {
+            return "undefined".into();
+        }
+        let number = if value == f64::INFINITY {
+            "∞".into()
+        } else if value == f64::NEG_INFINITY {
+            "−∞".into()
+        } else {
+            format_numeric_value(value, self.precision())
+        };
+        format!("{number}{}", self.unit().suffix())
     }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -1946,6 +2001,14 @@ impl CalculationGroup {
             .collect::<Vec<_>>();
         if words.iter().any(|word| (0x6000..=0x600f).contains(word)) {
             return Err("Literal calculation has a source reference".into());
+        }
+        if words.contains(&0x0201) {
+            return Err("Source-free centimeter calculations are not yet supported".into());
+        }
+        if words.iter().enumerate().any(|(i, word)| {
+            *word == 10 && words.get(i + 1).is_none_or(|next| *next > 9)
+        }) {
+            return Err("Source-free trailing decimal calculations are not yet supported".into());
         }
         // Native source-free radian expressions use subtype49 and produce an
         // angle. Scalar/compound results and other subtype49 literal families

@@ -28,6 +28,8 @@ mod selection;
 mod style;
 mod tables;
 mod text;
+pub mod transform_evaluator;
+pub mod transform_model;
 mod transforms;
 mod validation;
 

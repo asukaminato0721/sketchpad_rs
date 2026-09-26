@@ -237,6 +237,23 @@ impl Document {
             return false;
         };
         if host.deleted { return false; }
+        fn dependencies_available(document: &Document, id: usize,
+            page: usize, visiting: &mut BTreeSet<usize>) -> bool {
+            let Some(object) = id.checked_sub(1).and_then(|index| document.objects.get(index)) else {
+                return false;
+            };
+            if object.deleted || object.page != page
+                || matches!(object.kind, Kind::Unsupported(_)) || !visiting.insert(id) {
+                return false;
+            }
+            let available = object.kind.dependencies().into_iter()
+                .all(|parent| dependencies_available(document, parent, page, visiting));
+            visiting.remove(&id);
+            available
+        }
+        if !host.kind.dependencies().into_iter().all(|id| {
+            dependencies_available(self, id, host.page, &mut BTreeSet::new())
+        }) { return false; }
         let point_available = |id: usize| {
             id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|point| {
                 id < path && !point.deleted && point.page == host.page
@@ -308,6 +325,11 @@ impl Document {
 
     pub(super) fn undefined_native_path_plot(&self, path: usize, value: f64) -> bool {
         self.undefined_transformed_ray_plot(path, value) || self.undefined_arc_plot(path, value)
+    }
+
+    pub(super) fn undefined_three_point_arc(&self, path: usize) -> bool {
+        self.objects.get(path.saturating_sub(1)).is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
+            && self.undefined_arc_plot(path, 0.5)
     }
 
     pub fn position(&self, id: usize) -> Option<Point> {
@@ -782,11 +804,19 @@ impl Document {
             _ => None,
         }
     }
-    pub(super) fn fixed_straight_has_zero_factor(&self, mut id: usize) -> bool {
+    pub(super) fn straight_transform_has_suppressed_ancestor(&self, mut id: usize) -> bool {
         let mut seen = BTreeSet::new();
         while seen.insert(id) {
             match self.objects.get(id.saturating_sub(1)).map(|object| &object.kind) {
                 Some(Kind::ScaledRay(_, _, factor) | Kind::ScaledLine(_, _, factor)) if *factor == 0. => return true,
+                Some(Kind::CalculatedRatioScaledRay(source, _, ratio) | Kind::CalculatedRatioScaledLine(source, _, ratio)) => {
+                    if self.unitless_numeric_value(*ratio).is_none_or(|value| value == 0.) { return true; }
+                    id = *source;
+                }
+                Some(Kind::CalculatedAngleRotatedRay(source, _, angle) | Kind::CalculatedAngleRotatedLine(source, _, angle)) => {
+                    if self.numeric_value(*angle).is_none() { return true; }
+                    id = *source;
+                }
                 Some(Kind::ScaledRay(source, _, _) | Kind::ScaledLine(source, _, _)
                     | Kind::RotatedRay(source, _, _) | Kind::RotatedLine(source, _, _)) => id = *source,
                 _ => return false,
@@ -1330,6 +1360,11 @@ impl Document {
         if !t.is_finite() {
             return None;
         }
+        if let Some((start, end)) = self.linear_three_point_arc(id) {
+            let t = t.clamp(0., 1.);
+            return Some(Point { x: start.x + (end.x - start.x) * t,
+                y: start.y + (end.y - start.y) * t });
+        }
         Some(Self::sample_arc(self.arc_geometry(id)?, t))
     }
     fn sample_arc(
@@ -1348,6 +1383,11 @@ impl Document {
         }
     }
     pub(super) fn arc_parameter(&self, id: usize, p: Point) -> Option<f64> {
+        if let Some((start, end)) = self.linear_three_point_arc(id) {
+            let (dx, dy) = (end.x - start.x, end.y - start.y);
+            let parameter = ((p.x - start.x) * dx + (p.y - start.y) * dy) / (dx * dx + dy * dy);
+            return parameter.is_finite().then_some(parameter.clamp(0., 1.));
+        }
         let (center, _, start, sweep, clockwise_y) = self.arc_geometry(id)?;
         if sweep.abs() < 1e-9 {
             return None;

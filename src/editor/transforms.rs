@@ -686,14 +686,12 @@ impl Editor {
                 && kind.is_circle()))
             && self.doc.circle_points(source).is_some();
         let source_ray = source_kind.is_some_and(|kind|
-            (!self.rotation_use_marked && kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
-            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
-                && matches!(kind, Kind::Ray(..))))
+            (!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                && kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
             && self.doc.line_points(source).is_some();
         let source_line = source_kind.is_some_and(|kind|
-            (!self.rotation_use_marked && kind.fixed_transform_straight_mode() == Some(LineMode::Line))
-            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
-                && matches!(kind, Kind::Line(..))))
+            (!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                && kind.fixed_transform_straight_mode() == Some(LineMode::Line))
             && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
             || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))

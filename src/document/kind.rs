@@ -80,8 +80,10 @@ impl Kind {
     }
     pub fn fixed_transform_straight_mode(&self) -> Option<LineMode> {
         match self {
-            Kind::Ray(..) | Kind::RotatedRay(..) | Kind::ScaledRay(..) => Some(LineMode::Ray),
-            Kind::Line(..) | Kind::RotatedLine(..) | Kind::ScaledLine(..) => Some(LineMode::Line),
+            Kind::Ray(..) | Kind::RotatedRay(..) | Kind::ScaledRay(..)
+            | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedRatioScaledRay(..) => Some(LineMode::Ray),
+            Kind::Line(..) | Kind::RotatedLine(..) | Kind::ScaledLine(..)
+            | Kind::CalculatedAngleRotatedLine(..) | Kind::CalculatedRatioScaledLine(..) => Some(LineMode::Line),
             _ => None,
         }
     }

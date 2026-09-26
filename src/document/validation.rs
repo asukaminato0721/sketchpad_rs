@@ -140,8 +140,8 @@ impl Document {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedRatioScaledPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedRatioScaledSegment(..) => is_segment_kind(&p.kind),
-                        Kind::CalculatedRatioScaledRay(..) => matches!(p.kind, Kind::Ray(..)),
-                        Kind::CalculatedRatioScaledLine(..) => matches!(p.kind, Kind::Line(..)),
+                        Kind::CalculatedRatioScaledRay(..) => p.kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
+                        Kind::CalculatedRatioScaledLine(..) => p.kind.fixed_transform_straight_mode() == Some(LineMode::Line),
                         Kind::CalculatedRatioScaledCircle(..) => p.kind.is_circle(),
                         _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
@@ -154,7 +154,7 @@ impl Document {
                     let factor = self.unitless_numeric_value(*ratio);
                     if i >= self.source_count && (self.position(*center).is_none()
                         || (!straight_ratio && factor.is_none())
-                        || (straight_ratio && factor.is_some_and(|factor| factor != 0.) && self.line_points(o.id).is_none())) {
+                        || (straight_ratio && factor.is_some_and(|factor| factor != 0.) && !self.straight_transform_has_suppressed_ancestor(*source) && self.line_points(o.id).is_none())) {
                         return Err("Undefined numeric-ratio dilation".into());
                     }
                 }
@@ -167,8 +167,8 @@ impl Document {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedAngleRotatedPoint(..) => is_point_kind(&p.kind),
                         Kind::CalculatedAngleRotatedSegment(..) => is_segment_kind(&p.kind),
-                        Kind::CalculatedAngleRotatedRay(..) => matches!(p.kind, Kind::Ray(..)),
-                        Kind::CalculatedAngleRotatedLine(..) => matches!(p.kind, Kind::Line(..)),
+                        Kind::CalculatedAngleRotatedRay(..) => p.kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
+                        Kind::CalculatedAngleRotatedLine(..) => p.kind.fixed_transform_straight_mode() == Some(LineMode::Line),
                         Kind::CalculatedAngleRotatedCircle(..) => p.kind.is_circle(),
                         _ => p.kind.is_polygon() && polygon_vertex_count(&self.objects, *source).is_some(),
                     });
@@ -177,7 +177,7 @@ impl Document {
                         || !self.objects.get(angle.saturating_sub(1)).is_some_and(|p| !p.deleted && p.kind.numeric_unit() == Some(NumericUnit::Degrees)) {
                         return Err("Invalid numeric-angle rotation parents".into());
                     }
-                    let undefined_straight_angle = matches!(o.kind, Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)) && self.numeric_value(*angle).is_none();
+                    let undefined_straight_angle = matches!(o.kind, Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)) && (self.numeric_value(*angle).is_none() || self.straight_transform_has_suppressed_ancestor(*source));
                     if i >= self.source_count && (self.position(*center).is_none() || (!undefined_straight_angle && (self.numeric_value(*angle).is_none()
                         || match o.kind { Kind::CalculatedAngleRotatedPoint(..) => self.position(o.id).is_none(), Kind::CalculatedAngleRotatedSegment(..) | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..) => self.line_points(o.id).is_none(), Kind::CalculatedAngleRotatedCircle(..) => self.circle_points(o.id).is_none(), _ => self.polygon_points(o.id).is_none() }))) {
                         return Err("Undefined numeric-angle rotation".into());
@@ -789,6 +789,7 @@ impl Document {
                 && self
                     .arc_angle_degrees(o.id)
                     .is_none_or(|value| !value.is_finite())
+                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_three_point_arc(host))
             {
                 return Err(format!("Invalid arc in angle measurement {}", o.id));
             }
@@ -796,6 +797,7 @@ impl Document {
                 && self
                     .arc_length_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
+                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_three_point_arc(host))
             {
                 return Err(format!("Invalid arc in length measurement {}", o.id));
             }
@@ -833,7 +835,9 @@ impl Document {
                 return Err(format!("Invalid circle host in point {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none())
+                && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none()
+                    && !(self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page)
+                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host))))
             {
                 return Err(format!("Invalid arc host in point {}", o.id));
             }
@@ -1133,7 +1137,7 @@ impl Document {
                     !object.deleted && object.kind.fixed_transform_straight_mode() == Some(expected));
                 if !source_matches
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
-                    || (factor != 0. && !self.fixed_straight_has_zero_factor(source)
+                    || (factor != 0. && !self.straight_transform_has_suppressed_ancestor(source)
                         && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
                 {
                     return Err(format!("Invalid ray or line source/center in dilation {}", o.id));
@@ -1147,7 +1151,7 @@ impl Document {
                     !object.deleted && object.kind.fixed_transform_straight_mode() == Some(expected));
                 if !source_matches
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
-                    || (!self.fixed_straight_has_zero_factor(source)
+                    || (!self.straight_transform_has_suppressed_ancestor(source)
                         && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
                 {
                     return Err(format!("Invalid ray or line source/center in rotation {}", o.id));
@@ -1264,6 +1268,8 @@ impl Document {
                             && (self.position(id).is_some() || match point.kind {
                                 Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
+                                Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
+                                    && self.undefined_three_point_arc(path),
                                 _ => false,
                             })
                     })

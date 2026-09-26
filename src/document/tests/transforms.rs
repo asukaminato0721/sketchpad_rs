@@ -1643,12 +1643,8 @@ fn calculated_ratio_ray_and_line_preserve_native_modes_and_live_domains() {
         } else {
             Kind::ScaledLine(4, 1, 2.)
         });
-        let before = reciprocal.encode().unwrap();
-        assert!(
-            reciprocal
-                .add_calculated_ratio_dilation(transformed, 1, 7)
-                .is_err()
-        );
-        assert_eq!(reciprocal.encode().unwrap(), before);
+        let chained = reciprocal.add_calculated_ratio_dilation(transformed, 1, 7).unwrap();
+        assert_eq!(reciprocal.line_points(chained).unwrap().2, mode);
+        reciprocal.verify_roundtrip().unwrap();
     }
 }

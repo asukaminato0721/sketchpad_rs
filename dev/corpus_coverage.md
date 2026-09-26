@@ -12,7 +12,7 @@ Drawing objects: 280347 slots; 86 documents with all drawing kinds decoded.
 
 Embedded tool prototypes: 103 definitions in 65 documents; 5356 undecoded slots.
 
-Unsupported object slots including tool prototypes: 112506. Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Unsupported object slots including tool prototypes: 108817. Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
 
 Embedded tool prototypes now have a separate namespace. They remain counted as undecoded slots; their exclusion from the drawing histogram does not establish tool support. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects.
 
@@ -21,25 +21,25 @@ Inspect complete groups and parent payloads before selecting a target.
 
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
-| 48 | 21632 | 690 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 48 | 20292 | 628 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 77 | 7405 | 797 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 24 | 6143 | 266 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/橡皮筋大战钉子(蚂蚁制作).gsp` |
 | 62 | 5540 | 428 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 16 | 5378 | 519 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 33 | 4343 | 428 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
+| 24 | 5261 | 222 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
+| 16 | 5029 | 502 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 33 | 4197 | 419 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
 | 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 27 | 3188 | 478 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 8 | 3030 | 496 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 27 | 3126 | 471 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 8 | 2903 | 477 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
 | 90 | 2712 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 89 | 2538 | 772 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 34 | 2341 | 191 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
-| 21 | 2328 | 237 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 15 | 2309 | 520 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 30 | 2281 | 371 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 41 | 2190 | 107 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 15 | 2307 | 520 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 34 | 2287 | 188 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
+| 21 | 2262 | 235 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 41 | 2185 | 106 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 30 | 2041 | 358 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 35 | 1978 | 409 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 69 | 1782 | 251 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 69 | 1780 | 250 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 80 | 1594 | 406 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
 
 Run the command again for the current full report and all examples.
@@ -60,3 +60,11 @@ Typed length and degree parameters, optional empty calculation attributes, polyg
 `迭代方法2(蚂蚁).gsp` provide concrete native payloads and paired HTML definitions.
 Retain native payload validation and regression/cross-open gates when extending
 these families.
+
+The next snapshot (checkpoint 12) retains the same drawing/tool scope and reduces
+unsupported slots from 112506 to 108817. It includes source-free radian arithmetic,
+centimeter calculation literals, numeric-ratio ray/line dilation, mixed fixed and
+numeric straight-transform chains, and the proved arc plot hosts. The full
+all-targets regression gate at this checkpoint passes 782 tests. Later constrained
+arc semantics, trailing decimal parsing, and unified transformation-model work
+are subsequent changes and require another gate.

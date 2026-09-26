@@ -1683,7 +1683,7 @@ impl Document {
                     .ok_or("Missing polygon drawing order")?.to_le_bytes());
             }
             put_record(&mut added, 0x7d0, &h);
-            if !matches!(o.kind, Kind::PointOnPolygon(..)) && let Some(label) = &o.label {
+            if !matches!(o.kind, Kind::PointOnPolygon(..) | Kind::PointOnArc(..)) && let Some(label) = &o.label {
                 added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
             }
             if let Kind::Free(p) = o.kind {
@@ -1718,6 +1718,9 @@ impl Document {
                         let mut payload = vec![15, 0, 67, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
+                        if let Some(label) = &o.label {
+                            added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                        }
                     }
                     Kind::PointOnPolygon(host, edge, t) => {
                         let count = polygon_vertex_count_for_encoding(&self.objects, host)

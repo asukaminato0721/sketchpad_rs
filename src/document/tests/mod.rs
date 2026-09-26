@@ -77,3 +77,5 @@ mod text_and_style;
 mod tracing_and_coordinates;
 mod transforms;
 mod translations;
+
+mod mixed_straight_chains;

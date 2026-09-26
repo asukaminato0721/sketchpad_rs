@@ -682,6 +682,7 @@ impl Document {
         let Kind::ArcAngle(arc) = object.kind else {
             return None;
         };
+        if self.linear_three_point_arc(arc).is_some() { return Some(0.); }
         Some(self.arc_geometry(arc)?.3.abs().to_degrees())
     }
     pub fn arc_length_cm(&self, id: usize) -> Option<f64> {
@@ -692,6 +693,9 @@ impl Document {
         let Kind::ArcLength(arc) = object.kind else {
             return None;
         };
+        if let Some((start, end)) = self.linear_three_point_arc(arc) {
+            return Some(start.distance(end) / 37.79527559055118);
+        }
         let (_, radius, _, sweep, _) = self.arc_geometry(arc)?;
         Some(radius * sweep.abs() / 37.79527559055118)
     }

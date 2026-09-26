@@ -6,10 +6,120 @@ fn close_point(actual: Option<Point>, expected: Point) {
 }
 
 #[test]
+fn independently_native_constrained_arc_and_measurements_follow_linear_and_undefined_states() {
+    for (bytes, defined) in [
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_linear_native_verified.gsp").as_slice(), true),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_outside_native_verified.gsp").as_slice(), false),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_repeated_native_verified.gsp").as_slice(), false),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_outside_low_native_verified.gsp").as_slice(), false),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_middle_end_native_verified.gsp").as_slice(), false),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_endpoints_equal_native_verified.gsp").as_slice(), false),
+    ] {
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert!(doc.objects.iter().all(|object| !matches!(object.kind, Kind::Unsupported(_))));
+        if defined {
+            close_point(doc.position(5), Point { x: 245., y: 180. });
+            assert_eq!(doc.arc_angle_degrees(9), Some(0.));
+            assert!((doc.arc_length_cm(8).unwrap() - 60. / 37.79527559055118).abs() < 1e-12);
+            assert!(doc.line_points(7).is_some());
+        } else {
+            assert_eq!(doc.position(5), None);
+            assert_eq!(doc.line_points(7), None);
+            assert_eq!(doc.arc_angle_degrees(9), None);
+            assert_eq!(doc.arc_length_cm(8), None);
+        }
+        assert_eq!(doc.encode().unwrap(), bytes);
+        doc.selected = (1..=9).collect();
+        let clipboard = doc.copy_selected().unwrap();
+        assert_eq!(doc.paste(&clipboard).unwrap().len(), 9);
+        assert_eq!(doc.position(14).is_some(), defined);
+        doc.verify_roundtrip().unwrap();
+    }
+}
+
+#[test]
+fn constrained_arc_writer_labels_source_edits_and_drag_match_native_controls() {
+    let circular = include_bytes!("../../../tests/fixtures/arc_constrained_measure_circular_native_verified.gsp");
+    let linear = include_bytes!("../../../tests/fixtures/arc_constrained_measure_linear_native_verified.gsp");
+    let outside = include_bytes!("../../../tests/fixtures/arc_constrained_measure_outside_native_verified.gsp");
+    let native_dragged = include_bytes!("../../../tests/fixtures/arc_constrained_measure_dragged_native.gsp");
+    let dragged = Document::from_bytes(native_dragged, None).unwrap();
+    assert_eq!(dragged.objects[4].kind, Kind::PointOnArc(4, 0.75));
+    close_point(dragged.position(5), Point { x: 215., y: 180. });
+    assert_eq!(dragged.encode().unwrap(), native_dragged);
+    for (bytes, t, position) in [
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_drag_start_native.gsp").as_slice(), 0., Point { x: 260., y: 180. }),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_drag_end_native.gsp").as_slice(), 1., Point { x: 200., y: 180. }),
+    ] {
+        let endpoint = Document::from_bytes(bytes, None).unwrap();
+        assert_eq!(endpoint.objects[4].kind, Kind::PointOnArc(4, t));
+        close_point(endpoint.position(5), position);
+        assert_eq!(endpoint.encode().unwrap(), bytes);
+    }
+    let mut doc = Document::new();
+    for point in [Point { x: 260., y: 180. }, Point { x: 242.42640687119285, y: 137.57359312880715 }, Point { x: 200., y: 120. }] { doc.add(Kind::Free(point)); }
+    doc.add(Kind::ThreePointArc(1, 2, 3));
+    let kind = doc.constrained_point(4, Point { x: 255.4327719506772, y: 157.0389940580946 }).unwrap();
+    doc.add(kind);
+    doc.set_point_label(5, "ConstrainedQuarter", true).unwrap();
+    doc.add(Kind::Free(Point { x: 170., y: 230. }));
+    doc.add(Kind::Segment(6, 5));
+    doc.add(Kind::ArcLength(4));
+    doc.add(Kind::ArcAngle(4));
+    assert_eq!(doc.encode().unwrap(), circular);
+    let mut imported = Document::from_bytes(include_bytes!("../../../tests/fixtures/arc_constrained_measure_unlabeled_native_verified.gsp"), None).unwrap();
+    imported.set_point_label(5, "ConstrainedQuarter", true).unwrap();
+    assert_eq!(imported.encode().unwrap(), circular);
+    doc.checkpoint();
+    assert!(doc.move_point(2, Point { x: 240., y: 180. }));
+    assert!(doc.move_point(3, Point { x: 200., y: 180. }));
+    assert_eq!(doc.encode().unwrap(), linear);
+    assert_eq!(doc.constrained_point(4, Point { x: 280., y: 190. }), Some(Kind::PointOnArc(4, 0.)));
+    assert_eq!(doc.constrained_point(4, Point { x: 175., y: 190. }), Some(Kind::PointOnArc(4, 1.)));
+    doc.checkpoint();
+    assert!(doc.move_point(2, Point { x: 290., y: 180. }));
+    assert_eq!(doc.encode().unwrap(), outside);
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), linear);
+    doc.redo();
+    assert_eq!(doc.position(5), None);
+    assert!(doc.move_point(2, Point { x: 240., y: 180. }));
+    assert!(doc.move_point(5, Point { x: 215., y: 175. }));
+    assert_eq!(doc.objects[4].kind, Kind::PointOnArc(4, 0.75));
+    close_point(doc.position(5), Point { x: 215., y: 180. });
+    assert_eq!(doc.encode().unwrap(), include_bytes!("../../../tests/fixtures/arc_constrained_measure_authored_drag_native_verified.gsp"));
+    doc.verify_roundtrip().unwrap();
+    let mut copied = doc.clone();
+    copied.selected = (1..=9).collect();
+    let clipboard = copied.copy_selected().unwrap();
+    copied.paste(&clipboard).unwrap();
+    assert_eq!(copied.encode().unwrap(), include_bytes!("../../../tests/fixtures/arc_constrained_measure_authored_copy_native_verified.gsp"));
+    let mut undefined_copy = Document::from_bytes(outside, None).unwrap();
+    undefined_copy.selected = (1..=9).collect();
+    let clipboard = undefined_copy.copy_selected().unwrap();
+    undefined_copy.paste(&clipboard).unwrap();
+    assert_eq!(undefined_copy.encode().unwrap(), include_bytes!("../../../tests/fixtures/arc_constrained_measure_authored_undefined_copy_native_verified.gsp"));
+    if let Ok(directory) = std::env::var("SKETCHPAD_ARC_CONSTRAINT_GOLDEN_DIR") {
+        fs::write(Path::new(&directory).join("arc_constraint_drag_authored.gsp"), doc.encode().unwrap()).unwrap();
+        doc.selected = (1..=9).collect();
+        let clipboard = doc.copy_selected().unwrap();
+        doc.paste(&clipboard).unwrap();
+        fs::write(Path::new(&directory).join("arc_constraint_copied_authored.gsp"), doc.encode().unwrap()).unwrap();
+        let mut undefined = Document::from_bytes(outside, None).unwrap();
+        undefined.selected = (1..=9).collect();
+        let clipboard = undefined.copy_selected().unwrap();
+        undefined.paste(&clipboard).unwrap();
+        fs::write(Path::new(&directory).join("arc_constraint_undefined_copied_authored.gsp"), undefined.encode().unwrap()).unwrap();
+    }
+}
+
+#[test]
 fn native_known_arc_plots_use_normalized_sweep_and_preserve_undefined_domain() {
     for bytes in [
         include_bytes!("../../../tests/fixtures/arc_circle_plot_native_verified.gsp").as_slice(),
         include_bytes!("../../../tests/fixtures/arc_three_point_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_uneven_middle_plot_native_verified.gsp").as_slice(),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -51,6 +161,10 @@ fn native_collapsed_arc_plots_are_undefined_and_dependencies_remain_guarded() {
         include_bytes!("../../../tests/fixtures/arc_circle_collapsed_plot_native_verified.gsp").as_slice(),
         include_bytes!("../../../tests/fixtures/arc_circle_repeated_plot_native_verified.gsp").as_slice(),
         include_bytes!("../../../tests/fixtures/arc_three_point_repeated_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_outside_middle_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_outside_end_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_repeated_coordinates_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_repeated_end_coordinates_plot_native_verified.gsp").as_slice(),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -77,6 +191,15 @@ fn native_collapsed_arc_plots_are_undefined_and_dependencies_remain_guarded() {
     doc.objects[a - 1].deleted = true;
     assert!(!doc.undefined_arc_plot(nearly, -0.25));
     assert!(doc.plot_literal_on_path(-0.25, Some(nearly)).is_err());
+    let mut cyclic = Document::new();
+    cyclic.add(Kind::PathLiteralPoint(4, 0.5));
+    cyclic.add(Kind::Free(Point { x: 120., y: 100. }));
+    cyclic.add(Kind::Free(Point { x: 140., y: 120. }));
+    cyclic.add(Kind::ThreePointArc(1, 2, 3));
+    assert!(!cyclic.plot_arc_host_available(4));
+    let before = (cyclic.objects.len(), cyclic.undo.len());
+    assert!(cyclic.plot_literal_on_path(0.5, Some(4)).is_err());
+    assert_eq!((cyclic.objects.len(), cyclic.undo.len()), before);
 }
 
 fn authored_arcs() -> Document {
@@ -116,6 +239,7 @@ fn authored_arc_plots_follow_source_edits_copy_and_collapsed_recovery() {
     let mut doc = authored_arcs();
     assert_eq!(doc.objects.len(), 37);
     let generated = doc.encode().unwrap();
+    assert_eq!(generated, include_bytes!("../../../tests/fixtures/arc_plots_authored_generated_native_verified.gsp"));
     let before = (doc.objects.len(), doc.undo.len(), generated.clone());
     assert!(doc.plot_literal_on_path(f64::INFINITY, Some(6)).is_err());
     assert!(doc.plot_parameter_on_path(1, Some(10)).is_err());
@@ -128,6 +252,7 @@ fn authored_arc_plots_follow_source_edits_copy_and_collapsed_recovery() {
     for point in [14, 16, 20, 26, 28, 32] { assert!(doc.position(point).is_some()); }
     for point in [18, 22, 24, 30, 34, 36] { assert_eq!(doc.position(point), None); }
     let edited = doc.encode().unwrap();
+    assert_eq!(edited, include_bytes!("../../../tests/fixtures/arc_plots_authored_edited_native_verified.gsp"));
     let mut copy = doc.clone();
     copy.selected = (1..=37).collect();
     let clipboard = copy.copy_selected().unwrap();
@@ -139,6 +264,7 @@ fn authored_arc_plots_follow_source_edits_copy_and_collapsed_recovery() {
     }
     for old in [18, 22, 24, 30, 34, 36] { assert_eq!(copy.position(old + 37), None); }
     let copied = copy.encode().unwrap();
+    assert_eq!(copied, include_bytes!("../../../tests/fixtures/arc_plots_authored_copied_native_verified.gsp"));
     copy.verify_roundtrip().unwrap();
     doc.checkpoint();
     assert!(doc.move_point(5, doc.position(4).unwrap()));
@@ -154,6 +280,7 @@ fn authored_arc_plots_follow_source_edits_copy_and_collapsed_recovery() {
         assert!(doc.line_points(point + 1).is_some());
     }
     let collapsed = doc.encode().unwrap();
+    assert_eq!(collapsed, include_bytes!("../../../tests/fixtures/arc_plots_authored_collapsed_native_verified.gsp"));
     doc.undo();
     assert!(doc.position(26).is_some());
     assert_eq!(doc.position(14), None);
@@ -198,7 +325,10 @@ fn graph_plot_eligibility_matches_api_families_and_scalar_categories() {
 
 #[test]
 fn native_distinct_collinear_arc_plots_and_host_use_linear_fallback() {
-    let bytes = include_bytes!("../../../tests/fixtures/arc_three_point_collapsed_plot_native_verified.gsp");
+    for bytes in [
+        include_bytes!("../../../tests/fixtures/arc_three_point_collapsed_plot_native_verified.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/arc_three_point_uneven_linear_middle_plot_native_verified.gsp").as_slice(),
+    ] {
     let doc = Document::from_bytes(bytes, None).unwrap();
     close_point(doc.position(10), Point { x: 245., y: 180. });
     close_point(doc.position(16), Point { x: 230., y: 180. });
@@ -207,6 +337,7 @@ fn native_distinct_collinear_arc_plots_and_host_use_linear_fallback() {
     for point in [12, 14, 18, 20] { assert_eq!(doc.position(point), None); }
     assert_eq!(doc.encode().unwrap(), bytes);
     doc.verify_roundtrip().unwrap();
+    }
 }
 
 #[test]

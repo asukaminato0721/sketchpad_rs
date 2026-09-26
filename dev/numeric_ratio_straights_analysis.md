@@ -30,17 +30,16 @@ and likewise suppress the image. All of these records remain savable.
 Explicit `CalculatedRatioScaledRay` and `CalculatedRatioScaledLine` kinds retain
 the mode through geometry, stroke editing, SVG/canvas rendering, picking,
 serialization, clipboard remapping, and dependent deletion. Source guards allow
-only primitive Ray/Line with an earlier live point center and an earlier live
+primitive Ray/Line and the fixed/numeric transform images proven in the linked mixed-chain audit, with an earlier live point center and an earlier live
 Scalar numeric source. Degrees are rejected as ratios. An initially undefined
 ratio is rejected by the creation API; a previously created image remains savable
 when its ratio becomes zero or undefined, including before the first save.
 Restoring the input restores geometry. A defined zero ratio may author an image
 that becomes visible when its numeric input changes.
 
-Previously transformed ray/line sources, point-marked ratios (32), reflection,
-and fixed transforms of these numeric images remain separate proof targets. The
-six-kind fixed transformation source whitelist and the plotting/iteration host
-whitelists remain unchanged. The sibling scene audit, excluding embedded tool
+Point-marked ratios (32) and reflected ray/line source families remain separate proof targets. The plotting/iteration host whitelists are not broadened by the mixed-transform proof. The sibling scene audit, excluding embedded tool
 namespaces, found six primitive-ray code-33 images, including
 `../gsp-rs/tests/Samples/个人专栏/常新德作品/多边形外角和.gsp`; the clean native line
 control provides the corresponding line record evidence independently.
+
+Numeric and fixed transformed Ray/Line sources are subsequently supported by the bounded [mixed-transform chain proof](mixed_straight_transform_chains_analysis.md). Other straight-source families and plotted-point host guards remain separate.

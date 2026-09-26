@@ -234,7 +234,7 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
     if let Kind::ParameterCalculation(_, group) = &object.kind {
         if group.caption_suppressed() { return None; }
         let value = doc
-            .parameter_calculation_value(id)
+            .parameter_calculation_display_value(id)
             .map_or_else(|| "undefined".into(), |value| group.value_text(value));
         let name = object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty());
         let caption = match (group.display_mode(), name) {
@@ -2098,7 +2098,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_calculation_caption_flag_is_independent_of_geometry() {
+        let suppressed = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_calculation_trailing_decimal_cube84_native_verified.gsp"),
+            None,
+        ).unwrap();
+        assert_eq!(suppressed.numeric_value(5), Some(2.));
+        assert!(number_lines_for_object(&suppressed, 5).is_none());
+        assert!(suppressed.position(14).is_some());
+
+        let visible = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_calculation_trailing_decimal_cube_formula_visible_native_verified.gsp"),
+            None,
+        ).unwrap();
+        assert_eq!(visible.numeric_value(5), Some(2.));
+        let caption = &number_lines_for_object(&visible, 5).unwrap().1[0];
+        assert!(caption.ends_with("2.00"), "{caption}");
+        assert!(visible.position(14).is_some());
+    }
+
+    #[test]
+    fn native_infinite_angle_caption_keeps_geometry_undefined() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_angle_ray_undefined_native_verified.gsp"),
+            None,
+        ).unwrap();
+        assert_eq!(doc.numeric_value(6), None);
+        assert_eq!(doc.parameter_calculation_display_value(6), Some(f64::INFINITY));
+        assert!(number_lines_for_object(&doc, 6).unwrap().1[0].ends_with("∞°"));
+        assert!(doc.line_points(8).is_none());
+        doc.set_parameter_value(5, 4.).unwrap();
+        assert_eq!(doc.numeric_value(6), Some(90.));
+        assert!(number_lines_for_object(&doc, 6).unwrap().1[0].ends_with("90.00°"));
+        assert!(doc.line_points(8).is_some());
+    }
+
+    #[test]
     fn native_radian_literal_calculations_render_named_and_formula_modes() {
+        for (bytes, value, text) in [
+            (include_bytes!("../tests/fixtures/numeric_scalar_fraction_precision_native_verified.gsp").as_slice(), 0.075, "0.07"),
+            (include_bytes!("../tests/fixtures/numeric_scalar_true_half_precision_native_verified.gsp").as_slice(), 0.125, "0.13"),
+            (include_bytes!("../tests/fixtures/numeric_scalar_negative_half_precision_native_verified.gsp").as_slice(), -0.125, "-0.13"),
+        ] {
+            let doc = Document::from_bytes(bytes, None).unwrap();
+            assert_eq!(doc.numeric_value(17), Some(value));
+            let caption = &number_lines_for_object(&doc, 17).unwrap().1[0];
+            assert!(caption.ends_with(text), "{caption}");
+        }
         let mut named = Document::from_bytes(include_bytes!(
             "../tests/fixtures/numeric_sourcefree_radian_named_native_verified.gsp"
         ), None).unwrap();

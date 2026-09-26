@@ -501,7 +501,10 @@ fn calculated_angle_rotation_commands_keep_ray_and_line_modes() {
         editor.select_only(image);
         editor.rotation_use_marked = false;
         editor.rotate_selected();
-        assert_eq!(editor.doc.encode().unwrap(), before);
+        assert_eq!(editor.doc.objects.last().unwrap().kind, if ray {
+            Kind::RotatedRay(image, center, editor.rotation_angle)
+        } else { Kind::RotatedLine(image, center, editor.rotation_angle) });
+        editor.doc.verify_roundtrip().unwrap();
     }
 }
 
@@ -576,10 +579,13 @@ fn calculated_ratio_dilation_commands_keep_ray_and_line_extents_and_domains() {
         editor.doc.verify_roundtrip().unwrap();
         editor.doc.set_parameter_value(5, 4.).unwrap();
         assert!(editor.doc.line_points(9).is_some());
-        let before = editor.doc.encode().unwrap();
         editor.select_only(9);
         editor.dilate_selected();
-        assert_eq!(editor.doc.encode().unwrap(), before);
+        assert_eq!(editor.doc.objects[9].kind, if ray {
+            Kind::CalculatedRatioScaledRay(9, 1, 7)
+        } else { Kind::CalculatedRatioScaledLine(9, 1, 7) });
+        editor.doc.verify_roundtrip().unwrap();
+        let before = editor.doc.encode().unwrap();
         editor.select_only(4);
         editor.marked_ratio_value = Some(6);
         editor.dilate_selected();

@@ -479,6 +479,19 @@ impl Document {
         })
     }
     pub fn parameter_calculation_value(&self, id: usize) -> Option<f64> {
+        let (group, values, units) = self.parameter_calculation_inputs(id)?;
+        group.value_for_sources(&values, &units)
+    }
+
+    pub(crate) fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
+        let (group, values, units) = self.parameter_calculation_inputs(id)?;
+        group.display_value_for_sources(&values, &units)
+    }
+
+    fn parameter_calculation_inputs(
+        &self,
+        id: usize,
+    ) -> Option<(&ParameterCalculationGroup, Vec<f64>, Vec<NumericUnit>)> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::ParameterCalculation(source, group) = &object.kind else {
             return None;
@@ -504,7 +517,7 @@ impl Document {
             .iter()
             .map(|source| self.objects[*source - 1].kind.numeric_unit())
             .collect::<Option<Vec<_>>>()?;
-        group.value_for_sources(&values, &units)
+        Some((group, values, units))
     }
 
     pub fn parameter_calculation_expression(&self, id: usize) -> Option<String> {

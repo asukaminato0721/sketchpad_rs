@@ -1288,8 +1288,8 @@ impl Document {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedAngleRotatedPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
-                            (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedRay(*source, *center, *angle),
-                            (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedLine(*source, *center, *angle),
+                            (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedRay(*source, *center, *angle),
+                            (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedLine(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
                             (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
@@ -1301,8 +1301,8 @@ impl Document {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
-                            (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledRay(*source, *center, *angle),
-                            (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledLine(*source, *center, *angle),
+                            (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledRay(*source, *center, *angle),
+                            (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledLine(*source, *center, *angle),
                             (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
                             (Some(kind), _) if kind.is_polygon() && h[6..8] == [4, 0] && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),

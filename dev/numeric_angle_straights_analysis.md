@@ -20,11 +20,9 @@ and dependent deletion. A scalar marked value is rejected as an angle. A saved
 formula becoming undefined suppresses its image while retaining a savable graph;
 restoring the input restores the image.
 
-The source guard remains primitive-only. Rotations marked by three points,
-numeric rotations of previously transformed rays/lines, and fixed or numeric-ratio
-transforms using these new numeric-angle images require separate native proof.
+Rotations marked by three points remain a separate proof target. Numeric and fixed transforms of these images are now supported by the linked mixed-chain audit.
 Numeric-ratio dilation of primitive rays/lines is now documented in
-[numeric_ratio_straights_analysis.md](numeric_ratio_straights_analysis.md). The six-kind fixed transformation whitelist remains unchanged.
+[numeric_ratio_straights_analysis.md](numeric_ratio_straights_analysis.md). The bounded transform source helper now includes the four proven numeric Ray/Line kinds.
 
 An audit of sibling GSP4 scene records, excluding embedded tool scopes
 `03ea..03eb`, found eleven code-29 rays sourced by primitive rays and three
@@ -49,3 +47,5 @@ preserves the graph. Regressions compare authored fresh, moved, negative, and
 undefined outputs against these exact native-verified bytes, test restoration
 before the first save and after reopening, and check SVG clipping and picking on
 both sides of the ray origin.
+
+Numeric and fixed transformed Ray/Line sources are subsequently supported by the bounded [mixed-transform chain proof](mixed_straight_transform_chains_analysis.md). Other straight-source families and plotted-point host guards remain separate.

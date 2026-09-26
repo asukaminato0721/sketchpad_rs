@@ -17,7 +17,16 @@ image_capture="$(command -v import)"
 test -f "$sketch_path"
 test -f "$exe_path"
 
-xvfb-run -a bash -c '
+xvfb_options=(-a)
+if [[ -n "${SKETCHPAD_WINE_SCREEN:-}" ]]; then
+  if [[ ! "$SKETCHPAD_WINE_SCREEN" =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]]; then
+    echo "SKETCHPAD_WINE_SCREEN must be WIDTHxHEIGHT" >&2
+    exit 2
+  fi
+  xvfb_options+=(-s "-screen 0 ${SKETCHPAD_WINE_SCREEN}x24")
+fi
+
+xvfb-run "${xvfb_options[@]}" bash -c '
   set -euo pipefail
   # The outer shell owns the queue lock. Wine services can outlive this child;
   # do not let them inherit the lock and block the next native probe.
