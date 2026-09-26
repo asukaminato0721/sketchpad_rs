@@ -90,19 +90,18 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
         Kind::Parameter(group) => Some((
             group.anchor(),
             vec![format!(
-                "{} = {:.*}",
+                "{} = {}",
                 match group.name() {
                     "t[1]" => "t₁",
                     "t[2]" => "t₂",
                     name => name,
                 },
-                group.precision(),
-                group.value()
+                group.value_text()
             )],
         )),
         Kind::Calculation(group) => Some((
             group.anchor(),
-            vec![format!("{} = {:.2}", group.expression(), group.value())],
+            vec![format!("{} = {}", group.expression(), group.value_text())],
         )),
         Kind::ValueTable(_, group) => {
             if let Some((name, values)) = group.named_label_values() {
@@ -138,7 +137,7 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
     if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
         let value = doc
             .length_pair_calculation_value(id)
-            .map_or_else(|| "undefined".into(), |value| format!("{value:.2}"));
+            .map_or_else(|| "undefined".into(), |value| crate::table_records::format_numeric_value(value, group.precision()));
         let unit = match group.length_power() {
             1 => " cm",
             2 => " cm²",
@@ -153,22 +152,23 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         ));
     }
     if let Kind::MeasuredCalculation(source, group) = &object.kind {
-        let value = doc.measured_calculation_cm(id)?;
+        let value = crate::table_records::format_numeric_value(doc.measured_calculation_cm(id)?, group.precision());
         let name = doc
             .length_measurement_name(*source)
             .unwrap_or_else(|| "Length".into());
         return Some((
             group.anchor(),
             vec![format!(
-                "{name} {} {} = {value:.2} cm",
+                "{name} {} {} = {value} cm",
                 if group.divides() { "÷" } else { "·" },
                 group.factor()
             )],
         ));
     }
     if let Kind::ParameterCalculation(_, group) = &object.kind {
-        let value = doc.parameter_calculation_value(id)?;
-        let value = group.value_text(value);
+        let value = doc
+            .parameter_calculation_value(id)
+            .map_or_else(|| "undefined".into(), |value| group.value_text(value));
         let expression = doc.parameter_calculation_expression(id)?;
         let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
         return Some((group.anchor(), vec![format!("{expression} = {value}")]));
@@ -240,6 +240,14 @@ pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -
 }
 pub fn repeated_polygon_opacity(opacity: u16, paths: f64) -> f32 {
     (1. - (1. - f64::from(opacity) / 65535.).powf(paths)) as f32
+}
+
+pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    doc.circle_iteration_images(id).is_some_and(|circles| {
+        circles.into_iter().any(|(center, radius)| {
+            (at.distance(vp.screen(center)) - (radius as f32 * vp.scale).abs()).abs() < 7.
+        })
+    })
 }
 
 pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
@@ -1020,6 +1028,20 @@ pub fn svg_page_with_button_offset(
                 .unwrap();
             }
         }
+        if let Some(circles) = doc.circle_iteration_images(o.id) {
+            for (center, radius) in circles {
+                let center = vp.screen(center);
+                writeln!(
+                    svg,
+                    "<circle{} cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\"/>",
+                    svg_stroke(o.visual_style),
+                    center.x,
+                    center.y,
+                    (radius as f32 * vp.scale).abs()
+                )
+                .unwrap();
+            }
+        }
         if let Some(segments) = doc.segment_iteration_images(o.id) {
             for (start, end) in segments {
                 let start = vp.screen(start);
@@ -1243,131 +1265,19 @@ pub fn svg_page_with_button_offset(
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
-        if let Some(length) = doc.segment_length_cm(object.id) {
+        if let Some(text) = doc.measurement_text(object.id) {
             writeln!(
                 svg,
-                "<text x=\"{}\" y=\"{}\">Length = {:.2} cm</text>",
+                "<text x=\"{}\" y=\"{}\">{}</text>",
                 r.min.x + 12.,
                 r.min.y + 28. + row as f32 * 20.,
-                length
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(distance) = doc.point_distance_cm(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Distance = {:.2} cm</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                distance
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(ratio) = doc.ratio_value(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Ratio = {:.2}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                ratio
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(perimeter) = doc.perimeter_cm(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Perimeter = {:.2} cm</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                perimeter
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(circumference) = doc.circle_circumference_cm(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Circumference = {:.2} cm</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                circumference
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(radius) = doc.circle_radius_cm(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Radius = {:.2} cm</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                radius
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(area) = doc.circle_area_cm2(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Area = {:.2} cm²</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                area
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(area) = doc.polygon_area_cm2(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Area = {:.2} cm²</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                area
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(angle) = doc.arc_angle_degrees(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Arc Angle = {:.2}°</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                angle
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(length) = doc.arc_length_cm(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Arc Length = {:.2} cm</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                length
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(angle) = doc.angle_degrees(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Angle = {:.2}°</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                angle
-            )
-            .unwrap();
+                xml_text(&text)
+            ).unwrap();
             row += 1;
         }
         if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
             let value = doc
-                .slope_value(object.id)
-                .map(|value| format!("{value:.2}"))
+                .measurement_value_text(object.id)
                 .unwrap_or_else(|| "undefined".into());
             writeln!(
                 svg,
@@ -1864,6 +1774,22 @@ impl GeometryRenderer {
                     }
                 }
             }
+            if let Some(circles) = doc.circle_iteration_images(o.id) {
+                for (center, radius) in circles {
+                    let c = vp.screen(center);
+                    let r = (radius as f32 * vp.scale).abs();
+                    if r > 0.5 && r < 100000. {
+                        let n = ((r * 0.45) as usize).clamp(32, 256);
+                        let points = (0..n)
+                            .map(|i| {
+                                let t = i as f32 * std::f32::consts::TAU / n as f32;
+                                c + egui::vec2(t.cos(), t.sin()) * r
+                            })
+                            .collect::<Vec<_>>();
+                        mesh.styled_path(&points, true, stroke, col);
+                    }
+                }
+            }
             if let Some(segments) = doc.segment_iteration_images(o.id) {
                 for (start, end) in segments {
                     if let Some((a, b)) =
@@ -2065,6 +1991,58 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn carried_circle_export_and_hit_respect_binding_visibility_and_style() {
+        let mut doc = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/point_translation_carried_circle_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 2.,
+            center: Point { x: 200., y: 160. },
+        };
+        let (center, radius) = doc.circle_iteration_images(6).unwrap()[2];
+        let at = vp.screen(Point {
+            x: center.x,
+            y: center.y + radius,
+        });
+        assert!(circle_iteration_hit(&vp, &doc, 6, at));
+        assert!(!circle_iteration_hit(
+            &vp,
+            &doc,
+            6,
+            vp.screen(Point {
+                x: center.x,
+                y: center.y + radius * 3.
+            })
+        ));
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert_eq!(
+            svg.lines()
+                .filter(|line| line.starts_with("<circle") && line.contains("fill=\"none\""))
+                .count(),
+            3
+        );
+        let stroke = svg_stroke(doc.objects[5].visual_style);
+        assert!(!stroke.is_empty());
+        assert_eq!(svg.matches(&format!("<circle{stroke}")).count(), 3);
+        doc.selected.insert(6);
+        doc.set_selected_visibility(false);
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert_eq!(
+            svg.lines()
+                .filter(|line| line.starts_with("<circle") && line.contains("fill=\"none\""))
+                .count(),
+            0
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.is_displayed(6));
+    }
+
     #[test]
     fn branching_polygon_svg_uses_path_multiplicity_and_carried_bindings() {
         let doc = Document::from_bytes(
@@ -2462,6 +2440,67 @@ mod tests {
         let svg = svg_page(&doc, &vp).unwrap();
         assert!(svg.contains("data:image/png;base64,iVBORw0KGgo"));
         assert!(svg.contains("<image width=\"16\" height=\"16\""));
+    }
+    #[test]
+    fn collapsed_iteration_circles_are_omitted_from_svg() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/vector_collapsed_circle_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        let svg = svg_page(&doc, &viewport).unwrap();
+        assert!(!svg.contains("r=\"0\""));
+        assert!(svg.contains("r=\"40\""));
+    }
+
+    #[test]
+    fn scientific_captions_reach_svg_without_changing_numeric_values() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/scientific_rounding_native_verified.gsp"),
+            None,
+        )
+        .unwrap();
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        let svg = svg_page(&doc, &viewport).unwrap();
+        assert!(svg.contains("1.00 · 10⁷"));
+        assert!(svg.contains("-2.86 · 10¹⁴"));
+        assert_eq!(doc.numeric_value(1), Some(9999999.));
+        doc.set_numeric_precision(&[1], 5).unwrap();
+        assert!(svg_page(&doc, &viewport).unwrap().contains("1.00000 · 10⁷"));
+        assert_eq!(doc.numeric_value(1), Some(9999999.));
+    }
+
+    #[test]
+    fn calculation_precision_survives_svg_export() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/calculation_precision_native_verified.gsp"),
+            None,
+        )
+        .unwrap();
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        let svg = svg_page(&doc, &viewport).unwrap();
+        for caption in ["5.292 cm", "2.0000", "0.24690", "5</text>"] {
+            assert!(svg.contains(caption), "missing {caption}");
+        }
+        doc.set_numeric_precision(&[8, 9, 11, 12], 5).unwrap();
+        assert!(svg_page(&doc, &viewport).unwrap().contains("5.12500"));
+        doc.set_numeric_precision(&[11, 12], 0).unwrap();
+        let svg = svg_page(&doc, &viewport).unwrap();
+        assert!(!svg.contains("0.24690"));
+        assert!(!svg.contains("5.12500"));
     }
     #[test]
     fn svg_export_uses_visible_geometry_and_refuses_partial_documents() {

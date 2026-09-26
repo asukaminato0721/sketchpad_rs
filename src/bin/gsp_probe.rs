@@ -348,6 +348,34 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     println!("line {}: {command} -> object {id}", index + 1);
                 }
+                "measurement_precision" | "numeric_precision" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [ids, precision] = parts.as_slice() else {
+                        return Err("expected measurement_precision ID,ID,... DECIMAL_PLACES".into());
+                    };
+                    let ids = ids.split(',').map(|id| id.parse::<usize>().map_err(|_| "Invalid measurement ID")).collect::<Result<Vec<_>, _>>()?;
+                    let precision = precision.parse().map_err(|_| "Invalid precision")?;
+                    if command == "numeric_precision" { document.set_numeric_precision(&ids, precision)?; }
+                    else { document.set_measurement_precision(&ids, precision)?; }
+                }
+                "calculate_multi" => {
+                    let (ids, expression) = rest
+                        .split_once(' ')
+                        .ok_or("expected ID,ID,... EXPRESSION")?;
+                    let sources = ids
+                        .split(',')
+                        .map(|id| {
+                            id.parse::<usize>()
+                                .map_err(|_| "Invalid calculation source ID")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let id = document.add_multi_calculation(
+                        &sources,
+                        expression,
+                        document.next_calculation_anchor(),
+                    )?;
+                    println!("line {}: calculate_multi -> object {id}", index + 1);
+                }
                 "calculate_parameter" => {
                     let Some((source, expression)) = rest.split_once(char::is_whitespace) else {
                         return Err("expected calculate_parameter SOURCE EXPRESSION".into());
@@ -355,21 +383,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let source = source
                         .parse()
                         .map_err(|_| "invalid calculation source ID")?;
-                    let row = document
-                        .objects
-                        .iter()
-                        .filter(|object| {
-                            !object.deleted
-                                && matches!(
-                                    object.kind,
-                                    Kind::Parameter(_)
-                                        | Kind::Calculation(_)
-                                        | Kind::MeasuredCalculation(_, _)
-                                        | Kind::ParameterCalculation(_, _)
-                                )
-                        })
-                        .count();
-                    let anchor = (10, (5usize + row * 33).min(i16::MAX as usize) as i16);
+                    let anchor = document.next_calculation_anchor();
                     let id = document.add_parameter_calculation(source, expression, anchor)?;
                     println!("line {}: calculate_parameter -> object {id}", index + 1);
                 }
@@ -1410,6 +1424,18 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_segment_iteration(seed, image, segment, depth)?;
                     println!("line {}: iterate_segment -> object {id}", index + 1);
                 }
+                "iterate_circle" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 4 {
+                        return Err("expected seed ID, first-image ID, circle ID, and depth".into());
+                    }
+                    let seed = parts[0].parse().map_err(|_| "invalid seed ID")?;
+                    let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
+                    let circle = parts[2].parse().map_err(|_| "invalid circle ID")?;
+                    let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
+                    let id = document.add_circle_iteration(seed, image, circle, depth)?;
+                    println!("line {}: iterate_circle -> object {id}", index + 1);
+                }
                 "iterate_polygon_branch" | "iterate_polygon_branch_live" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     if parts.len() < 5 {
@@ -1423,7 +1449,7 @@ fn replay(path: &str) -> Result<(), String> {
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let depth = if command == "iterate_polygon_branch_live" {
-                        sketchpad_rs::document::IterationDepth::Parameter(ids[4])
+                        sketchpad_rs::document::IterationDepth::Value(ids[4])
                     } else {
                         sketchpad_rs::document::IterationDepth::Fixed(
                             u32::try_from(ids[4]).map_err(|_| "invalid depth")?,
@@ -1438,6 +1464,53 @@ fn replay(path: &str) -> Result<(), String> {
                         depth,
                     )?;
                     println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "rotate_value" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|p| p.parse::<usize>().map_err(|_| "invalid rotation ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [source, center, angle] = ids.as_slice() else {
+                        return Err("expected SOURCE CENTER ANGLE_VALUE".into());
+                    };
+                    let id = document.add_calculated_angle_rotation(*source, *center, *angle)?;
+                    println!("line {}: rotate_value -> object {id}", index + 1);
+                }
+                "iterate_point_live" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [seed, image, depth] = parts.as_slice() else {
+                        return Err("expected SEED IMAGE DEPTH_VALUE".into());
+                    };
+                    let id = document.add_point_iteration_with_depth_value(
+                        seed.parse().map_err(|_| "invalid seed")?,
+                        image.parse().map_err(|_| "invalid image")?,
+                        depth.parse().map_err(|_| "invalid depth")?,
+                    )?;
+                    println!("line {}: iterate_point_live -> object {id}", index + 1);
+                }
+                "iterate_segment_live" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|p| p.parse::<usize>().map_err(|_| "invalid iteration ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [seed, image, segment, depth] = ids.as_slice() else {
+                        return Err("expected SEED IMAGE SEGMENT DEPTH_VALUE".into());
+                    };
+                    let id = document
+                        .add_segment_iteration_with_depth_value(*seed, *image, *segment, *depth)?;
+                    println!("line {}: iterate_segment_live -> object {id}", index + 1);
+                }
+                "iterate_circle_live" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|p| p.parse::<usize>().map_err(|_| "invalid iteration ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [seed, image, circle, depth] = ids.as_slice() else {
+                        return Err("expected SEED IMAGE SEGMENT DEPTH_VALUE".into());
+                    };
+                    let id = document
+                        .add_circle_iteration_with_depth_value(*seed, *image, *circle, *depth)?;
+                    println!("line {}: iterate_circle_live -> object {id}", index + 1);
                 }
                 "iterate_numeric" | "iterate_numeric_live" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
@@ -1476,7 +1549,10 @@ fn replay(path: &str) -> Result<(), String> {
                 "iterate_ray" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     let [seed, image, ray, parameter] = parts.as_slice() else {
-                        return Err("expected seed ID, first-image ID, ray ID, and integer depth parameter ID".into());
+                        return Err(
+                            "expected seed ID, first-image ID, ray ID, and scalar depth value ID"
+                                .into(),
+                        );
                     };
                     let seed = seed.parse().map_err(|_| "invalid seed ID")?;
                     let image = image.parse().map_err(|_| "invalid first-image ID")?;

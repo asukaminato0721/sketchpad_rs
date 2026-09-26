@@ -34,6 +34,12 @@ enum Tool {
     Text,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkedAngle {
+    Points([usize; 3]),
+    Value(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TranslationMode {
     FixedPolar,
     FixedRectangular,
@@ -219,7 +225,7 @@ struct Editor {
     marked_vector: Option<(usize, usize)>,
     marked_distance: Option<usize>,
     marked_rectangular_distances: Option<(usize, usize)>,
-    marked_angle: Option<[usize; 3]>,
+    marked_angle: Option<MarkedAngle>,
     marked_ratio: Option<[usize; 3]>,
     trace_marks: Vec<TraceMark>,
     animations: Vec<AnimationTrack>,
@@ -733,44 +739,13 @@ impl Editor {
             object.page == self.doc.active_page && object.visible && !object.deleted
         }) {
             let id = object.id;
-            if let Some(value) = self.doc.segment_length_cm(id) {
-                rows.push((id, format!("Length = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.point_distance_cm(id) {
-                rows.push((id, format!("Distance = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.ratio_value(id) {
-                rows.push((id, format!("Ratio = {value:.2}")));
-            }
-            if let Some(value) = self.doc.perimeter_cm(id) {
-                rows.push((id, format!("Perimeter = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.circle_circumference_cm(id) {
-                rows.push((id, format!("Circumference = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.circle_radius_cm(id) {
-                rows.push((id, format!("Radius = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.circle_area_cm2(id) {
-                rows.push((id, format!("Area = {value:.2} cm²")));
-            }
-            if let Some(value) = self.doc.polygon_area_cm2(id) {
-                rows.push((id, format!("Area = {value:.2} cm²")));
-            }
-            if let Some(value) = self.doc.arc_angle_degrees(id) {
-                rows.push((id, format!("Arc Angle = {value:.2}°")));
-            }
-            if let Some(value) = self.doc.arc_length_cm(id) {
-                rows.push((id, format!("Arc Length = {value:.2} cm")));
-            }
-            if let Some(value) = self.doc.angle_degrees(id) {
-                rows.push((id, format!("Angle = {value:.2}°")));
+            if let Some(text) = self.doc.measurement_text(id) {
+                rows.push((id, text));
             }
             if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
                 let value = self
                     .doc
-                    .slope_value(id)
-                    .map(|value| format!("{value:.2}"))
+                    .measurement_value_text(id)
                     .unwrap_or_else(|| "undefined".into());
                 rows.push((id, format!("Slope = {value}")));
             }
@@ -908,7 +883,8 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
+                && (sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
+                    || sketchpad_rs::render::circle_iteration_hit(v, &self.doc, object.id, p))
         }) {
             return Some(object.id);
         }
@@ -1922,7 +1898,7 @@ impl Editor {
     fn iterate_selected(&mut self, depth: u32) {
         if !(2..=8).contains(&self.selection_order.len()) {
             self.status =
-                "Select a free point and transformed image; optionally add their segment, ray with a depth parameter, or parameter mapping with a numeric label".into();
+                "Select a free point and transformed image; optionally add their segment or circle, ray with a depth parameter, or parameter mapping with a numeric label".into();
             return;
         }
         let seed = self
@@ -1936,10 +1912,19 @@ impl Editor {
                 Kind::PolarTranslatedPoint(_, _, _, _)
                     | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
                     | Kind::RotatedPoint(_, _, _)
+                    | Kind::CalculatedAngleRotatedPoint(_, _, _)
+                    | Kind::ScaledPoint(_, _, _)
+                    | Kind::RatioScaledPoint(_, _, _, _, _)
+                    | Kind::ReflectedPoint(_, _)
+                    | Kind::VectorTranslatedPoint(_, _, _)
+                    | Kind::MarkedDistanceTranslatedPoint(_, _, _)
+                    | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
+                    | Kind::RectangularMarkedTranslatedPoint(_, _, _)
+                    | Kind::AngleRotatedPoint(_, _, _, _, _)
             )
         });
         let (Some(seed), Some(image)) = (seed, image) else {
-            self.status = "Select a free point and its directly translated or rotated image".into();
+            self.status = "Select a free point and its directly translated, rotated, dilated, or reflected image".into();
             return;
         };
         let selected_polygon = self
@@ -1960,8 +1945,7 @@ impl Editor {
                 .iter()
                 .copied()
                 .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
-            let depth =
-                depth_parameter.map_or(IterationDepth::Fixed(depth), IterationDepth::Parameter);
+            let depth = depth_parameter.map_or(IterationDepth::Fixed(depth), IterationDepth::Value);
             if images.len() == 2 {
                 self.doc.add_branching_polygon_iteration(
                     seed, images[0], images[1], polygon, &segments, depth,
@@ -1970,17 +1954,23 @@ impl Editor {
                 Err("Select two directly translated images for the branching triangle".into())
             }
         } else if self.selection_order.len() >= 5 {
-            let calculation = self.selection_order.iter().copied().find(|id| {
-                matches!(
-                    self.doc.objects[*id - 1].kind,
-                    Kind::ParameterCalculation(_, _)
-                )
-            });
-            let parameter = calculation.and_then(|id| match self.doc.objects[id - 1].kind {
-                Kind::ParameterCalculation(source, _) if self.selection_order.contains(&source) => {
-                    Some(source)
-                }
-                _ => None,
+            let calculation =
+                self.selection_order
+                    .iter()
+                    .find_map(|id| match self.doc.objects[*id - 1].kind {
+                        Kind::PointNumericLabel(_, value)
+                            if self.selection_order.contains(&value) =>
+                        {
+                            Some(value)
+                        }
+                        _ => None,
+                    });
+            let parameter = calculation.and_then(|id| {
+                let sources = self.doc.objects[id - 1].kind.dependencies();
+                self.selection_order.iter().copied().find(|source| {
+                    sources.contains(source)
+                        && matches!(self.doc.objects[*source - 1].kind, Kind::Parameter(_))
+                })
             });
             let label = self.selection_order.iter().copied().find(|id| {
                 matches!(
@@ -1993,11 +1983,13 @@ impl Editor {
                     if self.selection_order.len() == 6 {
                         let depth_parameter = self.selection_order.iter().copied().find(|id| {
                             *id != parameter
-                                && matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_))
+                                && *id != calculation
+                                && self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                                && self.doc.unitless_numeric_value(*id).is_some()
                         });
                         match depth_parameter {
                             Some(id) => self.doc.add_point_parameter_iteration_with_parameter_depth(seed, parameter, image, calculation, label, id),
-                            None => Err("Select a distinct integer depth parameter along with the numeric mapping".into()),
+                            None => Err("Select a distinct scalar depth parameter along with the numeric mapping".into()),
                         }
                     } else {
                         self.doc.add_point_parameter_iteration(
@@ -2016,31 +2008,50 @@ impl Editor {
                 ),
             }
         } else if self.selection_order.len() == 4 {
-            let ray = self
-                .selection_order
-                .iter()
-                .copied()
-                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Ray(_, _)));
-            let parameter = self
-                .selection_order
-                .iter()
-                .copied()
-                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
-            match (ray, parameter) {
-                (Some(ray), Some(parameter)) => {
-                    self.doc.add_ray_iteration(seed, image, ray, parameter)
-                }
-                _ => Err("Select the connecting ray and an integer depth parameter".into()),
+            let carried = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::Segment(_, _) | Kind::Ray(_, _) | Kind::Circle(_, _)
+                )
+            });
+            let value = self.selection_order.iter().copied().find(|id| {
+                self.doc.objects[*id - 1].kind.is_iteration_depth_value()
+                    && self.doc.unitless_numeric_value(*id).is_some()
+            });
+            match (carried,value) {
+                (Some(object),Some(value))=>match self.doc.objects[object-1].kind {
+                    Kind::Segment(_,_)=>self.doc.add_segment_iteration_with_depth_value(seed,image,object,value),
+                    Kind::Ray(_,_)=>self.doc.add_ray_iteration(seed,image,object,value),
+                    Kind::Circle(_,_)=>self.doc.add_circle_iteration_with_depth_value(seed,image,object,value),
+                    _=>unreachable!(),
+                },
+                _=>Err("Select the connecting segment, ray, or circle and an scalar parameter or calculation for depth".into()),
             }
         } else if self.selection_order.len() == 3 {
-            let segment = self
-                .selection_order
-                .iter()
-                .copied()
-                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Segment(_, _)));
+            let segment = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::Segment(_, _) | Kind::Circle(_, _)
+                )
+            });
             match segment {
-                Some(segment) => self.doc.add_segment_iteration(seed, image, segment, depth),
-                None => Err("The third selected object must be their segment".into()),
+                Some(segment) => match self.doc.objects[segment - 1].kind {
+                    Kind::Circle(_, _) => self.doc.add_circle_iteration(seed, image, segment, depth),
+                    _ => self.doc.add_segment_iteration(seed, image, segment, depth),
+                },
+                None => match self
+                    .selection_order
+                    .iter()
+                    .copied()
+                    .find(|id| self.doc.objects[*id - 1].kind.is_iteration_depth_value())
+                {
+                    Some(value) => self
+                        .doc
+                        .add_point_iteration_with_depth_value(seed, image, value),
+                    None => Err(
+                        "Select their segment, circle, or an scalar parameter/calculation for depth".into(),
+                    ),
+                },
             }
         } else {
             self.doc.add_point_iteration(seed, image, depth)
@@ -2055,7 +2066,7 @@ impl Editor {
                             ..
                         } => n as usize,
                         Kind::BranchingPolygonIteration {
-                            depth: IterationDepth::Parameter(p),
+                            depth: IterationDepth::Value(p),
                             ..
                         } => self
                             .doc
@@ -2660,6 +2671,19 @@ impl Editor {
         }
     }
     fn mark_angle_selected(&mut self) {
+        if let [id] = self.selection_order.as_slice()
+            && self.doc.objects[*id - 1].kind.numeric_unit()
+                == Some(sketchpad_rs::table_records::NumericUnit::Degrees)
+            && self.doc.numeric_value(*id).is_some()
+        {
+            let id = *id;
+            self.marked_angle = Some(MarkedAngle::Value(id));
+            self.rotation_use_marked = true;
+            self.doc.selected.remove(&id);
+            self.selection_order.clear();
+            self.status = format!("Marked angle value {id}");
+            return;
+        }
         let points = self
             .selection_order
             .iter()
@@ -2667,7 +2691,8 @@ impl Editor {
             .filter(|&id| self.doc.position(id).is_some())
             .collect::<Vec<_>>();
         if points.len() < 3 {
-            self.status = "Select three points to mark an angle".into();
+            self.status =
+                "Select three points or a degree-valued measurement or calculation to mark an angle".into();
             return;
         }
         let angle = [
@@ -2683,7 +2708,7 @@ impl Editor {
             self.status = "Marked angle needs distinct sides".into();
             return;
         }
-        self.marked_angle = Some(angle);
+        self.marked_angle = Some(MarkedAngle::Points(angle));
         self.rotation_use_marked = true;
         for &id in &angle {
             self.doc.selected.remove(&id);
@@ -2891,8 +2916,27 @@ impl Editor {
             self.status = "Select a point, segment, or circle and a center point".into();
             return;
         }
+        if self.rotation_use_marked
+            && let Some(MarkedAngle::Value(angle)) = self.marked_angle
+        {
+            if !source_point {
+                self.status = "Select a point to rotate by a marked numeric angle".into();
+                return;
+            }
+            match self
+                .doc
+                .add_calculated_angle_rotation(source, center, angle)
+            {
+                Ok(id) => {
+                    self.select_only(id);
+                    self.status = format!("Rotated point {id}");
+                }
+                Err(error) => self.status = error,
+            }
+            return;
+        }
         let kind = if self.rotation_use_marked {
-            let Some([first, vertex, last]) = self.marked_angle else {
+            let Some(MarkedAngle::Points([first, vertex, last])) = self.marked_angle else {
                 self.status = "Mark an angle first".into();
                 return;
             };
@@ -4257,6 +4301,19 @@ impl Editor {
                         self.measure_arc_length();
                         ui.close();
                     }
+                    ui.separator();
+                    ui.menu_button("Decimal Places", |ui| {
+                        for precision in 0..=5 {
+                            if ui.button(precision.to_string()).clicked() {
+                                let ids = self.doc.selected.iter().copied().collect::<Vec<_>>();
+                                match self.doc.set_numeric_precision(&ids, precision) {
+                                    Ok(count) => self.status = format!("Updated precision for {count} numeric captions"),
+                                    Err(error) => self.status = error,
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
                 });
                 ui.menu_button("Number", |ui| {
                     if ui.button("Attach Selected Value to Point").clicked() {
@@ -4304,13 +4361,18 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Calculate…").clicked() {
-                        self.calculation_draft = if self.doc.selected.len() == 2 {
+                        self.calculation_draft = if self.doc.selected.len() >= 2 {
                             "a + b".into()
                         } else if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
                                 Some(Kind::Parameter(group)) => format!("{}^2", group.name()),
+                                Some(kind) if kind.numeric_unit() == Some(sketchpad_rs::table_records::NumericUnit::Degrees) => "v / 2".into(),
+                                Some(Kind::AngleMeasurement(_,_,_) | Kind::ArcAngle(_)) => "v / 2".into(),
+                                Some(Kind::ParameterCalculation(_, group)) if matches!(group.unit(),sketchpad_rs::table_records::NumericUnit::Length | sketchpad_rs::table_records::NumericUnit::Area) => "v * 2".into(),
                                 Some(Kind::ParameterCalculation(_, _)) => "v + 1".into(),
                                 Some(kind) if kind.is_distance_value() => "× 2".into(),
+                                Some(kind) if kind.numeric_unit()==Some(sketchpad_rs::table_records::NumericUnit::Area) => "v * 2".into(),
+                                Some(kind) if kind.numeric_unit().is_some() => "v + 1".into(),
                                 _ => "2 + 3".into(),
                             }
                         } else { "2 + 3".into() };
@@ -5021,8 +5083,11 @@ impl Editor {
                         "Marked distances: horizontal {horizontal}, vertical {vertical}"
                     ));
                 }
-                if let Some([first, vertex, last]) = self.marked_angle {
+                if let Some(MarkedAngle::Points([first, vertex, last])) = self.marked_angle {
                     ui.label(format!("Marked angle: {first}–{vertex}–{last}"));
+                }
+                if let Some(MarkedAngle::Value(id)) = self.marked_angle {
+                    ui.label(format!("Marked angle value: {id}"));
                 }
                 if let Some([origin, base, target]) = self.marked_ratio {
                     ui.label(format!("Marked ratio: {origin}–{base}–{target}"));
@@ -6230,8 +6295,8 @@ impl Editor {
                 ui.heading("Calculate");
                 ui.text_edit_singleline(&mut self.calculation_draft);
                 ui.label(
-                    if self.doc.selected.len() == 2 {
-                        "Two selected lengths: a + b, a - b, a * b, or a / b, in selection order"
+                    if self.doc.selected.len() >= 2 {
+                        "Use v1, v2, … in selection order; a and b also name the first two values"
                     } else if self.doc.selected.len() == 1
                         && self.doc.selected.iter().next().is_some_and(|&id| {
                             self.doc
@@ -6240,13 +6305,16 @@ impl Editor {
                                 .is_some_and(|object| object.kind.is_distance_value())
                         })
                     {
-                        "Selected length × factor (0–99) or ÷ divisor (1–99); also supports two integers"
-                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_) | Kind::ParameterCalculation(_, _)))) {
-                        "Use the selected parameter by name, or a selected calculation as v"
+                        "Selected length: × factor, ÷ divisor, or an expression using v"
+                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| object.kind.numeric_unit().is_some())) {
+                        "Use a parameter by name, or a selected numeric value as v; degree literals use °"
                     } else {
-                        "Enter two integers from 0 to 99 with +, -, *, or /"
+                        "Enter numbers, arithmetic, functions, pi/π, e, and degree literals"
                     },
                 );
+                if self.doc.selected.iter().all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {
+                    ui.label("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e");
+                }
                 ui.horizontal(|ui| {
                     apply = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -6256,25 +6324,7 @@ impl Editor {
                 self.calculation_dialog = false;
             }
             if apply {
-                let row = self
-                    .doc
-                    .objects
-                    .iter()
-                    .filter(|object| {
-                        !object.deleted
-                            && object.page == self.doc.active_page
-                            && (object.kind.is_measurement()
-                                || matches!(
-                                    object.kind,
-                                    Kind::Parameter(_)
-                                        | Kind::Calculation(_)
-                                        | Kind::MeasuredCalculation(_, _)
-                                        | Kind::LengthPairCalculation(_, _, _)
-                                        | Kind::ParameterCalculation(_, _)
-                                ))
-                    })
-                    .count();
-                let y = (5usize + row * 33).min(i16::MAX as usize) as i16;
+                let (_, y) = self.doc.next_calculation_anchor();
                 let selected_length = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
                         self.doc
@@ -6287,12 +6337,10 @@ impl Editor {
                 };
                 let selected_parameter = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
-                        self.doc.objects.get(id - 1).is_some_and(|object| {
-                            matches!(
-                                object.kind,
-                                Kind::Parameter(_) | Kind::ParameterCalculation(_, _)
-                            )
-                        })
+                        self.doc
+                            .objects
+                            .get(id - 1)
+                            .is_some_and(|object| object.kind.numeric_unit().is_some())
                     })
                 } else {
                     None
@@ -6308,36 +6356,45 @@ impl Editor {
                     .copied()
                     .filter(|id| self.doc.selected.contains(id))
                     .collect::<Vec<_>>();
-                let result = if self.doc.selected.len() == 2 && pair_ids.len() == 2 {
+                let result = if self.doc.selected.len() >= 2 && pair_ids.len() >= 2 {
                     let compact = draft
                         .chars()
                         .filter(|ch| !ch.is_whitespace())
                         .collect::<String>();
-                    match compact.as_str() {
-                        "a+b" => self.doc.add_length_pair_calculation(
-                            pair_ids[0],
-                            pair_ids[1],
-                            false,
-                            (10, y),
-                        ),
-                        "a-b" | "a−b" => self.doc.add_length_pair_calculation(
-                            pair_ids[0],
-                            pair_ids[1],
-                            true,
-                            (10, y),
-                        ),
-                        "a*b" | "a×b" | "a·b" => {
-                            self.doc
-                                .add_length_pair_operation(pair_ids[0], pair_ids[1], 2, (10, y))
+                    if pair_ids.len() == 2
+                        && pair_ids
+                            .iter()
+                            .all(|id| self.doc.objects[*id - 1].kind.is_distance_value())
+                    {
+                        match compact.as_str() {
+                            "a+b" => self.doc.add_length_pair_calculation(
+                                pair_ids[0],
+                                pair_ids[1],
+                                false,
+                                (10, y),
+                            ),
+                            "a-b" | "a−b" => self.doc.add_length_pair_calculation(
+                                pair_ids[0],
+                                pair_ids[1],
+                                true,
+                                (10, y),
+                            ),
+                            "a*b" | "a×b" | "a·b" => self.doc.add_length_pair_operation(
+                                pair_ids[0],
+                                pair_ids[1],
+                                2,
+                                (10, y),
+                            ),
+                            "a/b" | "a÷b" => self.doc.add_length_pair_operation(
+                                pair_ids[0],
+                                pair_ids[1],
+                                3,
+                                (10, y),
+                            ),
+                            _ => self.doc.add_multi_calculation(&pair_ids, draft, (10, y)),
                         }
-                        "a/b" | "a÷b" => {
-                            self.doc
-                                .add_length_pair_operation(pair_ids[0], pair_ids[1], 3, (10, y))
-                        }
-                        _ => Err(
-                            "Enter a + b, a - b, a * b, or a / b for the two selected lengths"
-                                .into(),
-                        ),
+                    } else {
+                        self.doc.add_multi_calculation(&pair_ids, draft, (10, y))
                     }
                 } else if let Some((source, (factor, divide))) = selected_length.zip(measured) {
                     factor
@@ -6372,7 +6429,8 @@ impl Editor {
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
                 ui.heading("Iterate");
-                ui.label("Select a free point and translated or rotated image. Add their segment, ray with a depth parameter, or parameter, calculation, and attached numeric label. Select another integer parameter to control numeric iteration depth. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter.");
+                ui.label("Select a free seed point and its translated, rotated, dilated, or reflected image. Add a scalar parameter or calculation for live point depth, or their segment or circle with an optional depth value. Rays also accept a scalar parameter or calculation for live depth.");
+                ui.label("For numeric mappings, also select the parameter, calculation, and attached label, with an optional separate depth value. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter.");
                 ui.horizontal(|ui| {
                     ui.label("Depth");
                     ui.text_edit_singleline(&mut self.iteration_depth_draft);
@@ -6410,7 +6468,7 @@ impl Editor {
                     ui.label("Value");
                     ui.text_edit_singleline(&mut self.parameter_value_draft);
                 });
-                ui.label("Value: -99.99 to 99.99, up to two decimal places");
+                ui.label("Finite values, up to 32 native numeric tokens");
                 ui.horizontal(|ui| {
                     apply = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -6461,7 +6519,7 @@ impl Editor {
                     ui.label("Value");
                     ui.text_edit_singleline(&mut self.parameter_value_draft);
                 });
-                ui.label("-99.99 to 99.99, up to two decimal places");
+                ui.label("Finite values, up to 32 native numeric tokens");
                 ui.horizontal(|ui| {
                     apply = ui.button("Apply").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -7141,8 +7199,11 @@ impl Editor {
                     ui.radio_value(&mut use_marked, true, "Marked angle");
                 });
                 if use_marked {
-                    if let Some([first, vertex, last]) = self.marked_angle {
+                    if let Some(MarkedAngle::Points([first, vertex, last])) = self.marked_angle {
                         ui.label(format!("Point {first} → {vertex} → {last}"));
+                    }
+                    if let Some(MarkedAngle::Value(id)) = self.marked_angle {
+                        ui.label(format!("Calculated angle {id}"));
                     }
                 } else {
                     ui.horizontal(|ui| {
@@ -7210,7 +7271,7 @@ mod tests {
         assert!(matches!(
             editor.doc.objects[8].kind,
             Kind::BranchingPolygonIteration {
-                depth: IterationDepth::Parameter(8),
+                depth: IterationDepth::Value(8),
                 ..
             }
         ));
@@ -7296,6 +7357,51 @@ mod tests {
     }
 
     #[test]
+    fn numeric_iteration_selection_maps_second_formula_source() {
+        let mut document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_iteration_multi_port.gsp"),
+            None,
+        )
+        .unwrap();
+        document.selected.insert(7);
+        document.clear_selected().unwrap();
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![6, 2, 3, 1, 5];
+        editor
+            .doc
+            .selected
+            .extend(editor.selection_order.iter().copied());
+        editor.iterate_selected(3);
+        let iteration = editor
+            .doc
+            .objects
+            .iter()
+            .find(|object| !object.deleted && matches!(object.kind, Kind::PointParameterIteration(..)))
+            .unwrap();
+        assert!(matches!(
+            iteration.kind,
+            Kind::PointParameterIteration(
+                1,
+                3,
+                2,
+                5,
+                6,
+                sketchpad_rs::document::IterationDepth::Fixed(3)
+            )
+        ));
+        assert_eq!(
+            editor
+                .doc
+                .point_parameter_iteration_labels(iteration.id)
+                .unwrap()
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>(),
+            ["5.00", "7.00", "9.00"]
+        );
+    }
+
+    #[test]
     fn numeric_iteration_selection_uses_calculation_source_and_distinct_depth() {
         let mut document = Document::new();
         let seed = document.add(Kind::Free(Point { x: 100., y: 180. }));
@@ -7328,7 +7434,7 @@ mod tests {
                 image,
                 calculation,
                 label,
-                sketchpad_rs::document::IterationDepth::Parameter(depth_parameter)
+                sketchpad_rs::document::IterationDepth::Value(depth_parameter)
             )
         );
         assert_eq!(
@@ -7369,6 +7475,250 @@ mod tests {
     }
 
     #[test]
+    fn calculated_marked_angle_and_depth_create_regular_polygon() {
+        let mut document = Document::new();
+        let n = document.add_named_parameter("n", 5., (10, 5)).unwrap();
+        let center = document.add(Kind::Free(Point { x: 200., y: 160. }));
+        let depth = document
+            .add_parameter_calculation(n, "n-1", (10, 35))
+            .unwrap();
+        let seed = document.add(Kind::Free(Point { x: 250., y: 160. }));
+        let angle = document
+            .add_parameter_calculation(n, "360°/n", (10, 65))
+            .unwrap();
+        let mut editor = Editor::new(document);
+        editor.select_only(angle);
+        editor.mark_angle_selected();
+        assert_eq!(editor.marked_angle, Some(MarkedAngle::Value(angle)));
+        editor.select_only(seed);
+        editor.selection_order.push(center);
+        editor.doc.selected.insert(center);
+        editor.rotate_selected();
+        let image = editor.doc.objects.len();
+        assert_eq!(
+            editor.doc.objects[image - 1].kind,
+            Kind::CalculatedAngleRotatedPoint(seed, center, angle)
+        );
+        let segment = editor.doc.add(Kind::Segment(seed, image));
+        editor.doc.selected.clear();
+        editor.doc.selected.extend([depth, seed, image, segment]);
+        editor.selection_order = vec![segment, depth, image, seed];
+        editor.iterate_selected(4);
+        let iteration = 8;
+        assert_eq!(
+            editor.doc.objects[iteration - 1].kind,
+            Kind::SegmentIteration(seed, image, segment, IterationDepth::Value(depth))
+        );
+        editor.doc.set_parameter_value(n, 6.).unwrap();
+        let lines = editor.doc.segment_iteration_images(iteration).unwrap();
+        assert_eq!(lines.len(), 5);
+        assert!(
+            lines
+                .last()
+                .unwrap()
+                .1
+                .distance(editor.doc.position(seed).unwrap())
+                < 1e-9
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
+        let bytes =
+            include_bytes!("../tests/fixtures/point_calculated_rotation_live_depth_port.gsp");
+        let mut document = Document::from_bytes(bytes, None).unwrap();
+        document.selected.insert(7);
+        document.clear_selected().unwrap();
+        let mut editor = Editor::new(document);
+        editor.doc.selected.extend([3, 6, 5]);
+        editor.selection_order = vec![5, 6, 3];
+        editor.iterate_selected(4);
+        let id = *editor.doc.selected.iter().next().unwrap();
+        assert!(matches!(
+            editor.doc.objects[id - 1].kind,
+            Kind::PointIteration(3, 6, IterationDepth::Value(5))
+        ));
+        editor.doc.set_parameter_value(1, 6.).unwrap();
+        assert_eq!(editor.doc.point_iteration_images(id).unwrap().len(), 5);
+        let literal = editor
+            .doc
+            .add_calculation_expression("2+3", (10, 150))
+            .unwrap();
+        editor.doc.selected.clear();
+        editor.doc.selected.extend([3, 6, literal]);
+        editor.selection_order = vec![literal, 3, 6];
+        editor.iterate_selected(4);
+        let live = *editor.doc.selected.iter().next().unwrap();
+        assert!(
+            matches!(editor.doc.objects[live-1].kind,Kind::PointIteration(3,6,IterationDepth::Value(value)) if value==literal)
+        );
+        assert_eq!(editor.doc.point_iteration_images(live).unwrap().len(), 5);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn measured_angle_and_arc_angle_can_be_marked_and_iterated() {
+        for arc in [false, true] {
+            let mut doc = Document::new();
+            let seed = doc.add(Kind::Free(Point { x: 220., y: 180. }));
+            let center = doc.add(Kind::Free(Point { x: 160., y: 180. }));
+            let first = doc.add(Kind::Free(Point { x: 250., y: 160. }));
+            let vertex = doc.add(Kind::Free(Point { x: 200., y: 160. }));
+            let last = doc.add(Kind::Free(Point { x: 200., y: 110. }));
+            let angle = if arc {
+                let path = doc.add(Kind::ThreePointArc(first, vertex, last));
+                doc.add(Kind::ArcAngle(path))
+            } else {
+                doc.add(Kind::AngleMeasurement(first, vertex, last))
+            };
+            let mut editor = Editor::new(doc);
+            editor.selection_order = vec![angle];
+            editor.doc.selected.insert(angle);
+            editor.mark_angle_selected();
+            assert_eq!(editor.marked_angle, Some(MarkedAngle::Value(angle)));
+            editor.selection_order = vec![seed, center];
+            editor.doc.selected.extend([seed, center]);
+            editor.rotate_selected();
+            let image = *editor.doc.selected.iter().next().unwrap();
+            assert_eq!(
+                editor.doc.objects[image - 1].kind,
+                Kind::CalculatedAngleRotatedPoint(seed, center, angle)
+            );
+            editor.selection_order = vec![seed, image];
+            editor.doc.selected.insert(seed);
+            editor.iterate_selected(3);
+            let iteration = *editor.doc.selected.iter().next().unwrap();
+            assert_eq!(
+                editor.doc.point_iteration_images(iteration).unwrap().len(),
+                3
+            );
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn selected_marked_images_create_live_geometry_iterations() {
+        for mapping in 0..4 {
+            let mut doc = Document::new();
+            let seed = doc.add(Kind::Free(Point { x: 120., y: 180. }));
+            let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+            let b = doc.add(Kind::Free(Point { x: 100., y: 160. }));
+            let distance = doc.add(Kind::PointDistance(a, b));
+            let image = doc.add(match mapping {
+                0 => Kind::MarkedDistanceTranslatedPoint(seed, distance, 0.),
+                1 => Kind::MixedRectangularTranslatedPoint(seed, distance, 0.25, true),
+                2 => Kind::RectangularMarkedTranslatedPoint(seed, distance, distance),
+                _ => Kind::AngleRotatedPoint(seed, a, seed, a, b),
+            });
+            let mut editor = Editor::new(doc);
+            editor.selection_order = vec![image, seed];
+            editor.doc.selected.extend([seed, image]);
+            editor.iterate_selected(3);
+            let iteration = *editor.doc.selected.iter().next().unwrap();
+            assert!(matches!(
+                editor.doc.objects[iteration - 1].kind,
+                Kind::PointIteration(..)
+            ));
+            assert_eq!(
+                editor.doc.point_iteration_images(iteration).unwrap().len(),
+                3
+            );
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn selected_reflection_and_shared_vector_create_iterations() {
+        for vector in [false, true] {
+            let mut doc = Document::new();
+            let seed = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+            let a = doc.add(Kind::Free(Point { x: 140., y: 80. }));
+            let b = doc.add(Kind::Free(Point { x: 140., y: 260. }));
+            let mirror = doc.add(Kind::Line(a, b));
+            let image = doc.add(if vector {
+                Kind::VectorTranslatedPoint(seed, seed, b)
+            } else {
+                Kind::ReflectedPoint(seed, mirror)
+            });
+            let mut editor = Editor::new(doc);
+            editor.selection_order = vec![image, seed];
+            editor.doc.selected.extend([seed, image]);
+            editor.iterate_selected(3);
+            let points = editor.doc.point_iteration_images(6).unwrap();
+            if vector {
+                assert_eq!(points, vec![Point { x: 140., y: 260. }; 3]);
+            } else {
+                assert_eq!(
+                    points,
+                    vec![
+                        Point { x: 100., y: 180. },
+                        Point { x: 180., y: 180. },
+                        Point { x: 100., y: 180. }
+                    ]
+                );
+            }
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
+    }
+
+    #[test]
+    fn selected_dilated_image_creates_point_and_circle_iterations() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 220., y: 180. }));
+        let center = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let image = doc.add(Kind::ScaledPoint(seed, center, 0.5));
+        let circle = doc.add(Kind::Circle(seed, image));
+        let mut editor = Editor::new(doc);
+        editor.selection_order = vec![image, seed];
+        editor.doc.selected.extend([seed, image]);
+        editor.iterate_selected(4);
+        assert_eq!(
+            editor.doc.point_iteration_images(5).unwrap()[0],
+            Point { x: 130., y: 180. }
+        );
+        editor.selection_order = vec![circle, image, seed];
+        editor.doc.selected = [circle, image, seed].into_iter().collect();
+        editor.iterate_selected(3);
+        let binding = editor
+            .doc
+            .objects
+            .iter()
+            .find(|o| matches!(o.kind, Kind::IterationBinding(source, _) if source == circle))
+            .unwrap()
+            .id;
+        assert_eq!(
+            editor.doc.circle_iteration_images(binding).unwrap()[0],
+            (Point { x: 160., y: 180. }, 30.)
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
     fn selected_rotation_creates_point_iteration() {
         let mut document = Document::new();
         let seed = document.add(Kind::Free(Point { x: 350., y: 180. }));
@@ -7380,13 +7730,97 @@ mod tests {
         editor.iterate_selected(4);
         assert_eq!(
             editor.doc.objects[3].kind,
-            Kind::PointIteration(seed, image, 4)
+            Kind::PointIteration(seed, image, IterationDepth::Fixed(4))
         );
         assert_eq!(editor.doc.point_iteration_images(4).unwrap().len(), 4);
         assert_eq!(
             editor.doc.selected.iter().copied().collect::<Vec<_>>(),
             vec![4]
         );
+    }
+
+    #[test]
+    fn source_free_angle_can_be_marked_and_used_for_rotation() {
+        let mut doc = Document::new();
+        let angle = doc
+            .add_calculation_expression("asin(.5)", (10, 30))
+            .unwrap();
+        let center = doc.add(Kind::Free(Point { x: 250., y: 180. }));
+        let seed = doc.add(Kind::Free(Point { x: 310., y: 180. }));
+        let mut editor = Editor::new(doc);
+        editor.select_only(angle);
+        editor.mark_angle_selected();
+        assert!(matches!(editor.marked_angle, Some(MarkedAngle::Value(id)) if id == angle));
+        assert!(editor.doc.selected.is_empty());
+        let image = editor
+            .doc
+            .add_calculated_angle_rotation(seed, center, angle)
+            .unwrap();
+        assert!(editor.doc.position(image).unwrap().y < 180.);
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn selected_circle_iteration_fixed_live_and_picking() {
+        for live in [false, true] {
+            let mut document = Document::new();
+            let seed = document.add(Kind::Free(Point { x: 100., y: 160. }));
+            let image = document.add(Kind::FixedRectangularTranslatedPoint(
+                seed,
+                37.79527559055118,
+                0.5,
+                37.79527559055118,
+                0.,
+            ));
+            let circle = document.add(Kind::Circle(seed, image));
+            let mut selected = vec![circle, image, seed];
+            let count = if live {
+                let id = document.add_named_parameter("n", 3., (10, 30)).unwrap();
+                selected.push(id);
+                Some(id)
+            } else {
+                None
+            };
+            let mut editor = Editor::new(document);
+            editor.selection_order = selected.clone();
+            editor.doc.selected.extend(selected);
+            editor.iterate_selected(3);
+            let iteration = if live { 5 } else { 4 };
+            assert_eq!(
+                editor.doc.objects[iteration - 1].kind,
+                Kind::CircleIteration(
+                    seed,
+                    image,
+                    circle,
+                    count.map_or(IterationDepth::Fixed(3), IterationDepth::Value)
+                )
+            );
+            let binding = iteration + 2;
+            let viewport = Viewport {
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.)),
+                scale: 2.,
+                center: Point { x: 200., y: 160. },
+            };
+            let (center, radius) = editor.doc.circle_iteration_images(binding).unwrap()[2];
+            let at = viewport.screen(Point {
+                x: center.x,
+                y: center.y + radius,
+            });
+            assert_eq!(editor.hit(&viewport, at), Some(binding));
+            editor.doc.selected.clear();
+            editor.doc.selected.insert(binding);
+            editor.doc.set_selected_visibility(false);
+            assert_ne!(editor.hit(&viewport, at), Some(binding));
+            assert!(
+                !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                    .unwrap()
+                    .partial_view
+            );
+        }
     }
 
     #[test]
@@ -7402,7 +7836,7 @@ mod tests {
         editor.iterate_selected(4);
         assert_eq!(
             editor.doc.objects[4].kind,
-            Kind::SegmentIteration(seed, image, segment, 4)
+            Kind::SegmentIteration(seed, image, segment, IterationDepth::Fixed(4))
         );
         assert_eq!(editor.doc.segment_iteration_images(5).unwrap().len(), 4);
         assert_eq!(
@@ -7429,12 +7863,36 @@ mod tests {
         editor.iterate_selected(4);
         assert_eq!(
             editor.doc.objects[3].kind,
-            Kind::SegmentIteration(seed, image, segment, 4)
+            Kind::SegmentIteration(seed, image, segment, IterationDepth::Fixed(4))
         );
         assert_eq!(
             editor.doc.selected.iter().copied().collect::<Vec<_>>(),
             vec![4]
         );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn calculated_rotation_ray_and_scalar_formula_create_live_iteration() {
+        let bytes = include_bytes!("../tests/fixtures/ray_calculated_rotation_live_depth_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        doc.selected.insert(8);
+        doc.clear_selected().unwrap();
+        let mut editor = Editor::new(doc);
+        editor.doc.selected.extend([3, 6, 7, 5]);
+        editor.selection_order = vec![7, 5, 6, 3];
+        editor.iterate_selected(4);
+        let id = *editor.doc.selected.iter().next().unwrap();
+        assert_eq!(
+            editor.doc.objects[id - 1].kind,
+            Kind::RayIteration(3, 6, 7, 5)
+        );
+        editor.doc.set_parameter_value(1, 6.).unwrap();
+        assert_eq!(editor.doc.ray_iteration_images(id).unwrap().len(), 5);
         assert!(
             !Document::from_bytes(&editor.doc.encode().unwrap(), None)
                 .unwrap()
@@ -7814,6 +8272,7 @@ mod tests {
                 .center();
             editor.click(&viewport, click, false);
             assert_eq!(editor.doc.active_page, destination_page);
+            assert_eq!(Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap().active_page, destination_page);
         }
     }
 
@@ -8045,6 +8504,97 @@ mod tests {
     }
 
     #[test]
+    fn scalar_measurement_precision_reaches_desktop_and_svg_captions() {
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        for (bytes, expected) in [
+            (
+                include_bytes!("../tests/fixtures/scalar_precision_point_value_iteration_port.gsp")
+                    .as_slice(),
+                "Value of Point = 0.25000",
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/scalar_precision_point_value_iteration_edited_port.gsp"
+                )
+                .as_slice(),
+                "Value of Point = 1",
+            ),
+        ] {
+            let editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+            assert!(editor.overlay_rows().contains(&(5, expected.into())));
+            let svg = sketchpad_rs::render::svg_page(&editor.doc, &viewport).unwrap();
+            assert!(svg.contains(&format!(">{expected}</text>")));
+        }
+        let mut editor = Editor::new(
+            Document::from_bytes(
+                include_bytes!("../tests/fixtures/scalar_precision_coordinates_port.gsp"),
+                None,
+            )
+            .unwrap(),
+        );
+        assert!(
+            editor
+                .overlay_rows()
+                .iter()
+                .any(|(id, text)| *id == 11 && text.ends_with(" = 1"))
+        );
+        assert!(
+            editor
+                .overlay_rows()
+                .contains(&(14, "Slope = 0.0000".into()))
+        );
+        let svg = sketchpad_rs::render::svg_page(&editor.doc, &viewport).unwrap();
+        assert!(svg.contains("Slope = 0.0000</text>"));
+        editor.doc.set_measurement_precision(&[14], 0).unwrap();
+        assert!(editor.overlay_rows().contains(&(14, "Slope = 0".into())));
+        editor.doc.move_point(2, Point { x: 150., y: 175. });
+        assert!(
+            editor
+                .overlay_rows()
+                .contains(&(14, "Slope = undefined".into()))
+        );
+    }
+
+    #[test]
+    fn measurement_precision_overlay_and_svg_share_saved_digits() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/measurement_precision_basic_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(document);
+        let rows = editor.overlay_rows();
+        assert!(rows.contains(&(4, "Length = 1 cm".into())));
+        assert!(rows.contains(&(7, "Radius = 1.32292 cm".into())));
+        let viewport = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        let svg = sketchpad_rs::render::svg_page(&editor.doc, &viewport).unwrap();
+        assert!(svg.contains("Length = 1 cm</text>"));
+        assert!(svg.contains("Radius = 1.32292 cm</text>"));
+        editor.doc.set_measurement_precision(&[4, 7], 3).unwrap();
+        assert!(
+            editor
+                .overlay_rows()
+                .contains(&(4, "Length = 1.323 cm".into()))
+        );
+        assert!(
+            editor
+                .overlay_rows()
+                .contains(&(7, "Radius = 1.323 cm".into()))
+        );
+        let svg = sketchpad_rs::render::svg_page(&editor.doc, &viewport).unwrap();
+        assert!(svg.contains("Length = 1.323 cm</text>"));
+        assert!(svg.contains("Radius = 1.323 cm</text>"));
+    }
+
+    #[test]
     fn one_host_measurements_work_on_multi_page_sketch() {
         let document = Document::from_bytes(
             include_bytes!("../tests/fixtures/two_page_blank_native.gsp"),
@@ -8121,7 +8671,12 @@ mod tests {
         assert_eq!(editor.selection_order, vec![5, 6, 7]);
         assert_eq!(
             editor.doc.encode().unwrap(),
-            include_bytes!("../tests/fixtures/two_page_pasted_segment_first_page_port.gsp")
+            {
+                let mut expected = include_bytes!("../tests/fixtures/two_page_pasted_segment_first_page_port.gsp").to_vec();
+                let record = sketchpad_rs::document::records(&expected).unwrap().into_iter().find(|r| r.kind == 0x0384).unwrap();
+                expected[record.data.start + 16..record.data.start + 18].copy_from_slice(&0_u16.to_le_bytes());
+                expected
+            }
         );
     }
 
@@ -8615,7 +9170,7 @@ mod tests {
         let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
             panic!("Expected parameter")
         };
-        assert!((group.value() - 99.99).abs() < 1e-9);
+        assert!((group.value() - 100.).abs() < 1e-9);
         editor.tick_animation(0.1);
         assert_eq!(editor.animations.len(), 1);
         let Kind::Parameter(group) = &editor.doc.objects[0].kind else {
@@ -9033,7 +9588,10 @@ mod tests {
         editor.selection_order.extend([vertex, last]);
         editor.doc.selected.extend([vertex, last]);
         editor.mark_angle_selected();
-        assert_eq!(editor.marked_angle, Some([first, vertex, last]));
+        assert_eq!(
+            editor.marked_angle,
+            Some(MarkedAngle::Points([first, vertex, last]))
+        );
         assert!(editor.selection_order.is_empty());
         assert_eq!(editor.doc.encode().unwrap(), before);
 
@@ -9061,7 +9619,7 @@ mod tests {
         let segment = editor.doc.add(Kind::Segment(a, b));
         let circle = editor.doc.add(Kind::Circle(a, b));
         editor.marked_center = Some(center);
-        editor.marked_angle = Some([first, vertex, last]);
+        editor.marked_angle = Some(MarkedAngle::Points([first, vertex, last]));
         editor.rotation_use_marked = true;
         editor.select_only(segment);
         editor.rotate_selected();
@@ -9245,7 +9803,7 @@ mod tests {
         let base = editor.doc.add(Kind::Free(Point { x: 230., y: 100. }));
         let target = editor.doc.add(Kind::Free(Point { x: 205., y: 100. }));
         editor.marked_center = Some(center);
-        editor.marked_angle = Some([first, vertex, last]);
+        editor.marked_angle = Some(MarkedAngle::Points([first, vertex, last]));
         editor.marked_ratio = Some([origin, base, target]);
 
         editor.rotation_angle = 90.;

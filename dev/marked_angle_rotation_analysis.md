@@ -27,3 +27,11 @@ point to `(290, 190)`, and Sketchpad renders the rotated point at its new
 position. This implementation covers angles marked from three points and
 rotation of points; segment and circle extensions are documented in
 `dev/rotation_shapes_analysis.md`. Other angle sources and object types remain.
+
+## Direct measured angle values
+
+Transform > Mark Angle now accepts a selected three-point angle or arc-angle measurement directly, in addition to a degree-valued calculation. The numeric angle uses code 29 with references `[source point, center point, numeric angle]`, distinct from the five-reference code-28 three-point mapping. Import, creation, save validation, and the iteration mapping predicate accept any supported degree-valued numeric kind. The numeric measurement remains an external input during iteration, including an arc whose endpoint is the seed.
+
+`tests/replay_measured_angle_rotation.txt` creates a 90° measured-angle segment iteration, edits its angle to 135°, and creates a circle iteration driven by a measured arc angle before and after changing the arc endpoint. The circle has live depth n=3.5, truncated to three steps. All four generated original/edited files open, display their corresponding orbits, and save byte-identically in Sketchpad 5.
+
+`dev/measured_angle_rotation_wine_setup.sh`, used as `SKETCHPAD_WINE_SETUP_SCRIPT` with `dev/wine_roundtrip.sh`, selects the measurement in `measured_angle_rotation_base_port.gsp`, marks it and the center, and creates a native rotation. Its durable result is `tests/fixtures/measured_angle_rotation_native.gsp`. That native rotation's complete 68-byte object group is identical to the port-generated object. Regression tests compare these groups, preserve the native file, check source edits, undefined measurement recovery, dependency deletion, copy/paste, saved fractional depth, and desktop Mark Angle → Rotate → Iterate selection.

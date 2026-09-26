@@ -71,3 +71,11 @@ The replay also creates a page-1 Hide/Show button and a page-2 Page Link to it i
 `tests/replay_multi_page_presentation.txt` adds a page-2 Presentation button targeting two page-2 Hide/Show buttons. It writes their page-local action ordinals, and the generated file opened and saved byte-identically in native Sketchpad 5. A native click ran both parent actions and hid their targets while leaving page 1 unchanged.
 
 `tests/replay_multi_page_action_clear.txt` removes a Hide/Show parent, a target point with dependent objects, or an unrelated constrained point from the page-2 Presentation fixture. All three results opened and saved byte-identically in Sketchpad 5. Removing the parent also removes its dependent Presentation button. Removing the constrained point shifts both Hide/Show buttons and Presentation references down one local ordinal; clicking the surviving Presentation in native Sketchpad still hid both parent targets. The deletion writer now accepts `0x0906` action payload records while remapping the surviving `0x07d2` references. Page Link deletion remains guarded.
+
+## Selected page when reopening
+
+Ordinary saves now update the u16 initial-page index at payload offset 16 of the global `0384` record. This is applied after content encoding for all save paths, including view-only page changes with `dirty=false`, edits on existing pages, added pages, and save after page undo/redo. The selected index and page count are validated before writing. Other header bytes and page-local object references remain intact.
+
+A native-verified copy with index 1 opens on the second page and shows its 1.323 cm measurement; index 0 opens on the first page and shows its zero-decimal measurement. `tests/replay_page_selection.txt` generates both selected views and an added third page after undo/redo. Native Sketchpad displays the intended page and saves the generated files byte-identically. The native selected-page fixture is `two_page_selection_native_verified.gsp`.
+
+Regression tests cover unchanged native byte preservation, navigation without a content edit, explicit save/reopen, invalid indices, content edits on both pages, added-page undo/redo, and navigation through Page Link buttons. Earlier construction/action tests retain their complete byte comparison, with only the expected native initial-page field updated to the selected view.

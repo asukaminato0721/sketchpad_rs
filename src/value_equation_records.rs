@@ -237,7 +237,7 @@ pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
                 || !matches!(aux[12..14], [0x0a, 0] | [0x4a, 0])
                 || aux[18..22] != [0x3c, 0x30, 0x3e, 0]
                 || u32_at(aux, 24) != 6
-                || u16::from_le_bytes(aux[28..30].try_into().unwrap()) != 2
+                || u16::from_le_bytes(aux[28..30].try_into().unwrap()) > 5
             {
                 return Err("Unsupported Value of Point format".into());
             }

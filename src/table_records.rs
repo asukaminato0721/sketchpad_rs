@@ -23,8 +23,7 @@ const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
 const PARAMETER_CALCULATION_NATIVE: &[u8] =
     include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
 
-/// Numeric display rounding observed in Sketchpad: halfway values round away from zero.
-pub fn format_numeric_value(value: f64, precision: usize) -> String {
+fn format_fixed_numeric_value(value: f64, precision: usize) -> String {
     let factor = 10_f64.powi(i32::try_from(precision).unwrap_or(i32::MAX));
     let displayed = if factor.is_finite() && value.abs() <= f64::MAX / factor {
         (value * factor).round() / factor
@@ -32,6 +31,74 @@ pub fn format_numeric_value(value: f64, precision: usize) -> String {
         value
     };
     format!("{displayed:.precision$}")
+}
+
+/// Native numeric captions round halfway values away from zero and use scientific
+/// notation only when the unrounded magnitude is greater than one million.
+pub fn format_numeric_value(value: f64, precision: usize) -> String {
+    if !value.is_finite() || value.abs() <= 1e6 {
+        return format_fixed_numeric_value(value, precision);
+    }
+    let mut exponent = value.abs().log10().floor() as i32;
+    let mut mantissa = value / 10_f64.powi(exponent);
+    let factor = 10_f64.powi(precision as i32);
+    if (mantissa.abs() * factor).round() / factor >= 10. {
+        exponent += 1;
+        mantissa /= 10.;
+    }
+    let exponent = exponent
+        .to_string()
+        .chars()
+        .map(|digit| match digit {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            '-' => '⁻',
+            _ => unreachable!(),
+        })
+        .collect::<String>();
+    format!(
+        "{} · 10{exponent}",
+        format_fixed_numeric_value(mantissa, precision)
+    )
+}
+
+fn calculation_precision(bytes: &[u8]) -> Result<usize, String> {
+    let record = records(bytes, 0)?
+        .into_iter()
+        .find(|record| record.kind == 0x0907)
+        .ok_or("Missing calculation precision")?;
+    let field = bytes
+        .get(record.payload + 28..record.payload + 30)
+        .ok_or("Missing calculation precision")?;
+    let precision = u16::from_le_bytes(field.try_into().unwrap());
+    if precision > 5 {
+        return Err("Calculation precision must be from 0 to 5".into());
+    }
+    Ok(usize::from(precision))
+}
+
+fn calculation_bytes_with_precision(bytes: &[u8], precision: u16) -> Result<Vec<u8>, String> {
+    if precision > 5 {
+        return Err("Calculation precision must be from 0 to 5".into());
+    }
+    let record = records(bytes, 0)?
+        .into_iter()
+        .find(|record| record.kind == 0x0907)
+        .ok_or("Missing calculation precision")?;
+    let mut updated = bytes.to_vec();
+    let field = updated
+        .get_mut(record.payload + 28..record.payload + 30)
+        .ok_or("Missing calculation precision")?;
+    field.copy_from_slice(&precision.to_le_bytes());
+    Ok(updated)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,30 +170,25 @@ pub struct ParameterGroup {
 }
 
 fn decimal_words(value: f64) -> Result<Vec<u16>, String> {
-    if !value.is_finite() || value.abs() > 99.99 {
-        return Err("Parameter value must be within -99.99 to 99.99".into());
+    if !value.is_finite() {
+        return Err("Parameter value must be finite".into());
     }
-    let cents = (value.abs() * 100.).round();
-    if (value.abs() * 100. - cents).abs() > 1e-7 {
-        return Err("Parameter value has more than two decimal places".into());
-    }
-    let cents = cents as u16;
-    let whole = cents / 100;
-    let fraction = cents % 100;
-    let mut words = Vec::new();
-    if value.is_sign_negative() && cents != 0 {
-        words.push(4097);
-    }
-    if whole >= 10 {
-        words.push(whole / 10);
-    }
-    words.push(whole % 10);
-    if fraction != 0 {
-        words.push(10);
-        words.push(fraction / 10);
-        if fraction % 10 != 0 {
-            words.push(fraction % 10);
-        }
+    let text = if value == 0. {
+        "0".into()
+    } else {
+        value.to_string()
+    };
+    let words = text
+        .chars()
+        .map(|ch| match ch {
+            '-' => Ok(4097),
+            '.' => Ok(10),
+            '0'..='9' => Ok(ch as u16 - '0' as u16),
+            _ => Err("Unsupported parameter number spelling"),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if words.len() > 32 {
+        return Err("Parameter value exceeds 32 native numeric tokens".into());
     }
     Ok(words)
 }
@@ -145,7 +207,7 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
         Some(index) => (&digits[..index], &digits[index + 1..]),
         None => (digits, &[][..]),
     };
-    if !(1..=6).contains(&whole.len())
+    if !(1..=32).contains(&whole.len())
         || fraction.len() > 30
         || decimal.is_some() && fraction.is_empty()
         || whole.iter().chain(fraction).any(|digit| *digit > 9)
@@ -153,20 +215,23 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
     {
         return Err("Unsupported parameter digits".into());
     }
-    let whole_value = whole
-        .iter()
-        .fold(0_u32, |value, digit| value * 10 + u32::from(*digit));
-    let mut place = 1.;
-    let mut value = f64::from(whole_value);
-    for digit in fraction {
-        place /= 10.;
-        value += f64::from(*digit) * place;
+    let mut text = String::new();
+    if negative {
+        text.push('-');
     }
-    let value = if negative { -value } else { value };
-    value
-        .is_finite()
-        .then_some(value)
-        .ok_or("Invalid parameter value".into())
+    for digit in whole {
+        text.push(char::from(b'0' + *digit as u8));
+    }
+    if decimal.is_some() {
+        text.push('.');
+        for digit in fraction {
+            text.push(char::from(b'0' + *digit as u8));
+        }
+    }
+    text.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| "Invalid parameter value".into())
 }
 
 impl ParameterGroup {
@@ -219,8 +284,9 @@ impl ParameterGroup {
                 _ => 8,
             })
             .sum::<i16>();
-        let value_extra = 4 * (i16::from(value.abs() >= 10.) + i16::from(value < 0.));
-        let width = 80 + letter_width + if group.precision() == 2 { 10 } else { 0 } + value_extra;
+        let whole_digits = value.abs().to_string().split('.').next().unwrap().len();
+        let value_extra = 4 * (whole_digits.saturating_sub(1) as i16 + i16::from(value < 0.));
+        let width = 80 + letter_width + 10 * group.precision().saturating_sub(1) as i16 + value_extra;
         updated[bbox + 4..bbox + 6].copy_from_slice(&(left + width).to_le_bytes());
         Self::parse(&updated)
     }
@@ -249,9 +315,7 @@ impl ParameterGroup {
         value_from_words(&words)?;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
-        if !(precision == 0 && step == 1.
-            || precision == 1 && step == 0.1
-            || precision == 2 && step == 0.01)
+        if precision > 5 || step != [1., 0.1, 0.01, 0.001, 0.0001, 0.00001][usize::from(precision)]
         {
             return Err("Unsupported parameter precision".into());
         }
@@ -366,6 +430,9 @@ impl ParameterGroup {
         value_from_words(&words).unwrap()
     }
 
+    pub fn value_text(&self) -> String {
+        format_numeric_value(self.value(), self.precision())
+    }
     pub fn animation_domain(&self) -> (f64, f64) {
         let rs = records(&self.bytes, 0).unwrap();
         let payload = &self.bytes[rs[1].payload..rs[1].end];
@@ -376,23 +443,26 @@ impl ParameterGroup {
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
-        if self.precision() == 0 && (value - value.round()).abs() > 1e-7 {
-            return Err("Integer parameter requires a whole number".into());
-        }
         let words = decimal_words(value)?;
-        let promote_precision =
-            self.precision() == 1 && (value * 10. - (value * 10.).round()).abs() > 1e-7;
+        let fractional_digits = words
+            .iter()
+            .position(|word| *word == 10)
+            .map_or(0, |at| words.len() - at - 1);
+        let precision = self.precision().max(fractional_digits.min(5));
         let old_value = self.value();
-        let extra = |value: f64| i32::from(value.abs() >= 10.) + i32::from(value < 0.);
+        let extra = |value: f64| {
+            let text = value.abs().to_string();
+            let digits = text.split('.').next().unwrap().len();
+            (digits.saturating_sub(1)) as i32 + i32::from(value < 0.)
+        };
         let width_delta =
-            4 * (extra(value) - extra(old_value)) + if promote_precision { 10 } else { 0 };
+            4 * (extra(value) - extra(old_value)) + 10 * (precision as i32 - self.precision() as i32);
         let rs = records(&self.bytes, 0)?;
         let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
-        if promote_precision {
-            payload[28..30].copy_from_slice(&2_u16.to_le_bytes());
-            payload[52..60].copy_from_slice(&0.01_f64.to_le_bytes());
-        }
+        payload[28..30].copy_from_slice(&(precision as u16).to_le_bytes());
+        payload[52..60]
+            .copy_from_slice(&[1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001][precision].to_le_bytes());
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
         }
@@ -412,7 +482,6 @@ impl ParameterGroup {
         self.bytes = updated;
         Ok(())
     }
-
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
         let at = rs[1].payload + 12;
@@ -496,6 +565,15 @@ pub struct LengthPairCalculationGroup {
 }
 
 impl LengthPairCalculationGroup {
+    pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
+        let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
+        *self = Self::parse(&updated)?;
+        Ok(())
+    }
+    pub fn precision(&self) -> usize {
+        calculation_precision(&self.bytes).unwrap()
+    }
+
     pub fn new(
         first: u32,
         second: u32,
@@ -522,6 +600,7 @@ impl LengthPairCalculationGroup {
         Self::parse(&bytes)
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        calculation_precision(bytes)?;
         let template = include_bytes!("../assets/length_sum_pair_group.bin");
         let rs = records(bytes, 0)?;
         if bytes.len() != template.len()
@@ -617,46 +696,177 @@ impl LengthPairCalculationGroup {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericUnit {
+    Scalar,
+    Degrees,
+    Length,
+    Area,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterCalculationGroup {
     bytes: Vec<u8>,
 }
 
+// Native calculator degree conversion, verified with tan(90).
+const CALCULATOR_PI: f64 = 3.1415926535898;
+
+const CALCULATION_FUNCTIONS: &[(&str, u16)] = &[
+    ("sin", 0x2000),
+    ("cos", 0x2001),
+    ("tan", 0x2002),
+    ("asin", 0x2003),
+    ("acos", 0x2004),
+    ("atan", 0x2005),
+    ("abs", 0x2006),
+    ("sqrt", 0x2007),
+    ("ln", 0x2008),
+    ("log", 0x2009),
+    ("sgn", 0x200a),
+    ("round", 0x200b),
+    ("trunc", 0x200c),
+];
+
+fn calculation_function_name(token: u16) -> Option<&'static str> {
+    CALCULATION_FUNCTIONS
+        .iter()
+        .find_map(|(name, code)| (*code == token).then_some(*name))
+}
+
 #[derive(Clone, Debug)]
 enum ParameterExpr {
-    Source,
+    Source(usize),
     Literal(f64, String),
     Binary(u16, Box<ParameterExpr>, Box<ParameterExpr>),
+    Call(u16, Box<ParameterExpr>),
+    Neg(Box<ParameterExpr>),
 }
 
 impl ParameterExpr {
     fn eval(&self, source: f64) -> Option<f64> {
+        let value = self.eval_raw(source)?;
+        value.is_finite().then_some(value)
+    }
+    fn eval_raw(&self, source: f64) -> Option<f64> {
+        self.eval_raw_values(&[source])
+    }
+    fn eval_raw_values(&self, sources: &[f64]) -> Option<f64> {
         let value = match self {
-            Self::Source => source,
+            Self::Source(index) => *sources.get(*index)?,
+            Self::Neg(argument) => -argument.eval_raw_values(sources)?,
             Self::Literal(value, _) => *value,
+            Self::Call(function, argument) => {
+                let value = argument.eval_raw_values(sources)?;
+                // Native calculator PI constant, present at executable offset 0x272690.
+                let angle = value / 180. * CALCULATOR_PI;
+                match function {
+                    0x2000 => angle.sin(),
+                    0x2001 => angle.cos(),
+                    0x2002 => angle.tan(),
+                    0x2003 => value.asin() / CALCULATOR_PI * 180.,
+                    0x2004 => value.acos() / CALCULATOR_PI * 180.,
+                    0x2005 => value.atan() / CALCULATOR_PI * 180.,
+                    0x2006 => value.abs(),
+                    0x2007 => value.sqrt(),
+                    0x2008 => value.ln(),
+                    0x2009 => value.log10(),
+                    0x200a => {
+                        if value == 0. {
+                            0.
+                        } else {
+                            value.signum()
+                        }
+                    }
+                    0x200b => (value + 0.5).floor(),
+                    0x200c => value.trunc(),
+                    _ => return None,
+                }
+            }
             Self::Binary(operator, left, right) => {
-                let left = left.eval(source)?;
-                let right = right.eval(source)?;
+                let left = left.eval_raw_values(sources)?;
+                let right = right.eval_raw_values(sources)?;
                 match operator {
                     0x1000 => left + right,
                     0x1001 => left - right,
                     0x1002 => left * right,
-                    0x1003 if right != 0. => left / right,
+                    0x1003 => left / right,
                     0x1004 => left.powf(right),
                     _ => return None,
                 }
             }
         };
-        value.is_finite().then_some(value)
+        Some(value)
+    }
+
+    fn unit(&self, source: NumericUnit) -> Result<NumericUnit, String> {
+        self.units(&[source])
+    }
+    fn units(&self, sources: &[NumericUnit]) -> Result<NumericUnit, String> {
+        use NumericUnit::{Area, Degrees, Length, Scalar};
+        match self {
+            Self::Source(index) => sources
+                .get(*index)
+                .copied()
+                .ok_or_else(|| "Missing calculation source units".into()),
+            Self::Neg(argument) => argument.units(sources),
+            Self::Literal(_, text) => Ok(if text.ends_with('°') {
+                Degrees
+            } else {
+                Scalar
+            }),
+            Self::Call(function, argument) => {
+                let unit = argument.units(sources)?;
+                match *function {
+                    0x2000..=0x2002 if matches!(unit, Scalar | Degrees) => Ok(Scalar),
+                    0x2003..=0x2005 if unit == Scalar => Ok(Degrees),
+                    0x2006 => Ok(unit),
+                    0x2007..=0x200c if unit == Scalar => Ok(Scalar),
+                    _ => Err("Function uses incompatible or unsupported units".into()),
+                }
+            }
+            Self::Binary(op, a, b) => {
+                let (left, right) = (a.units(sources)?, b.units(sources)?);
+                match *op {
+                    0x1000 | 0x1001 if left == right => Ok(left),
+                    0x1002 if left == Length && right == Length => Ok(Area),
+                    0x1003 if left == Area && right == Length => Ok(Length),
+                    0x1002 if left == Scalar => Ok(right),
+                    0x1002 if right == Scalar => Ok(left),
+                    0x1003 if right == Scalar => Ok(left),
+                    0x1003 if left == right => Ok(Scalar),
+                    0x1004 if left == Scalar && right == Scalar => Ok(Scalar),
+                    0x1004
+                        if right == Scalar
+                            && left == Length
+                            && matches!(&**b, Self::Literal(2., _)) =>
+                    {
+                        Ok(Area)
+                    }
+                    0x1004 if right == Scalar && matches!(&**b, Self::Literal(0., _)) => Ok(Scalar),
+                    0x1004 if right == Scalar && matches!(&**b, Self::Literal(1., _)) => Ok(left),
+                    _ => Err("Calculation uses incompatible or unsupported units".into()),
+                }
+            }
+        }
     }
 
     fn display(&self, source_name: &str) -> String {
+        self.display_names(&[source_name])
+    }
+    fn display_names(&self, source_names: &[&str]) -> String {
         match self {
-            Self::Source => source_name.into(),
+            Self::Source(index) => source_names.get(*index).copied().unwrap_or("?").into(),
+            Self::Neg(argument) => format!("−{}", argument.display_names(source_names)),
             Self::Literal(_, text) => text.clone(),
+            Self::Call(function, argument) => format!(
+                "{}({})",
+                calculation_function_name(*function).unwrap(),
+                argument.display_names(source_names)
+            ),
             Self::Binary(operator, left, right) => format!(
                 "({} {} {})",
-                left.display(source_name),
+                left.display_names(source_names),
                 match operator {
                     0x1000 => "+",
                     0x1001 => "−",
@@ -665,7 +875,7 @@ impl ParameterExpr {
                     0x1004 => "^",
                     _ => "?",
                 },
-                right.display(source_name)
+                right.display_names(source_names)
             ),
         }
     }
@@ -707,6 +917,39 @@ impl<'a> ParameterExprParser<'a> {
             .words
             .get(self.at)
             .ok_or("Missing calculation operand")?;
+        if matches!(word, 0x1000 | 0x1001) {
+            self.at += 1;
+            let argument = self.binary(3)?;
+            return Ok(if word == 0x1001 {
+                ParameterExpr::Neg(Box::new(argument))
+            } else {
+                argument
+            });
+        }
+        if calculation_function_name(word).is_some() {
+            self.at += 1;
+            if self.words.get(self.at) != Some(&11) {
+                return Err("Missing function argument".into());
+            }
+            self.at += 1;
+            let argument = self.expression()?;
+            if self.words.get(self.at..self.at + 2) != Some(&[12, 12]) {
+                return Err("Unclosed function argument".into());
+            }
+            self.at += 2;
+            return Ok(ParameterExpr::Call(word, Box::new(argument)));
+        }
+        if word == 13 || word == 14 {
+            self.at += 1;
+            return Ok(ParameterExpr::Literal(
+                if word == 13 {
+                    CALCULATOR_PI
+                } else {
+                    std::f64::consts::E
+                },
+                if word == 13 { "π" } else { "e" }.into(),
+            ));
+        }
         if word == 11 {
             self.at += 1;
             let result = self.expression()?;
@@ -716,19 +959,14 @@ impl<'a> ParameterExprParser<'a> {
             self.at += 1;
             return Ok(result);
         }
-        if word == 0x6000 {
+        if (0x6000..=0x600f).contains(&word) {
             self.at += 1;
-            return Ok(ParameterExpr::Source);
+            return Ok(ParameterExpr::Source((word - 0x6000) as usize));
         }
-        if word <= 9 {
-            let mut value = 0u32;
+        if word <= 10 {
             let mut digits = 0;
             let mut text = String::new();
             while let Some(&digit @ 0..=9) = self.words.get(self.at) {
-                value = value
-                    .checked_mul(10)
-                    .and_then(|value| value.checked_add(u32::from(digit)))
-                    .ok_or("Calculation literal is too large")?;
                 digits += 1;
                 text.push(char::from(b'0' + digit as u8));
                 self.at += 1;
@@ -736,15 +974,11 @@ impl<'a> ParameterExprParser<'a> {
             if digits > 1 && word == 0 {
                 return Err("Leading zero in calculation".into());
             }
-            let mut value = f64::from(value);
             if self.words.get(self.at) == Some(&10) {
                 self.at += 1;
                 text.push('.');
                 let fraction_start = self.at;
-                let mut place = 0.1;
                 while let Some(&digit @ 0..=9) = self.words.get(self.at) {
-                    value += f64::from(digit) * place;
-                    place /= 10.;
                     text.push(char::from(b'0' + digit as u8));
                     self.at += 1;
                 }
@@ -752,52 +986,138 @@ impl<'a> ParameterExprParser<'a> {
                     return Err("Decimal point needs fractional digits".into());
                 }
             }
+            let value = text
+                .parse::<f64>()
+                .map_err(|_| "Invalid calculation literal")?;
+            if self.words.get(self.at) == Some(&0x0101) {
+                self.at += 1;
+                text.push('°');
+            }
             return Ok(ParameterExpr::Literal(value, text));
         }
         Err("Unsupported parameter calculation token".into())
     }
 }
 
+fn calculation_words(expression: &str, source_name: &str) -> Result<Vec<u16>, String> {
+    let names = [(source_name, 0)];
+    calculation_words_for_sources(
+        expression,
+        if source_name.is_empty() { &[] } else { &names },
+    )
+}
+fn calculation_words_for_sources(
+    expression: &str,
+    source_names: &[(&str, usize)],
+) -> Result<Vec<u16>, String> {
+    let mut words = Vec::new();
+    let mut input = expression;
+    let mut parentheses = Vec::new();
+    while !input.is_empty() {
+        let ch = input.chars().next().unwrap();
+        if ch.is_whitespace() {
+            input = &input[ch.len_utf8()..];
+        } else if let Some((name, code)) = CALCULATION_FUNCTIONS.iter().find(|(name, _)| {
+            input
+                .strip_prefix(*name)
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        }) {
+            words.extend([*code, 11]);
+            input = input[name.len()..].trim_start();
+            input = &input[1..];
+            parentheses.push(true);
+        } else if ch == '(' {
+            words.push(11);
+            parentheses.push(false);
+            input = &input[1..];
+        } else if ch == ')' {
+            words.push(12);
+            if parentheses.pop().ok_or("Unexpected closing parenthesis")? {
+                words.push(12);
+            }
+            input = &input[1..];
+        } else if let Some((source_name, index)) = source_names.iter().find(|(name, _)| {
+            input.strip_prefix(*name).is_some_and(|tail| {
+                !tail
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        }) {
+            words.push(0x6000 + *index as u16);
+            input = &input[source_name.len()..];
+        } else if ch == 'π' || input.starts_with("pi") {
+            words.push(13);
+            input = &input[if ch == 'π' { ch.len_utf8() } else { 2 }..];
+        } else if ch == 'e' {
+            words.push(14);
+            input = &input[1..];
+        } else if ch.is_ascii_digit() {
+            words.push((ch as u8 - b'0') as u16);
+            input = &input[1..];
+        } else {
+            words.push(match ch {
+                '+' => 0x1000,
+                '-' | '−' => 0x1001,
+                '*' | '×' | '·' => 0x1002,
+                '/' | '÷' => 0x1003,
+                '^' => 0x1004,
+                '(' => 11,
+                ')' => 12,
+                '.' => 10,
+                '°' => 0x0101,
+                _ => return Err("Unsupported calculation character".into()),
+            });
+            input = &input[ch.len_utf8()..];
+        }
+    }
+    if !(1..=32).contains(&words.len()) {
+        return Err("Calculation must use 1–32 tokens".into());
+    }
+    Ok(words)
+}
+
+fn calculation_tree(words: &[u16]) -> Result<ParameterExpr, String> {
+    let mut parser = ParameterExprParser { words, at: 0 };
+    let expression = parser.expression()?;
+    if parser.at != words.len() {
+        return Err("Unexpected calculation token".into());
+    }
+    Ok(expression)
+}
+
 impl ParameterCalculationGroup {
+    pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
+        let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
+        *self = Self::parse(&updated)?;
+        Ok(())
+    }
+
     pub fn from_expression(
         source: u32,
         source_name: &str,
         expression: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        Self::from_expression_with_source_unit(
+            source,
+            source_name,
+            expression,
+            anchor,
+            NumericUnit::Scalar,
+        )
+    }
+    pub fn from_expression_with_source_unit(
+        source: u32,
+        source_name: &str,
+        expression: &str,
+        anchor: (i16, i16),
+        source_unit: NumericUnit,
+    ) -> Result<Self, String> {
         if source == 0 || source_name.is_empty() {
             return Err("Select a parameter".into());
         }
-        let mut words = Vec::new();
-        let mut input = expression;
-        while !input.is_empty() {
-            let ch = input.chars().next().unwrap();
-            if ch.is_whitespace() {
-                input = &input[ch.len_utf8()..];
-            } else if input.starts_with(source_name) {
-                words.push(0x6000u16);
-                input = &input[source_name.len()..];
-            } else if ch.is_ascii_digit() {
-                words.push((ch as u8 - b'0') as u16);
-                input = &input[1..];
-            } else {
-                words.push(match ch {
-                    '+' => 0x1000,
-                    '-' | '−' => 0x1001,
-                    '*' | '×' | '·' => 0x1002,
-                    '/' | '÷' => 0x1003,
-                    '^' => 0x1004,
-                    '(' => 11,
-                    ')' => 12,
-                    '.' => 10,
-                    _ => return Err("Unsupported calculation character".into()),
-                });
-                input = &input[ch.len_utf8()..];
-            }
-        }
-        if !(1..=32).contains(&words.len()) {
-            return Err("Calculation must use 1–32 tokens".into());
-        }
+        let words = calculation_words(expression, source_name)?;
         let base = object_group(PARAMETER_CALCULATION_NATIVE, 2);
         let rs = records(&base, 0)?;
         let mut payload = base[rs[2].payload..rs[2].end].to_vec();
@@ -813,9 +1133,97 @@ impl ParameterCalculationGroup {
         bytes[48..52].copy_from_slice(&source.to_le_bytes());
         bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
         bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        let group = Self::parse(&bytes)?;
+        let unit = group.expression_unit(source_unit)?;
+        let subtype: u16 = match unit {
+            NumericUnit::Length => 48,
+            NumericUnit::Degrees => 49,
+            NumericUnit::Area => 50,
+            NumericUnit::Scalar => 51,
+        };
+        bytes[16..18].copy_from_slice(&subtype.to_le_bytes());
+        Self::parse(&bytes)
+    }
+    pub fn from_sources(
+        sources: &[u32],
+        expression: &str,
+        anchor: (i16, i16),
+        units: &[NumericUnit],
+    ) -> Result<Self, String> {
+        if !(2..=16).contains(&sources.len())
+            || sources.contains(&0)
+            || sources.len() != units.len()
+        {
+            return Err("Select 2–16 numeric sources".into());
+        }
+        let names = (1..=sources.len())
+            .map(|n| format!("v{n}"))
+            .collect::<Vec<_>>();
+        let mut aliases = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), i))
+            .collect::<Vec<_>>();
+        aliases.extend([("a", 0), ("b", 1)]);
+        let words = calculation_words_for_sources(expression, &aliases)?;
+        let tree = calculation_tree(&words)?;
+        let unit = tree.units(units)?;
+        let base = object_group(PARAMETER_CALCULATION_NATIVE, 2);
+        let rs = records(&base, 0)?;
+        let mut bytes = base[..rs[1].start].to_vec();
+        let mut refs = (sources.len() as u32).to_le_bytes().to_vec();
+        for id in sources {
+            refs.extend_from_slice(&id.to_le_bytes());
+        }
+        put_record(&mut bytes, 0x07d2, &refs);
+        let mut payload = base[rs[2].payload..rs[2].end].to_vec();
+        payload.truncate(92);
+        payload[12..14].copy_from_slice(&anchor.0.to_le_bytes());
+        payload[14..16].copy_from_slice(&anchor.1.to_le_bytes());
+        payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        for word in words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&base[rs[2].end..]);
+        let subtype: u16 = match unit {
+            NumericUnit::Length => 48,
+            NumericUnit::Degrees => 49,
+            NumericUnit::Area => 50,
+            NumericUnit::Scalar => 51,
+        };
+        bytes[16..18].copy_from_slice(&subtype.to_le_bytes());
         Self::parse(&bytes)
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        calculation_precision(bytes)?;
+        let rs = records(bytes, 0)?;
+        let reference = rs.get(1).ok_or("Missing calculation references")?;
+        let payload = &bytes[reference.payload..reference.end];
+        if reference.kind != 0x07d2 || payload.len() < 8 {
+            return Err("Missing calculation references".into());
+        }
+        let count = u32::from_le_bytes(payload[..4].try_into().unwrap()) as usize;
+        if !(1..=16).contains(&count)
+            || payload.len() != 4 + 4 * count
+            || payload[4..].chunks_exact(4).any(|id| id == [0; 4])
+        {
+            return Err("Invalid calculation reference count".into());
+        }
+        let mut normalized = bytes[..reference.start].to_vec();
+        let mut refs = 1_u32.to_le_bytes().to_vec();
+        refs.extend_from_slice(&payload[4..8]);
+        put_record(&mut normalized, 0x07d2, &refs);
+        normalized.extend_from_slice(&bytes[reference.end..]);
+        Self::validate_single_layout(&normalized)?;
+        let group = Self {
+            bytes: bytes.to_vec(),
+        };
+        group.expression_tree()?;
+        Ok(group)
+    }
+    fn validate_single_layout(bytes: &[u8]) -> Result<(), String> {
         let rs = records(bytes, 0)?;
         if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
         {
@@ -834,6 +1242,10 @@ impl ParameterCalculationGroup {
             || rs[4].end != rs[4].payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
             || u32::from_le_bytes(bytes[48..52].try_into().unwrap()) == 0
+            || !matches!(
+                u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
+                48..=51
+            )
             || u32::from_le_bytes(bytes[96..100].try_into().unwrap()) as usize
                 != expression_len - 32
             || u16::from_le_bytes(bytes[104..106].try_into().unwrap()) as usize != token_count
@@ -842,6 +1254,7 @@ impl ParameterCalculationGroup {
         }
         for (index, (&actual, &expected)) in bytes[..152].iter().zip(&template[..152]).enumerate() {
             let variable = index == 10
+                || (16..18).contains(&index)
                 || (26..28).contains(&index)
                 || (48..52).contains(&index)
                 || (52..56).contains(&index)
@@ -856,11 +1269,7 @@ impl ParameterCalculationGroup {
         {
             return Err("Unsupported parameter calculation font".into());
         }
-        let group = Self {
-            bytes: bytes.to_vec(),
-        };
-        group.expression_tree()?;
-        Ok(group)
+        Ok(())
     }
     fn expression_tree(&self) -> Result<ParameterExpr, String> {
         let rs = records(&self.bytes, 0)?;
@@ -868,50 +1277,108 @@ impl ParameterCalculationGroup {
             .chunks_exact(2)
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
-        if !words.contains(&0x6000) {
-            return Err("Calculation has no source".into());
+        let count = self.sources().len();
+        if !words.iter().any(|w| (0x6000..=0x600f).contains(w))
+            || words
+                .iter()
+                .any(|w| (0x6000..=0x600f).contains(w) && (*w - 0x6000) as usize >= count)
+        {
+            return Err("Invalid calculation source token".into());
         }
-        let mut parser = ParameterExprParser {
-            words: &words,
-            at: 0,
-        };
-        let expression = parser.expression()?;
-        if parser.at != words.len() {
-            return Err("Unexpected calculation token".into());
-        }
-        Ok(expression)
+        calculation_tree(&words)
     }
     pub fn value(&self, source: f64) -> Option<f64> {
         self.expression_tree().ok()?.eval(source)
     }
+    pub fn value_with_source_unit(&self, source: f64, unit: NumericUnit) -> Option<f64> {
+        let expression = self.expression_tree().ok()?;
+        expression.unit(unit).ok()?;
+        expression.eval(source)
+    }
     pub fn expression(&self, source_name: &str) -> String {
         self.expression_tree().unwrap().display(source_name)
     }
+    pub fn sources(&self) -> Vec<u32> {
+        let rs = records(&self.bytes, 0).unwrap();
+        self.bytes[rs[1].payload + 4..rs[1].end]
+            .chunks_exact(4)
+            .map(|id| u32::from_le_bytes(id.try_into().unwrap()))
+            .collect()
+    }
     pub fn source_id(&self) -> u32 {
-        u32::from_le_bytes(self.bytes[48..52].try_into().unwrap())
+        self.sources()[0]
+    }
+    pub fn value_for_sources(&self, values: &[f64], units: &[NumericUnit]) -> Option<f64> {
+        let tree = self.expression_tree().ok()?;
+        if tree.units(units).ok()? != self.unit() {
+            return None;
+        }
+        let value = tree.eval_raw_values(values)?;
+        value.is_finite().then_some(value)
+    }
+    pub fn expression_for_sources(&self, names: &[&str]) -> String {
+        self.expression_tree().unwrap().display_names(names)
+    }
+    pub fn units_for_sources(&self, units: &[NumericUnit]) -> Result<NumericUnit, String> {
+        self.expression_tree()?.units(units)
+    }
+    pub fn remap_sources(&self, ids: &[u32]) -> Result<Self, String> {
+        if ids.len() != self.sources().len() || ids.contains(&0) {
+            return Err("Invalid calculation sources".into());
+        }
+        let mut bytes = self.bytes.clone();
+        let rs = records(&bytes, 0)?;
+        for (index, id) in ids.iter().enumerate() {
+            let at = rs[1].payload + 4 + 4 * index;
+            bytes[at..at + 4].copy_from_slice(&id.to_le_bytes());
+        }
+        Self::parse(&bytes)
+    }
+    pub fn unit(&self) -> NumericUnit {
+        match u16::from_le_bytes(self.bytes[16..18].try_into().unwrap()) {
+            48 => NumericUnit::Length,
+            49 => NumericUnit::Degrees,
+            50 => NumericUnit::Area,
+            _ => NumericUnit::Scalar,
+        }
+    }
+    pub fn expression_unit(&self, source: NumericUnit) -> Result<NumericUnit, String> {
+        self.expression_tree()?.unit(source)
     }
     pub fn precision(&self) -> usize {
-        u16::from_le_bytes(self.bytes[88..90].try_into().unwrap()) as usize
+        let rs = records(&self.bytes, 0).unwrap();
+        let at = rs[2].payload + 28;
+        u16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()) as usize
     }
     pub fn value_text(&self, value: f64) -> String {
-        format_numeric_value(value, self.precision())
+        let number = format_numeric_value(value, self.precision());
+        match self.unit() {
+            NumericUnit::Degrees => format!("{number}°"),
+            NumericUnit::Length => format!("{number} cm"),
+            NumericUnit::Area => format!("{number} cm²"),
+            NumericUnit::Scalar => number,
+        }
     }
     pub fn anchor(&self) -> (i16, i16) {
+        let rs = records(&self.bytes, 0).unwrap();
+        let at = rs[2].payload + 12;
         (
-            i16::from_le_bytes(self.bytes[72..74].try_into().unwrap()),
-            i16::from_le_bytes(self.bytes[74..76].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
         )
     }
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
-        self.bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
-        self.bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        let rs = records(&self.bytes, 0)?;
+        let at = rs[2].payload + 12;
+        self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
         Self::parse(&self.bytes)?;
         Ok(())
     }
     pub fn remap_source(&self, source: u32) -> Result<Self, String> {
-        let mut result = self.clone();
-        result.bytes[48..52].copy_from_slice(&source.to_le_bytes());
-        Self::parse(&result.bytes)
+        let mut ids = self.sources();
+        ids[0] = source;
+        self.remap_sources(&ids)
     }
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -928,6 +1395,15 @@ fn measured_factor(bytes: &[u8], digit_count: usize) -> u8 {
 }
 
 impl MeasuredCalculationGroup {
+    pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
+        let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
+        *self = Self::parse(&updated)?;
+        Ok(())
+    }
+    pub fn precision(&self) -> usize {
+        calculation_precision(&self.bytes).unwrap()
+    }
+
     pub fn multiply(source: u32, factor: u8, anchor: (i16, i16)) -> Result<Self, String> {
         Self::scaled(source, factor, anchor, false)
     }
@@ -962,6 +1438,7 @@ impl MeasuredCalculationGroup {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        calculation_precision(bytes)?;
         let template = match bytes.len() {
             176 => MEASURED_CALCULATION,
             178 => MEASURED_CALCULATION_TWO_DIGIT,
@@ -1044,10 +1521,81 @@ impl MeasuredCalculationGroup {
 }
 
 impl CalculationGroup {
+    pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
+        let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
+        *self = Self::parse(&updated)?;
+        Ok(())
+    }
+    pub fn precision(&self) -> usize {
+        calculation_precision(&self.bytes).unwrap()
+    }
+
     pub fn literal_two_plus_three() -> Self {
         Self {
             bytes: object_group(CALCULATION, 2),
         }
+    }
+    pub fn from_expression(expression: &str) -> Result<Self, String> {
+        if let Ok(group) = Self::small_integer_expression(expression) {
+            return Ok(group);
+        }
+        let words = calculation_words(expression, "")?;
+        let tree = calculation_tree(&words)?;
+        tree.unit(NumericUnit::Scalar)?;
+        let base = Self::literal_two_plus_three();
+        let rs = records(&base.bytes, 0)?;
+        let mut payload = base.bytes[rs[1].payload..rs[1].end].to_vec();
+        payload.truncate(92);
+        payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        for word in words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut bytes = base.bytes[..rs[1].start].to_vec();
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&base.bytes[rs[1].end..]);
+        Self::parse(&bytes)
+    }
+    fn expression_tree(&self) -> Result<ParameterExpr, String> {
+        let rs = records(&self.bytes, 0)?;
+        let words = self.bytes[rs[1].payload + 92..rs[1].end]
+            .chunks_exact(2)
+            .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        if words.contains(&0x6000) {
+            return Err("Literal calculation has a source reference".into());
+        }
+        let tree = calculation_tree(&words)?;
+        tree.unit(NumericUnit::Scalar)?;
+        Ok(tree)
+    }
+    pub fn unit(&self) -> NumericUnit {
+        self.expression_tree()
+            .unwrap()
+            .unit(NumericUnit::Scalar)
+            .unwrap()
+    }
+    pub fn evaluated_value(&self) -> Option<f64> {
+        self.expression_tree().ok()?.eval(0.)
+    }
+    pub fn value_text(&self) -> String {
+        let value = self.value();
+        if value.is_nan() {
+            return "undefined".into();
+        }
+        let number = if value == f64::INFINITY {
+            "∞".into()
+        } else if value == f64::NEG_INFINITY {
+            "−∞".into()
+        } else {
+            format_numeric_value(value, self.precision())
+        };
+        let suffix = if self.unit() == NumericUnit::Degrees {
+            "°"
+        } else {
+            ""
+        };
+        format!("{number}{suffix}")
     }
     pub fn small_integer_expression(expression: &str) -> Result<Self, String> {
         let compact = expression
@@ -1126,6 +1674,7 @@ impl CalculationGroup {
         Self::parse(&group.bytes)
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        calculation_precision(bytes)?;
         let rs = records(bytes, 0)?;
         if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
         {
@@ -1140,7 +1689,7 @@ impl CalculationGroup {
             return Err("Unsupported calculation record lengths".into());
         }
         let payload = &bytes[rs[1].payload..rs[1].end];
-        if !(98..=102).contains(&payload.len())
+        if !(94..=156).contains(&payload.len())
             || payload.len() % 2 != 0
             || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
                 != payload.len() - 32
@@ -1154,6 +1703,7 @@ impl CalculationGroup {
             let mutable = i == 10
                 || (26..28).contains(&i)
                 || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
+                || (rs[1].payload + 28..rs[1].payload + 30).contains(&i)
                 || matches!(i, 36 | 66 | 74 | 80 | 88)
                 || (92..=140).contains(&i);
             if !mutable && bytes[i] != template[i] {
@@ -1167,10 +1717,10 @@ impl CalculationGroup {
                 return Err("Unsupported calculation style".into());
             }
         }
-        Self::parts_from_payload(payload)?;
         let result = Self {
             bytes: bytes.to_vec(),
         };
+        result.expression_tree()?;
         let anchor = result.anchor();
         let bbox = rs[3].payload;
         let word = |offset| {
@@ -1183,7 +1733,11 @@ impl CalculationGroup {
         if (word(0), word(2)) != anchor
             || !(80..=300).contains(&(i32::from(word(4)) - i32::from(word(0))))
             || i32::from(word(6)) - i32::from(word(2))
-                != if result.parts().2 == 3 { 55 } else { 26 }
+                != if Self::parts_from_payload(payload).is_ok_and(|p| p.2 == 3) {
+                    55
+                } else {
+                    26
+                }
         {
             return Err("Calculation anchor and box disagree".into());
         }
@@ -1228,6 +1782,10 @@ impl CalculationGroup {
         Self::parts_from_payload(&self.bytes[rs[1].payload..rs[1].end]).unwrap()
     }
     pub fn expression(&self) -> String {
+        let rs = records(&self.bytes, 0).unwrap();
+        if Self::parts_from_payload(&self.bytes[rs[1].payload..rs[1].end]).is_err() {
+            return self.expression_tree().unwrap().display("");
+        }
         let (left, right, op) = self.parts();
         let operator = match op {
             0 => "+",
@@ -1239,16 +1797,10 @@ impl CalculationGroup {
         format!("{left} {operator} {right}")
     }
     pub fn value(&self) -> f64 {
-        let (left, right, op) = self.parts();
-        let left = f64::from(left);
-        let right = f64::from(right);
-        match op {
-            0 => left + right,
-            1 => left - right,
-            2 => left * right,
-            3 => left / right,
-            _ => unreachable!(),
-        }
+        self.expression_tree()
+            .ok()
+            .and_then(|tree| tree.eval_raw(0.))
+            .unwrap_or(f64::NAN)
     }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -1333,7 +1885,15 @@ fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     }
 }
 
-fn table_value_text(value: f64) -> Result<String, String> {
+pub(crate) fn table_value_text(value: f64) -> Result<String, String> {
+    if !value.is_finite()
+        || value.abs() > 99.99
+        || (value * 100. - (value * 100.).round()).abs() > 1e-7
+    {
+        return Err(
+            "This table supports values within ±99.99 with up to two decimal places".into(),
+        );
+    }
     decimal_words(value)?;
     let rendered = if value < 0.0 {
         format!("–{:.2}", -value)
@@ -1537,7 +2097,7 @@ fn named_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
             return None;
         }
         let numeric = value.parse::<f64>().ok()?;
-        decimal_words(numeric).ok()?;
+        table_value_text(numeric).ok()?;
         if format!("{numeric:.decimals$}") != value {
             return None;
         }
@@ -1596,6 +2156,7 @@ impl TableGroup {
         parameter: &ParameterGroup,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        table_value_text(parameter.value())?;
         let value = format!("{:.*}", parameter.precision(), parameter.value());
         let bytes = canonical_named_table(source, parameter.name(), &[value], anchor)?;
         Self::parse(&bytes)
@@ -2042,6 +2603,318 @@ mod tests {
         assert_eq!(parsed.factor(), 12);
     }
     use super::*;
+
+    #[test]
+    fn multiple_source_calculations_indexes_units_bounds_and_remap() {
+        let group = ParameterCalculationGroup::from_sources(
+            &[2, 4, 6],
+            "sqrt((v1+v2)*v3)",
+            (10, 30),
+            &[NumericUnit::Scalar; 3],
+        )
+        .unwrap();
+        assert_eq!(group.sources(), vec![2, 4, 6]);
+        assert_eq!(
+            group.value_for_sources(&[2., 3., 5.], &[NumericUnit::Scalar; 3]),
+            Some(5.)
+        );
+        assert_eq!(group.anchor(), (10, 30));
+        assert_eq!(
+            group.remap_sources(&[8, 10, 12]).unwrap().sources(),
+            vec![8, 10, 12]
+        );
+        let length = ParameterCalculationGroup::from_sources(
+            &[2, 4],
+            "(a+b)/2",
+            (10, 30),
+            &[NumericUnit::Length; 2],
+        )
+        .unwrap();
+        assert_eq!(length.unit(), NumericUnit::Length);
+        assert_eq!(
+            length.value_for_sources(&[2., 4.], &[NumericUnit::Length; 2]),
+            Some(3.)
+        );
+        let angle = ParameterCalculationGroup::from_sources(
+            &[2, 4],
+            "v1/v2",
+            (10, 30),
+            &[NumericUnit::Degrees, NumericUnit::Scalar],
+        )
+        .unwrap();
+        assert_eq!(angle.unit(), NumericUnit::Degrees);
+        assert_eq!(
+            angle.value_for_sources(&[90., 2.], &[NumericUnit::Degrees, NumericUnit::Scalar]),
+            Some(45.)
+        );
+        assert!(
+            ParameterCalculationGroup::from_sources(
+                &[2, 4],
+                "v1+v2",
+                (10, 30),
+                &[NumericUnit::Degrees, NumericUnit::Scalar]
+            )
+            .is_err()
+        );
+        assert!(
+            ParameterCalculationGroup::from_sources(
+                &[2, 4],
+                "v3+1",
+                (10, 30),
+                &[NumericUnit::Scalar; 2]
+            )
+            .is_err()
+        );
+        let ids = (1..=16).collect::<Vec<_>>();
+        let expr = (1..=16)
+            .map(|i| format!("v{i}"))
+            .collect::<Vec<_>>()
+            .join("+");
+        let largest = ParameterCalculationGroup::from_sources(
+            &ids,
+            &expr,
+            (10, 30),
+            &[NumericUnit::Scalar; 16],
+        )
+        .unwrap();
+        assert_eq!(
+            largest.value_for_sources(&[1.; 16], &[NumericUnit::Scalar; 16]),
+            Some(16.)
+        );
+        assert!(
+            ParameterCalculationGroup::from_sources(
+                &[1; 17],
+                "v1",
+                (10, 30),
+                &[NumericUnit::Scalar; 17]
+            )
+            .is_err()
+        );
+        let mut broken = group.as_bytes().to_vec();
+        broken[44..48].copy_from_slice(&2_u32.to_le_bytes());
+        assert!(ParameterCalculationGroup::parse(&broken).is_err());
+    }
+
+    #[test]
+    fn source_free_expressions_functions_units_and_undefined_values() {
+        for (expression, value, unit) in [
+            (
+                "pi+e",
+                CALCULATOR_PI + std::f64::consts::E,
+                NumericUnit::Scalar,
+            ),
+            ("1.25*4+.5", 5.5, NumericUnit::Scalar),
+            ("100+3", 103., NumericUnit::Scalar),
+            ("10000000000", 1e10, NumericUnit::Scalar),
+            ("sqrt(2)^2", 2., NumericUnit::Scalar),
+            ("sin(30°)", 0.5, NumericUnit::Scalar),
+            ("asin(.5)", 30., NumericUnit::Degrees),
+            ("-0.5+2", 1.5, NumericUnit::Scalar),
+            ("-2^2", -4., NumericUnit::Scalar),
+            ("(-2)^2", 4., NumericUnit::Scalar),
+            ("2^-3", 0.125, NumericUnit::Scalar),
+            ("round(-4.5)", -4., NumericUnit::Scalar),
+            ("-30°", -30., NumericUnit::Degrees),
+        ] {
+            let mut group = CalculationGroup::from_expression(expression).unwrap();
+            assert_eq!(group.unit(), unit);
+            assert!((group.value() - value).abs() < 1e-12, "{expression}");
+            group.set_anchor((150, 200)).unwrap();
+            assert_eq!(group.anchor(), (150, 200));
+            assert_eq!(CalculationGroup::parse(group.as_bytes()).unwrap(), group);
+        }
+        for expression in ["0/0", "sqrt(-1)", "asin(2)"] {
+            let group = CalculationGroup::from_expression(expression).unwrap();
+            assert!(group.evaluated_value().is_none());
+            assert_eq!(group.value_text(), "undefined");
+        }
+        for (expression, text) in [("1/0", "∞"), ("-1/0", "−∞"), ("ln(0)", "−∞")] {
+            let group = CalculationGroup::from_expression(expression).unwrap();
+            assert!(group.evaluated_value().is_none());
+            assert_eq!(group.value_text(), text);
+        }
+        for expression in [
+            "v+2",
+            "30°+2",
+            "sin()",
+            "(2+3",
+            "2)3",
+            "1".repeat(33).as_str(),
+        ] {
+            assert!(
+                CalculationGroup::from_expression(expression).is_err(),
+                "{expression}"
+            );
+        }
+        assert_eq!(
+            CalculationGroup::from_expression("2+3").unwrap().as_bytes(),
+            CalculationGroup::literal_two_plus_three().as_bytes()
+        );
+        assert!(
+            CalculationGroup::from_expression("asin(.5)")
+                .unwrap()
+                .value_text()
+                .ends_with('°')
+        );
+    }
+
+    #[test]
+    fn inverse_functions_constants_units_and_domains() {
+        for (expression, expected, unit) in [
+            ("asin(n)", 30., NumericUnit::Degrees),
+            ("acos(n)", 60., NumericUnit::Degrees),
+            ("atan(n)", 26.56505117707799, NumericUnit::Degrees),
+            ("sin(asin(n))", 0.5, NumericUnit::Scalar),
+            ("n+pi", 0.5 + CALCULATOR_PI, NumericUnit::Scalar),
+            ("n+π", 0.5 + CALCULATOR_PI, NumericUnit::Scalar),
+            ("n+e", 0.5 + std::f64::consts::E, NumericUnit::Scalar),
+            ("acos(n)+10°", 70., NumericUnit::Degrees),
+        ] {
+            let group =
+                ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
+            assert_eq!(group.unit(), unit);
+            assert!(
+                (group.value(0.5).unwrap() - expected).abs() < 1e-12,
+                "{expression}"
+            );
+            assert_eq!(
+                ParameterCalculationGroup::parse(group.as_bytes()).unwrap(),
+                group
+            );
+        }
+        for function in ["asin", "acos"] {
+            let group = ParameterCalculationGroup::from_expression(
+                1,
+                "n",
+                &format!("{function}(n)"),
+                (10, 30),
+            )
+            .unwrap();
+            assert!(group.value(1.01).is_none());
+            assert!(group.value(-1.01).is_none());
+            assert!(group.value(1.).is_some());
+            assert!(group.value(-1.).is_some());
+            assert!(
+                ParameterCalculationGroup::from_expression_with_source_unit(
+                    1,
+                    "v",
+                    &format!("{function}(v)"),
+                    (10, 30),
+                    NumericUnit::Degrees
+                )
+                .is_err()
+            );
+        }
+        let prefix = ParameterCalculationGroup::from_expression(1, "p", "p+pi", (10, 30)).unwrap();
+        assert_eq!(prefix.value(2.), Some(2. + CALCULATOR_PI));
+        let e_parameter =
+            ParameterCalculationGroup::from_expression(1, "e", "e+1", (10, 30)).unwrap();
+        assert_eq!(e_parameter.value(2.), Some(3.));
+        assert!(ParameterCalculationGroup::from_expression(1, "n", "pi+e", (10, 30)).is_err());
+        assert!(ParameterCalculationGroup::from_expression(1, "n", "asin(n)+n", (10, 30)).is_err());
+    }
+
+    #[test]
+    fn calculator_functions_nested_units_and_domains() {
+        for (expression, expected) in [
+            ("sin(n)", 0.5),
+            ("cos(n)", 3_f64.sqrt() / 2.),
+            ("tan(n)", 1. / 3_f64.sqrt()),
+            ("abs(n-33)", 3.),
+            ("sqrt(n+6)", 6.),
+            ("ln(n-29)", 0.),
+            ("log(n+70)", 2.),
+            ("sgn(n-33)", -1.),
+            ("round(n/12)", 3.),
+            ("trunc(n/12)", 2.),
+            ("sqrt(abs(n-34))", 2.),
+            ("sin (n)+cos(n+60)", 0.5),
+        ] {
+            let group =
+                ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
+            assert!(
+                (group.value(30.).unwrap() - expected).abs() < 1e-12,
+                "{expression}"
+            );
+            assert_eq!(
+                ParameterCalculationGroup::parse(group.as_bytes()).unwrap(),
+                group
+            );
+        }
+        for expression in [
+            "sin(n",
+            "sin n",
+            "sqrt()",
+            "sin(n))",
+            "ln((n)",
+            "unknown(n)",
+        ] {
+            assert!(
+                ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).is_err(),
+                "{expression}"
+            );
+        }
+        for expression in ["sqrt(n-31)", "ln(n-30)", "log(n-31)"] {
+            let group =
+                ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
+            assert!(group.value(30.).is_none(), "{expression}");
+        }
+        let tangent =
+            ParameterCalculationGroup::from_expression(1, "n", "tan(n)", (10, 30)).unwrap();
+        assert!((tangent.value(90.).unwrap() / -286411383293069.44 - 1.).abs() < 1e-12);
+        let decimal =
+            ParameterCalculationGroup::from_expression(1, "n", "n*0.15", (10, 30)).unwrap();
+        assert_eq!(decimal.value(-30.), Some(-4.5));
+        let angle = ParameterCalculationGroup::from_expression_with_source_unit(
+            1,
+            "v",
+            "sin(v/2)",
+            (10, 30),
+            NumericUnit::Degrees,
+        )
+        .unwrap();
+        assert_eq!(angle.unit(), NumericUnit::Scalar);
+        assert!(
+            (angle
+                .value_with_source_unit(60., NumericUnit::Degrees)
+                .unwrap()
+                - 0.5)
+                .abs()
+                < 1e-12
+        );
+        let length = ParameterCalculationGroup::from_expression_with_source_unit(
+            1,
+            "v",
+            "abs(v-v*2)",
+            (10, 30),
+            NumericUnit::Length,
+        )
+        .unwrap();
+        assert_eq!(length.unit(), NumericUnit::Length);
+        assert_eq!(
+            length.value_with_source_unit(3., NumericUnit::Length),
+            Some(3.)
+        );
+        for expression in ["sin(v)", "sqrt(v)", "ln(v)"] {
+            assert!(
+                ParameterCalculationGroup::from_expression_with_source_unit(
+                    1,
+                    "v",
+                    expression,
+                    (10, 30),
+                    NumericUnit::Length
+                )
+                .is_err()
+            );
+        }
+        for (expression, expected) in [("round(n*0.15)", -4.), ("trunc(n*0.15)", -4.)] {
+            let group =
+                ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
+            assert_eq!(group.value(-30.), Some(expected));
+        }
+        let zero = ParameterCalculationGroup::from_expression(1, "n", "sgn(n)", (10, 30)).unwrap();
+        assert_eq!(zero.value(-0.), Some(0.));
+    }
 
     #[test]
     fn original_table_roundtrips_and_anchor_moves() {

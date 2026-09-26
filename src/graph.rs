@@ -240,13 +240,14 @@ pub fn decode_graph_object(
             let sample = &include_bytes!("../assets/graph_slope_measurement_group.bin")[64..96];
             // Sketchpad rewrites this style index from 2 to 1 after a drag.
             (format.len() == 32
+                && u16::from_le_bytes(format[28..30].try_into().unwrap()) <= 5
                 && format
                     .iter()
                     .zip(sample)
                     .enumerate()
                     .all(|(i, (actual, expected))| {
                         // Label position and the numeric presentation key vary.
-                        matches!(i, 12..=15 | 22..=23) || actual == expected
+                        matches!(i, 12..=15 | 22..=23 | 28..=29) || actual == expected
                     })
                 && (style == [1, 0] || style == [2, 0]))
             .then_some(GraphObject::Slope {
