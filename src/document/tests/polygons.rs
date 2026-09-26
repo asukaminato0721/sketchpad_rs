@@ -302,10 +302,7 @@ fn mixed_rectangular_polygon_fixtures_import_and_track_distance() {
         assert_eq!(document.objects[11].kind, expected, "{path}");
         assert_eq!(document.encode().unwrap(), bytes, "{path}");
         let before = document.polygon_points(12).unwrap();
-        let id = if matches!(
-            expected,
-            Kind::MixedRectangularTranslatedPolygon(_, _, _, true)
-        ) {
+        let id = if transform_is(&expected, NativeTransformFlavor::FixedHorizontal, &[ElementType::Polygon]) {
             4
         } else {
             2
@@ -427,10 +424,9 @@ fn native_polygon_order_is_signed_presentation_preserved_by_edits_and_copy() {
     let clipboard = doc.copy_selected().unwrap();
     let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
     assert_eq!(doc.objects[copied - 1].interior_order, Some(-1));
-    let source = match doc.objects[copied - 1].kind {
-        Kind::CalculatedRatioScaledPolygon(source, _, _) => source,
-        ref kind => panic!("Unexpected copied interior: {kind:?}"),
-    };
+    let kind = &doc.objects[copied - 1].kind;
+    assert!(transform_is(kind, NativeTransformFlavor::NumericDilation, &[ElementType::Polygon]));
+    let source = kind.transform_definition().unwrap().source();
     assert_eq!(doc.objects[source - 1].interior_order, Some(0));
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.objects[copied - 1].interior_order, Some(-1));

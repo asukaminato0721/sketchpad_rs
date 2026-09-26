@@ -60,8 +60,9 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
         assert_eq!(doc.encode().unwrap(), bytes);
-        match expected {
-            Kind::CalculatedRatioScaledPoint(..) => {
+        assert!(transform_is(&expected, NativeTransformFlavor::NumericDilation, &[ElementType::Point, ElementType::Segment, ElementType::Circle, ElementType::Polygon]));
+        match expected.transform_definition().unwrap().element() {
+            ElementType::Point => {
                 assert_eq!(doc.position(image), Some(Point { x: 160., y: 180. }));
                 assert_eq!(
                     doc.point_iteration_images(7).unwrap(),
@@ -72,7 +73,7 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
                     ]
                 );
             }
-            Kind::CalculatedRatioScaledSegment(..) => assert_eq!(
+            ElementType::Segment => assert_eq!(
                 doc.line_points(image),
                 Some((
                     Point { x: 160., y: 180. },
@@ -80,11 +81,11 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
                     LineMode::Segment
                 ))
             ),
-            Kind::CalculatedRatioScaledCircle(..) => assert_eq!(
+            ElementType::Circle => assert_eq!(
                 doc.circle_points(image),
                 Some((Point { x: 160., y: 180. }, 20.))
             ),
-            _ => assert_eq!(
+            ElementType::Polygon => assert_eq!(
                 doc.polygon_points(image).unwrap(),
                 vec![
                     Point { x: 160., y: 180. },
@@ -92,6 +93,7 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
                     Point { x: 180., y: 200. }
                 ]
             ),
+            element => panic!("Unexpected numeric dilation element: {element:?}"),
         }
         doc.set_parameter_value(1, -0.5).unwrap();
         assert_eq!(doc.encode().unwrap(), edited);
@@ -108,13 +110,7 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
         let copied = *pasted
             .iter()
             .find(|id| {
-                matches!(
-                    doc.objects[**id - 1].kind,
-                    Kind::CalculatedRatioScaledPoint(..)
-                        | Kind::CalculatedRatioScaledSegment(..)
-                        | Kind::CalculatedRatioScaledCircle(..)
-                        | Kind::CalculatedRatioScaledPolygon(..)
-                )
+                transform_is(&doc.objects[**id - 1].kind, NativeTransformFlavor::NumericDilation, &[ElementType::Point, ElementType::Segment, ElementType::Circle, ElementType::Polygon])
             })
             .unwrap();
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
@@ -296,19 +292,20 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
         assert!(!doc.partial_view);
         assert_eq!(doc.objects[9].kind, expected);
         assert_eq!(doc.encode().unwrap(), bytes);
-        match expected {
-            Kind::CalculatedAngleRotatedSegment(..) => {
+        assert!(transform_is(&expected, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle, ElementType::Polygon]));
+        match expected.transform_definition().unwrap().element() {
+            ElementType::Segment => {
                 let (a, b, mode) = doc.line_points(10).unwrap();
                 assert_eq!(mode, LineMode::Segment);
                 assert!(a.distance(Point { x: 160., y: 120. }) < 1e-10);
                 assert!(b.distance(Point { x: 200., y: 120. }) < 1e-10);
             }
-            Kind::CalculatedAngleRotatedCircle(..) => {
+            ElementType::Circle => {
                 let (center, radius) = doc.circle_points(10).unwrap();
                 assert!(center.distance(Point { x: 160., y: 120. }) < 1e-10);
                 assert_eq!(radius, 40.);
             }
-            _ => {
+            ElementType::Polygon => {
                 for (actual, expected) in doc.polygon_points(10).unwrap().iter().zip([
                     Point { x: 160., y: 120. },
                     Point { x: 200., y: 120. },
@@ -317,6 +314,7 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
                     assert!(actual.distance(expected) < 1e-10);
                 }
             }
+            element => panic!("Unexpected numeric rotation element: {element:?}"),
         }
         doc.move_point(4, Point { x: 150., y: 110. });
         doc.selected.insert(10);
@@ -332,12 +330,7 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
         let copied = *pasted
             .iter()
             .find(|id| {
-                matches!(
-                    doc.objects[**id - 1].kind,
-                    Kind::CalculatedAngleRotatedSegment(..)
-                        | Kind::CalculatedAngleRotatedCircle(..)
-                        | Kind::CalculatedAngleRotatedPolygon(..)
-                )
+                transform_is(&doc.objects[**id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle, ElementType::Polygon])
             })
             .unwrap();
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
@@ -563,10 +556,7 @@ fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
             .objects
             .iter()
             .find(|o| {
-                matches!(
-                    o.kind,
-                    Kind::VectorTranslatedSegment(..) | Kind::VectorTranslatedCircle(..)
-                )
+                transform_is(&o.kind, NativeTransformFlavor::Vector, &[ElementType::Segment, ElementType::Circle])
             })
             .unwrap()
             .id;
@@ -639,11 +629,7 @@ fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
         let copy = pasted
             .iter()
             .find(|&&id| {
-                matches!(
-                    reopened.objects[id - 1].kind,
-                    Kind::CalculatedAngleRotatedSegment(..)
-                        | Kind::CalculatedAngleRotatedCircle(..)
-                )
+                transform_is(&reopened.objects[id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle])
             })
             .copied()
             .unwrap();

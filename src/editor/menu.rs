@@ -597,13 +597,7 @@ impl Editor {
                                 self.plot_axis_draft =
                                     match path.map(|id| &self.doc.objects[id - 1].kind) {
                                         Some(Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)) => "0.5",
-                                        Some(
-                                            Kind::Circle(_, _)
-                                            | Kind::CircleBySegment(_, _)
-                                            | Kind::ReflectedCircle(_, _)
-                                            | Kind::ScaledCircle(_, _, _)
-                                            | Kind::RatioScaledCircle(_, _, _, _, _),
-                                        ) => "0.25",
+                                        Some(kind) if super::is_circle_construction_host(kind) => "0.25",
                                         _ => "1",
                                     }
                                     .into();

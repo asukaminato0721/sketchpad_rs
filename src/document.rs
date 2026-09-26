@@ -30,6 +30,8 @@ mod tables;
 mod text;
 pub mod transform_evaluator;
 pub mod transform_model;
+mod transform_validation;
+mod transform_wire;
 mod transforms;
 mod validation;
 
@@ -76,6 +78,7 @@ pub enum IterationDepth {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
+    Transformed(transform_model::TransformDefinition),
     PresentationButton {
         targets: Vec<usize>,
         mode: PresentationMode,
@@ -201,66 +204,6 @@ pub enum Kind {
     },
     IterationValues(usize, usize),
     PointRatio(usize, usize, usize),
-    PolarTranslatedPoint(usize, f64, f64, f64),
-    PolarTranslatedSegment(usize, f64, f64, f64),
-    PolarTranslatedCircle(usize, f64, f64, f64),
-    PolarTranslatedPolygon(usize, f64, f64, f64),
-    FixedRectangularTranslatedPoint(usize, f64, f64, f64, f64),
-    FixedRectangularTranslatedSegment(usize, f64, f64, f64, f64),
-    FixedRectangularTranslatedCircle(usize, f64, f64, f64, f64),
-    FixedRectangularTranslatedPolygon(usize, f64, f64, f64, f64),
-    MarkedDistanceTranslatedPoint(usize, usize, f64),
-    MarkedDistanceTranslatedSegment(usize, usize, f64),
-    MarkedDistanceTranslatedCircle(usize, usize, f64),
-    MarkedDistanceTranslatedPolygon(usize, usize, f64),
-    MixedRectangularTranslatedPoint(usize, usize, f64, bool),
-    MixedRectangularTranslatedSegment(usize, usize, f64, bool),
-    MixedRectangularTranslatedCircle(usize, usize, f64, bool),
-    MixedRectangularTranslatedPolygon(usize, usize, f64, bool),
-    RectangularMarkedTranslatedPoint(usize, usize, usize),
-    RectangularMarkedTranslatedSegment(usize, usize, usize),
-    RectangularMarkedTranslatedCircle(usize, usize, usize),
-    RectangularMarkedTranslatedPolygon(usize, usize, usize),
-    VectorTranslatedPoint(usize, usize, usize),
-    VectorTranslatedSegment(usize, usize, usize),
-    VectorTranslatedCircle(usize, usize, usize),
-    VectorTranslatedPolygon(usize, usize, usize),
-    AngleRotatedPoint(usize, usize, usize, usize, usize),
-    AngleRotatedSegment(usize, usize, usize, usize, usize),
-    AngleRotatedCircle(usize, usize, usize, usize, usize),
-    AngleRotatedPolygon(usize, usize, usize, usize, usize),
-    RatioScaledPoint(usize, usize, usize, usize, usize),
-    RatioScaledCircle(usize, usize, usize, usize, usize),
-    RatioScaledSegment(usize, usize, usize, usize, usize),
-    RatioScaledPolygon(usize, usize, usize, usize, usize),
-    ReflectedPoint(usize, usize),
-    ReflectedCircle(usize, usize),
-    ReflectedSegment(usize, usize),
-    ReflectedPolygon(usize, usize),
-    ScaledPoint(usize, usize, f64),
-    ScaledCircle(usize, usize, f64),
-    ScaledSegment(usize, usize, f64),
-    ScaledRay(usize, usize, f64),
-    ScaledLine(usize, usize, f64),
-    ScaledPolygon(usize, usize, f64),
-    RotatedPoint(usize, usize, f64),
-    CalculatedRatioScaledPoint(usize, usize, usize),
-    CalculatedRatioScaledSegment(usize, usize, usize),
-    CalculatedRatioScaledRay(usize, usize, usize),
-    CalculatedRatioScaledLine(usize, usize, usize),
-    CalculatedRatioScaledCircle(usize, usize, usize),
-    CalculatedRatioScaledPolygon(usize, usize, usize),
-    CalculatedAngleRotatedPoint(usize, usize, usize),
-    CalculatedAngleRotatedSegment(usize, usize, usize),
-    CalculatedAngleRotatedRay(usize, usize, usize),
-    CalculatedAngleRotatedLine(usize, usize, usize),
-    CalculatedAngleRotatedCircle(usize, usize, usize),
-    CalculatedAngleRotatedPolygon(usize, usize, usize),
-    RotatedSegment(usize, usize, f64),
-    RotatedRay(usize, usize, f64),
-    RotatedLine(usize, usize, f64),
-    RotatedCircle(usize, usize, f64),
-    RotatedPolygon(usize, usize, f64),
     Midpoint(usize, usize),
     /// Native code 35. The reference list records the target, the driver's
     /// path, the driver, and the construction chain leading to the target.
@@ -421,27 +364,12 @@ impl Document {
     fn append_object(&mut self, kind: Kind) -> usize {
         self.last_moved_object = None;
         let id = self.objects.len() + 1;
-        let visual_style = if let Kind::ReflectedPolygon(source, _)
-        | Kind::VectorTranslatedPolygon(source, _, _)
-        | Kind::PolarTranslatedPolygon(source, _, _, _)
-        | Kind::FixedRectangularTranslatedPolygon(source, _, _, _, _)
-        | Kind::MarkedDistanceTranslatedPolygon(source, _, _)
-        | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
-        | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
-        | Kind::RotatedPolygon(source, _, _)
-        | Kind::CalculatedAngleRotatedPolygon(source, _, _)
-        | Kind::CalculatedRatioScaledPolygon(source, _, _)
-        | Kind::AngleRotatedPolygon(source, _, _, _, _)
-        | Kind::ScaledPolygon(source, _, _)
-        | Kind::RatioScaledPolygon(source, _, _, _, _)
-        | Kind::CalculatedRatioScaledRay(source, _, _)
-        | Kind::CalculatedRatioScaledLine(source, _, _)
-        | Kind::CalculatedAngleRotatedRay(source, _, _)
-        | Kind::CalculatedAngleRotatedLine(source, _, _)
-        | Kind::RotatedRay(source, _, _)
-        | Kind::RotatedLine(source, _, _)
-        | Kind::ScaledRay(source, _, _)
-        | Kind::ScaledLine(source, _, _) = kind
+        let inherited_transform_source = kind.transform_definition()
+            .filter(|definition| matches!(definition.element(),
+                transform_model::ElementType::Polygon | transform_model::ElementType::Ray
+                | transform_model::ElementType::Line))
+            .map(|definition| definition.source());
+        let visual_style = if let Some(source) = inherited_transform_source
         {
             self.objects
                 .get(source.saturating_sub(1))

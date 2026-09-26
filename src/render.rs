@@ -1941,21 +1941,7 @@ impl GeometryRenderer {
                 }
             }
             match o.kind {
-                Kind::Circle(_, _)
-                | Kind::CircleBySegment(_, _)
-                | Kind::PolarTranslatedCircle(_, _, _, _)
-                | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
-                | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
-                | Kind::RectangularMarkedTranslatedCircle(_, _, _)
-                | Kind::VectorTranslatedCircle(_, _, _)
-                | Kind::MarkedDistanceTranslatedCircle(_, _, _)
-                | Kind::AngleRotatedCircle(_, _, _, _, _)
-                | Kind::RotatedCircle(_, _, _)
-                | Kind::CalculatedAngleRotatedCircle(_, _, _)
-                | Kind::CalculatedRatioScaledCircle(_, _, _)
-                | Kind::ReflectedCircle(_, _)
-                | Kind::ScaledCircle(_, _, _)
-                | Kind::RatioScaledCircle(_, _, _, _, _) => {
+                ref kind if kind.is_circle() => {
                     if let Some((a, radius)) = doc.circle_points(o.id) {
                         let c = vp.screen(a);
                         let r = (radius as f32 * vp.scale).abs();
@@ -1980,20 +1966,7 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                Kind::Polygon(_)
-                | Kind::ReflectedPolygon(_, _)
-                | Kind::VectorTranslatedPolygon(_, _, _)
-                | Kind::PolarTranslatedPolygon(_, _, _, _)
-                | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-                | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-                | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-                | Kind::RotatedPolygon(_, _, _)
-                | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-                | Kind::CalculatedRatioScaledPolygon(_, _, _)
-                | Kind::AngleRotatedPolygon(_, _, _, _, _)
-                | Kind::ScaledPolygon(_, _, _)
-                | Kind::RatioScaledPolygon(_, _, _, _, _) => {
+                ref kind if kind.is_polygon() => {
                     let polygon_object = polygon_fills.next().unwrap();
                     if let Some(points) = doc.polygon_points(polygon_object.id) {
                         let screen = points

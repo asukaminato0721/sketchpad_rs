@@ -3,68 +3,63 @@ use super::geometry::{
     marked_rotation_theta, ratio_of_points, reflect_point, rotate_point_about, scale_point_about,
 };
 use super::kind::{is_point_kind, is_straight_kind};
+use super::transform_model::{DisplacementExpr, ElementType, NativeTransformFlavor, NumericExpr, Transform, TransformDefinition};
 use super::{Document, IterationDepth, Kind, Object, Point};
 use crate::style_records;
 use crate::table_records::NumericUnit;
 use std::collections::BTreeSet;
 
-pub(super) fn supported_point_iteration_mapping(
-    objects: &[Object],
-    seed: usize,
-    image: usize,
-) -> bool {
-    let get = |id: usize| {
-        id.checked_sub(1)
-            .and_then(|at| objects.get(at))
-            .filter(|o| !o.deleted)
+fn point_iteration_definition(
+    objects: &[Object], seed: usize, image: usize,
+) -> Option<TransformDefinition> {
+    let get = |id: usize| id.checked_sub(1).and_then(|at| objects.get(at)).filter(|object| !object.deleted);
+    let definition = get(image)?.kind.transform_definition()?;
+    if definition.element() != ElementType::Point || definition.source() != seed
+        || definition.native_literals().iter().any(|literal| !literal.value.is_finite()) {
+        return None;
+    }
+    let point = |id: usize| get(id).is_some_and(|object| is_point_kind(&object.kind));
+    let numeric = |expression: &NumericExpr| match *expression {
+        NumericExpr::Literal { .. } => true,
+        NumericExpr::ObjectValue { id, unit } => get(id).is_some_and(|object| {
+            if unit == NumericUnit::Length { object.kind.is_distance_value() }
+            else { object.kind.numeric_unit() == Some(unit) }
+        }),
+        NumericExpr::DirectedAngle { first, vertex, last } => [first, vertex, last].into_iter().all(point),
+        NumericExpr::DistanceRatio { origin, base, target } => [origin, base, target].into_iter().all(point),
     };
-    let point = |id: usize| get(id).is_some_and(|o| is_point_kind(&o.kind));
-    let distance = |id: usize| get(id).is_some_and(|o| o.kind.is_distance_value());
-    get(image).is_some_and(|o| match o.kind {
-        Kind::PolarTranslatedPoint(source, angle, units, length) => {
-            source == seed && [angle, units, length].iter().all(|v| v.is_finite())
-        }
-        Kind::FixedRectangularTranslatedPoint(source, xu, xd, yu, yd) => {
-            source == seed && [xu, xd, yu, yd].iter().all(|v| v.is_finite())
-        }
-        Kind::MarkedDistanceTranslatedPoint(source, value, angle) => {
-            source == seed && distance(value) && angle.is_finite()
-        }
-        Kind::MixedRectangularTranslatedPoint(source, value, fixed, _) => {
-            source == seed && distance(value) && fixed.is_finite()
-        }
-        Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
-            source == seed && distance(horizontal) && distance(vertical)
-        }
-        Kind::VectorTranslatedPoint(source, start, end) => {
-            source == seed && point(start) && point(end)
-        }
-        Kind::ReflectedPoint(source, mirror) => {
-            source == seed && get(mirror).is_some_and(|o| is_straight_kind(&o.kind))
-        }
-        Kind::CalculatedRatioScaledPoint(source, center, ratio) => {
-            source == seed
-                && point(center)
-                && get(ratio).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Scalar))
-        }
-        Kind::CalculatedAngleRotatedPoint(source, center, angle) => {
-            source == seed
-                && point(center)
-                && get(angle).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Degrees))
-        }
-        Kind::RotatedPoint(source, center, angle) => {
-            source == seed && point(center) && angle.is_finite()
-        }
-        Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
-            source == seed && [center, first, vertex, last].into_iter().all(point)
-        }
-        Kind::ScaledPoint(source, center, factor) => {
-            source == seed && point(center) && factor.is_finite()
-        }
-        Kind::RatioScaledPoint(source, center, origin, base, target) => {
-            source == seed && [center, origin, base, target].into_iter().all(point)
+    let supported = match definition.transform() {
+        Transform::Translate(DisplacementExpr::Cartesian { horizontal, vertical }) => numeric(horizontal) && numeric(vertical),
+        Transform::Translate(DisplacementExpr::Polar { angle, distance }) => numeric(angle) && numeric(distance),
+        Transform::Translate(DisplacementExpr::Vector { start, end }) => point(*start) && point(*end),
+        Transform::Rotate { center, angle } => point(*center) && numeric(angle),
+        Transform::Dilate { center, ratio } => point(*center) && numeric(ratio),
+        Transform::Reflect { mirror } => get(*mirror).is_some_and(|object| is_straight_kind(&object.kind)),
+    };
+    supported.then_some(definition)
+}
+
+pub(super) fn supported_point_iteration_mapping(objects: &[Object], seed: usize, image: usize) -> bool {
+    point_iteration_definition(objects, seed, image).is_some()
+}
+
+/// Preserve the bounded native simultaneous mapping family: vector points and
+/// segments, plus point rotations driven by pure numeric angle expressions.
+fn mapped_transform_supported(objects: &[Object], definition: &TransformDefinition) -> bool {
+    match (definition.element(), definition.wire_flavor(), definition.transform()) {
+        (ElementType::Point | ElementType::Segment, NativeTransformFlavor::Vector, _) => true,
+        (ElementType::Point, NativeTransformFlavor::NumericRotation,
+            Transform::Rotate { angle: NumericExpr::ObjectValue { id, unit: NumericUnit::Degrees }, .. }) => {
+            id.checked_sub(1).and_then(|index| objects.get(index))
+                .is_some_and(|object| !object.deleted && object.kind.numeric_unit() == Some(NumericUnit::Degrees))
         }
         _ => false,
+    }
+}
+
+pub(super) fn mapped_segment_binding(kind: &Kind) -> bool {
+    matches!(kind, Kind::Segment(..)) || kind.transform_definition().is_some_and(|definition| {
+        definition.element() == ElementType::Segment && definition.wire_flavor() == NativeTransformFlavor::Vector
     })
 }
 
@@ -103,7 +98,10 @@ pub(super) fn supported_branch_polygon_mapping(
             .filter(|o| !o.deleted)
     };
     let translated = |id| {
-        get(id).is_some_and(|o| matches!(o.kind, Kind::PolarTranslatedPoint(source, _, _, _) | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed))
+        get(id).and_then(|object| object.kind.transform_definition()).is_some_and(|definition| {
+            definition.element() == ElementType::Point && definition.source() == seed
+                && matches!(definition.wire_flavor(), NativeTransformFlavor::FixedPolar | NativeTransformFlavor::FixedCartesian)
+        })
     };
     get(seed).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
         && first != second && translated(first) && translated(second)
@@ -150,16 +148,14 @@ pub(super) fn supported_mapped_point_iteration(
         let Some(object) = get(id) else {
             return false;
         };
+        if let Some(definition) = object.kind.transform_definition() {
+            if !mapped_transform_supported(objects, &definition) { return false; }
+            pending.extend(definition.dependencies());
+            continue;
+        }
         match object.kind {
             Kind::Free(_) => {}
-            Kind::VectorTranslatedPoint(a, b, c) | Kind::VectorTranslatedSegment(a, b, c) => {
-                pending.extend([a, b, c])
-            }
             Kind::Segment(a, b) | Kind::Midpoint(a, b) => pending.extend([a, b]),
-            Kind::CalculatedAngleRotatedPoint(source, center, angle)
-                if get(angle).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Degrees)) => {
-                pending.extend([source, center, angle]);
-            }
             // Only pure parameter formulas are supported as mapped numeric inputs.
             Kind::Parameter(_) | Kind::Calculation(_) => {}
             Kind::ParameterCalculation(source, ref group) => {
@@ -180,8 +176,7 @@ impl Document {
         depth: IterationDepth,
     ) -> Result<usize, String> {
         let bindings: Vec<_> = carried.iter().copied().filter(|id| {
-            self.objects.get(id.saturating_sub(1)).is_some_and(|o| matches!(o.kind,
-                Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _)))
+            self.objects.get(id.saturating_sub(1)).is_some_and(|object| mapped_segment_binding(&object.kind))
         }).collect();
         self.add_mapped_point_iteration_with_bindings(seeds, branches, carried, &bindings, depth)
     }
@@ -197,8 +192,7 @@ impl Document {
             || bindings.is_empty()
             || bindings.iter().copied().collect::<BTreeSet<_>>().len() != bindings.len()
             || bindings.iter().any(|id| !carried.contains(id) || !self.objects.get(id.saturating_sub(1))
-                .is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind,
-                    Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))))
+                .is_some_and(|object| is_point_kind(&object.kind) || mapped_segment_binding(&object.kind)))
         {
             return Err("Select supported simultaneous free-point mappings and carried point/segment bindings; depth must be 1–128".into());
         }
@@ -704,76 +698,47 @@ impl Document {
             x: current.x + dx,
             y: current.y + dy,
         };
-        let result = match self.objects.get(image.checked_sub(1)?)?.kind {
-            Kind::PolarTranslatedPoint(_, angle, units, distance) => {
-                let theta = angle.to_radians();
-                translated(
-                    units * distance * theta.cos(),
-                    -units * distance * theta.sin(),
-                )
-            }
-            Kind::FixedRectangularTranslatedPoint(_, xu, xd, yu, yd) => {
-                translated(xu * xd, -yu * yd)
-            }
-            Kind::MarkedDistanceTranslatedPoint(_, distance, angle) => {
-                let distance = self.distance_value_pixels(distance)?;
-                let theta = angle.to_radians();
+        let definition = point_iteration_definition(&self.objects, seed, image)?;
+        // Numeric object values remain pinned to the original document. Only
+        // direct point references use the current seed, including angle/ratio
+        // construction inputs. A reflection mirror also remains pinned.
+        let numeric = |expression: &NumericExpr| -> Option<f64> {
+            let value = match *expression {
+                NumericExpr::Literal { magnitude, scale, .. } => Some(magnitude * scale),
+                NumericExpr::ObjectValue { id, unit } => match unit {
+                    NumericUnit::Length => self.distance_value_pixels(id),
+                    NumericUnit::Degrees => self.numeric_value(id),
+                    NumericUnit::Scalar => self.unitless_numeric_value(id),
+                    _ => None,
+                },
+                NumericExpr::DistanceRatio { origin, base, target } => ratio_of_points(point(origin)?, point(base)?, point(target)?),
+                NumericExpr::DirectedAngle { .. } => None,
+            }?;
+            value.is_finite().then_some(value)
+        };
+        let angle_radians = |expression: &NumericExpr| match *expression {
+            // Keep the original radians directly, avoiding a degrees/radians
+            // roundtrip that would change existing orbit rounding.
+            NumericExpr::DirectedAngle { first, vertex, last } => marked_rotation_theta(point(first)?, point(vertex)?, point(last)?),
+            _ => Some(numeric(expression)?.to_radians()),
+        };
+        let result = match definition.transform() {
+            Transform::Translate(DisplacementExpr::Cartesian { horizontal, vertical }) => translated(numeric(horizontal)?, -numeric(vertical)?),
+            Transform::Translate(DisplacementExpr::Polar { angle, distance }) => {
+                let theta = angle_radians(angle)?;
+                let distance = numeric(distance)?;
                 translated(distance * theta.cos(), -distance * theta.sin())
             }
-            Kind::MixedRectangularTranslatedPoint(_, distance, fixed, horizontal) => {
-                let distance = self.distance_value_pixels(distance)?;
-                let fixed = fixed * 37.79527559055118;
-                if horizontal {
-                    translated(fixed, -distance)
-                } else {
-                    translated(distance, -fixed)
-                }
-            }
-            Kind::RectangularMarkedTranslatedPoint(_, horizontal, vertical) => translated(
-                self.distance_value_pixels(horizontal)?,
-                -self.distance_value_pixels(vertical)?,
-            ),
-            Kind::VectorTranslatedPoint(_, start, end) => {
-                let a = point(start)?;
-                let b = point(end)?;
+            Transform::Translate(DisplacementExpr::Vector { start, end }) => {
+                let (a, b) = (point(*start)?, point(*end)?);
                 translated(b.x - a.x, b.y - a.y)
             }
-            Kind::ReflectedPoint(_, mirror) => {
-                let (a, b, _) = self.line_points(mirror)?;
+            Transform::Rotate { center, angle } => rotate_point_about(current, point(*center)?, angle_radians(angle)?)?,
+            Transform::Dilate { center, ratio } => scale_point_about(current, point(*center)?, numeric(ratio)?)?,
+            Transform::Reflect { mirror } => {
+                let (a, b, _) = self.line_points(*mirror)?;
                 reflect_point(current, a, b)?
             }
-            Kind::RotatedPoint(_, center, angle) => {
-                rotate_point_about(current, point(center)?, angle.to_radians())?
-            }
-            Kind::CalculatedAngleRotatedPoint(_, center, angle) => rotate_point_about(
-                current,
-                point(center)?,
-                self.numeric_value(angle)?.to_radians(),
-            )?,
-            Kind::AngleRotatedPoint(_, center, first, vertex, last) => rotate_point_about(
-                current,
-                point(center)?,
-                marked_rotation_theta(point(first)?, point(vertex)?, point(last)?)?,
-            )?,
-            Kind::CalculatedRatioScaledPoint(_, center, ratio) => {
-                scale_point_about(current, point(center)?, self.unitless_numeric_value(ratio)?)?
-            }
-            Kind::ScaledPoint(_, center, factor) => {
-                let c = point(center)?;
-                Point {
-                    x: c.x + factor * (current.x - c.x),
-                    y: c.y + factor * (current.y - c.y),
-                }
-            }
-            Kind::RatioScaledPoint(_, center, origin, base, target) => {
-                let c = point(center)?;
-                let factor = ratio_of_points(point(origin)?, point(base)?, point(target)?)?;
-                Point {
-                    x: c.x + factor * (current.x - c.x),
-                    y: c.y + factor * (current.y - c.y),
-                }
-            }
-            _ => return None,
         };
         (result.x.is_finite() && result.y.is_finite()).then_some(result)
     }

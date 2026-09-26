@@ -1,4 +1,6 @@
+use super::iteration::mapped_segment_binding;
 use super::embedded_tools::document_records;
+use super::transform_model::{ElementType, NativeTransformFlavor};
 use super::calculations::calculation_source_ids;
 use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding, straight_kind_mode};
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
@@ -81,7 +83,10 @@ impl Document {
                     class |= 0x1_0000;
                 }
                 out[i..i + 4].copy_from_slice(&class.to_le_bytes());
-                if matches!(o.kind, Kind::VectorTranslatedPolygon(_, _, _))
+                if o.kind.transform_definition().is_some_and(|definition| {
+                    definition.element() == ElementType::Polygon
+                        && definition.wire_flavor() == NativeTransformFlavor::Vector
+                })
                     && self.objects.iter().any(|candidate| {
                         !candidate.deleted
                             && matches!(&candidate.kind, Kind::Locus(refs, _) if refs.first() == Some(&o.id))
@@ -710,10 +715,8 @@ impl Document {
                 continue;
             }
             if let Kind::IterationBinding(image, iteration) = o.kind {
-                let segment = matches!(
-                    self.objects.get(image - 1).map(|object| &object.kind),
-                    Some(Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))
-                );
+                let segment = self.objects.get(image - 1)
+                    .is_some_and(|object| mapped_segment_binding(&object.kind));
                 let circle = matches!(
                     self.objects.get(image - 1).map(|o| &o.kind),
                     Some(Kind::Circle(_, _))
@@ -1102,27 +1105,25 @@ impl Document {
                     h[10] = 0x21;
                     h[12..16].copy_from_slice(&[0xff, 0xb2, 0x66, 0]);
                     h[17] = 0x7f;
-                    if matches!(target_kind, Kind::PolarTranslatedPolygon(_, _, _, _)) {
-                        h[18..20].copy_from_slice(&[0xf0, 0x3f]);
-                    } else if matches!(
-                        target_kind,
-                        Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                    ) {
-                        h[18..20].copy_from_slice(&[0, 0x40]);
-                    }
-                    h[20..24].copy_from_slice(
-                        &if matches!(
-                            target_kind,
-                            Kind::VectorTranslatedPolygon(_, _, _)
-                                | Kind::PolarTranslatedPolygon(_, _, _, _)
-                                | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                        ) {
-                            2u32
-                        } else {
-                            1u32
+                    let flavor = target_kind.transform_definition()
+                        .filter(|definition| definition.element() == ElementType::Polygon)
+                        .map(|definition| definition.wire_flavor());
+                    match flavor {
+                        Some(NativeTransformFlavor::FixedPolar) => {
+                            h[18..20].copy_from_slice(&[0xf0, 0x3f]);
                         }
-                        .to_le_bytes(),
-                    );
+                        Some(NativeTransformFlavor::FixedCartesian) => {
+                            h[18..20].copy_from_slice(&[0, 0x40]);
+                        }
+                        _ => {}
+                    }
+                    let rank = if matches!(flavor,
+                        Some(NativeTransformFlavor::Vector
+                            | NativeTransformFlavor::FixedPolar
+                            | NativeTransformFlavor::FixedCartesian)) {
+                        2u32
+                    } else { 1u32 };
+                    h[20..24].copy_from_slice(&rank.to_le_bytes());
                 } else if straight_target || curved_target {
                     h[8] = 43;
                     h[12..16].copy_from_slice(if curved_target {
@@ -1395,6 +1396,28 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Some(definition) = o.kind.transform_definition() {
+                use super::transform_wire::{PolygonWire, TransformWirePresentation};
+                let polygon = if definition.element() == ElementType::Polygon {
+                    Some(PolygonWire {
+                        vertex_count: polygon_vertex_count_for_encoding(&self.objects, definition.source())
+                            .ok_or("Interior transform requires a supported polygon source")?,
+                        interior_order: o.interior_order.ok_or("Missing polygon drawing order")?,
+                        vector_locus_target: definition.wire_flavor() == NativeTransformFlavor::Vector
+                            && self.objects.iter().any(|candidate| {
+                                !candidate.deleted && matches!(&candidate.kind,
+                                    Kind::Locus(refs, _) if refs.first() == Some(&o.id))
+                            }),
+                    })
+                } else {
+                    None
+                };
+                added.extend_from_slice(&super::transform_wire::encode_group(
+                    &definition,
+                    TransformWirePresentation { visible: o.visible, label: o.label.as_ref(), polygon },
+                )?);
+                continue;
+            }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
@@ -1403,94 +1426,6 @@ impl Document {
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _)
                 | Kind::PointOnPolygon(host, _, _) => (15, vec![host]),
-                Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
-                Kind::PolarTranslatedSegment(source, _, _, _) => (21, vec![source]),
-                Kind::PolarTranslatedCircle(source, _, _, _) => (21, vec![source]),
-                Kind::PolarTranslatedPolygon(source, _, _, _) => (21, vec![source]),
-                Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) => (17, vec![source]),
-                Kind::FixedRectangularTranslatedSegment(source, _, _, _, _) => (17, vec![source]),
-                Kind::FixedRectangularTranslatedCircle(source, _, _, _, _) => (17, vec![source]),
-                Kind::FixedRectangularTranslatedPolygon(source, _, _, _, _) => (17, vec![source]),
-                Kind::MarkedDistanceTranslatedPoint(source, distance, _) => {
-                    (24, vec![source, distance])
-                }
-                Kind::MarkedDistanceTranslatedSegment(source, distance, _)
-                | Kind::MarkedDistanceTranslatedCircle(source, distance, _)
-                | Kind::MarkedDistanceTranslatedPolygon(source, distance, _) => {
-                    (24, vec![source, distance])
-                }
-                Kind::MixedRectangularTranslatedPoint(source, distance, _, fixed_horizontal)
-                | Kind::MixedRectangularTranslatedSegment(source, distance, _, fixed_horizontal)
-                | Kind::MixedRectangularTranslatedCircle(source, distance, _, fixed_horizontal) => {
-                    (
-                        if fixed_horizontal { 18 } else { 19 },
-                        vec![source, distance],
-                    )
-                }
-                Kind::MixedRectangularTranslatedPolygon(source, distance, _, fixed_horizontal) => (
-                    if fixed_horizontal { 18 } else { 19 },
-                    vec![source, distance],
-                ),
-                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
-                | Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
-                | Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
-                    (20, vec![source, horizontal, vertical])
-                }
-                Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
-                    (20, vec![source, horizontal, vertical])
-                }
-                Kind::VectorTranslatedPoint(source, start, end) => (16, vec![source, start, end]),
-                Kind::VectorTranslatedSegment(source, start, end)
-                | Kind::VectorTranslatedCircle(source, start, end)
-                | Kind::VectorTranslatedPolygon(source, start, end) => {
-                    (16, vec![source, start, end])
-                }
-                Kind::ReflectedPoint(source, mirror) => (34, vec![source, mirror]),
-                Kind::ReflectedCircle(source, mirror)
-                | Kind::ReflectedSegment(source, mirror)
-                | Kind::ReflectedPolygon(source, mirror) => (34, vec![source, mirror]),
-                Kind::ScaledPoint(source, center, _)
-                | Kind::ScaledCircle(source, center, _)
-                | Kind::ScaledSegment(source, center, _)
-                | Kind::ScaledRay(source, center, _)
-                | Kind::ScaledLine(source, center, _)
-                | Kind::ScaledPolygon(source, center, _) => (30, vec![source, center]),
-                Kind::CalculatedRatioScaledPoint(source, center, ratio)
-                | Kind::CalculatedRatioScaledSegment(source, center, ratio)
-                | Kind::CalculatedRatioScaledRay(source, center, ratio)
-                | Kind::CalculatedRatioScaledLine(source, center, ratio)
-                | Kind::CalculatedRatioScaledCircle(source, center, ratio)
-                | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
-                    (33, vec![source, center, ratio])
-                }
-                Kind::CalculatedAngleRotatedPoint(source, center, angle)
-                | Kind::CalculatedAngleRotatedSegment(source, center, angle)
-                | Kind::CalculatedAngleRotatedRay(source, center, angle)
-                | Kind::CalculatedAngleRotatedLine(source, center, angle)
-                | Kind::CalculatedAngleRotatedCircle(source, center, angle)
-                | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
-                    (29, vec![source, center, angle])
-                }
-                Kind::RotatedPoint(source, center, _)
-                | Kind::RotatedSegment(source, center, _)
-                | Kind::RotatedRay(source, center, _)
-                | Kind::RotatedLine(source, center, _)
-                | Kind::RotatedCircle(source, center, _)
-                | Kind::RotatedPolygon(source, center, _) => (27, vec![source, center]),
-                Kind::AngleRotatedPoint(source, center, first, vertex, last)
-                | Kind::AngleRotatedSegment(source, center, first, vertex, last)
-                | Kind::AngleRotatedCircle(source, center, first, vertex, last)
-                | Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
-                    (28, vec![source, center, first, vertex, last])
-                }
-                Kind::RatioScaledPoint(source, center, origin, base, target) => {
-                    (32, vec![source, center, origin, base, target])
-                }
-                Kind::RatioScaledCircle(source, center, origin, base, target)
-                | Kind::RatioScaledSegment(source, center, origin, base, target)
-                | Kind::RatioScaledPolygon(source, center, origin, base, target) => {
-                    (32, vec![source, center, origin, base, target])
-                }
                 Kind::Midpoint(_, _) => (
                     1,
                     vec![
@@ -1525,155 +1460,6 @@ impl Document {
                         .ok_or("Polygon has too many vertices")?
                         .to_le_bytes(),
                 );
-            }
-            if matches!(
-                o.kind,
-                Kind::RotatedRay(..) | Kind::RotatedLine(..) | Kind::ScaledRay(..) | Kind::ScaledLine(..)
-                    | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)
-                    | Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)
-            ) {
-                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..) | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedRatioScaledRay(..)) {
-                    64
-                } else {
-                    63
-                });
-                h[0] = code as u8;
-                h[18..20].copy_from_slice(&[0x51, 0x5c]);
-            }
-            if matches!(
-                o.kind,
-                Kind::ReflectedCircle(_, _) | Kind::ScaledCircle(_, _, _)
-            ) {
-                h = header(3);
-                h[0] = code as u8;
-                h[18] = 0;
-                h[19] = 0;
-            }
-            if matches!(
-                o.kind,
-                Kind::PolarTranslatedSegment(_, _, _, _)
-                    | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
-                    | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
-                    | Kind::RectangularMarkedTranslatedSegment(_, _, _)
-                    | Kind::VectorTranslatedSegment(_, _, _)
-                    | Kind::MarkedDistanceTranslatedSegment(_, _, _)
-                    | Kind::AngleRotatedSegment(_, _, _, _, _)
-                    | Kind::RotatedSegment(_, _, _)
-                    | Kind::CalculatedAngleRotatedSegment(_, _, _)
-                    | Kind::CalculatedRatioScaledSegment(_, _, _)
-                    | Kind::ScaledSegment(_, _, _)
-                    | Kind::RatioScaledSegment(_, _, _, _, _)
-                    | Kind::ReflectedSegment(_, _)
-            ) {
-                h = header(2);
-                h[0] = code as u8;
-                if matches!(
-                    o.kind,
-                    Kind::VectorTranslatedSegment(_, _, _)
-                        | Kind::MarkedDistanceTranslatedSegment(_, _, _)
-                        | Kind::AngleRotatedSegment(_, _, _, _, _)
-                        | Kind::RotatedSegment(_, _, _)
-                        | Kind::CalculatedAngleRotatedSegment(_, _, _)
-                        | Kind::CalculatedRatioScaledSegment(_, _, _)
-                        | Kind::ScaledSegment(_, _, _)
-                        | Kind::RatioScaledSegment(_, _, _, _, _)
-                ) {
-                    h[18] = 0x51;
-                    h[19] = 0x5c;
-                }
-            }
-            if matches!(
-                o.kind,
-                Kind::PolarTranslatedCircle(_, _, _, _)
-                    | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
-                    | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
-                    | Kind::RectangularMarkedTranslatedCircle(_, _, _)
-                    | Kind::VectorTranslatedCircle(_, _, _)
-                    | Kind::MarkedDistanceTranslatedCircle(_, _, _)
-                    | Kind::AngleRotatedCircle(_, _, _, _, _)
-                    | Kind::RotatedCircle(_, _, _)
-                    | Kind::CalculatedAngleRotatedCircle(_, _, _)
-                    | Kind::CalculatedRatioScaledCircle(_, _, _)
-            ) {
-                h = header(3);
-                h[0] = code as u8;
-                if matches!(
-                    o.kind,
-                    Kind::VectorTranslatedCircle(_, _, _)
-                        | Kind::MarkedDistanceTranslatedCircle(_, _, _)
-                        | Kind::AngleRotatedCircle(_, _, _, _, _)
-                        | Kind::RotatedCircle(_, _, _)
-                        | Kind::CalculatedAngleRotatedCircle(_, _, _)
-                        | Kind::CalculatedRatioScaledCircle(_, _, _)
-                ) {
-                    h[18] = 0x51;
-                    h[19] = 0x5c;
-                }
-            }
-            if matches!(o.kind, Kind::RatioScaledCircle(_, _, _, _, _)) {
-                h = header(3);
-                h[0] = code as u8;
-                h[18] = 0x51;
-                h[19] = 0x5c;
-            }
-            if matches!(
-                o.kind,
-                Kind::ReflectedPolygon(_, _)
-                    | Kind::VectorTranslatedPolygon(_, _, _)
-                    | Kind::PolarTranslatedPolygon(_, _, _, _)
-                    | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                    | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-                    | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-                    | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-                    | Kind::RotatedPolygon(_, _, _)
-                    | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-                    | Kind::CalculatedRatioScaledPolygon(_, _, _)
-                    | Kind::AngleRotatedPolygon(_, _, _, _, _)
-                    | Kind::ScaledPolygon(_, _, _)
-                    | Kind::RatioScaledPolygon(_, _, _, _, _)
-            ) {
-                h = header(8);
-                h[0] = code as u8;
-                if let Kind::ReflectedPolygon(source, _)
-                | Kind::VectorTranslatedPolygon(source, _, _)
-                | Kind::PolarTranslatedPolygon(source, _, _, _)
-                | Kind::FixedRectangularTranslatedPolygon(source, _, _, _, _)
-                | Kind::MarkedDistanceTranslatedPolygon(source, _, _)
-                | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
-                | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
-                | Kind::RotatedPolygon(source, _, _)
-                | Kind::CalculatedAngleRotatedPolygon(source, _, _)
-                | Kind::CalculatedRatioScaledPolygon(source, _, _)
-                | Kind::AngleRotatedPolygon(source, _, _, _, _)
-                | Kind::ScaledPolygon(source, _, _)
-                | Kind::RatioScaledPolygon(source, _, _, _, _) = o.kind
-                {
-                    let vertex_count = polygon_vertex_count_for_encoding(&self.objects, source)
-                        .ok_or("Interior transform requires a supported polygon source")?;
-                    h[8..10].copy_from_slice(
-                        &polygon_subtype(vertex_count)
-                            .ok_or("Polygon has too many vertices")?
-                            .to_le_bytes(),
-                    );
-                }
-                h[20..24].copy_from_slice(&1u32.to_le_bytes());
-                if !matches!(
-                    o.kind,
-                    Kind::ReflectedPolygon(_, _)
-                        | Kind::PolarTranslatedPolygon(_, _, _, _)
-                        | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                ) {
-                    h[18] = 0x51;
-                    h[19] = 0x5c;
-                }
-            }
-            if matches!(o.kind, Kind::VectorTranslatedPolygon(_, _, _))
-                && self.objects.iter().any(|candidate| {
-                    !candidate.deleted
-                        && matches!(&candidate.kind, Kind::Locus(refs, _) if refs.first() == Some(&o.id))
-                })
-            {
-                h[18..20].copy_from_slice(&[0x39, 0x20]);
             }
             if !o.visible {
                 h[2] = 1;
@@ -1743,110 +1529,6 @@ impl Document {
                         payload.extend_from_slice(&y.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::PolarTranslatedPoint(_, angle, units, distance)
-                    | Kind::PolarTranslatedSegment(_, angle, units, distance)
-                    | Kind::PolarTranslatedCircle(_, angle, units, distance)
-                    | Kind::PolarTranslatedPolygon(_, angle, units, distance) => {
-                        let mut payload =
-                            *include_bytes!("../../assets/polar_translation_payload.bin");
-                        if angle != 90. {
-                            payload[4..12]
-                                .copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
-                            payload[12..20]
-                                .copy_from_slice(&angle.to_radians().cos().to_le_bytes());
-                        }
-                        payload[20..28].copy_from_slice(&angle.to_le_bytes());
-                        payload[32..40].copy_from_slice(&units.to_le_bytes());
-                        payload[40..48].copy_from_slice(&distance.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
-                    Kind::FixedRectangularTranslatedPoint(
-                        _,
-                        x_units,
-                        x_distance,
-                        y_units,
-                        y_distance,
-                    )
-                    | Kind::FixedRectangularTranslatedSegment(
-                        _,
-                        x_units,
-                        x_distance,
-                        y_units,
-                        y_distance,
-                    )
-                    | Kind::FixedRectangularTranslatedCircle(
-                        _,
-                        x_units,
-                        x_distance,
-                        y_units,
-                        y_distance,
-                    )
-                    | Kind::FixedRectangularTranslatedPolygon(
-                        _,
-                        x_units,
-                        x_distance,
-                        y_units,
-                        y_distance,
-                    ) => {
-                        let mut payload = *include_bytes!(
-                            "../../assets/rectangular_fixed_translation_payload.bin"
-                        );
-                        payload[4..12].copy_from_slice(&(x_units * x_distance).to_le_bytes());
-                        payload[12..20].copy_from_slice(&x_distance.to_le_bytes());
-                        payload[24..32].copy_from_slice(&(y_units * y_distance).to_le_bytes());
-                        payload[32..40].copy_from_slice(&y_distance.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
-                    Kind::MarkedDistanceTranslatedPoint(_, _, angle)
-                    | Kind::MarkedDistanceTranslatedSegment(_, _, angle)
-                    | Kind::MarkedDistanceTranslatedCircle(_, _, angle)
-                    | Kind::MarkedDistanceTranslatedPolygon(_, _, angle) => {
-                        let mut payload =
-                            *include_bytes!("../../assets/marked_distance_translation_payload.bin");
-                        if angle != 90. {
-                            payload[4..12]
-                                .copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
-                            payload[12..20]
-                                .copy_from_slice(&angle.to_radians().cos().to_le_bytes());
-                        }
-                        payload[20..28].copy_from_slice(&angle.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
-                    Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, fixed_horizontal)
-                    | Kind::MixedRectangularTranslatedSegment(_, _, fixed_cm, fixed_horizontal)
-                    | Kind::MixedRectangularTranslatedCircle(_, _, fixed_cm, fixed_horizontal)
-                    | Kind::MixedRectangularTranslatedPolygon(_, _, fixed_cm, fixed_horizontal) => {
-                        let mut payload = *include_bytes!(
-                            "../../assets/mixed_rectangular_translation_payload.bin"
-                        );
-                        payload[0] = if fixed_horizontal { 18 } else { 19 };
-                        payload[4..12]
-                            .copy_from_slice(&(fixed_cm * 37.79527559055118).to_le_bytes());
-                        payload[12..20].copy_from_slice(&fixed_cm.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
-                    Kind::ScaledPoint(_, _, factor)
-                    | Kind::ScaledCircle(_, _, factor)
-                    | Kind::ScaledSegment(_, _, factor)
-                    | Kind::ScaledRay(_, _, factor)
-                    | Kind::ScaledLine(_, _, factor)
-                    | Kind::ScaledPolygon(_, _, factor) => {
-                        let mut payload = vec![30, 0, 0, 0];
-                        payload.extend_from_slice(&factor.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
-                    Kind::RotatedPoint(_, _, angle)
-                    | Kind::RotatedSegment(_, _, angle)
-                    | Kind::RotatedRay(_, _, angle)
-                    | Kind::RotatedLine(_, _, angle)
-                    | Kind::RotatedCircle(_, _, angle)
-                    | Kind::RotatedPolygon(_, _, angle) => {
-                        let mut payload = *include_bytes!("../../assets/rotation_payload.bin");
-                        payload[4..12].copy_from_slice(&(-angle.to_radians().sin()).to_le_bytes());
-                        payload[12..20].copy_from_slice(&angle.to_radians().cos().to_le_bytes());
-                        payload[20..28].copy_from_slice(&angle.to_le_bytes());
-                        put_record(&mut added, 0x7d3, &payload);
-                    }
                     _ => {}
                 }
             }
@@ -1871,20 +1553,9 @@ impl Document {
                         | Kind::PlottedPoint(_, _, _, _)
                         | Kind::NumericCoordinatePoint(_, _, _)
                         | Kind::CoordinateMeasurement { .. }
-                        | Kind::ReflectedPolygon(_, _)
-                        | Kind::VectorTranslatedPolygon(_, _, _)
-                        | Kind::PolarTranslatedPolygon(_, _, _, _)
-                        | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                        | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-                        | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-                        | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-                        | Kind::RotatedPolygon(_, _, _)
-                        | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-                        | Kind::CalculatedRatioScaledPolygon(_, _, _)
-                        | Kind::AngleRotatedPolygon(_, _, _, _, _)
-                        | Kind::ScaledPolygon(_, _, _)
-                        | Kind::RatioScaledPolygon(_, _, _, _, _)
-                )
+                ) || o.kind.transform_definition().is_some_and(|definition| {
+                    definition.element() == ElementType::Polygon
+                })
             })
             .map(|o| o.id);
         if let Some(id) = last_marker_object {

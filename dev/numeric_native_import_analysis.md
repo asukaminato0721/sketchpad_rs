@@ -639,3 +639,70 @@ source inputs. The existing native-verified zero-angle ray fixture displays
 therefore uses a separate raw-result path; public numeric values, dependent
 calculations, and geometry still require finite results. A renderer regression
 checks the infinite caption, undefined ray, and recovery to 90.00° at n=4.
+
+The terminal-decimal follow-up audit (`/tmp/numeric_trailing_decimal_audit.txt`)
+identifies five distinct actual scene objects; earlier aggregate keys combined
+unrelated named subtype51 formulas. Pursuit object32 has `[240.,6000/6001]`
+(two supported PointDistance sources), cube-stack objects84/86 have `−1.+6000`
+(supported Scalar calculations), and mechanical-wave object172 ends a four-source
+Length expression with `sgn(6003−0.)`. The remaining named square-root2 object38
+uses `1. cm+6000`, a separate unit-conflict prerequisite. All five original groups
+are retained as `numeric_calculation_trailing_decimal_*_original.bin`.
+
+The pursuit isolate uses known Scalar0.01/1 sources, retains the original
+`[2,4,0,10]` literal, and positively shows `y =2.40` and x=2.4. A mode0
+control displays the formula with literal `240`, not `240.`. Both reopen/save
+identically at3,552 bytes. Cube84/86 use Scalar3/4 and retain `−1.`; native
+points have x=2/3. Their original mode3/flag2 captions remain suppressed.
+Clearing flag2 in mode3 exposes a generated `m₁ =2.00` name, a distinct naming
+prerequisite; it is not inferred from the literal parser. Mode0/flag2 still
+suppresses the caption, while mode0/flag0 displays `−1+source =2.00`, without
+its terminal separator. All cube controls retain3,502 bytes. These establish
+caption suppression in modes0 and3 separately from the numeric grammar;
+the document renderer/getter change is coordinated independently.
+
+The full original mechanical formula is isolated with supported sources
+[Length1cm, Scalar1, Scalar3, Scalar sin(3)] and the original final `0.`
+inside sgn. Native shows0.71cm and its full-precision positive coordinate
+x≈0.707106781187, y=3. The first isolate accidentally moved a Scalar source's
+numeric anchor without translating its bounding box. The port correctly marked
+that source partial; the corrected retained fixture moves both and independently
+reopens/saves3,590 bytes identically. No presentation guard was weakened.
+The central harness was edited during one cube control, causing a post-save
+Bash reader error; a stable harness snapshot repeat completed terminal0 with
+matching bytes and a positive formula caption. Neither event was a native
+format rejection.
+
+Bounded source-calculation support accepts a terminal decimal separator only
+after whole digits. It normalizes the literal caption (`240.`→`240`, `−1.`→`−1`,
+`0.`→`0`) while retaining all original token words, precision, fonts, names,
+anchors, opaque numeric prefix fields, and record ordering. A bare separator,
+repeated separators, and leading-zero violations remain invalid. Source-free
+code0 terminal-decimal literals remain guarded: the independent native1.
+control uses a boxed literal presentation rather than an ordinary formula,
+which needs a separate model/presentation proof. Trailing decimal radian and
+degree suffix variants remain guarded. No function7000 or source-count limit
+is widened.
+
+The API edits original sources and precision, authors `240.*v1/v2`,
+`−1.+source`, and `v1·sgn(v2−0.)` through the existing single/multiple-source
+writers, adds code69 points, and copies original/authored points with their
+live prerequisites. Independent copied-source edits produce native original/
+copy values1.2000/1.8000 (pursuit),3.00/1.50 (cube authored formulas), and
+1.0607cm/0.5303cm (mechanical original), with mechanical authored1.50cm/0.75cm.
+Positive original and shifted copied geometry appears in all three captures,
+`/tmp/numeric_trailing_decimal_{pursuit,cube84,mechanical}_api_after_setup.png`.
+The complete writer goldens reopen/save identically:29 objects/5,512 bytes,
+28 objects/5,186 bytes, and30 objects/5,786 bytes. They are retained as
+`numeric_calculation_trailing_decimal_{pursuit,cube84,mechanical}_edited_authored_copied_native_verified.gsp`.
+Tests recreate their bytes and check live independent sources, unit evaluation,
+caption normalization, original words, preservation, and undo separately.
+
+The square-root2 group remains losslessly Unsupported48 despite its newly
+parseable trailing separator: native positively computes `s =3.00` for
+`1. cm+Scalar2`, and a separate mode0 nontrailing `1 cm+Scalar2` control also
+shows3.00 without a physical result suffix. Thus its quantity behavior is
+independent of terminal punctuation and needs a focused unit-promotion proof.
+The current dimensional rules remain unchanged, avoiding an unsupported
+inference from this one mixed-unit family. Its exact native file is retained
+and tested as partial with unchanged bytes.

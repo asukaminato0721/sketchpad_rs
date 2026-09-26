@@ -22,6 +22,20 @@ mod transform_dialogs;
 mod transforms;
 mod ui;
 
+fn is_circle_construction_host(kind: &Kind) -> bool {
+    use sketchpad_rs::document::transform_model::{ElementType, NativeTransformFlavor};
+    matches!(kind, Kind::Circle(..) | Kind::CircleBySegment(..))
+        || kind.transform_definition().is_some_and(|definition| {
+            definition.element() == ElementType::Circle
+                && matches!(
+                    definition.wire_flavor(),
+                    NativeTransformFlavor::Reflection
+                        | NativeTransformFlavor::FixedDilation
+                        | NativeTransformFlavor::PointRatioDilation
+                )
+        })
+}
+
 use sketchpad_rs::action_records::{
     AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement,
 };

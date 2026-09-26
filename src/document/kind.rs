@@ -1,4 +1,5 @@
 use super::calculations::calculation_source_ids;
+use super::transform_model::{ElementType, NativeTransformFlavor};
 use super::{IterationDepth, Kind, LineMode, Object};
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::style_records::{
@@ -80,54 +81,41 @@ impl Kind {
     }
     pub fn fixed_transform_straight_mode(&self) -> Option<LineMode> {
         match self {
-            Kind::Ray(..) | Kind::RotatedRay(..) | Kind::ScaledRay(..)
-            | Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedRatioScaledRay(..) => Some(LineMode::Ray),
-            Kind::Line(..) | Kind::RotatedLine(..) | Kind::ScaledLine(..)
-            | Kind::CalculatedAngleRotatedLine(..) | Kind::CalculatedRatioScaledLine(..) => Some(LineMode::Line),
-            _ => None,
+            Kind::Ray(..) => Some(LineMode::Ray),
+            Kind::Line(..) => Some(LineMode::Line),
+            _ => {
+                let definition = self.transform_definition()?;
+                if !matches!(
+                    definition.wire_flavor(),
+                    NativeTransformFlavor::FixedRotation
+                        | NativeTransformFlavor::FixedDilation
+                        | NativeTransformFlavor::NumericRotation
+                        | NativeTransformFlavor::NumericDilation
+                ) {
+                    return None;
+                }
+                match definition.element() {
+                    ElementType::Ray => Some(LineMode::Ray),
+                    ElementType::Line => Some(LineMode::Line),
+                    _ => None,
+                }
+            }
         }
     }
     pub fn is_circle(&self) -> bool {
-        matches!(
-            self,
-            Kind::Circle(_, _)
-                | Kind::CircleBySegment(_, _)
-                | Kind::PolarTranslatedCircle(_, _, _, _)
-                | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
-                | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
-                | Kind::RectangularMarkedTranslatedCircle(_, _, _)
-                | Kind::VectorTranslatedCircle(_, _, _)
-                | Kind::MarkedDistanceTranslatedCircle(_, _, _)
-                | Kind::AngleRotatedCircle(_, _, _, _, _)
-                | Kind::RotatedCircle(_, _, _)
-                | Kind::CalculatedAngleRotatedCircle(_, _, _)
-                | Kind::CalculatedRatioScaledCircle(_, _, _)
-                | Kind::ReflectedCircle(_, _)
-                | Kind::ScaledCircle(_, _, _)
-                | Kind::RatioScaledCircle(_, _, _, _, _)
-        )
+        matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
+            || self
+                .transform_definition()
+                .is_some_and(|definition| definition.element() == ElementType::Circle)
     }
     pub fn is_line(&self) -> bool {
         straight_kind_mode(self) == Some(LineMode::Line)
     }
     pub fn is_polygon(&self) -> bool {
-        matches!(
-            self,
-            Kind::Polygon(_)
-                | Kind::ReflectedPolygon(_, _)
-                | Kind::VectorTranslatedPolygon(_, _, _)
-                | Kind::PolarTranslatedPolygon(_, _, _, _)
-                | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-                | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-                | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-                | Kind::RotatedPolygon(_, _, _)
-                | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-                | Kind::CalculatedRatioScaledPolygon(_, _, _)
-                | Kind::AngleRotatedPolygon(_, _, _, _, _)
-                | Kind::ScaledPolygon(_, _, _)
-                | Kind::RatioScaledPolygon(_, _, _, _, _)
-        )
+        matches!(self, Kind::Polygon(_))
+            || self
+                .transform_definition()
+                .is_some_and(|definition| definition.element() == ElementType::Polygon)
     }
     pub fn is_measurement(&self) -> bool {
         matches!(
@@ -207,6 +195,9 @@ impl Kind {
         }
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Some(definition) = self.transform_definition() {
+            return definition.dependencies();
+        }
         if let Kind::HideShowButton { targets, .. } = self {
             return targets.clone();
         }
@@ -281,26 +272,20 @@ impl Kind {
         if let Kind::RayIteration(seed, image, ray, parameter) = self {
             return vec![*parameter, *seed, *image, *ray];
         }
-        if let Kind::CalculatedAngleRotatedPoint(source, center, angle)
-        | Kind::CalculatedAngleRotatedSegment(source, center, angle)
-        | Kind::CalculatedAngleRotatedRay(source, center, angle)
-        | Kind::CalculatedAngleRotatedLine(source, center, angle)
-        | Kind::CalculatedAngleRotatedCircle(source, center, angle)
-        | Kind::CalculatedAngleRotatedPolygon(source, center, angle)
-        | Kind::CalculatedRatioScaledPoint(source, center, angle)
-        | Kind::CalculatedRatioScaledSegment(source, center, angle)
-        | Kind::CalculatedRatioScaledRay(source, center, angle)
-        | Kind::CalculatedRatioScaledLine(source, center, angle)
-        | Kind::CalculatedRatioScaledCircle(source, center, angle)
-        | Kind::CalculatedRatioScaledPolygon(source, center, angle) = self
+        if let Kind::MappedPointIteration {
+            seeds,
+            branches,
+            carried,
+            depth,
+            ..
+        } = self
         {
-            return vec![*source, *center, *angle];
-        }
-        if let Kind::MappedPointIteration { seeds, branches, carried, depth, .. } = self {
             let mut parents = seeds.clone();
             parents.extend(branches.iter().flatten().copied());
             parents.extend(carried);
-            if let IterationDepth::Value(id) = depth { parents.push(*id); }
+            if let IterationDepth::Value(id) = depth {
+                parents.push(*id);
+            }
             return parents;
         }
         if let Kind::BranchingPolygonIteration {
@@ -343,14 +328,6 @@ impl Kind {
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::PointOnPolygon(host, _, _)
-            | Kind::PolarTranslatedPoint(host, _, _, _)
-            | Kind::PolarTranslatedSegment(host, _, _, _)
-            | Kind::PolarTranslatedCircle(host, _, _, _)
-            | Kind::PolarTranslatedPolygon(host, _, _, _)
-            | Kind::FixedRectangularTranslatedPoint(host, _, _, _, _)
-            | Kind::FixedRectangularTranslatedSegment(host, _, _, _, _)
-            | Kind::FixedRectangularTranslatedCircle(host, _, _, _, _)
-            | Kind::FixedRectangularTranslatedPolygon(host, _, _, _, _)
             | Kind::PathLiteralPoint(host, _)
             | Kind::SegmentLength(host)
             | Kind::PolygonPerimeter(host)
@@ -379,10 +356,6 @@ impl Kind {
             | Kind::Intersection(a, b)
             | Kind::LineCircleIntersection(a, b, _)
             | Kind::CircleCircleIntersection(a, b, _)
-            | Kind::ReflectedPoint(a, b)
-            | Kind::ReflectedCircle(a, b)
-            | Kind::ReflectedSegment(a, b)
-            | Kind::ReflectedPolygon(a, b)
             | Kind::PointDistance(a, b)
             | Kind::PointLineDistance(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
@@ -395,20 +368,6 @@ impl Kind {
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
             | Kind::NumericCoordinatePoint(x, y, frame) => vec![x, y, frame],
             Kind::DerivativeFunction(source, _) => vec![source],
-            Kind::ScaledPoint(source, center, _)
-            | Kind::ScaledCircle(source, center, _)
-            | Kind::ScaledSegment(source, center, _)
-            | Kind::ScaledRay(source, center, _)
-            | Kind::ScaledLine(source, center, _)
-            | Kind::ScaledPolygon(source, center, _)
-            | Kind::RotatedPoint(source, center, _)
-            | Kind::RotatedSegment(source, center, _)
-            | Kind::RotatedRay(source, center, _)
-            | Kind::RotatedLine(source, center, _)
-            | Kind::RotatedCircle(source, center, _)
-            | Kind::RotatedPolygon(source, center, _) => {
-                vec![source, center]
-            }
             Kind::Bisector(a, b, c)
             | Kind::ThreePointArc(a, b, c)
             | Kind::ArcOnCircle(a, b, c)
@@ -416,57 +375,9 @@ impl Kind {
                 vec![a, b, c]
             }
             Kind::PointRatio(a, b, c) => vec![a, b, c],
-            Kind::MarkedDistanceTranslatedPoint(source, distance, _) => vec![source, distance],
-            Kind::MarkedDistanceTranslatedSegment(source, distance, _)
-            | Kind::MarkedDistanceTranslatedCircle(source, distance, _)
-            | Kind::MarkedDistanceTranslatedPolygon(source, distance, _) => vec![source, distance],
-            Kind::MixedRectangularTranslatedPoint(source, distance, _, _)
-            | Kind::MixedRectangularTranslatedSegment(source, distance, _, _)
-            | Kind::MixedRectangularTranslatedCircle(source, distance, _, _) => {
-                vec![source, distance]
-            }
-            Kind::MixedRectangularTranslatedPolygon(source, distance, _, _) => {
-                vec![source, distance]
-            }
-            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
-            | Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
-            | Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
-                vec![source, horizontal, vertical]
-            }
-            Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
-                vec![source, horizontal, vertical]
-            }
-            Kind::VectorTranslatedPoint(source, start, end) => vec![source, start, end],
-            Kind::VectorTranslatedSegment(source, start, end)
-            | Kind::VectorTranslatedCircle(source, start, end)
-            | Kind::VectorTranslatedPolygon(source, start, end) => vec![source, start, end],
-            Kind::AngleRotatedPoint(source, center, first, vertex, last)
-            | Kind::AngleRotatedSegment(source, center, first, vertex, last)
-            | Kind::AngleRotatedCircle(source, center, first, vertex, last)
-            | Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
-                vec![source, center, first, vertex, last]
-            }
-            Kind::RatioScaledPoint(source, center, origin, base, target)
-            | Kind::RatioScaledCircle(source, center, origin, base, target)
-            | Kind::RatioScaledSegment(source, center, origin, base, target)
-            | Kind::RatioScaledPolygon(source, center, origin, base, target) => {
-                vec![source, center, origin, base, target]
-            }
             Kind::Polygon(_)
             | Kind::BranchingPolygonIteration { .. }
-            | Kind::MappedPointIteration { .. }
-            | Kind::CalculatedAngleRotatedPoint(_, _, _)
-            | Kind::CalculatedRatioScaledPoint(_, _, _)
-            | Kind::CalculatedAngleRotatedSegment(_, _, _)
-            | Kind::CalculatedAngleRotatedRay(_, _, _)
-            | Kind::CalculatedAngleRotatedLine(_, _, _)
-            | Kind::CalculatedRatioScaledRay(_, _, _)
-            | Kind::CalculatedRatioScaledLine(_, _, _)
-            | Kind::CalculatedRatioScaledSegment(_, _, _)
-            | Kind::CalculatedAngleRotatedCircle(_, _, _)
-            | Kind::CalculatedRatioScaledCircle(_, _, _)
-            | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-            | Kind::CalculatedRatioScaledPolygon(_, _, _) => unreachable!(),
+            | Kind::MappedPointIteration { .. } => unreachable!(),
             Kind::SegmentIteration(_, _, _, _)
             | Kind::CircleIteration(_, _, _, _)
             | Kind::PointIteration(_, _, _) => unreachable!(),
@@ -487,16 +398,30 @@ impl Kind {
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
+            Kind::Transformed(..) => unreachable!("transform dependencies handled above"),
         }
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
-        if let Kind::MappedPointIteration { seeds, branches, carried, depth, final_only } = self {
+        if let Kind::MappedPointIteration {
+            seeds,
+            branches,
+            carried,
+            depth,
+            final_only,
+        } = self
+        {
             return Kind::MappedPointIteration {
                 seeds: seeds.iter().map(|id| m(*id)).collect(),
-                branches: branches.iter().map(|branch| branch.iter().map(|id| m(*id)).collect()).collect(),
+                branches: branches
+                    .iter()
+                    .map(|branch| branch.iter().map(|id| m(*id)).collect())
+                    .collect(),
                 carried: carried.iter().map(|id| m(*id)).collect(),
-                depth: match depth { IterationDepth::Fixed(n) => IterationDepth::Fixed(*n), IterationDepth::Value(id) => IterationDepth::Value(m(*id)) },
+                depth: match depth {
+                    IterationDepth::Fixed(n) => IterationDepth::Fixed(*n),
+                    IterationDepth::Value(id) => IterationDepth::Value(m(*id)),
+                },
                 final_only: *final_only,
             };
         }
@@ -754,7 +679,9 @@ impl Kind {
             Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
             Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
             Kind::PlottedPoint(a, b, mode, stored) => Kind::PlottedPoint(m(a), m(b), mode, stored),
-            Kind::NumericCoordinatePoint(x, y, frame) => Kind::NumericCoordinatePoint(m(x), m(y), m(frame)),
+            Kind::NumericCoordinatePoint(x, y, frame) => {
+                Kind::NumericCoordinatePoint(m(x), m(y), m(frame))
+            }
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -767,205 +694,6 @@ impl Kind {
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
-            Kind::PolarTranslatedPoint(a, angle, units, distance) => {
-                Kind::PolarTranslatedPoint(m(a), angle, units, distance)
-            }
-            Kind::PolarTranslatedSegment(a, angle, units, distance) => {
-                Kind::PolarTranslatedSegment(m(a), angle, units, distance)
-            }
-            Kind::PolarTranslatedCircle(a, angle, units, distance) => {
-                Kind::PolarTranslatedCircle(m(a), angle, units, distance)
-            }
-            Kind::PolarTranslatedPolygon(a, angle, units, distance) => {
-                Kind::PolarTranslatedPolygon(m(a), angle, units, distance)
-            }
-            Kind::FixedRectangularTranslatedPoint(
-                source,
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ) => Kind::FixedRectangularTranslatedPoint(
-                m(source),
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ),
-            Kind::FixedRectangularTranslatedSegment(
-                source,
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ) => Kind::FixedRectangularTranslatedSegment(
-                m(source),
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ),
-            Kind::FixedRectangularTranslatedCircle(
-                source,
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ) => Kind::FixedRectangularTranslatedCircle(
-                m(source),
-                x_units,
-                x_distance,
-                y_units,
-                y_distance,
-            ),
-            Kind::FixedRectangularTranslatedPolygon(source, xu, xd, yu, yd) => {
-                Kind::FixedRectangularTranslatedPolygon(m(source), xu, xd, yu, yd)
-            }
-            Kind::MarkedDistanceTranslatedPoint(source, distance, angle) => {
-                Kind::MarkedDistanceTranslatedPoint(m(source), m(distance), angle)
-            }
-            Kind::MarkedDistanceTranslatedSegment(source, distance, angle) => {
-                Kind::MarkedDistanceTranslatedSegment(m(source), m(distance), angle)
-            }
-            Kind::MarkedDistanceTranslatedCircle(source, distance, angle) => {
-                Kind::MarkedDistanceTranslatedCircle(m(source), m(distance), angle)
-            }
-            Kind::MarkedDistanceTranslatedPolygon(source, distance, angle) => {
-                Kind::MarkedDistanceTranslatedPolygon(m(source), m(distance), angle)
-            }
-            Kind::MixedRectangularTranslatedPoint(source, distance, fixed_cm, fixed_horizontal) => {
-                Kind::MixedRectangularTranslatedPoint(
-                    m(source),
-                    m(distance),
-                    fixed_cm,
-                    fixed_horizontal,
-                )
-            }
-            Kind::MixedRectangularTranslatedSegment(
-                source,
-                distance,
-                fixed_cm,
-                fixed_horizontal,
-            ) => Kind::MixedRectangularTranslatedSegment(
-                m(source),
-                m(distance),
-                fixed_cm,
-                fixed_horizontal,
-            ),
-            Kind::MixedRectangularTranslatedCircle(
-                source,
-                distance,
-                fixed_cm,
-                fixed_horizontal,
-            ) => Kind::MixedRectangularTranslatedCircle(
-                m(source),
-                m(distance),
-                fixed_cm,
-                fixed_horizontal,
-            ),
-            Kind::MixedRectangularTranslatedPolygon(
-                source,
-                distance,
-                fixed_cm,
-                fixed_horizontal,
-            ) => Kind::MixedRectangularTranslatedPolygon(
-                m(source),
-                m(distance),
-                fixed_cm,
-                fixed_horizontal,
-            ),
-            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
-                Kind::RectangularMarkedTranslatedPoint(m(source), m(horizontal), m(vertical))
-            }
-            Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical) => {
-                Kind::RectangularMarkedTranslatedSegment(m(source), m(horizontal), m(vertical))
-            }
-            Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
-                Kind::RectangularMarkedTranslatedCircle(m(source), m(horizontal), m(vertical))
-            }
-            Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
-                Kind::RectangularMarkedTranslatedPolygon(m(source), m(horizontal), m(vertical))
-            }
-            Kind::VectorTranslatedPoint(source, start, end) => {
-                Kind::VectorTranslatedPoint(m(source), m(start), m(end))
-            }
-            Kind::VectorTranslatedSegment(source, start, end) => {
-                Kind::VectorTranslatedSegment(m(source), m(start), m(end))
-            }
-            Kind::VectorTranslatedCircle(source, start, end) => {
-                Kind::VectorTranslatedCircle(m(source), m(start), m(end))
-            }
-            Kind::VectorTranslatedPolygon(source, start, end) => {
-                Kind::VectorTranslatedPolygon(m(source), m(start), m(end))
-            }
-            Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
-                Kind::AngleRotatedPoint(m(source), m(center), m(first), m(vertex), m(last))
-            }
-            Kind::AngleRotatedSegment(source, center, first, vertex, last) => {
-                Kind::AngleRotatedSegment(m(source), m(center), m(first), m(vertex), m(last))
-            }
-            Kind::AngleRotatedCircle(source, center, first, vertex, last) => {
-                Kind::AngleRotatedCircle(m(source), m(center), m(first), m(vertex), m(last))
-            }
-            Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
-                Kind::AngleRotatedPolygon(m(source), m(center), m(first), m(vertex), m(last))
-            }
-            Kind::RatioScaledPoint(source, center, origin, base, target) => {
-                Kind::RatioScaledPoint(m(source), m(center), m(origin), m(base), m(target))
-            }
-            Kind::RatioScaledCircle(source, center, origin, base, target) => {
-                Kind::RatioScaledCircle(m(source), m(center), m(origin), m(base), m(target))
-            }
-            Kind::RatioScaledSegment(source, center, origin, base, target) => {
-                Kind::RatioScaledSegment(m(source), m(center), m(origin), m(base), m(target))
-            }
-            Kind::RatioScaledPolygon(source, center, origin, base, target) => {
-                Kind::RatioScaledPolygon(m(source), m(center), m(origin), m(base), m(target))
-            }
-            Kind::ReflectedPoint(a, b) => Kind::ReflectedPoint(m(a), m(b)),
-            Kind::ReflectedCircle(a, b) => Kind::ReflectedCircle(m(a), m(b)),
-            Kind::ReflectedSegment(a, b) => Kind::ReflectedSegment(m(a), m(b)),
-            Kind::ReflectedPolygon(a, b) => Kind::ReflectedPolygon(m(a), m(b)),
-            Kind::ScaledPoint(a, b, factor) => Kind::ScaledPoint(m(a), m(b), factor),
-            Kind::ScaledCircle(a, b, factor) => Kind::ScaledCircle(m(a), m(b), factor),
-            Kind::ScaledSegment(a, b, factor) => Kind::ScaledSegment(m(a), m(b), factor),
-            Kind::ScaledRay(a, b, factor) => Kind::ScaledRay(m(a), m(b), factor),
-            Kind::ScaledLine(a, b, factor) => Kind::ScaledLine(m(a), m(b), factor),
-            Kind::ScaledPolygon(a, b, factor) => Kind::ScaledPolygon(m(a), m(b), factor),
-            Kind::RotatedPoint(a, b, angle) => Kind::RotatedPoint(m(a), m(b), angle),
-            Kind::RotatedRay(a, b, angle) => Kind::RotatedRay(m(a), m(b), angle),
-            Kind::RotatedLine(a, b, angle) => Kind::RotatedLine(m(a), m(b), angle),
-            Kind::CalculatedRatioScaledPoint(a, b, value) => {
-                Kind::CalculatedRatioScaledPoint(m(a), m(b), m(value))
-            }
-            Kind::CalculatedRatioScaledSegment(a, b, value) => {
-                Kind::CalculatedRatioScaledSegment(m(a), m(b), m(value))
-            }
-            Kind::CalculatedRatioScaledRay(a, b, value) => Kind::CalculatedRatioScaledRay(m(a), m(b), m(value)),
-            Kind::CalculatedRatioScaledLine(a, b, value) => Kind::CalculatedRatioScaledLine(m(a), m(b), m(value)),
-            Kind::CalculatedRatioScaledCircle(a, b, value) => {
-                Kind::CalculatedRatioScaledCircle(m(a), m(b), m(value))
-            }
-            Kind::CalculatedRatioScaledPolygon(a, b, value) => {
-                Kind::CalculatedRatioScaledPolygon(m(a), m(b), m(value))
-            }
-            Kind::CalculatedAngleRotatedPoint(a, b, value) => {
-                Kind::CalculatedAngleRotatedPoint(m(a), m(b), m(value))
-            }
-            Kind::CalculatedAngleRotatedRay(a, b, value) => Kind::CalculatedAngleRotatedRay(m(a), m(b), m(value)),
-            Kind::CalculatedAngleRotatedLine(a, b, value) => Kind::CalculatedAngleRotatedLine(m(a), m(b), m(value)),
-            Kind::CalculatedAngleRotatedSegment(a, b, value) => {
-                Kind::CalculatedAngleRotatedSegment(m(a), m(b), m(value))
-            }
-            Kind::CalculatedAngleRotatedCircle(a, b, value) => {
-                Kind::CalculatedAngleRotatedCircle(m(a), m(b), m(value))
-            }
-            Kind::CalculatedAngleRotatedPolygon(a, b, value) => {
-                Kind::CalculatedAngleRotatedPolygon(m(a), m(b), m(value))
-            }
-            Kind::RotatedSegment(a, b, angle) => Kind::RotatedSegment(m(a), m(b), angle),
-            Kind::RotatedCircle(a, b, angle) => Kind::RotatedCircle(m(a), m(b), angle),
-            Kind::RotatedPolygon(a, b, angle) => Kind::RotatedPolygon(m(a), m(b), angle),
             Kind::Midpoint(a, b) => Kind::Midpoint(m(a), m(b)),
             Kind::Segment(a, b) => Kind::Segment(m(a), m(b)),
             Kind::Line(a, b) => Kind::Line(m(a), m(b)),
@@ -985,7 +713,8 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
-            Kind::Polygon(_) | Kind::BranchingPolygonIteration { .. }
+            Kind::Polygon(_)
+            | Kind::BranchingPolygonIteration { .. }
             | Kind::MappedPointIteration { .. } => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
@@ -996,6 +725,7 @@ impl Kind {
             Kind::LinkPageButton { .. } => unreachable!(),
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
+            Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
         }
     }
     pub(super) fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
@@ -1083,111 +813,62 @@ pub(super) fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
         )
 }
 pub(super) fn is_segment_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Segment(_, _)
-            | Kind::PolarTranslatedSegment(_, _, _, _)
-            | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
-            | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
-            | Kind::RectangularMarkedTranslatedSegment(_, _, _)
-            | Kind::VectorTranslatedSegment(_, _, _)
-            | Kind::MarkedDistanceTranslatedSegment(_, _, _)
-            | Kind::AngleRotatedSegment(_, _, _, _, _)
-            | Kind::RotatedSegment(_, _, _)
-            | Kind::CalculatedAngleRotatedSegment(_, _, _)
-            | Kind::CalculatedRatioScaledSegment(_, _, _)
-            | Kind::ScaledSegment(_, _, _)
-            | Kind::RatioScaledSegment(_, _, _, _, _)
-            | Kind::ReflectedSegment(_, _)
-    )
+    matches!(kind, Kind::Segment(..))
+        || kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::Segment)
 }
 
 pub(super) fn is_straight_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Segment(_, _)
-            | Kind::RotatedRay(_, _, _)
-            | Kind::ScaledRay(_, _, _)
-            | Kind::RotatedLine(_, _, _)
-            | Kind::ScaledLine(_, _, _)
-            | Kind::CalculatedAngleRotatedRay(_, _, _)
-            | Kind::CalculatedAngleRotatedLine(_, _, _)
-            | Kind::CalculatedRatioScaledRay(_, _, _)
-            | Kind::CalculatedRatioScaledLine(_, _, _)
-            | Kind::PolarTranslatedSegment(_, _, _, _)
-            | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
-            | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
-            | Kind::RectangularMarkedTranslatedSegment(_, _, _)
-            | Kind::VectorTranslatedSegment(_, _, _)
-            | Kind::MarkedDistanceTranslatedSegment(_, _, _)
-            | Kind::AngleRotatedSegment(_, _, _, _, _)
-            | Kind::RotatedSegment(_, _, _)
-            | Kind::CalculatedAngleRotatedSegment(_, _, _)
-            | Kind::CalculatedRatioScaledSegment(_, _, _)
-            | Kind::ScaledSegment(_, _, _)
-            | Kind::RatioScaledSegment(_, _, _, _, _)
-            | Kind::ReflectedSegment(_, _)
-            | Kind::Line(_, _)
-            | Kind::Ray(_, _)
-            | Kind::Bisector(_, _, _)
-            | Kind::Parallel(_, _)
-            | Kind::Perpendicular(_, _)
-            | Kind::GraphAxis(_, _, _)
-            | Kind::CircleAxis(_, _)
-            | Kind::DistanceAxis(_, _, _)
-    )
+    straight_kind_mode(kind).is_some()
 }
 
 pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
-    if is_segment_kind(kind) {
-        Some(LineMode::Segment)
-    } else if matches!(
-        kind,
-        Kind::Ray(_, _) | Kind::RotatedRay(_, _, _) | Kind::ScaledRay(_, _, _) | Kind::CalculatedAngleRotatedRay(_, _, _) | Kind::CalculatedRatioScaledRay(_, _, _) | Kind::Bisector(_, _, _)
-    ) {
-        Some(LineMode::Ray)
-    } else if is_straight_kind(kind) {
-        Some(LineMode::Line)
-    } else {
-        None
+    if let Some(definition) = kind.transform_definition() {
+        return match definition.element() {
+            ElementType::Segment => Some(LineMode::Segment),
+            ElementType::Ray => Some(LineMode::Ray),
+            ElementType::Line => Some(LineMode::Line),
+            _ => None,
+        };
+    }
+    match kind {
+        Kind::Segment(..) => Some(LineMode::Segment),
+        Kind::Ray(..) | Kind::Bisector(..) => Some(LineMode::Ray),
+        Kind::Line(..)
+        | Kind::Parallel(..)
+        | Kind::Perpendicular(..)
+        | Kind::GraphAxis(..)
+        | Kind::CircleAxis(..)
+        | Kind::DistanceAxis(..) => Some(LineMode::Line),
+        _ => None,
     }
 }
 
 pub(super) fn is_point_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Free(_)
-            | Kind::PointOnSegment(_, _)
-            | Kind::PointOnRay(_, _)
-            | Kind::PointOnLine(_, _)
-            | Kind::PointOnCircle(_, _, _)
-            | Kind::PointOnArc(_, _)
-            | Kind::PointOnPolygon(_, _, _)
-            | Kind::GraphHorizontalUnit(_, _)
-            | Kind::GraphVerticalUnit(_, _)
-            | Kind::DistanceVerticalUnit(_, _, _)
-            | Kind::PathLiteralPoint(_, _)
-            | Kind::PathValuePoint(_, _)
-            | Kind::PlottedPoint(_, _, _, _)
-            | Kind::NumericCoordinatePoint(_, _, _)
-            | Kind::PolarTranslatedPoint(_, _, _, _)
-            | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
-            | Kind::MarkedDistanceTranslatedPoint(_, _, _)
-            | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
-            | Kind::RectangularMarkedTranslatedPoint(_, _, _)
-            | Kind::VectorTranslatedPoint(_, _, _)
-            | Kind::ReflectedPoint(_, _)
-            | Kind::ScaledPoint(_, _, _)
-            | Kind::RotatedPoint(_, _, _)
-            | Kind::CalculatedAngleRotatedPoint(_, _, _)
-            | Kind::CalculatedRatioScaledPoint(_, _, _)
-            | Kind::AngleRotatedPoint(_, _, _, _, _)
-            | Kind::RatioScaledPoint(_, _, _, _, _)
-            | Kind::Midpoint(_, _)
-            | Kind::Intersection(_, _)
-            | Kind::LineCircleIntersection(_, _, _)
-            | Kind::CircleCircleIntersection(_, _, _)
-    )
+    kind.transform_definition()
+        .is_some_and(|definition| definition.element() == ElementType::Point)
+        || matches!(
+            kind,
+            Kind::Free(_)
+                | Kind::PointOnSegment(_, _)
+                | Kind::PointOnRay(_, _)
+                | Kind::PointOnLine(_, _)
+                | Kind::PointOnCircle(_, _, _)
+                | Kind::PointOnArc(_, _)
+                | Kind::PointOnPolygon(_, _, _)
+                | Kind::GraphHorizontalUnit(_, _)
+                | Kind::GraphVerticalUnit(_, _)
+                | Kind::DistanceVerticalUnit(_, _, _)
+                | Kind::PathLiteralPoint(_, _)
+                | Kind::PathValuePoint(_, _)
+                | Kind::PlottedPoint(_, _, _, _)
+                | Kind::NumericCoordinatePoint(_, _, _)
+                | Kind::Midpoint(_, _)
+                | Kind::Intersection(_, _)
+                | Kind::LineCircleIntersection(_, _, _)
+                | Kind::CircleCircleIntersection(_, _, _)
+        )
 }
 
 pub(super) fn expected_parameter_locus_refs(objects: &[Object], driver: usize, target: usize) -> Option<Vec<usize>> {
@@ -1319,13 +1000,16 @@ pub(super) fn is_arc_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn is_locus_polygon_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Polygon(_)
-            | Kind::VectorTranslatedPolygon(_, _, _)
-            | Kind::PolarTranslatedPolygon(_, _, _, _)
-            | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-    )
+    matches!(kind, Kind::Polygon(_))
+        || kind.transform_definition().is_some_and(|definition| {
+            definition.element() == ElementType::Polygon
+                && matches!(
+                    definition.wire_flavor(),
+                    NativeTransformFlavor::Vector
+                        | NativeTransformFlavor::FixedPolar
+                        | NativeTransformFlavor::FixedCartesian
+                )
+        })
 }
 
 pub(super) fn is_locus_straight_kind(kind: &Kind) -> bool {
@@ -1360,20 +1044,37 @@ pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn is_transformed_plot_ray_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::RotatedRay(..) | Kind::ScaledRay(..))
+    kind.transform_definition().is_some_and(|definition| {
+        definition.element() == ElementType::Ray
+            && matches!(
+                definition.wire_flavor(),
+                NativeTransformFlavor::FixedRotation | NativeTransformFlavor::FixedDilation
+            )
+    })
 }
 
 pub(super) fn is_transformed_plot_path_kind(kind: &Kind) -> bool {
-    is_transformed_plot_ray_kind(kind) || matches!(kind, Kind::RotatedLine(..) | Kind::ScaledLine(..))
+    kind.transform_definition().is_some_and(|definition| {
+        matches!(definition.element(), ElementType::Ray | ElementType::Line)
+            && matches!(
+                definition.wire_flavor(),
+                NativeTransformFlavor::FixedRotation | NativeTransformFlavor::FixedDilation
+            )
+    })
 }
 
 pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
     value.is_finite()
         && is_plot_path_kind(kind)
-        && match kind {
-            Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) => (0.0..=1.0).contains(&value),
-            Kind::Ray(_, _) | Kind::RotatedRay(..) | Kind::ScaledRay(..) => value >= 0.0,
-            _ => true,
+        && if matches!(
+            kind,
+            Kind::Segment(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)
+        ) {
+            (0.0..=1.0).contains(&value)
+        } else if matches!(kind, Kind::Ray(..)) || is_transformed_plot_ray_kind(kind) {
+            value >= 0.0
+        } else {
+            true
         }
 }
 
@@ -1407,7 +1108,11 @@ pub(super) fn polygon_vertex_count_for_encoding(objects: &[Object], id: usize) -
     polygon_vertex_count_impl(objects, id, false)
 }
 
-fn polygon_vertex_count_impl(objects: &[Object], mut id: usize, require_live: bool) -> Option<usize> {
+fn polygon_vertex_count_impl(
+    objects: &[Object],
+    mut id: usize,
+    require_live: bool,
+) -> Option<usize> {
     let page = objects.get(id.checked_sub(1)?)?.page;
     loop {
         let object = objects.get(id.checked_sub(1)?)?;
@@ -1422,20 +1127,11 @@ fn polygon_vertex_count_impl(objects: &[Object], mut id: usize, require_live: bo
                 super::records::polygon_subtype(vertices.len())?;
                 return Some(vertices.len());
             }
-            Kind::ReflectedPolygon(source, _)
-            | Kind::VectorTranslatedPolygon(source, _, _)
-            | Kind::PolarTranslatedPolygon(source, _, _, _)
-            | Kind::FixedRectangularTranslatedPolygon(source, _, _, _, _)
-            | Kind::MarkedDistanceTranslatedPolygon(source, _, _)
-            | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
-            | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
-            | Kind::RotatedPolygon(source, _, _)
-            | Kind::CalculatedAngleRotatedPolygon(source, _, _)
-            | Kind::CalculatedRatioScaledPolygon(source, _, _)
-            | Kind::AngleRotatedPolygon(source, _, _, _, _)
-            | Kind::ScaledPolygon(source, _, _)
-            | Kind::RatioScaledPolygon(source, _, _, _, _) => *source,
-            _ => return None,
+            _ => object
+                .kind
+                .transform_definition()
+                .filter(|definition| definition.element() == ElementType::Polygon)?
+                .source(),
         };
         if source == 0 || source >= id {
             return None;
@@ -1464,6 +1160,26 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         width: LineWidth::Medium,
         pattern: LinePattern::Solid,
     };
+    if let Some(definition) = kind.transform_definition() {
+        return Some(match definition.element() {
+            ElementType::Point => VisualStyle::Point {
+                shape: PointStyle::Medium,
+                color: red,
+            },
+            ElementType::Segment | ElementType::Ray | ElementType::Line => {
+                VisualStyle::Stroke { line, color: navy }
+            }
+            ElementType::Circle => VisualStyle::Stroke { line, color: green },
+            ElementType::Polygon => VisualStyle::Polygon {
+                opacity: 32767,
+                color: RgbColor {
+                    red: 255,
+                    green: 128,
+                    blue: 0,
+                },
+            },
+        });
+    }
     match kind {
         Kind::Free(_)
         | Kind::PointOnSegment(_, _)
@@ -1475,19 +1191,6 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
         | Kind::NumericCoordinatePoint(_, _, _)
-        | Kind::PolarTranslatedPoint(_, _, _, _)
-        | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
-        | Kind::MarkedDistanceTranslatedPoint(_, _, _)
-        | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
-        | Kind::RectangularMarkedTranslatedPoint(_, _, _)
-        | Kind::VectorTranslatedPoint(_, _, _)
-        | Kind::ReflectedPoint(_, _)
-        | Kind::ScaledPoint(_, _, _)
-        | Kind::RotatedPoint(_, _, _)
-        | Kind::CalculatedAngleRotatedPoint(_, _, _)
-        | Kind::CalculatedRatioScaledPoint(_, _, _)
-        | Kind::AngleRotatedPoint(_, _, _, _, _)
-        | Kind::RatioScaledPoint(_, _, _, _, _)
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)
         | Kind::LineCircleIntersection(_, _, _)
@@ -1496,71 +1199,36 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             color: red,
         }),
         Kind::Segment(_, _)
-        | Kind::PolarTranslatedSegment(_, _, _, _)
-        | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
-        | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
-        | Kind::RectangularMarkedTranslatedSegment(_, _, _)
-        | Kind::VectorTranslatedSegment(_, _, _)
-        | Kind::MarkedDistanceTranslatedSegment(_, _, _)
-        | Kind::AngleRotatedSegment(_, _, _, _, _)
-        | Kind::RotatedSegment(_, _, _)
-        | Kind::CalculatedAngleRotatedSegment(_, _, _)
-        | Kind::CalculatedRatioScaledSegment(_, _, _)
-        | Kind::ScaledSegment(_, _, _)
-        | Kind::RatioScaledSegment(_, _, _, _, _)
-        | Kind::ReflectedSegment(_, _)
         | Kind::Line(_, _)
         | Kind::Ray(_, _)
-        | Kind::RotatedRay(_, _, _)
-        | Kind::ScaledRay(_, _, _)
-        | Kind::RotatedLine(_, _, _)
-        | Kind::ScaledLine(_, _, _)
-        | Kind::CalculatedAngleRotatedRay(_, _, _)
-        | Kind::CalculatedAngleRotatedLine(_, _, _)
-        | Kind::CalculatedRatioScaledRay(_, _, _)
-        | Kind::CalculatedRatioScaledLine(_, _, _)
         | Kind::Parallel(_, _)
         | Kind::Perpendicular(_, _)
         | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),
         Kind::Circle(_, _)
         | Kind::CircleBySegment(_, _)
-        | Kind::PolarTranslatedCircle(_, _, _, _)
-        | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
-        | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
-        | Kind::RectangularMarkedTranslatedCircle(_, _, _)
-        | Kind::VectorTranslatedCircle(_, _, _)
-        | Kind::MarkedDistanceTranslatedCircle(_, _, _)
-        | Kind::AngleRotatedCircle(_, _, _, _, _)
-        | Kind::RotatedCircle(_, _, _)
-        | Kind::CalculatedAngleRotatedCircle(_, _, _)
-        | Kind::CalculatedRatioScaledCircle(_, _, _)
-        | Kind::ReflectedCircle(_, _)
-        | Kind::ScaledCircle(_, _, _)
-        | Kind::RatioScaledCircle(_, _, _, _, _)
         | Kind::ThreePointArc(_, _, _)
         | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
-        Kind::FunctionPlot(_,_,_,_,_) => Some(VisualStyle::Stroke {
-            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
-            color: RgbColor { red:128, green:0, blue:128 },
+        Kind::FunctionPlot(_, _, _, _, _) => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Solid,
+            },
+            color: RgbColor {
+                red: 128,
+                green: 0,
+                blue: 128,
+            },
         }),
-        Kind::ParametricPlot(_,_,_,_,_,_,_) => Some(VisualStyle::Stroke {
-            line, color: RgbColor { red:128, green:0, blue:128 },
+        Kind::ParametricPlot(_, _, _, _, _, _, _) => Some(VisualStyle::Stroke {
+            line,
+            color: RgbColor {
+                red: 128,
+                green: 0,
+                blue: 128,
+            },
         }),
-        Kind::ParameterLocus(_,_,_,_) => Some(point_locus_visual_style()),
-        Kind::Polygon(_)
-        | Kind::ReflectedPolygon(_, _)
-        | Kind::VectorTranslatedPolygon(_, _, _)
-        | Kind::PolarTranslatedPolygon(_, _, _, _)
-        | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-        | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-        | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-        | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-        | Kind::RotatedPolygon(_, _, _)
-        | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-        | Kind::CalculatedRatioScaledPolygon(_, _, _)
-        | Kind::AngleRotatedPolygon(_, _, _, _, _)
-        | Kind::ScaledPolygon(_, _, _)
-        | Kind::RatioScaledPolygon(_, _, _, _, _) => Some(VisualStyle::Polygon {
+        Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
+        Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {
                 red: 255,

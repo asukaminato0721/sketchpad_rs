@@ -1,3 +1,5 @@
+use super::transform_evaluator::TransformGeometry;
+use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
@@ -123,19 +125,20 @@ fn line_circle_intersection(
         return None;
     }
     let root = discriminant.max(0.).sqrt();
-    let mut parameters = [
-        (-linear - root) / (2. * length_squared),
-        (-linear + root) / (2. * length_squared),
-    ]
-    .into_iter()
-    .filter(|t| match mode {
-        LineMode::Segment => *t >= -1e-10 && *t <= 1. + 1e-10,
-        LineMode::Ray => *t >= -1e-10,
+    // Native code 12 (variant 0) is the larger line parameter; code 11
+    // (variant 1) is the smaller. Keep the chosen branch undefined when it
+    // falls outside a segment/ray instead of substituting the other root.
+    let t = if variant == 0 {
+        (-linear + root) / (2. * length_squared)
+    } else {
+        (-linear - root) / (2. * length_squared)
+    };
+    let contains = match mode {
+        LineMode::Segment => (-1e-10..=1. + 1e-10).contains(&t),
+        LineMode::Ray => t >= -1e-10,
         LineMode::Line => true,
-    })
-    .collect::<Vec<_>>();
-    parameters.sort_by(f64::total_cmp);
-    let t = *parameters.get(variant.min(parameters.len().checked_sub(1)?))?;
+    };
+    if !contains { return None; }
     let result = Point {
         x: a.x + dx * t,
         y: a.y + dy * t,
@@ -298,8 +301,13 @@ impl Document {
         match self.objects[path - 1].kind {
             Kind::ThreePointArc(a, b, c) => {
                 let (a, b, c) = (self.position(a).unwrap(), self.position(b).unwrap(), self.position(c).unwrap());
-                let determinant = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-                determinant == 0.0 && self.linear_three_point_arc(path).is_none()
+                if a == b || b == c || a == c { return true; }
+                let (dx, dy) = (c.x - a.x, c.y - a.y);
+                let determinant = (b.x - a.x) * dy - (b.y - a.y) * dx;
+                let length_squared = dx * dx + dy * dy;
+                let projection = (b.x - a.x) * dx + (b.y - a.y) * dy;
+                determinant == 0.0 && length_squared.is_finite() && length_squared > 0.0 && projection.is_finite()
+                    && (projection <= 0.0 || projection >= length_squared)
             }
             Kind::ArcOnCircle(_, start, end) => self.position(start) == self.position(end),
             _ => false,
@@ -394,6 +402,13 @@ impl Document {
             if object.deleted {
                 return None;
             }
+            if object.kind.transform_definition().is_some() {
+                let point = match d.evaluate_transform(id).ok()? {
+                    TransformGeometry::Point(point) => Some(point), _ => None,
+                };
+                seen.remove(&id);
+                return point;
+            }
             let p = match &object.kind {
                 Kind::Free(p) => Some(*p),
                 Kind::GraphHorizontalUnit(origin, step) => {
@@ -486,131 +501,6 @@ impl Document {
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
-                Kind::PolarTranslatedPoint(origin, angle, units_to_raw, distance) => {
-                    let source = go(d, *origin, seen)?;
-                    let radians = angle.to_radians();
-                    let step = units_to_raw * distance;
-                    Some(Point {
-                        x: source.x + step * radians.cos(),
-                        y: source.y - step * radians.sin(),
-                    })
-                }
-                Kind::FixedRectangularTranslatedPoint(
-                    source,
-                    x_units,
-                    x_distance,
-                    y_units,
-                    y_distance,
-                ) => {
-                    let source = go(d, *source, seen)?;
-                    Some(Point {
-                        x: source.x + x_units * x_distance,
-                        y: source.y - y_units * y_distance,
-                    })
-                }
-                Kind::MarkedDistanceTranslatedPoint(source, distance, angle) => {
-                    let source = go(d, *source, seen)?;
-                    let step = d.distance_value_pixels(*distance)?;
-                    let radians = angle.to_radians();
-                    Some(Point {
-                        x: source.x + step * radians.cos(),
-                        y: source.y - step * radians.sin(),
-                    })
-                }
-                Kind::MixedRectangularTranslatedPoint(
-                    source,
-                    distance,
-                    fixed_cm,
-                    fixed_horizontal,
-                ) => {
-                    let source = go(d, *source, seen)?;
-                    let fixed_pixels = fixed_cm * 37.79527559055118;
-                    let marked_pixels = d.distance_value_pixels(*distance)?;
-                    Some(Point {
-                        x: source.x
-                            + if *fixed_horizontal {
-                                fixed_pixels
-                            } else {
-                                marked_pixels
-                            },
-                        y: source.y
-                            - if *fixed_horizontal {
-                                marked_pixels
-                            } else {
-                                fixed_pixels
-                            },
-                    })
-                }
-                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
-                    let source = go(d, *source, seen)?;
-                    Some(Point {
-                        x: source.x + d.distance_value_pixels(*horizontal)?,
-                        y: source.y - d.distance_value_pixels(*vertical)?,
-                    })
-                }
-                Kind::VectorTranslatedPoint(source, start, end) => {
-                    let source = go(d, *source, seen)?;
-                    let start = go(d, *start, seen)?;
-                    let end = go(d, *end, seen)?;
-                    Some(Point {
-                        x: source.x + end.x - start.x,
-                        y: source.y + end.y - start.y,
-                    })
-                }
-                Kind::ReflectedPoint(source, mirror) => {
-                    let source = go(d, *source, seen)?;
-                    let (a, b, _) = d.line_points(*mirror)?;
-                    reflect_point(source, a, b)
-                }
-                Kind::ScaledPoint(source, center, factor) => {
-                    let source = go(d, *source, seen)?;
-                    let center = go(d, *center, seen)?;
-                    Some(Point {
-                        x: center.x + factor * (source.x - center.x),
-                        y: center.y + factor * (source.y - center.y),
-                    })
-                }
-                Kind::RatioScaledPoint(source, center, origin, base, target) => {
-                    let source = go(d, *source, seen)?;
-                    let center = go(d, *center, seen)?;
-                    let factor = d.ratio_for_points(*origin, *base, *target)?;
-                    Some(Point {
-                        x: center.x + factor * (source.x - center.x),
-                        y: center.y + factor * (source.y - center.y),
-                    })
-                }
-                Kind::CalculatedRatioScaledPoint(source, center, ratio) => {
-                    let source = go(d, *source, seen)?;
-                    scale_point_about(
-                        source,
-                        go(d, *center, seen)?,
-                        d.unitless_numeric_value(*ratio)?,
-                    )
-                }
-                Kind::CalculatedAngleRotatedPoint(source, center, angle) => {
-                    let source = go(d, *source, seen)?;
-                    let center = go(d, *center, seen)?;
-                    rotate_point_about(source, center, d.numeric_value(*angle)?.to_radians())
-                }
-                Kind::RotatedPoint(source, center, angle) => {
-                    let source = go(d, *source, seen)?;
-                    let center = go(d, *center, seen)?;
-                    let theta = angle.to_radians();
-                    let dx = source.x - center.x;
-                    let dy = source.y - center.y;
-                    Some(Point {
-                        x: center.x + dx * theta.cos() + dy * theta.sin(),
-                        y: center.y - dx * theta.sin() + dy * theta.cos(),
-                    })
-                }
-                Kind::AngleRotatedPoint(source, center, first, vertex, last) => {
-                    let source = go(d, *source, seen)?;
-                    let center = go(d, *center, seen)?;
-                    let first = go(d, *first, seen)?;
-                    let vertex = go(d, *vertex, seen)?;
-                    let last = go(d, *last, seen)?;
-                    rotate_point_about(source, center, marked_rotation_theta(first, vertex, last)?)
-                }
                 Kind::Midpoint(a, b) => {
                     let a = go(d, *a, seen)?;
                     let b = go(d, *b, seen)?;
@@ -642,185 +532,45 @@ impl Document {
         if object.deleted {
             return None;
         }
+        if object.kind.transform_definition().is_some() {
+            return match self.evaluate_transform(id).ok()? {
+                TransformGeometry::Polygon(vertices) => Some(vertices), _ => None,
+            };
+        }
         match &object.kind {
             Kind::Polygon(vertices) => vertices
                 .iter()
                 .map(|&vertex| self.position(vertex))
                 .collect(),
-            Kind::ReflectedPolygon(source, mirror) => {
-                let points = self.polygon_points(*source)?;
-                let (a, b, _) = self.line_points(*mirror)?;
-                points
-                    .into_iter()
-                    .map(|point| reflect_point(point, a, b))
-                    .collect()
-            }
-            Kind::VectorTranslatedPolygon(source, start, end) => {
-                let start = self.position(*start)?;
-                let end = self.position(*end)?;
-                let dx = end.x - start.x;
-                let dy = end.y - start.y;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::PolarTranslatedPolygon(source, angle, units, distance) => {
-                let radians = angle.to_radians();
-                let dx = units * distance * radians.cos();
-                let dy = -units * distance * radians.sin();
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::FixedRectangularTranslatedPolygon(source, xu, xd, yu, yd) => {
-                let dx = xu * xd;
-                let dy = -yu * yd;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::MarkedDistanceTranslatedPolygon(source, distance, angle) => {
-                let step = self.distance_value_pixels(*distance)?;
-                let radians = angle.to_radians();
-                let dx = step * radians.cos();
-                let dy = -step * radians.sin();
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
-                let dx = self.distance_value_pixels(*horizontal)?;
-                let dy = -self.distance_value_pixels(*vertical)?;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::MixedRectangularTranslatedPolygon(
-                source,
-                distance,
-                fixed_cm,
-                fixed_horizontal,
-            ) => {
-                let marked = self.distance_value_pixels(*distance)?;
-                let fixed = fixed_cm * 37.79527559055118;
-                let (dx, dy) = if *fixed_horizontal {
-                    (fixed, -marked)
-                } else {
-                    (marked, -fixed)
-                };
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = point.x + dx;
-                        let y = point.y + dy;
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::RotatedPolygon(source, center, angle) => {
-                let center = self.position(*center)?;
-                let theta = angle.to_radians();
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| rotate_point_about(point, center, theta))
-                    .collect()
-            }
-            Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
-                let center = self.position(*center)?;
-                let factor = self.unitless_numeric_value(*ratio)?;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| scale_point_about(point, center, factor))
-                    .collect()
-            }
-            Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
-                let center = self.position(*center)?;
-                let theta = self.numeric_value(*angle)?.to_radians();
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| rotate_point_about(point, center, theta))
-                    .collect()
-            }
-            Kind::AngleRotatedPolygon(source, center, first, vertex, last) => {
-                let center = self.position(*center)?;
-                let theta = marked_rotation_theta(
-                    self.position(*first)?,
-                    self.position(*vertex)?,
-                    self.position(*last)?,
-                )?;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| rotate_point_about(point, center, theta))
-                    .collect()
-            }
-            Kind::ScaledPolygon(source, center, factor) => {
-                let center = self.position(*center)?;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = center.x + factor * (point.x - center.x);
-                        let y = center.y + factor * (point.y - center.y);
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
-            Kind::RatioScaledPolygon(source, center, origin, base, target) => {
-                let center = self.position(*center)?;
-                let factor = self.ratio_for_points(*origin, *base, *target)?;
-                self.polygon_points(*source)?
-                    .into_iter()
-                    .map(|point| {
-                        let x = center.x + factor * (point.x - center.x);
-                        let y = center.y + factor * (point.y - center.y);
-                        (x.is_finite() && y.is_finite()).then_some(Point { x, y })
-                    })
-                    .collect()
-            }
             _ => None,
         }
     }
     pub(super) fn straight_transform_has_suppressed_ancestor(&self, mut id: usize) -> bool {
         let mut seen = BTreeSet::new();
         while seen.insert(id) {
-            match self.objects.get(id.saturating_sub(1)).map(|object| &object.kind) {
-                Some(Kind::ScaledRay(_, _, factor) | Kind::ScaledLine(_, _, factor)) if *factor == 0. => return true,
-                Some(Kind::CalculatedRatioScaledRay(source, _, ratio) | Kind::CalculatedRatioScaledLine(source, _, ratio)) => {
+            let Some(definition) = self.objects.get(id.saturating_sub(1))
+                .and_then(|object| object.kind.transform_definition()) else { return false; };
+            if !matches!(definition.element(), ElementType::Ray | ElementType::Line) {
+                return false;
+            }
+            match (definition.wire_flavor(), definition.transform()) {
+                (NativeTransformFlavor::FixedDilation, Transform::Dilate {
+                    ratio: NumericExpr::Literal { magnitude, .. }, ..
+                }) if *magnitude == 0. => return true,
+                (NativeTransformFlavor::NumericDilation, Transform::Dilate {
+                    ratio: NumericExpr::ObjectValue { id: ratio, .. }, ..
+                }) => {
                     if self.unitless_numeric_value(*ratio).is_none_or(|value| value == 0.) { return true; }
-                    id = *source;
                 }
-                Some(Kind::CalculatedAngleRotatedRay(source, _, angle) | Kind::CalculatedAngleRotatedLine(source, _, angle)) => {
+                (NativeTransformFlavor::NumericRotation, Transform::Rotate {
+                    angle: NumericExpr::ObjectValue { id: angle, .. }, ..
+                }) => {
                     if self.numeric_value(*angle).is_none() { return true; }
-                    id = *source;
                 }
-                Some(Kind::ScaledRay(source, _, _) | Kind::ScaledLine(source, _, _)
-                    | Kind::RotatedRay(source, _, _) | Kind::RotatedLine(source, _, _)) => id = *source,
+                (NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation, _) => {}
                 _ => return false,
             }
+            id = definition.source();
         }
         false
     }
@@ -838,214 +588,15 @@ impl Document {
             if object.deleted {
                 return None;
             }
+            if object.kind.transform_definition().is_some() {
+                let straight = match d.evaluate_transform(id).ok()? {
+                    TransformGeometry::Straight { start, end, mode } => Some((start, end, mode)), _ => None,
+                };
+                seen.remove(&id);
+                return straight;
+            }
             let result = match object.kind {
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
-                Kind::PolarTranslatedSegment(source, angle, units, distance) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let step = units * distance;
-                    let radians = angle.to_radians();
-                    let dx = step * radians.cos();
-                    let dy = -step * radians.sin();
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::FixedRectangularTranslatedSegment(
-                    source,
-                    x_units,
-                    x_distance,
-                    y_units,
-                    y_distance,
-                ) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let dx = x_units * x_distance;
-                    let dy = -y_units * y_distance;
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let dx = d.distance_value_pixels(horizontal)?;
-                    let dy = -d.distance_value_pixels(vertical)?;
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::MixedRectangularTranslatedSegment(source, distance, fixed, horizontal) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let dx = if horizontal {
-                        fixed * 37.79527559055118
-                    } else {
-                        d.distance_value_pixels(distance)?
-                    };
-                    let dy = if horizontal {
-                        -d.distance_value_pixels(distance)?
-                    } else {
-                        -fixed * 37.79527559055118
-                    };
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::VectorTranslatedSegment(source, start, end) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let start = d.position(start)?;
-                    let end = d.position(end)?;
-                    let dx = end.x - start.x;
-                    let dy = end.y - start.y;
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::MarkedDistanceTranslatedSegment(source, distance, angle) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let step = d.distance_value_pixels(distance)?;
-                    let radians = angle.to_radians();
-                    let dx = step * radians.cos();
-                    let dy = -step * radians.sin();
-                    Some((
-                        Point {
-                            x: a.x + dx,
-                            y: a.y + dy,
-                        },
-                        Point {
-                            x: b.x + dx,
-                            y: b.y + dy,
-                        },
-                        mode,
-                    ))
-                }
-                Kind::CalculatedRatioScaledSegment(source, center, ratio)
-                | Kind::CalculatedRatioScaledRay(source, center, ratio)
-                | Kind::CalculatedRatioScaledLine(source, center, ratio) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let factor = d.unitless_numeric_value(ratio)?;
-                    if factor == 0. && matches!(object.kind, Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)) { return None; }
-                    Some((
-                        scale_point_about(a, center, factor)?,
-                        scale_point_about(b, center, factor)?,
-                        mode,
-                    ))
-                }
-                Kind::CalculatedAngleRotatedSegment(source, center, angle)
-                | Kind::CalculatedAngleRotatedRay(source, center, angle)
-                | Kind::CalculatedAngleRotatedLine(source, center, angle) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let theta = d.numeric_value(angle)?.to_radians();
-                    Some((
-                        rotate_point_about(a, center, theta)?,
-                        rotate_point_about(b, center, theta)?,
-                        mode,
-                    ))
-                }
-                Kind::AngleRotatedSegment(source, center, first, vertex, last) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let theta = marked_rotation_theta(
-                        d.position(first)?,
-                        d.position(vertex)?,
-                        d.position(last)?,
-                    )?;
-                    Some((
-                        rotate_point_about(a, center, theta)?,
-                        rotate_point_about(b, center, theta)?,
-                        mode,
-                    ))
-                }
-                Kind::RotatedSegment(source, center, angle)
-                | Kind::RotatedRay(source, center, angle)
-                | Kind::RotatedLine(source, center, angle) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let theta = angle.to_radians();
-                    Some((
-                        rotate_point_about(a, center, theta)?,
-                        rotate_point_about(b, center, theta)?,
-                        mode,
-                    ))
-                }
-                Kind::ScaledSegment(source, center, factor)
-                | Kind::ScaledRay(source, center, factor)
-                | Kind::ScaledLine(source, center, factor) => {
-                    if factor == 0.
-                        && matches!(object.kind, Kind::ScaledRay(..) | Kind::ScaledLine(..))
-                    {
-                        return None;
-                    }
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let scale = |point: Point| Point {
-                        x: center.x + factor * (point.x - center.x),
-                        y: center.y + factor * (point.y - center.y),
-                    };
-                    let (a, b) = (scale(a), scale(b));
-                    (a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite())
-                        .then_some((a, b, mode))
-                }
-                Kind::RatioScaledSegment(source, center, origin, base, target) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let center = d.position(center)?;
-                    let factor = d.ratio_for_points(origin, base, target)?;
-                    let scale = |point: Point| Point {
-                        x: center.x + factor * (point.x - center.x),
-                        y: center.y + factor * (point.y - center.y),
-                    };
-                    let (a, b) = (scale(a), scale(b));
-                    (a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite())
-                        .then_some((a, b, mode))
-                }
-                Kind::ReflectedSegment(source, mirror) => {
-                    let (a, b, mode) = go(d, source, seen)?;
-                    let (mirror_a, mirror_b, _) = go(d, mirror, seen)?;
-                    Some((
-                        reflect_point(a, mirror_a, mirror_b)?,
-                        reflect_point(b, mirror_a, mirror_b)?,
-                        mode,
-                    ))
-                }
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::CircleAxis(circle, axis @ (0 | 1)) => {
                     let (center, radius) = d.circle_points(circle)?;
@@ -1093,11 +644,16 @@ impl Document {
                             y: direction.x,
                         };
                     }
+                    // Native derived-line parameters are centered on the
+                    // construction point; .5 is the point itself.
                     Some((
-                        origin,
                         Point {
-                            x: origin.x + direction.x,
-                            y: origin.y + direction.y,
+                            x: origin.x - direction.x * 0.5,
+                            y: origin.y - direction.y * 0.5,
+                        },
+                        Point {
+                            x: origin.x + direction.x * 0.5,
+                            y: origin.y + direction.y * 0.5,
                         },
                         LineMode::Line,
                     ))
@@ -1144,175 +700,12 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
-        if self.objects.get(id.checked_sub(1)?)?.deleted {
-            return None;
-        }
-        if let Kind::PolarTranslatedCircle(source, angle, units, distance) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let step = units * distance;
-            let radians = angle.to_radians();
-            let moved = Point {
-                x: center.x + step * radians.cos(),
-                y: center.y - step * radians.sin(),
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted { return None; }
+        if object.kind.transform_definition().is_some() {
+            return match self.evaluate_transform(id).ok()? {
+                TransformGeometry::Circle { center, radius } => Some((center, radius)), _ => None,
             };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::FixedRectangularTranslatedCircle(
-            source,
-            x_units,
-            x_distance,
-            y_units,
-            y_distance,
-        ) = self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let moved = Point {
-                x: center.x + x_units * x_distance,
-                y: center.y - y_units * y_distance,
-            };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let dx = self.distance_value_pixels(horizontal)?;
-            let dy = -self.distance_value_pixels(vertical)?;
-            let moved = Point {
-                x: center.x + dx,
-                y: center.y + dy,
-            };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::MixedRectangularTranslatedCircle(source, distance, fixed, horizontal) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let dx = if horizontal {
-                fixed * 37.79527559055118
-            } else {
-                self.distance_value_pixels(distance)?
-            };
-            let dy = if horizontal {
-                -self.distance_value_pixels(distance)?
-            } else {
-                -fixed * 37.79527559055118
-            };
-            let moved = Point {
-                x: center.x + dx,
-                y: center.y + dy,
-            };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::VectorTranslatedCircle(source, start, end) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let start = self.position(start)?;
-            let end = self.position(end)?;
-            let moved = Point {
-                x: center.x + end.x - start.x,
-                y: center.y + end.y - start.y,
-            };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::MarkedDistanceTranslatedCircle(source, distance, angle) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (center, radius) = self.circle_points(source)?;
-            let step = self.distance_value_pixels(distance)?;
-            let radians = angle.to_radians();
-            let moved = Point {
-                x: center.x + step * radians.cos(),
-                y: center.y - step * radians.sin(),
-            };
-            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
-        }
-        if let Kind::CalculatedRatioScaledCircle(source, center, ratio) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            let factor = self.unitless_numeric_value(ratio)?;
-            let scaled = scale_point_about(source_center, center, factor)?;
-            let radius = radius * factor.abs();
-            return (radius.is_finite() && radius > 0.).then_some((scaled, radius));
-        }
-        if let Kind::CalculatedAngleRotatedCircle(source, center, angle) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            return Some((
-                rotate_point_about(
-                    source_center,
-                    center,
-                    self.numeric_value(angle)?.to_radians(),
-                )?,
-                radius,
-            ));
-        }
-        if let Kind::AngleRotatedCircle(source, center, first, vertex, last) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            let theta = marked_rotation_theta(
-                self.position(first)?,
-                self.position(vertex)?,
-                self.position(last)?,
-            )?;
-            return Some((rotate_point_about(source_center, center, theta)?, radius));
-        }
-        if let Kind::RotatedCircle(source, center, angle) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            return Some((
-                rotate_point_about(source_center, center, angle.to_radians())?,
-                radius,
-            ));
-        }
-        if let Kind::ReflectedCircle(source, mirror) = self.objects.get(id.checked_sub(1)?)?.kind {
-            let (center, radius) = self.circle_points(source)?;
-            let (a, b, _) = self.line_points(mirror)?;
-            return Some((reflect_point(center, a, b)?, radius));
-        }
-        if let Kind::ScaledCircle(source, center, factor) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            let scaled = Point {
-                x: center.x + factor * (source_center.x - center.x),
-                y: center.y + factor * (source_center.y - center.y),
-            };
-            let radius = radius * factor.abs();
-            return (scaled.x.is_finite()
-                && scaled.y.is_finite()
-                && radius.is_finite()
-                && radius > 0.)
-                .then_some((scaled, radius));
-        }
-        if let Kind::RatioScaledCircle(source, center, origin, base, target) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            let (source_center, radius) = self.circle_points(source)?;
-            let center = self.position(center)?;
-            let factor = self.ratio_for_points(origin, base, target)?;
-            let scaled = Point {
-                x: center.x + factor * (source_center.x - center.x),
-                y: center.y + factor * (source_center.y - center.y),
-            };
-            let radius = radius * factor.abs();
-            return (scaled.x.is_finite()
-                && scaled.y.is_finite()
-                && radius.is_finite()
-                && radius > 0.)
-                .then_some((scaled, radius));
         }
         let (center_id, radius) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Circle(center, radius_point) => {
@@ -1334,6 +727,10 @@ impl Document {
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
     pub(super) fn arc_geometry(&self, id: usize) -> Option<(Point, f64, f64, f64, bool)> {
+        if self.objects.get(id.checked_sub(1)?).is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
+            && !self.plot_arc_host_available(id) {
+            return None;
+        }
         let geometry = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::ThreePointArc(a, b, c) => {
                 let (center, radius, start, sweep) = three_point_arc_geometry(

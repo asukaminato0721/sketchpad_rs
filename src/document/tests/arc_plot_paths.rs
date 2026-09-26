@@ -14,6 +14,7 @@ fn independently_native_constrained_arc_and_measurements_follow_linear_and_undef
         (include_bytes!("../../../tests/fixtures/arc_constrained_measure_outside_low_native_verified.gsp").as_slice(), false),
         (include_bytes!("../../../tests/fixtures/arc_constrained_measure_middle_end_native_verified.gsp").as_slice(), false),
         (include_bytes!("../../../tests/fixtures/arc_constrained_measure_endpoints_equal_native_verified.gsp").as_slice(), false),
+        (include_bytes!("../../../tests/fixtures/arc_constrained_measure_repeated_refs_native_verified.gsp").as_slice(), false),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -23,11 +24,13 @@ fn independently_native_constrained_arc_and_measurements_follow_linear_and_undef
             assert_eq!(doc.arc_angle_degrees(9), Some(0.));
             assert!((doc.arc_length_cm(8).unwrap() - 60. / 37.79527559055118).abs() < 1e-12);
             assert!(doc.line_points(7).is_some());
+            assert!(doc.measurement_text(8).is_some() && doc.measurement_text(9).is_some());
         } else {
             assert_eq!(doc.position(5), None);
             assert_eq!(doc.line_points(7), None);
             assert_eq!(doc.arc_angle_degrees(9), None);
             assert_eq!(doc.arc_length_cm(8), None);
+            assert!(doc.measurement_text(8).is_none() && doc.measurement_text(9).is_none());
         }
         assert_eq!(doc.encode().unwrap(), bytes);
         doc.selected = (1..=9).collect();
@@ -200,6 +203,26 @@ fn native_collapsed_arc_plots_are_undefined_and_dependencies_remain_guarded() {
     let before = (cyclic.objects.len(), cyclic.undo.len());
     assert!(cyclic.plot_literal_on_path(0.5, Some(4)).is_err());
     assert_eq!((cyclic.objects.len(), cyclic.undo.len()), before);
+    let mut constrained_cycle = Document::new();
+    constrained_cycle.add(Kind::PointOnArc(4, 0.5));
+    constrained_cycle.add(Kind::Free(Point { x: 120., y: 100. }));
+    constrained_cycle.add(Kind::Free(Point { x: 140., y: 120. }));
+    constrained_cycle.add(Kind::ThreePointArc(1, 2, 3));
+    let angle = constrained_cycle.add(Kind::ArcAngle(4));
+    let length = constrained_cycle.add(Kind::ArcLength(4));
+    assert_eq!(constrained_cycle.point_on_arc(4, 0.5), None);
+    assert_eq!(constrained_cycle.arc_points(4, 32), None);
+    assert_eq!(constrained_cycle.constrained_point(4, Point { x: 130., y: 110. }), None);
+    assert_eq!(constrained_cycle.arc_angle_degrees(angle), None);
+    assert_eq!(constrained_cycle.arc_length_cm(length), None);
+    assert!(constrained_cycle.encode().is_err());
+    let mut overflow = Document::new();
+    for x in [1e200, 0., -1e200] { overflow.add(Kind::Free(Point { x, y: 0. })); }
+    overflow.add(Kind::ThreePointArc(1, 2, 3));
+    assert!(!overflow.undefined_three_point_arc(4));
+    let before = (overflow.objects.len(), overflow.undo.len());
+    assert!(overflow.plot_literal_on_path(0.5, Some(4)).is_err());
+    assert_eq!((overflow.objects.len(), overflow.undo.len()), before);
 }
 
 fn authored_arcs() -> Document {

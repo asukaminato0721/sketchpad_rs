@@ -147,22 +147,9 @@ impl Document {
             return Ok(bytes);
         };
         if !self.objects.iter().any(|object| {
-            matches!(
-                object.kind,
-                Kind::ReflectedPolygon(_, _)
-                    | Kind::VectorTranslatedPolygon(_, _, _)
-                    | Kind::PolarTranslatedPolygon(_, _, _, _)
-                    | Kind::FixedRectangularTranslatedPolygon(_, _, _, _, _)
-                    | Kind::MarkedDistanceTranslatedPolygon(_, _, _)
-                    | Kind::RectangularMarkedTranslatedPolygon(_, _, _)
-                    | Kind::MixedRectangularTranslatedPolygon(_, _, _, _)
-                    | Kind::RotatedPolygon(_, _, _)
-                    | Kind::CalculatedAngleRotatedPolygon(_, _, _)
-                    | Kind::CalculatedRatioScaledPolygon(_, _, _)
-                    | Kind::AngleRotatedPolygon(_, _, _, _, _)
-                    | Kind::ScaledPolygon(_, _, _)
-                    | Kind::RatioScaledPolygon(_, _, _, _, _)
-            )
+            object.kind.transform_definition().is_some_and(|definition| {
+                definition.element() == super::transform_model::ElementType::Polygon
+            })
         }) {
             return Ok(bytes);
         }

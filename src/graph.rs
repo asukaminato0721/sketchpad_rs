@@ -78,14 +78,29 @@ impl CoordinateFrame {
     }
 
     pub fn slope(self, a: GraphPoint, b: GraphPoint) -> Option<f64> {
-        let a = self.coordinates(a)?;
-        let b = self.coordinates(b)?;
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
+        // Transform the direction directly: subtracting separately converted
+        // endpoints loses precision through the frame's origin translation.
+        let direction = CoordinateFrame {
+            origin: GraphPoint { x: 0.0, y: 0.0 },
+            x_unit: GraphPoint {
+                x: self.x_unit.x - self.origin.x,
+                y: self.x_unit.y - self.origin.y,
+            },
+            y_unit: GraphPoint {
+                x: self.y_unit.x - self.origin.x,
+                y: self.y_unit.y - self.origin.y,
+            },
+        }
+        .coordinates(GraphPoint {
+            x: b.x - a.x,
+            y: b.y - a.y,
+        })?;
+        let dx = direction.x;
+        let dy = direction.y;
         if dx == 0.0 {
             return None;
         }
-        let slope = dy / dx;
+        let slope = if dy == 0.0 { 0.0 } else { dy / dx };
         slope.is_finite().then_some(slope)
     }
 }
@@ -737,6 +752,34 @@ mod tests {
                 .abs()
                 < 1e-12
         );
+    }
+
+    #[test]
+    fn slope_transforms_direction_without_origin_cancellation() {
+        let frame = CoordinateFrame {
+            origin: GraphPoint { x: 199.0, y: 125.0 },
+            x_unit: GraphPoint {
+                x: 236.75,
+                y: 125.0,
+            },
+            y_unit: GraphPoint { x: 199.0, y: 87.25 },
+        };
+        assert_eq!(
+            frame.slope(
+                GraphPoint { x: 20.0, y: 240.0 },
+                GraphPoint { x: 100.0, y: 200.0 }
+            ),
+            Some(0.5)
+        );
+        let skew = CoordinateFrame {
+            origin: GraphPoint { x: 100.0, y: 200.0 },
+            x_unit: GraphPoint { x: 104.0, y: 202.0 },
+            y_unit: GraphPoint { x: 101.0, y: 197.0 },
+        };
+        let first = skew.world(-2.0, 3.0).unwrap();
+        let second = skew.world(4.0, 6.0).unwrap();
+        assert_eq!(skew.slope(first, second), Some(0.5));
+        assert_eq!(skew.slope(second, first), Some(0.5));
     }
 
     #[test]

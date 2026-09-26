@@ -45,21 +45,21 @@ fn derived_lines_update() {
     assert_eq!(
         d.line_points(parallel),
         Some((
-            Point { x: 1., y: 5. },
-            Point { x: 11., y: 5. },
+            Point { x: -4., y: 5. },
+            Point { x: 6., y: 5. },
             LineMode::Line
         ))
     );
     assert_eq!(
         d.line_points(perpendicular),
         Some((
-            Point { x: 1., y: 5. },
-            Point { x: 1., y: 15. },
+            Point { x: 1., y: 0. },
+            Point { x: 1., y: 10. },
             LineMode::Line
         ))
     );
     d.move_point(b, Point { x: 0., y: 10. });
-    assert_eq!(d.line_points(parallel).unwrap().1, Point { x: 1., y: 15. });
+    assert_eq!(d.line_points(parallel).unwrap().1, Point { x: 1., y: 10. });
     let reopened = Document::from_bytes(&d.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.line_points(parallel), d.line_points(parallel));
 }
@@ -115,8 +115,15 @@ fn sketchpad_saved_edit_updates_dependents() {
     assert_eq!(document.objects.len(), 9);
     assert_eq!(document.position(1), Some(Point { x: 261., y: 181. }));
     assert_eq!(document.position(5), Some(Point { x: 370.5, y: 270.5 }));
+    let (start, end, mode) = document.line_points(8).unwrap();
+    assert_eq!(mode, LineMode::Line);
+    assert_eq!(start, Point { x: 151.5, y: 91.5 });
+    assert_eq!(end, Point { x: 370.5, y: 270.5 });
     assert_eq!(
-        document.line_points(8).unwrap().0,
+        Point {
+            x: (start.x + end.x) * 0.5,
+            y: (start.y + end.y) * 0.5
+        },
         document.position(1).unwrap()
     );
 }

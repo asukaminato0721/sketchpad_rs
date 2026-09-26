@@ -361,7 +361,7 @@ fn native_transformed_polygon_boundary_retains_edge_fraction_and_live_host() {
     let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
     assert_eq!(doc.position(copied), Some(Point { x: 120., y: 210. }));
     let host = match doc.objects[copied - 1].kind { Kind::PointOnPolygon(host,3,0.5) => host, ref kind => panic!("Unexpected kind: {kind:?}") };
-    assert!(matches!(doc.objects[host - 1].kind, Kind::VectorTranslatedPolygon(..)));
+    assert!(transform_is(&doc.objects[host - 1].kind, NativeTransformFlavor::Vector, &[ElementType::Polygon]));
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(copied), doc.position(copied));
 }

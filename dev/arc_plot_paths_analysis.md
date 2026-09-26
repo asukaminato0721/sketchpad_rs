@@ -88,15 +88,21 @@ source coordinates to endpoints (260,180)/(200,180) and middle (240,180)
 produces a displayed constrained point at (245,180), length 1.59 cm (60 pixels
 divided by the native centimeter scale), and angle 0.00 degrees. This proves
 constrained-point and measurement semantics independently of code 95/123.
-Moving the middle outside to (290,180), or repeating its coordinates at the
-first endpoint, removes the host, point, marker, and both measurement captions.
-All four labeled controls save byte-identically at 2,534 bytes.
+Moving the middle outside to either (290,180) or (170,180), repeating its
+coordinates at either endpoint, equal endpoint coordinates, and repeated
+first/middle references all remove the host, point, marker, and both
+measurement captions. All eight labeled controls save byte-identically at
+2,534 bytes.
 
 An actual native drag from the linear constrained point to (215,180) preserves
 the source vertices and rewrites its stored code-15 parameter to .75. The
 native-edited 2,726-byte file is retained separately; native UI editing also
 adds default labels, styles, and window metadata, so it is evidence for the
 drag result rather than an expected byte match to the port's 2,534-byte writer.
+Two further actual native drags beyond the last and first endpoints store
+parameters 1 and 0 respectively, and display the point at the corresponding
+endpoint. Those 2,706-byte native-edited files independently establish the
+projection clamp used for creation and dragging.
 
 The evaluator now uses the finite endpoint span for linear `point_on_arc`,
 projected/clamped `arc_parameter`, endpoint distance for arc length, and zero
@@ -113,3 +119,13 @@ label/font opens and saves exactly (2,534 bytes). Both new-object writing and
 adding a label to an imported unlabeled arc point now use the accepted order.
 Other point families are not broadened by this observation. Regression tests
 compare both actual public-API paths with the retained positive native file.
+
+Actual public-API writer outputs for a linear constrained drag (2,534 bytes),
+copying its defined nine-object graph (18 objects, 3,300 bytes), and copying
+the undefined outside-middle graph (18 objects, 3,300 bytes) each opened and
+saved byte-identically in Native. The undefined copy preserves absent hosts,
+points, markers, and measurement captions on both original and copied sides.
+All three outputs are retained as exact regression goldens. Two additional
+document tests cover the complete independent control matrix, native drag and
+clamp results, both label-writing paths, source edits, recovery, undo/redo,
+defined/undefined copy and save/reopen.

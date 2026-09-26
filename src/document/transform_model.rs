@@ -63,6 +63,22 @@ impl NumericExpr {
             } => vec![origin, base, target],
         }
     }
+    fn references_mut(&mut self) -> Vec<&mut usize> {
+        match self {
+            Self::Literal { .. } => vec![],
+            Self::ObjectValue { id, .. } => vec![id],
+            Self::DirectedAngle {
+                first,
+                vertex,
+                last,
+            } => vec![first, vertex, last],
+            Self::DistanceRatio {
+                origin,
+                base,
+                target,
+            } => vec![origin, base, target],
+        }
+    }
     fn remap(&mut self, ids: &[usize]) -> Result<(), String> {
         let m = |id: &mut usize| -> Result<(), String> {
             *id = ids
@@ -143,6 +159,31 @@ impl Transform {
                 std::iter::once(*center).chain(ratio.references()).collect()
             }
             Self::Reflect { mirror } => vec![*mirror],
+        }
+    }
+    fn references_mut(&mut self) -> Vec<&mut usize> {
+        match self {
+            Self::Translate(DisplacementExpr::Cartesian {
+                horizontal,
+                vertical,
+            }) => horizontal
+                .references_mut()
+                .into_iter()
+                .chain(vertical.references_mut())
+                .collect(),
+            Self::Translate(DisplacementExpr::Polar { angle, distance }) => angle
+                .references_mut()
+                .into_iter()
+                .chain(distance.references_mut())
+                .collect(),
+            Self::Translate(DisplacementExpr::Vector { start, end }) => vec![start, end],
+            Self::Rotate { center, angle } => std::iter::once(center)
+                .chain(angle.references_mut())
+                .collect(),
+            Self::Dilate { center, ratio } => std::iter::once(center)
+                .chain(ratio.references_mut())
+                .collect(),
+            Self::Reflect { mirror } => vec![mirror],
         }
     }
     fn remap(&mut self, ids: &[usize]) -> Result<(), String> {
@@ -253,7 +294,14 @@ impl TransformDefinition {
     ) -> Result<Self, String> {
         use NativeTransformFlavor as F;
         use NumericExpr as N;
-        let literal = |e: &NumericExpr, unit| matches!(e,N::Literal { unit:u,.. } if *u==unit);
+        let literal = |e: &NumericExpr, unit| {
+            matches!(e,N::Literal { unit:u,scale,.. }
+            if *u==unit && (unit==NumericUnit::Length || *scale==1.))
+        };
+        let centimeters = |e: &NumericExpr| {
+            matches!(e,N::Literal { unit:NumericUnit::Length,scale,.. }
+            if *scale==37.79527559055118)
+        };
         let object = |e: &NumericExpr, unit| matches!(e,N::ObjectValue { unit:u,.. } if *u==unit);
         let valid = match (&transform, flavor) {
             (Transform::Translate(DisplacementExpr::Vector { .. }), F::Vector) => true,
@@ -270,14 +318,14 @@ impl TransformDefinition {
                     vertical: v,
                 }),
                 F::FixedHorizontal,
-            ) => literal(h, NumericUnit::Length) && object(v, NumericUnit::Length),
+            ) => centimeters(h) && object(v, NumericUnit::Length),
             (
                 Transform::Translate(DisplacementExpr::Cartesian {
                     horizontal: h,
                     vertical: v,
                 }),
                 F::FixedVertical,
-            ) => object(h, NumericUnit::Length) && literal(v, NumericUnit::Length),
+            ) => object(h, NumericUnit::Length) && centimeters(v),
             (
                 Transform::Translate(DisplacementExpr::Cartesian {
                     horizontal: h,
@@ -370,6 +418,16 @@ impl TransformDefinition {
     /// Ordered parent list, matching the existing document dependency API.
     pub fn dependencies(&self) -> Vec<usize> {
         self.native_references()
+    }
+    // Match Kind's structural remapping contract, including unresolved zero
+    // IDs; checked document operations validate those references separately.
+    pub(super) fn remap_unchecked(&self, ids: &[usize]) -> Self {
+        let mut result = self.clone();
+        result.source = ids[result.source];
+        for id in result.transform.references_mut() {
+            *id = ids[*id];
+        }
+        result
     }
     pub fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
         let mut result = self.clone();
@@ -474,619 +532,281 @@ fn literal(magnitude: f64, unit: NumericUnit, scale: f64) -> NumericExpr {
 fn value(id: usize, unit: NumericUnit) -> NumericExpr {
     NumericExpr::ObjectValue { id, unit }
 }
+// Compatibility construction names create the single generic storage variant.
+// Each native flavor defines its expression once for all supported elements.
+macro_rules! native_transform_constructor {
+    ($name:ident, $element:ident, $element_binding:ident, $parameters:tt, $definition:expr) => {
+        impl Kind {
+            #[allow(non_snake_case)]
+            pub fn $name $parameters -> Self {
+                let $element_binding = ElementType::$element;
+                let (source, element, transform, flavor) = $definition;
+                Self::Transformed(TransformDefinition { source, element, transform, flavor })
+            }
+        }
+    };
+}
+macro_rules! native_transform_constructors {
+    ($element_binding:ident; $parameters:tt; $definition:expr; $( $name:ident => $element:ident ),+ $(,)?) => {
+        $(native_transform_constructor!($name, $element, $element_binding, $parameters, $definition);)+
+    };
+}
 impl Kind {
-    /// Project a supported legacy transform without changing the stored Kind.
     pub fn transform_definition(&self) -> Option<TransformDefinition> {
-        use ElementType as E;
-        use NativeTransformFlavor as F;
-        let (source, element, transform, flavor) = match *self {
-            Self::PolarTranslatedPoint(source, a, u, d) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: literal(d, NumericUnit::Length, u),
-                }),
-                F::FixedPolar,
-            ),
-            Self::PolarTranslatedSegment(source, a, u, d) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: literal(d, NumericUnit::Length, u),
-                }),
-                F::FixedPolar,
-            ),
-            Self::PolarTranslatedCircle(source, a, u, d) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: literal(d, NumericUnit::Length, u),
-                }),
-                F::FixedPolar,
-            ),
-            Self::PolarTranslatedPolygon(source, a, u, d) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: literal(d, NumericUnit::Length, u),
-                }),
-                F::FixedPolar,
-            ),
-            Self::FixedRectangularTranslatedPoint(source, xu, x, yu, y) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: literal(x, NumericUnit::Length, xu),
-                    vertical: literal(y, NumericUnit::Length, yu),
-                }),
-                F::FixedCartesian,
-            ),
-            Self::FixedRectangularTranslatedSegment(source, xu, x, yu, y) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: literal(x, NumericUnit::Length, xu),
-                    vertical: literal(y, NumericUnit::Length, yu),
-                }),
-                F::FixedCartesian,
-            ),
-            Self::FixedRectangularTranslatedCircle(source, xu, x, yu, y) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: literal(x, NumericUnit::Length, xu),
-                    vertical: literal(y, NumericUnit::Length, yu),
-                }),
-                F::FixedCartesian,
-            ),
-            Self::FixedRectangularTranslatedPolygon(source, xu, x, yu, y) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: literal(x, NumericUnit::Length, xu),
-                    vertical: literal(y, NumericUnit::Length, yu),
-                }),
-                F::FixedCartesian,
-            ),
-            Self::MarkedDistanceTranslatedPoint(source, d, a) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: value(d, NumericUnit::Length),
-                }),
-                F::MarkedPolar,
-            ),
-            Self::MarkedDistanceTranslatedSegment(source, d, a) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: value(d, NumericUnit::Length),
-                }),
-                F::MarkedPolar,
-            ),
-            Self::MarkedDistanceTranslatedCircle(source, d, a) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: value(d, NumericUnit::Length),
-                }),
-                F::MarkedPolar,
-            ),
-            Self::MarkedDistanceTranslatedPolygon(source, d, a) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Polar {
-                    angle: literal(a, NumericUnit::Degrees, 1.),
-                    distance: value(d, NumericUnit::Length),
-                }),
-                F::MarkedPolar,
-            ),
-            Self::MixedRectangularTranslatedPoint(source, d, f, h) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: if h {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    } else {
-                        value(d, NumericUnit::Length)
-                    },
-                    vertical: if h {
-                        value(d, NumericUnit::Length)
-                    } else {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    },
-                }),
-                if h {
-                    F::FixedHorizontal
-                } else {
-                    F::FixedVertical
-                },
-            ),
-            Self::MixedRectangularTranslatedSegment(source, d, f, h) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: if h {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    } else {
-                        value(d, NumericUnit::Length)
-                    },
-                    vertical: if h {
-                        value(d, NumericUnit::Length)
-                    } else {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    },
-                }),
-                if h {
-                    F::FixedHorizontal
-                } else {
-                    F::FixedVertical
-                },
-            ),
-            Self::MixedRectangularTranslatedCircle(source, d, f, h) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: if h {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    } else {
-                        value(d, NumericUnit::Length)
-                    },
-                    vertical: if h {
-                        value(d, NumericUnit::Length)
-                    } else {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    },
-                }),
-                if h {
-                    F::FixedHorizontal
-                } else {
-                    F::FixedVertical
-                },
-            ),
-            Self::MixedRectangularTranslatedPolygon(source, d, f, h) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: if h {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    } else {
-                        value(d, NumericUnit::Length)
-                    },
-                    vertical: if h {
-                        value(d, NumericUnit::Length)
-                    } else {
-                        literal(f, NumericUnit::Length, 37.79527559055118)
-                    },
-                }),
-                if h {
-                    F::FixedHorizontal
-                } else {
-                    F::FixedVertical
-                },
-            ),
-            Self::RectangularMarkedTranslatedPoint(source, h, v) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: value(h, NumericUnit::Length),
-                    vertical: value(v, NumericUnit::Length),
-                }),
-                F::MarkedCartesian,
-            ),
-            Self::RectangularMarkedTranslatedSegment(source, h, v) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: value(h, NumericUnit::Length),
-                    vertical: value(v, NumericUnit::Length),
-                }),
-                F::MarkedCartesian,
-            ),
-            Self::RectangularMarkedTranslatedCircle(source, h, v) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: value(h, NumericUnit::Length),
-                    vertical: value(v, NumericUnit::Length),
-                }),
-                F::MarkedCartesian,
-            ),
-            Self::RectangularMarkedTranslatedPolygon(source, h, v) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Cartesian {
-                    horizontal: value(h, NumericUnit::Length),
-                    vertical: value(v, NumericUnit::Length),
-                }),
-                F::MarkedCartesian,
-            ),
-            Self::VectorTranslatedPoint(source, start, end) => (
-                source,
-                E::Point,
-                Transform::Translate(DisplacementExpr::Vector { start, end }),
-                F::Vector,
-            ),
-            Self::VectorTranslatedSegment(source, start, end) => (
-                source,
-                E::Segment,
-                Transform::Translate(DisplacementExpr::Vector { start, end }),
-                F::Vector,
-            ),
-            Self::VectorTranslatedCircle(source, start, end) => (
-                source,
-                E::Circle,
-                Transform::Translate(DisplacementExpr::Vector { start, end }),
-                F::Vector,
-            ),
-            Self::VectorTranslatedPolygon(source, start, end) => (
-                source,
-                E::Polygon,
-                Transform::Translate(DisplacementExpr::Vector { start, end }),
-                F::Vector,
-            ),
-            Self::AngleRotatedPoint(source, center, first, vertex, last) => (
-                source,
-                E::Point,
-                Transform::Rotate {
-                    center,
-                    angle: NumericExpr::DirectedAngle {
-                        first,
-                        vertex,
-                        last,
-                    },
-                },
-                F::PointAngleRotation,
-            ),
-            Self::AngleRotatedSegment(source, center, first, vertex, last) => (
-                source,
-                E::Segment,
-                Transform::Rotate {
-                    center,
-                    angle: NumericExpr::DirectedAngle {
-                        first,
-                        vertex,
-                        last,
-                    },
-                },
-                F::PointAngleRotation,
-            ),
-            Self::AngleRotatedCircle(source, center, first, vertex, last) => (
-                source,
-                E::Circle,
-                Transform::Rotate {
-                    center,
-                    angle: NumericExpr::DirectedAngle {
-                        first,
-                        vertex,
-                        last,
-                    },
-                },
-                F::PointAngleRotation,
-            ),
-            Self::AngleRotatedPolygon(source, center, first, vertex, last) => (
-                source,
-                E::Polygon,
-                Transform::Rotate {
-                    center,
-                    angle: NumericExpr::DirectedAngle {
-                        first,
-                        vertex,
-                        last,
-                    },
-                },
-                F::PointAngleRotation,
-            ),
-            Self::RatioScaledPoint(source, center, origin, base, target) => (
-                source,
-                E::Point,
-                Transform::Dilate {
-                    center,
-                    ratio: NumericExpr::DistanceRatio {
-                        origin,
-                        base,
-                        target,
-                    },
-                },
-                F::PointRatioDilation,
-            ),
-            Self::RatioScaledSegment(source, center, origin, base, target) => (
-                source,
-                E::Segment,
-                Transform::Dilate {
-                    center,
-                    ratio: NumericExpr::DistanceRatio {
-                        origin,
-                        base,
-                        target,
-                    },
-                },
-                F::PointRatioDilation,
-            ),
-            Self::RatioScaledCircle(source, center, origin, base, target) => (
-                source,
-                E::Circle,
-                Transform::Dilate {
-                    center,
-                    ratio: NumericExpr::DistanceRatio {
-                        origin,
-                        base,
-                        target,
-                    },
-                },
-                F::PointRatioDilation,
-            ),
-            Self::RatioScaledPolygon(source, center, origin, base, target) => (
-                source,
-                E::Polygon,
-                Transform::Dilate {
-                    center,
-                    ratio: NumericExpr::DistanceRatio {
-                        origin,
-                        base,
-                        target,
-                    },
-                },
-                F::PointRatioDilation,
-            ),
-            Self::ReflectedPoint(source, mirror) => (
-                source,
-                E::Point,
-                Transform::Reflect { mirror },
-                F::Reflection,
-            ),
-            Self::ReflectedSegment(source, mirror) => (
-                source,
-                E::Segment,
-                Transform::Reflect { mirror },
-                F::Reflection,
-            ),
-            Self::ReflectedCircle(source, mirror) => (
-                source,
-                E::Circle,
-                Transform::Reflect { mirror },
-                F::Reflection,
-            ),
-            Self::ReflectedPolygon(source, mirror) => (
-                source,
-                E::Polygon,
-                Transform::Reflect { mirror },
-                F::Reflection,
-            ),
-            Self::ScaledPoint(source, center, factor) => (
-                source,
-                E::Point,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::ScaledSegment(source, center, factor) => (
-                source,
-                E::Segment,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::ScaledRay(source, center, factor) => (
-                source,
-                E::Ray,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::ScaledLine(source, center, factor) => (
-                source,
-                E::Line,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::ScaledCircle(source, center, factor) => (
-                source,
-                E::Circle,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::ScaledPolygon(source, center, factor) => (
-                source,
-                E::Polygon,
-                Transform::Dilate {
-                    center,
-                    ratio: literal(factor, NumericUnit::Scalar, 1.),
-                },
-                F::FixedDilation,
-            ),
-            Self::RotatedPoint(source, center, angle) => (
-                source,
-                E::Point,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::RotatedSegment(source, center, angle) => (
-                source,
-                E::Segment,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::RotatedRay(source, center, angle) => (
-                source,
-                E::Ray,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::RotatedLine(source, center, angle) => (
-                source,
-                E::Line,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::RotatedCircle(source, center, angle) => (
-                source,
-                E::Circle,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::RotatedPolygon(source, center, angle) => (
-                source,
-                E::Polygon,
-                Transform::Rotate {
-                    center,
-                    angle: literal(angle, NumericUnit::Degrees, 1.),
-                },
-                F::FixedRotation,
-            ),
-            Self::CalculatedRatioScaledPoint(source, center, ratio) => (
-                source,
-                E::Point,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedRatioScaledSegment(source, center, ratio) => (
-                source,
-                E::Segment,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedRatioScaledRay(source, center, ratio) => (
-                source,
-                E::Ray,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedRatioScaledLine(source, center, ratio) => (
-                source,
-                E::Line,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedRatioScaledCircle(source, center, ratio) => (
-                source,
-                E::Circle,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedRatioScaledPolygon(source, center, ratio) => (
-                source,
-                E::Polygon,
-                Transform::Dilate {
-                    center,
-                    ratio: value(ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            ),
-            Self::CalculatedAngleRotatedPoint(source, center, angle) => (
-                source,
-                E::Point,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            Self::CalculatedAngleRotatedSegment(source, center, angle) => (
-                source,
-                E::Segment,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            Self::CalculatedAngleRotatedRay(source, center, angle) => (
-                source,
-                E::Ray,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            Self::CalculatedAngleRotatedLine(source, center, angle) => (
-                source,
-                E::Line,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            Self::CalculatedAngleRotatedCircle(source, center, angle) => (
-                source,
-                E::Circle,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            Self::CalculatedAngleRotatedPolygon(source, center, angle) => (
-                source,
-                E::Polygon,
-                Transform::Rotate {
-                    center,
-                    angle: value(angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            ),
-            _ => return None,
-        };
-        TransformDefinition::new(source, element, transform, flavor).ok()
+        match self {
+            Self::Transformed(definition) => Some(definition.clone()),
+            _ => None,
+        }
     }
 }
+
+native_transform_constructors!(element_type; (&self) -> Option<TransformDefinition> { match self { Self::Transformed(definition) => Some(definition.clone()), _ => None, } } pub fn PolarTranslatedPoint(source: usize, a: f64, u: f64, d: f64);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Polar {
+                angle: literal(a, NumericUnit::Degrees, 1.),
+                distance: literal(d, NumericUnit::Length, u),
+            }),
+            NativeTransformFlavor::FixedPolar,
+        );
+    transform_definition => Point
+);
+
+native_transform_constructors!(element_type; (source: usize, a: f64, u: f64, d: f64);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Polar {
+                angle: literal(a, NumericUnit::Degrees, 1.),
+                distance: literal(d, NumericUnit::Length, u),
+            }),
+            NativeTransformFlavor::FixedPolar,
+        );
+    PolarTranslatedSegment => Segment,
+    PolarTranslatedCircle => Circle,
+    PolarTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, xu: f64, x: f64, yu: f64, y: f64,);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Cartesian {
+                horizontal: literal(x, NumericUnit::Length, xu),
+                vertical: literal(y, NumericUnit::Length, yu),
+            }),
+            NativeTransformFlavor::FixedCartesian,
+        );
+    FixedRectangularTranslatedPoint => Point,
+    FixedRectangularTranslatedSegment => Segment,
+    FixedRectangularTranslatedCircle => Circle,
+    FixedRectangularTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, d: usize, a: f64);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Polar {
+                angle: literal(a, NumericUnit::Degrees, 1.),
+                distance: value(d, NumericUnit::Length),
+            }),
+            NativeTransformFlavor::MarkedPolar,
+        );
+    MarkedDistanceTranslatedPoint => Point,
+    MarkedDistanceTranslatedSegment => Segment,
+    MarkedDistanceTranslatedCircle => Circle,
+    MarkedDistanceTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, d: usize, f: f64, h: bool);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Cartesian {
+                horizontal: if h {
+                    literal(f, NumericUnit::Length, 37.79527559055118)
+                } else {
+                    value(d, NumericUnit::Length)
+                },
+                vertical: if h {
+                    value(d, NumericUnit::Length)
+                } else {
+                    literal(f, NumericUnit::Length, 37.79527559055118)
+                },
+            }),
+            if h {
+                NativeTransformFlavor::FixedHorizontal
+            } else {
+                NativeTransformFlavor::FixedVertical
+            },
+        );
+    MixedRectangularTranslatedPoint => Point,
+    MixedRectangularTranslatedSegment => Segment,
+    MixedRectangularTranslatedCircle => Circle,
+    MixedRectangularTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, h: usize, v: usize);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Cartesian {
+                horizontal: value(h, NumericUnit::Length),
+                vertical: value(v, NumericUnit::Length),
+            }),
+            NativeTransformFlavor::MarkedCartesian,
+        );
+    RectangularMarkedTranslatedPoint => Point,
+    RectangularMarkedTranslatedSegment => Segment,
+    RectangularMarkedTranslatedCircle => Circle,
+    RectangularMarkedTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, start: usize, end: usize);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Vector { start, end }),
+            NativeTransformFlavor::Vector,
+        );
+    VectorTranslatedPoint => Point,
+    VectorTranslatedSegment => Segment,
+    VectorTranslatedCircle => Circle,
+    VectorTranslatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, first: usize, vertex: usize, last: usize,);
+(
+            source,
+            element_type,
+            Transform::Rotate {
+                center,
+                angle: NumericExpr::DirectedAngle {
+                    first,
+                    vertex,
+                    last,
+                },
+            },
+            NativeTransformFlavor::PointAngleRotation,
+        );
+    AngleRotatedPoint => Point,
+    AngleRotatedSegment => Segment,
+    AngleRotatedCircle => Circle,
+    AngleRotatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, origin: usize, base: usize, target: usize,);
+(
+            source,
+            element_type,
+            Transform::Dilate {
+                center,
+                ratio: NumericExpr::DistanceRatio {
+                    origin,
+                    base,
+                    target,
+                },
+            },
+            NativeTransformFlavor::PointRatioDilation,
+        );
+    RatioScaledPoint => Point,
+    RatioScaledSegment => Segment,
+    RatioScaledCircle => Circle,
+    RatioScaledPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, mirror: usize);
+(
+            source,
+            element_type,
+            Transform::Reflect { mirror },
+            NativeTransformFlavor::Reflection,
+        );
+    ReflectedPoint => Point,
+    ReflectedSegment => Segment,
+    ReflectedCircle => Circle,
+    ReflectedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, factor: f64);
+(
+            source,
+            element_type,
+            Transform::Dilate {
+                center,
+                ratio: literal(factor, NumericUnit::Scalar, 1.),
+            },
+            NativeTransformFlavor::FixedDilation,
+        );
+    ScaledPoint => Point,
+    ScaledSegment => Segment,
+    ScaledRay => Ray,
+    ScaledLine => Line,
+    ScaledCircle => Circle,
+    ScaledPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, angle: f64);
+(
+            source,
+            element_type,
+            Transform::Rotate {
+                center,
+                angle: literal(angle, NumericUnit::Degrees, 1.),
+            },
+            NativeTransformFlavor::FixedRotation,
+        );
+    RotatedPoint => Point,
+    RotatedSegment => Segment,
+    RotatedRay => Ray,
+    RotatedLine => Line,
+    RotatedCircle => Circle,
+    RotatedPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, ratio: usize);
+(
+            source,
+            element_type,
+            Transform::Dilate {
+                center,
+                ratio: value(ratio, NumericUnit::Scalar),
+            },
+            NativeTransformFlavor::NumericDilation,
+        );
+    CalculatedRatioScaledPoint => Point,
+    CalculatedRatioScaledSegment => Segment,
+    CalculatedRatioScaledRay => Ray,
+    CalculatedRatioScaledLine => Line,
+    CalculatedRatioScaledCircle => Circle,
+    CalculatedRatioScaledPolygon => Polygon
+);
+
+native_transform_constructors!(element_type; (source: usize, center: usize, angle: usize);
+(
+            source,
+            element_type,
+            Transform::Rotate {
+                center,
+                angle: value(angle, NumericUnit::Degrees),
+            },
+            NativeTransformFlavor::NumericRotation,
+        );
+    CalculatedAngleRotatedPoint => Point,
+    CalculatedAngleRotatedSegment => Segment,
+    CalculatedAngleRotatedRay => Ray,
+    CalculatedAngleRotatedLine => Line,
+    CalculatedAngleRotatedCircle => Circle,
+    CalculatedAngleRotatedPolygon => Polygon
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn all_sixty_legacy_variants_preserve_dependencies_and_remapping() {
+    fn all_sixty_construction_helpers_preserve_dependencies_and_remapping() {
         let kinds = [
             Kind::PolarTranslatedPoint(1, -0., 17., 2.),
             Kind::PolarTranslatedSegment(1, -0., 17., 2.),
@@ -1159,6 +879,23 @@ mod tests {
             assert!(definition.remap_checked(&[0, 0]).is_err());
         }
     }
+    #[test]
+    fn malformed_references_retain_transform_identity_and_dependencies() {
+        let kind = Kind::CalculatedAngleRotatedRay(0, 2, 0);
+        let definition = kind.transform_definition().unwrap();
+        assert_eq!(definition.element(), ElementType::Ray);
+        assert_eq!(definition.dependencies(), [0, 2, 0]);
+        assert!(
+            TransformDefinition::new(
+                0,
+                definition.element(),
+                definition.transform().clone(),
+                definition.wire_flavor()
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn wire_flavors_keep_literal_fields_and_repeated_references() {
         let d = Kind::FixedRectangularTranslatedPoint(1, 17., -0., 23., 2.)

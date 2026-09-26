@@ -488,17 +488,39 @@ fn decimal_parameter_calculations_update_and_reject_bad_literals() {
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
     assert!((reopened.parameter_calculation_value(3).unwrap() - 15.25).abs() < 1e-12);
-    for expression in ["speed+1.", "speed+1.2.3", "speed+00.5", "speed/0.0"] {
+    let before_invalid = doc.encode().unwrap();
+    for expression in [
+        "speed+.",
+        "speed+1..",
+        "speed+1.2.3",
+        "speed+00.5",
+        "speed/0.0",
+    ] {
         assert!(
             doc.add_parameter_calculation(1, expression, (10, 120))
                 .is_err(),
             "{expression}"
         );
+        assert_eq!(doc.encode().unwrap(), before_invalid);
     }
     let fractional = doc
         .add_parameter_calculation(1, "speed^0.5", (10, 120))
         .unwrap();
     assert!((doc.parameter_calculation_value(fractional).unwrap() - 3_f64.sqrt()).abs() < 1e-12);
+    let trailing = doc
+        .add_parameter_calculation(1, "speed+1.", (10, 150))
+        .unwrap();
+    assert_eq!(doc.parameter_calculation_value(trailing), Some(4.));
+    assert!(
+        !doc.parameter_calculation_expression(trailing)
+            .unwrap()
+            .contains("1.")
+    );
+    doc.set_parameter_value(1, 4.).unwrap();
+    assert_eq!(doc.parameter_calculation_value(trailing), Some(5.));
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.parameter_calculation_value(trailing), Some(5.));
 }
 
 #[test]

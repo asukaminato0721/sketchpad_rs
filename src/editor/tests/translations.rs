@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn circle_construction_host_keeps_exact_transform_flavors() {
+    for kind in [
+        Kind::Circle(1, 2),
+        Kind::CircleBySegment(1, 2),
+        Kind::ReflectedCircle(1, 2),
+        Kind::ScaledCircle(1, 2, 3.),
+        Kind::RatioScaledCircle(1, 2, 3, 4, 5),
+    ] {
+        assert!(super::super::is_circle_construction_host(&kind), "{kind:?}");
+    }
+    for kind in [
+        Kind::RotatedCircle(1, 2, 3.),
+        Kind::VectorTranslatedCircle(1, 2, 3),
+        Kind::CalculatedRatioScaledCircle(1, 2, 3),
+        Kind::ReflectedPoint(1, 2),
+        Kind::ScaledPolygon(1, 2, 3.),
+    ] {
+        assert!(!super::super::is_circle_construction_host(&kind), "{kind:?}");
+    }
+}
+
+#[test]
 fn marked_center_and_mirror_drive_transforms_without_changing_source_records() {
     let mut editor = Editor::new(Document::new());
     let center = editor.doc.add(Kind::Free(Point { x: 0., y: 0. }));
@@ -19,20 +41,20 @@ fn marked_center_and_mirror_drive_transforms_without_changing_source_records() {
     editor.rotation_angle = 90.;
     editor.rotate_selected();
     assert!(
-        matches!(editor.doc.objects.last().unwrap().kind, Kind::RotatedPoint(s, c, 90.) if s == source && c == center)
+        editor.doc.objects.last().unwrap().kind == Kind::RotatedPoint(source, center, 90.)
     );
 
     editor.select_only(source);
     editor.dilation_factor = 2.;
     editor.dilate_selected();
     assert!(
-        matches!(editor.doc.objects.last().unwrap().kind, Kind::ScaledPoint(s, c, 2.) if s == source && c == center)
+        editor.doc.objects.last().unwrap().kind == Kind::ScaledPoint(source, center, 2.)
     );
 
     editor.select_only(source);
     editor.reflect_selected();
     assert!(
-        matches!(editor.doc.objects.last().unwrap().kind, Kind::ReflectedPoint(s, m) if s == source && m == mirror)
+        editor.doc.objects.last().unwrap().kind == Kind::ReflectedPoint(source, mirror)
     );
     assert!(Document::from_bytes(&editor.doc.encode().unwrap(), None).is_ok());
 }

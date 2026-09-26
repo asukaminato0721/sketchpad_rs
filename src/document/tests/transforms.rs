@@ -4,10 +4,15 @@ use super::*;
 fn polar_translation_matches_original_and_updates() {
     let bytes = fs::read("tests/fixtures/point_translation.gsp").unwrap();
     let mut original = Document::from_bytes(&bytes, None).unwrap();
-    assert!(matches!(
-        original.objects[1].kind,
-        Kind::PolarTranslatedPoint(1, 90., _, 1.)
+    let definition = original.objects[1].kind.transform_definition().unwrap();
+    assert!(transform_is(
+        &original.objects[1].kind,
+        NativeTransformFlavor::FixedPolar,
+        &[ElementType::Point],
     ));
+    assert_eq!(definition.source(), 1);
+    assert!(transform_literal_is(&original.objects[1].kind, NativeLiteralRole::AngleDegrees, 90.));
+    assert!(transform_literal_is(&original.objects[1].kind, NativeLiteralRole::PolarMagnitude, 1.));
     assert!(!original.partial_view);
     assert_eq!(original.encode().unwrap(), bytes);
     let source = original.position(1).unwrap();
@@ -30,10 +35,15 @@ fn polar_translation_matches_original_and_updates() {
 
     let moved = Document::open(Path::new("tests/fixtures/wine_moved_translation.gsp")).unwrap();
     assert_eq!(moved.position(1), Some(Point { x: 241., y: 221. }));
-    assert!(matches!(
-        moved.objects[1].kind,
-        Kind::PolarTranslatedPoint(1, 90., _, 1.)
+    let definition = moved.objects[1].kind.transform_definition().unwrap();
+    assert!(transform_is(
+        &moved.objects[1].kind,
+        NativeTransformFlavor::FixedPolar,
+        &[ElementType::Point],
     ));
+    assert_eq!(definition.source(), 1);
+    assert!(transform_literal_is(&moved.objects[1].kind, NativeLiteralRole::AngleDegrees, 90.));
+    assert!(transform_literal_is(&moved.objects[1].kind, NativeLiteralRole::PolarMagnitude, 1.));
     assert!((moved.position(2).unwrap().y - 183.20472440944883).abs() < 1e-6);
 }
 #[test]
@@ -241,7 +251,7 @@ fn marked_angle_rotation_of_shapes_imports_and_tracks_angle_points() {
         assert!(!native.partial_view, "{path}");
         assert_eq!(native.objects[7].kind, expected);
         assert_eq!(native.encode().unwrap(), bytes);
-        let before = if matches!(&expected, Kind::AngleRotatedSegment(..)) {
+        let before = if transform_is(&expected, NativeTransformFlavor::PointAngleRotation, &[ElementType::Segment]) {
             let (a, b, _) = native.line_points(8).unwrap();
             assert!((a.x - 90.).abs() < 1e-8 && (a.y - 190.).abs() < 1e-8);
             assert!((b.x - 90.).abs() < 1e-8 && (b.y - 230.).abs() < 1e-8);
@@ -253,7 +263,7 @@ fn marked_angle_rotation_of_shapes_imports_and_tracks_angle_points() {
             center
         };
         assert!(native.move_point(4, Point { x: 290., y: 190. }));
-        let after = if matches!(&expected, Kind::AngleRotatedSegment(..)) {
+        let after = if transform_is(&expected, NativeTransformFlavor::PointAngleRotation, &[ElementType::Segment]) {
             native.line_points(8).unwrap().0
         } else {
             native.circle_points(8).unwrap().0
@@ -278,7 +288,7 @@ fn fixed_rotation_of_shapes_imports_and_tracks_center() {
         assert!(!native.partial_view, "{path}");
         assert_eq!(native.objects[4].kind, expected);
         assert_eq!(native.encode().unwrap(), bytes);
-        let rotated_center = if matches!(&expected, Kind::RotatedSegment(..)) {
+        let rotated_center = if transform_is(&expected, NativeTransformFlavor::FixedRotation, &[ElementType::Segment]) {
             let (a, b, _) = native.line_points(5).unwrap();
             assert!((a.x - 170.).abs() < 1e-8 && (a.y - 110.).abs() < 1e-8);
             assert!((b.x - 170.).abs() < 1e-8 && (b.y - 70.).abs() < 1e-8);
@@ -290,7 +300,7 @@ fn fixed_rotation_of_shapes_imports_and_tracks_center() {
             center
         };
         assert!(native.move_point(1, Point { x: 140., y: 150. }));
-        let after = if matches!(&expected, Kind::RotatedSegment(..)) {
+        let after = if transform_is(&expected, NativeTransformFlavor::FixedRotation, &[ElementType::Segment]) {
             native.line_points(5).unwrap().0
         } else {
             native.circle_points(5).unwrap().0
@@ -322,13 +332,13 @@ fn segment_dilations_and_reflection_import_and_track_dependencies() {
         assert_eq!(native.encode().unwrap(), bytes);
         let (a, b, mode) = native.line_points(image).unwrap();
         assert_eq!(mode, LineMode::Segment);
-        if matches!(&expected, Kind::ReflectedSegment(..)) {
+        if transform_is(&expected, NativeTransformFlavor::Reflection, &[ElementType::Segment]) {
             assert!((a.x - 40.).abs() < 1e-8 && (b.x - 0.).abs() < 1e-8);
             assert!(native.move_point(2, Point { x: 120., y: 220. }));
         } else {
             assert_eq!(a, Point { x: 120., y: 120. });
             assert_eq!(b, Point { x: 130., y: 120. });
-            let moved = if matches!(&expected, Kind::ScaledSegment(..)) {
+            let moved = if transform_is(&expected, NativeTransformFlavor::FixedDilation, &[ElementType::Segment]) {
                 native.move_point(1, Point { x: 110., y: 120. })
             } else {
                 native.move_point(4, Point { x: 255., y: 100. })
@@ -444,10 +454,7 @@ fn fixed_transform_chains_match_native_and_follow_source_center_and_mirror() {
         let copy = copied
             .into_iter()
             .find(|id| {
-                matches!(
-                    reopened.objects[id - 1].kind,
-                    Kind::ReflectedSegment(..) | Kind::ReflectedCircle(..)
-                )
+                transform_is(&reopened.objects[id - 1].kind, NativeTransformFlavor::Reflection, &[ElementType::Segment, ElementType::Circle])
             })
             .unwrap();
         if name == "segment" {
@@ -593,10 +600,7 @@ fn fixed_rotated_ray_and_line_preserve_native_modes_edits_and_dependencies() {
         let copy = pasted
             .into_iter()
             .find(|id| {
-                matches!(
-                    reopened.objects[id - 1].kind,
-                    Kind::RotatedRay(..) | Kind::RotatedLine(..)
-                )
+                transform_is(&reopened.objects[id - 1].kind, NativeTransformFlavor::FixedRotation, &[ElementType::Ray, ElementType::Line])
             })
             .unwrap();
         let (ca, cb, cmode) = reopened.line_points(copy).unwrap();
@@ -846,10 +850,7 @@ fn fixed_scaled_ray_and_line_native_modes_zero_dependents_and_edits() {
         let copy = copied
             .into_iter()
             .find(|&id| {
-                matches!(
-                    doc.objects[id - 1].kind,
-                    Kind::ScaledRay(..) | Kind::ScaledLine(..)
-                )
+                transform_is(&doc.objects[id - 1].kind, NativeTransformFlavor::FixedDilation, &[ElementType::Ray, ElementType::Line])
             })
             .unwrap();
         assert_eq!(
@@ -1124,15 +1125,9 @@ fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancesto
                 .iter()
                 .find(|&&id| {
                     if original == 6 {
-                        matches!(
-                            doc.objects[id - 1].kind,
-                            Kind::RotatedRay(_, _, 90.) | Kind::RotatedLine(_, _, 90.)
-                        )
+                        transform_is(&doc.objects[id - 1].kind, NativeTransformFlavor::FixedRotation, &[ElementType::Ray, ElementType::Line]) && transform_literal_is(&doc.objects[id - 1].kind, NativeLiteralRole::AngleDegrees, 90.)
                     } else {
-                        matches!(
-                            doc.objects[id - 1].kind,
-                            Kind::ScaledRay(_, _, -2.) | Kind::ScaledLine(_, _, -2.)
-                        )
+                        transform_is(&doc.objects[id - 1].kind, NativeTransformFlavor::FixedDilation, &[ElementType::Ray, ElementType::Line]) && transform_literal_is(&doc.objects[id - 1].kind, NativeLiteralRole::ScaleFactor, -2.)
                     }
                 })
                 .unwrap();
@@ -1407,10 +1402,7 @@ fn calculated_angle_ray_and_line_require_degrees_and_preserve_live_modes() {
         let copy = *copied
             .iter()
             .find(|&&id| {
-                matches!(
-                    doc.objects[id - 1].kind,
-                    Kind::CalculatedAngleRotatedRay(..) | Kind::CalculatedAngleRotatedLine(..)
-                )
+                transform_is(&doc.objects[id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Ray, ElementType::Line])
             })
             .unwrap();
         let (ra, rb, copied_mode) = doc.line_points(copy).unwrap();
@@ -1589,10 +1581,7 @@ fn calculated_ratio_ray_and_line_preserve_native_modes_and_live_domains() {
         let copy = *copied
             .iter()
             .find(|&&id| {
-                matches!(
-                    doc.objects[id - 1].kind,
-                    Kind::CalculatedRatioScaledRay(..) | Kind::CalculatedRatioScaledLine(..)
-                )
+                transform_is(&doc.objects[id - 1].kind, NativeTransformFlavor::NumericDilation, &[ElementType::Ray, ElementType::Line])
             })
             .unwrap();
         assert_eq!(

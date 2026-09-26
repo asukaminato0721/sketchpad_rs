@@ -70,8 +70,8 @@ fn circle_intersections_update_and_reopen() {
         second_circle,
         1,
     ));
-    assert_eq!(document.position(near), Some(Point { x: -5., y: 0. }));
-    assert_eq!(document.position(far), Some(Point { x: 5., y: 0. }));
+    assert_eq!(document.position(near), Some(Point { x: 5., y: 0. }));
+    assert_eq!(document.position(far), Some(Point { x: -5., y: 0. }));
     assert!(document.position(upper).unwrap().y < 0.);
     assert!(document.position(lower).unwrap().y > 0.);
     let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
@@ -83,7 +83,7 @@ fn circle_intersections_update_and_reopen() {
     assert!(document.position(lower).is_none());
 }
 #[test]
-fn line_circle_second_root_uses_remaining_segment_crossing() {
+fn line_circle_second_root_stays_undefined_outside_segment() {
     let mut document = Document::new();
     let center = document.add(Kind::Free(Point { x: 0., y: 0. }));
     let end = document.add(Kind::Free(Point { x: 10., y: 0. }));
@@ -91,7 +91,7 @@ fn line_circle_second_root_uses_remaining_segment_crossing() {
     let segment = document.add(Kind::Segment(center, end));
     let circle = document.add(Kind::Circle(center, radius));
     let second = document.add(Kind::LineCircleIntersection(segment, circle, 1));
-    assert_eq!(document.position(second), Some(Point { x: 5., y: 0. }));
+    assert!(document.position(second).is_none());
     let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(second), document.position(second));
 }
@@ -178,9 +178,10 @@ fn three_point_arc_matches_original_record_and_updates() {
     document.move_point(mid, Point { x: 0., y: -2. });
     assert_ne!(reopened.arc_points(id, 32), document.arc_points(id, 32));
     document.move_point(mid, Point { x: 0., y: 0. });
-    assert_eq!(document.arc_points(id, 32), Some(vec![
-        Point { x: -1., y: 0. }, Point { x: 1., y: 0. },
-    ]));
+    assert_eq!(
+        document.arc_points(id, 32),
+        Some(vec![Point { x: -1., y: 0. }, Point { x: 1., y: 0. },])
+    );
 }
 #[test]
 fn circle_by_segment_matches_original_and_updates() {
@@ -328,4 +329,118 @@ fn point_on_arc_matches_original_and_updates() {
     let reopened = Document::from_bytes(&created.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(p), created.position(p));
     assert_eq!(reopened.objects[p - 1].kind, Kind::PointOnArc(arc, 0.5));
+}
+
+#[test]
+fn native_straight_direction_controls_pin_circle_branches_and_line_parameters() {
+    let rows = [
+        (7, 8, 9, 180., 180.),
+        (16, 17, 18, 480., 180.),
+        (25, 26, 27, 780., 180.),
+        (35, 36, 37, 220., 480.),
+        (45, 46, 47, 620., 480.),
+    ];
+    for (name, t, reverse, offbase, clipped) in [
+        ("probe", 0.5, false, false, false),
+        ("quarter", 0.25, false, false, false),
+        ("three_quarter", 0.75, false, false, false),
+        ("reversed", 0.5, true, false, false),
+        ("offbase", 0.5, false, true, false),
+        ("clipped", 0.5, false, false, true),
+    ] {
+        let bytes = fs::read(format!(
+            "tests/fixtures/straight_direction_{name}_native_verified.gsp"
+        ))
+        .unwrap();
+        let d = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!d.partial_view);
+        assert_eq!(d.objects.len(), 47);
+        for (index, &(first, second, parameter, x, y)) in rows.iter().enumerate() {
+            let (x, y) = if offbase && index >= 3 {
+                (x + 40., y + 30.)
+            } else {
+                (x, y)
+            };
+            let sign = if reverse { -1. } else { 1. };
+            let (dx, dy) = if index == 4 {
+                (0., 60. * sign)
+            } else {
+                (60. * sign, 0.)
+            };
+            assert_eq!(
+                d.position(first),
+                Some(Point {
+                    x: x + dx,
+                    y: y + dy
+                }),
+                "{name} branch0 row{index}"
+            );
+            let expected_second = if clipped && matches!(index, 0 | 2) {
+                None
+            } else {
+                Some(Point {
+                    x: x - dx,
+                    y: y - dy,
+                })
+            };
+            assert_eq!(
+                d.position(second),
+                expected_second,
+                "{name} branch1 row{index}"
+            );
+            let offset = if clipped && index < 3 {
+                50.
+            } else {
+                200. * (t - 0.5) * sign
+            };
+            let expected = if index == 4 {
+                Point { x, y: y + offset }
+            } else {
+                Point { x: x + offset, y }
+            };
+            assert_eq!(
+                d.position(parameter),
+                Some(expected),
+                "{name} parameter row{index}"
+            );
+        }
+        assert_eq!(d.encode().unwrap(), bytes);
+        d.verify_roundtrip().unwrap();
+    }
+}
+
+#[test]
+fn edited_derived_line_anchors_keep_native_center_and_magnitude() {
+    let bytes =
+        include_bytes!("../../../tests/fixtures/straight_direction_probe_native_verified.gsp");
+    let edited =
+        include_bytes!("../../../tests/fixtures/straight_direction_offbase_native_verified.gsp");
+    let reversed =
+        include_bytes!("../../../tests/fixtures/straight_direction_reversed_native_verified.gsp");
+    let mut d = Document::from_bytes(bytes, None).unwrap();
+    for id in [30, 31, 40, 41] {
+        let p = d.position(id).unwrap();
+        assert!(d.move_point(
+            id,
+            Point {
+                x: p.x + 40.,
+                y: p.y + 30.
+            }
+        ));
+    }
+    assert_eq!(d.position(37), Some(Point { x: 260., y: 510. }));
+    assert_eq!(d.position(47), Some(Point { x: 660., y: 510. }));
+    assert_eq!(d.encode().unwrap(), edited);
+    d.verify_roundtrip().unwrap();
+    let mut d = Document::from_bytes(bytes, None).unwrap();
+    for (a, b) in [(1, 2), (10, 11), (19, 20), (28, 29), (38, 39)] {
+        let pa = d.position(a).unwrap();
+        let pb = d.position(b).unwrap();
+        assert!(d.move_point(a, pb));
+        assert!(d.move_point(b, pa));
+    }
+    assert_eq!(d.position(45), Some(Point { x: 620., y: 420. }));
+    assert_eq!(d.position(46), Some(Point { x: 620., y: 540. }));
+    assert_eq!(d.encode().unwrap(), reversed);
+    d.verify_roundtrip().unwrap();
 }

@@ -390,13 +390,13 @@ fn parallel_line_target_locus_import_generation_and_parent_edit() {
     assert_eq!(
         family[0],
         (
-            Point { x: 120., y: 180. },
-            Point { x: 220., y: 210. },
+            Point { x: 70., y: 165. },
+            Point { x: 170., y: 195. },
             LineMode::Line
         )
     );
-    assert_eq!(family[250].0, Point { x: 300., y: 180. });
-    assert_eq!(family[250].1, Point { x: 400., y: 210. });
+    assert_eq!(family[250].0, Point { x: 250., y: 165. });
+    assert_eq!(family[250].1, Point { x: 350., y: 195. });
 
     let base = include_bytes!("../../../tests/fixtures/locus_parallel_target_base.gsp");
     let mut generated = Document::from_bytes(base, None).unwrap();
@@ -409,9 +409,9 @@ fn parallel_line_target_locus_import_generation_and_parent_edit() {
     assert!(generated.move_point(1, Point { x: 100., y: 220. }));
     let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
     let changed = moved.locus_strokes(9, 384).unwrap();
-    assert_eq!(changed[0].0, Point { x: 100., y: 220. });
-    assert_eq!(changed[0].1, Point { x: 200., y: 250. });
-    assert_eq!(changed[250].0, Point { x: 300., y: 180. });
+    assert_eq!(changed[0].0, Point { x: 50., y: 205. });
+    assert_eq!(changed[0].1, Point { x: 150., y: 235. });
+    assert_eq!(changed[250].0, Point { x: 250., y: 165. });
 }
 #[test]
 fn perpendicular_line_target_locus_import_generation_and_parent_edit() {
@@ -426,13 +426,13 @@ fn perpendicular_line_target_locus_import_generation_and_parent_edit() {
     assert_eq!(
         family[0],
         (
-            Point { x: 120., y: 180. },
-            Point { x: 90., y: 280. },
+            Point { x: 135., y: 130. },
+            Point { x: 105., y: 230. },
             LineMode::Line
         )
     );
-    assert_eq!(family[250].0, Point { x: 300., y: 180. });
-    assert_eq!(family[250].1, Point { x: 270., y: 280. });
+    assert_eq!(family[250].0, Point { x: 315., y: 130. });
+    assert_eq!(family[250].1, Point { x: 285., y: 230. });
 
     let base = include_bytes!("../../../tests/fixtures/locus_perpendicular_target_base.gsp");
     let mut generated = Document::from_bytes(base, None).unwrap();
@@ -445,9 +445,9 @@ fn perpendicular_line_target_locus_import_generation_and_parent_edit() {
     assert!(generated.move_point(1, Point { x: 100., y: 220. }));
     let moved = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
     let changed = moved.locus_strokes(9, 384).unwrap();
-    assert_eq!(changed[0].0, Point { x: 100., y: 220. });
-    assert_eq!(changed[0].1, Point { x: 70., y: 320. });
-    assert_eq!(changed[250].0, Point { x: 300., y: 180. });
+    assert_eq!(changed[0].0, Point { x: 115., y: 170. });
+    assert_eq!(changed[0].1, Point { x: 85., y: 270. });
+    assert_eq!(changed[250].0, Point { x: 315., y: 130. });
 }
 #[test]
 fn bisector_target_locus_import_generation_and_parent_edit() {

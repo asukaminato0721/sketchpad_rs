@@ -1,6 +1,7 @@
 use super::embedded_tools::{document_record_indices, document_records};
 use super::calculations::parse_numeric_calculation;
 use super::iteration::{
+    mapped_segment_binding,
     supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
     supported_point_parameter_iteration,
 };
@@ -664,7 +665,7 @@ impl Document {
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
                                 Kind::BranchingPolygonIteration { ref segments, polygon, .. } => polygon == *image || segments.contains(image),
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
-                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| is_point_kind(&source.kind) || matches!(source.kind, Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))),
+                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| is_point_kind(&source.kind) || mapped_segment_binding(&source.kind)),
                                 Kind::SegmentIteration(_, mapped, segment, _) | Kind::CircleIteration(_,mapped,segment,_) => mapped == *image || segment == *image,
                                 Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
                                 Kind::PointParameterIteration(_,_,mapped,_,label,_) => mapped==*image || label==*image,

@@ -1,4 +1,4 @@
-use super::Editor;
+use super::{is_circle_construction_host, Editor};
 use sketchpad_rs::document::Kind;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 
@@ -23,16 +23,7 @@ impl Editor {
                     Some(id) if matches!(self.doc.objects[id - 1].kind, Kind::Line(_, _)) => {
                         format!("Line object {id}")
                     }
-                    Some(id)
-                        if matches!(
-                            self.doc.objects[id - 1].kind,
-                            Kind::Circle(_, _)
-                                | Kind::CircleBySegment(_, _)
-                                | Kind::ReflectedCircle(_, _)
-                                | Kind::ScaledCircle(_, _, _)
-                                | Kind::RatioScaledCircle(_, _, _, _, _)
-                        ) =>
-                    {
+                    Some(id) if is_circle_construction_host(&self.doc.objects[id - 1].kind) => {
                         format!("Circle object {id} (counterclockwise turns)")
                     }
                     Some(id) => format!("Axis object {id}"),

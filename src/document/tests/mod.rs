@@ -2,6 +2,7 @@ use super::geometry::{intersect_straight, reflect_point, rotate_point_about};
 use super::kind::{is_segment_kind, straight_kind_mode};
 use super::records::{f64_at, header, put_record, records, u32_at};
 use super::{Document, IterationDepth, Kind, LineMode, Point, TextStyleCommand};
+use super::transform_model::{ElementType, NativeLiteralRole, NativeTransformFlavor};
 use crate::action_records::{
     AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction,
 };
@@ -17,6 +18,20 @@ use crate::table_records::{NumericUnit, ParameterCalculationGroup};
 use crate::value_equation_records::{EquationValue, ValueEquationKind};
 use std::fs;
 use std::path::Path;
+
+fn transform_is(kind: &Kind, flavor: NativeTransformFlavor, elements: &[ElementType]) -> bool {
+    kind.transform_definition().is_some_and(|definition| {
+        definition.wire_flavor() == flavor && elements.contains(&definition.element())
+    })
+}
+
+fn transform_literal_is(kind: &Kind, role: NativeLiteralRole, value: f64) -> bool {
+    kind.transform_definition().is_some_and(|definition| {
+        definition.native_literals().iter().any(|literal| {
+            literal.role == role && literal.value == value
+        })
+    })
+}
 
 // Native 0384 stores the initial page at payload offset 16. Older
 // construction fixtures predate persistence of the selected view.

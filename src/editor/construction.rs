@@ -1,4 +1,5 @@
-use super::Editor;
+use super::{is_circle_construction_host, Editor};
+use sketchpad_rs::document::transform_model::{ElementType, NativeTransformFlavor};
 use sketchpad_rs::document::{IterationDepth, Kind, Point};
 
 impl Editor {
@@ -176,22 +177,8 @@ impl Editor {
             .copied()
             .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Free(_)));
         let image = self.selection_order.iter().copied().find(|id| {
-            matches!(
-                self.doc.objects[*id - 1].kind,
-                Kind::PolarTranslatedPoint(_, _, _, _)
-                    | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
-                    | Kind::RotatedPoint(_, _, _)
-                    | Kind::CalculatedAngleRotatedPoint(_, _, _)
-                    | Kind::CalculatedRatioScaledPoint(_, _, _)
-                    | Kind::ScaledPoint(_, _, _)
-                    | Kind::RatioScaledPoint(_, _, _, _, _)
-                    | Kind::ReflectedPoint(_, _)
-                    | Kind::VectorTranslatedPoint(_, _, _)
-                    | Kind::MarkedDistanceTranslatedPoint(_, _, _)
-                    | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
-                    | Kind::RectangularMarkedTranslatedPoint(_, _, _)
-                    | Kind::AngleRotatedPoint(_, _, _, _, _)
-            )
+            self.doc.objects[*id - 1].kind.transform_definition()
+                .is_some_and(|definition| definition.element() == ElementType::Point)
         });
         let (Some(seed), Some(image)) = (seed, image) else {
             self.status = "Select a free point and its directly translated, rotated, dilated, or reflected image".into();
@@ -203,7 +190,12 @@ impl Editor {
             .copied()
             .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Polygon(_)));
         let result = if let Some(polygon) = selected_polygon {
-            let images = self.selection_order.iter().copied().filter(|id| matches!(self.doc.objects[*id-1].kind,Kind::PolarTranslatedPoint(source,_,_,_) | Kind::FixedRectangularTranslatedPoint(source,_,_,_,_) if source==seed)).collect::<Vec<_>>();
+            let images = self.selection_order.iter().copied().filter(|id| {
+                self.doc.objects[*id - 1].kind.transform_definition().is_some_and(|definition| {
+                    definition.element() == ElementType::Point && definition.source() == seed
+                        && matches!(definition.wire_flavor(), NativeTransformFlavor::FixedPolar | NativeTransformFlavor::FixedCartesian)
+                })
+            }).collect::<Vec<_>>();
             let segments = self
                 .selection_order
                 .iter()
@@ -361,18 +353,13 @@ impl Editor {
             return;
         }
         let host = self.selection_order.iter().copied().find(|id| {
-            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon()) || matches!(
+            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || is_circle_construction_host(&o.kind)) || matches!(
                 self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                 Some(
                     Kind::Polygon(_)
                         | Kind::Segment(_, _)
                         | Kind::Ray(_, _)
                         | Kind::Line(_, _)
-                        | Kind::Circle(_, _)
-                        | Kind::CircleBySegment(_, _)
-                        | Kind::ReflectedCircle(_, _)
-                        | Kind::ScaledCircle(_, _, _)
-                        | Kind::RatioScaledCircle(_, _, _, _, _)
                         | Kind::ThreePointArc(_, _, _)
                         | Kind::ArcOnCircle(_, _, _)
                 )

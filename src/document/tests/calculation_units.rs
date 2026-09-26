@@ -57,10 +57,7 @@ fn dimensional_length_expressions_update_units_and_marked_distance() {
         .iter()
         .copied()
         .find(|id| {
-            matches!(
-                doc.objects[*id - 1].kind,
-                Kind::MarkedDistanceTranslatedPoint(..)
-            )
+            transform_is(&doc.objects[*id - 1].kind, NativeTransformFlavor::MarkedPolar, &[ElementType::Point])
         })
         .unwrap();
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
@@ -289,10 +286,7 @@ fn measured_angle_calculations_follow_geometry_and_remap_dependencies() {
         .iter()
         .copied()
         .find(|id| {
-            matches!(
-                doc.objects[*id - 1].kind,
-                Kind::CalculatedAngleRotatedPoint(..)
-            )
+            transform_is(&doc.objects[*id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Point])
         })
         .unwrap();
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();

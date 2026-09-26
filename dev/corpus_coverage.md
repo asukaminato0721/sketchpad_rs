@@ -12,7 +12,7 @@ Drawing objects: 280347 slots; 86 documents with all drawing kinds decoded.
 
 Embedded tool prototypes: 103 definitions in 65 documents; 5356 undecoded slots.
 
-Unsupported object slots including tool prototypes: 108817. Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Unsupported object slots including tool prototypes: 108783. Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
 
 Embedded tool prototypes now have a separate namespace. They remain counted as undecoded slots; their exclusion from the drawing histogram does not establish tool support. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects.
 
@@ -21,7 +21,7 @@ Inspect complete groups and parent payloads before selecting a target.
 
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
-| 48 | 20292 | 628 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 48 | 20272 | 627 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 77 | 7405 | 797 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
 | 62 | 5540 | 428 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 | 24 | 5261 | 222 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
@@ -29,7 +29,7 @@ Inspect complete groups and parent payloads before selecting a target.
 | 33 | 4197 | 419 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
 | 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 | 27 | 3126 | 471 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 8 | 2903 | 477 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 8 | 2897 | 476 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
 | 90 | 2712 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 89 | 2538 | 772 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
@@ -39,7 +39,7 @@ Inspect complete groups and parent payloads before selecting a target.
 | 41 | 2185 | 106 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
 | 30 | 2041 | 358 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 35 | 1978 | 409 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 69 | 1780 | 250 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 69 | 1772 | 249 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 80 | 1594 | 406 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
 
 Run the command again for the current full report and all examples.
@@ -68,3 +68,12 @@ numeric straight-transform chains, and the proved arc plot hosts. The full
 all-targets regression gate at this checkpoint passes 782 tests. Later constrained
 arc semantics, trailing decimal parsing, and unified transformation-model work
 are subsequent changes and require another gate.
+
+Checkpoint 13 retains that same scope and reduces unsupported slots to 108783.
+It includes the verified constrained linear arc semantics and trailing decimal
+calculation literals. All 1599 documents remain byte-identical on round-trip.
+The unified transform refactor does not itself count as additional decoding
+coverage. Checkpoint 14 independently confirms the same counts after the shared consumer
+migration. The combined all-targets gate passes 805 tests, including the
+independently verified straight-geometry corrections and slope precision fixes.
+Generic transform storage and the remaining command requirements are pending.

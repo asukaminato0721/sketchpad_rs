@@ -71,3 +71,53 @@ displayed the drawing point. The retained
 `embedded_tool_square_point_scene_original_native_verified.gsp` has one drawing
 object and 13 separate prototype objects, with input order [2, 1]. This is
 import/preservation evidence, and is distinct from invoking the tool.
+
+The earlier appended-tool controls keep the point template's document header
+(tool count 0, section count 2). They establish scene import and raw preservation;
+they do not establish that Native registers those tools. A separately registered
+Square control sets the header's tool count to 1 and total section count to 3.
+Native now lists `Square Given Two Vertices` in its custom-tool menu and saves
+all 3516 bytes identically. This retained control is
+`embedded_tool_square_registered_native_verified.gsp`.
+
+An audit of all 65 corpus documents containing tools found exact header counts:
+the declared tool count equals the number of tool canvases, and the total section
+count equals drawing pages plus tools plus one. No mismatches were found.
+
+Actual Native invocation of that registered Square tool takes two point clicks,
+creates a square with 11 dependent objects, and leaves the unrelated original
+point intact. The result has 14 drawing objects and the same 13-object tool
+prototype graph. Native normalizes its local Arial/Times fonts to Tahoma,
+including the first local style’s font index; all other tool records are equal. Its corners are (200,180),(260,180),(260,120),(200,120); helpers 5, 6, 7, 9
+are hidden. Native opened and saved the 4472-byte result again byte-identically,
+with a positive square screenshot. The retained
+`embedded_tool_square_invoked_native_verified.gsp` regression checks geometry,
+visibility, separate namespaces, identical prototype records excluding local
+font tables, and exact saving.
+This establishes Native materialization behavior; Rust tool execution remains
+pending.
+
+Native UI probes may now set `SKETCHPAD_WINE_SCREEN=800x600` on the central
+round-trip helper. The larger display exposes the ninth toolbox icon and full
+tool menus; the default probe display remains unchanged. The queue lock and Wine
+cleanup behavior are unchanged.
+
+The Square assertion exposed two pre-existing geometry discrepancies. Six
+independent Native controls establish that code 12 selects the larger line
+parameter and code 11 the smaller before testing segment/ray extents; an
+out-of-range selected branch remains undefined. Parallel and perpendicular
+lines have parameter anchors centered at the construction point, separated by
+the full source vector. Perpendicular direction remains clockwise in screen
+coordinates. Reversed endpoints swap the branches, and parameter values
+0.25/0.5/0.75 establish direction and anchor placement independently of Square.
+All six controls were opened and saved byte-identically with positive geometry
+captures. The corrected Square corners now match Native.
+
+An independent Native Create Tool control selects two free points, their
+segment, and its midpoint, then creates the default named tool through the
+custom-tool menu. Native saves a 2816-byte document with four drawing objects,
+a four-object prototype, input IDs [2,1], and registered header counts 1/3.
+Reopening and saving a separate copy exits successfully and preserves all
+2816 bytes; the capture visibly shows the two endpoints, midpoint and segment.
+The retained control is `embedded_tool_simple_created_native_verified.gsp`.
+This proves the native creation layout; Rust Create Tool remains pending.

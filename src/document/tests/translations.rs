@@ -592,7 +592,7 @@ fn vector_translations_of_rotated_shapes_follow_edits_constraints_and_copy() {
         assert!(!doc.partial_view);
         assert_eq!(doc.objects[5].kind, image);
         assert_eq!(doc.encode().unwrap(), bytes);
-        if matches!(image, Kind::VectorTranslatedSegment(..)) {
+        if transform_is(&image, NativeTransformFlavor::Vector, &[ElementType::Segment]) {
             let (a,b,mode) = doc.line_points(6).unwrap();
             assert!(a.distance(Point { x: 210., y: 150. }) < 1e-12);
             assert!(b.distance(Point { x: 210., y: 110. }) < 1e-12);
