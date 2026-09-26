@@ -702,11 +702,77 @@ pub enum NumericUnit {
     Degrees,
     Length,
     Area,
+    Compound { length: i32, degrees: i32 },
+}
+
+impl NumericUnit {
+    fn dimensions(self) -> (i32, i32) {
+        match self {
+            Self::Scalar => (0, 0),
+            Self::Length => (1, 0),
+            Self::Area => (2, 0),
+            Self::Degrees => (0, 1),
+            Self::Compound { length, degrees } => (length, degrees),
+        }
+    }
+    fn from_dimensions(length: i32, degrees: i32) -> Self {
+        match (length, degrees) {
+            (0, 0) => Self::Scalar,
+            (1, 0) => Self::Length,
+            (2, 0) => Self::Area,
+            (0, 1) => Self::Degrees,
+            _ => Self::Compound { length, degrees },
+        }
+    }
+    fn subtype(self) -> u16 {
+        match self {
+            Self::Length => 48,
+            Self::Degrees => 49,
+            Self::Area => 50,
+            _ => 51,
+        }
+    }
+    pub fn suffix(self) -> String {
+        fn exponent(value: i32) -> String {
+            if value == 1 {
+                return String::new();
+            }
+            value
+                .to_string()
+                .chars()
+                .map(|c| match c {
+                    '-' => '⁻',
+                    '0' => '⁰',
+                    '1' => '¹',
+                    '2' => '²',
+                    '3' => '³',
+                    '4' => '⁴',
+                    '5' => '⁵',
+                    '6' => '⁶',
+                    '7' => '⁷',
+                    '8' => '⁸',
+                    '9' => '⁹',
+                    _ => unreachable!(),
+                })
+                .collect()
+        }
+        let (length, degrees) = self.dimensions();
+        let mut text = String::new();
+        if length != 0 {
+            text.push_str(&format!(" cm{}", exponent(length)));
+        }
+        if degrees != 0 {
+            text.push_str(&format!("°{}", exponent(degrees)));
+        }
+        text
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterCalculationGroup {
     bytes: Vec<u8>,
+    // Native subtype 51 covers generic quantities, including higher unit powers.
+    inferred_unit: Option<NumericUnit>,
 }
 
 // Native calculator degree conversion, verified with tan(90).
@@ -741,6 +807,7 @@ enum ParameterExpr {
     Binary(u16, Box<ParameterExpr>, Box<ParameterExpr>),
     Call(u16, Box<ParameterExpr>),
     Neg(Box<ParameterExpr>),
+    Group(Box<ParameterExpr>),
 }
 
 impl ParameterExpr {
@@ -755,6 +822,7 @@ impl ParameterExpr {
         let value = match self {
             Self::Source(index) => *sources.get(*index)?,
             Self::Neg(argument) => -argument.eval_raw_values(sources)?,
+            Self::Group(argument) => argument.eval_raw_values(sources)?,
             Self::Literal(value, _) => *value,
             Self::Call(function, argument) => {
                 let value = argument.eval_raw_values(sources)?;
@@ -803,13 +871,13 @@ impl ParameterExpr {
         self.units(&[source])
     }
     fn units(&self, sources: &[NumericUnit]) -> Result<NumericUnit, String> {
-        use NumericUnit::{Area, Degrees, Length, Scalar};
+        use NumericUnit::{Degrees, Scalar};
         match self {
             Self::Source(index) => sources
                 .get(*index)
                 .copied()
                 .ok_or_else(|| "Missing calculation source units".into()),
-            Self::Neg(argument) => argument.units(sources),
+            Self::Neg(argument) | Self::Group(argument) => argument.units(sources),
             Self::Literal(_, text) => Ok(if text.ends_with('°') {
                 Degrees
             } else {
@@ -821,7 +889,15 @@ impl ParameterExpr {
                     0x2000..=0x2002 if matches!(unit, Scalar | Degrees) => Ok(Scalar),
                     0x2003..=0x2005 if unit == Scalar => Ok(Degrees),
                     0x2006 => Ok(unit),
-                    0x2007..=0x200c if unit == Scalar => Ok(Scalar),
+                    0x2007 => {
+                        let (length, degrees) = unit.dimensions();
+                        Ok(if length % 2 == 0 && degrees % 2 == 0 {
+                            NumericUnit::from_dimensions(length / 2, degrees / 2)
+                        } else {
+                            Scalar
+                        })
+                    }
+                    0x2008..=0x200c if unit == Scalar => Ok(Scalar),
                     _ => Err("Function uses incompatible or unsupported units".into()),
                 }
             }
@@ -829,22 +905,45 @@ impl ParameterExpr {
                 let (left, right) = (a.units(sources)?, b.units(sources)?);
                 match *op {
                     0x1000 | 0x1001 if left == right => Ok(left),
-                    0x1002 if left == Length && right == Length => Ok(Area),
-                    0x1003 if left == Area && right == Length => Ok(Length),
-                    0x1002 if left == Scalar => Ok(right),
-                    0x1002 if right == Scalar => Ok(left),
-                    0x1003 if right == Scalar => Ok(left),
-                    0x1003 if left == right => Ok(Scalar),
-                    0x1004 if left == Scalar && right == Scalar => Ok(Scalar),
-                    0x1004
-                        if right == Scalar
-                            && left == Length
-                            && matches!(&**b, Self::Literal(2., _)) =>
-                    {
-                        Ok(Area)
+                    0x1002 | 0x1003 => {
+                        let (al, ad) = left.dimensions();
+                        let (bl, bd) = right.dimensions();
+                        let dimensions = if *op == 0x1002 {
+                            al.checked_add(bl).zip(ad.checked_add(bd))
+                        } else {
+                            al.checked_sub(bl).zip(ad.checked_sub(bd))
+                        };
+                        dimensions
+                            .map(|(l, d)| NumericUnit::from_dimensions(l, d))
+                            .ok_or_else(|| "Calculation unit exponent overflow".into())
                     }
-                    0x1004 if right == Scalar && matches!(&**b, Self::Literal(0., _)) => Ok(Scalar),
-                    0x1004 if right == Scalar && matches!(&**b, Self::Literal(1., _)) => Ok(left),
+                    0x1004 if right == Scalar => {
+                        if left == Scalar {
+                            return Ok(Scalar);
+                        }
+                        // Native retains dimensions only for a literal exponent.
+                        // Source values, computations, and parenthesized literals
+                        // discard units even when their numeric value is an integer.
+                        let power = match &**b {
+                            Self::Literal(value, _) => *value,
+                            _ => return Ok(Scalar),
+                        };
+                        if !power.is_finite() {
+                            return Err("Calculation unit exponent is undefined".into());
+                        }
+                        if power.fract() != 0. {
+                            return Ok(Scalar);
+                        }
+                        if power < i32::MIN as f64 || power > i32::MAX as f64 {
+                            return Err("Calculation unit exponent overflow".into());
+                        }
+                        let (length, degrees) = left.dimensions();
+                        length
+                            .checked_mul(power as i32)
+                            .zip(degrees.checked_mul(power as i32))
+                            .map(|(l, d)| NumericUnit::from_dimensions(l, d))
+                            .ok_or_else(|| "Calculation unit exponent overflow".into())
+                    }
                     _ => Err("Calculation uses incompatible or unsupported units".into()),
                 }
             }
@@ -858,6 +957,7 @@ impl ParameterExpr {
         match self {
             Self::Source(index) => source_names.get(*index).copied().unwrap_or("?").into(),
             Self::Neg(argument) => format!("−{}", argument.display_names(source_names)),
+            Self::Group(argument) => argument.display_names(source_names),
             Self::Literal(_, text) => text.clone(),
             Self::Call(function, argument) => format!(
                 "{}({})",
@@ -928,15 +1028,20 @@ impl<'a> ParameterExprParser<'a> {
         }
         if calculation_function_name(word).is_some() {
             self.at += 1;
-            if self.words.get(self.at) != Some(&11) {
-                return Err("Missing function argument".into());
+            // Native UI emits an implicit opening parenthesis. Existing saved
+            // formulas can also wrap the argument in an explicit pair.
+            let explicit = self.words.get(self.at) == Some(&11);
+            if explicit {
+                self.at += 1;
             }
-            self.at += 1;
             let argument = self.expression()?;
-            if self.words.get(self.at..self.at + 2) != Some(&[12, 12]) {
-                return Err("Unclosed function argument".into());
+            let closing = if explicit { 2 } else { 1 };
+            for _ in 0..closing {
+                if self.words.get(self.at) != Some(&12) {
+                    return Err("Unclosed function argument".into());
+                }
+                self.at += 1;
             }
-            self.at += 2;
             return Ok(ParameterExpr::Call(word, Box::new(argument)));
         }
         if word == 13 || word == 14 {
@@ -957,7 +1062,7 @@ impl<'a> ParameterExprParser<'a> {
                 return Err("Unclosed calculation parenthesis".into());
             }
             self.at += 1;
-            return Ok(result);
+            return Ok(ParameterExpr::Group(Box::new(result)));
         }
         if (0x6000..=0x600f).contains(&word) {
             self.at += 1;
@@ -1089,7 +1194,9 @@ fn calculation_tree(words: &[u16]) -> Result<ParameterExpr, String> {
 impl ParameterCalculationGroup {
     pub fn set_precision(&mut self, precision: u16) -> Result<(), String> {
         let updated = calculation_bytes_with_precision(&self.bytes, precision)?;
-        *self = Self::parse(&updated)?;
+        let mut parsed = Self::parse(&updated)?;
+        parsed.inferred_unit = self.inferred_unit;
+        *self = parsed;
         Ok(())
     }
 
@@ -1135,14 +1242,12 @@ impl ParameterCalculationGroup {
         bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
         let group = Self::parse(&bytes)?;
         let unit = group.expression_unit(source_unit)?;
-        let subtype: u16 = match unit {
-            NumericUnit::Length => 48,
-            NumericUnit::Degrees => 49,
-            NumericUnit::Area => 50,
-            NumericUnit::Scalar => 51,
-        };
-        bytes[16..18].copy_from_slice(&subtype.to_le_bytes());
-        Self::parse(&bytes)
+        bytes[16..18].copy_from_slice(&unit.subtype().to_le_bytes());
+        let mut parsed = Self::parse(&bytes)?;
+        if unit.subtype() == 51 && unit != NumericUnit::Scalar {
+            parsed.inferred_unit = Some(unit);
+        }
+        Ok(parsed)
     }
     pub fn from_sources(
         sources: &[u32],
@@ -1187,14 +1292,12 @@ impl ParameterCalculationGroup {
         }
         put_record(&mut bytes, 0x0907, &payload);
         bytes.extend_from_slice(&base[rs[2].end..]);
-        let subtype: u16 = match unit {
-            NumericUnit::Length => 48,
-            NumericUnit::Degrees => 49,
-            NumericUnit::Area => 50,
-            NumericUnit::Scalar => 51,
-        };
-        bytes[16..18].copy_from_slice(&subtype.to_le_bytes());
-        Self::parse(&bytes)
+        bytes[16..18].copy_from_slice(&unit.subtype().to_le_bytes());
+        let mut parsed = Self::parse(&bytes)?;
+        if unit.subtype() == 51 && unit != NumericUnit::Scalar {
+            parsed.inferred_unit = Some(unit);
+        }
+        Ok(parsed)
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         calculation_precision(bytes)?;
@@ -1219,6 +1322,7 @@ impl ParameterCalculationGroup {
         Self::validate_single_layout(&normalized)?;
         let group = Self {
             bytes: bytes.to_vec(),
+            inferred_unit: None,
         };
         group.expression_tree()?;
         Ok(group)
@@ -1332,9 +1436,37 @@ impl ParameterCalculationGroup {
             let at = rs[1].payload + 4 + 4 * index;
             bytes[at..at + 4].copy_from_slice(&id.to_le_bytes());
         }
-        Self::parse(&bytes)
+        let mut parsed = Self::parse(&bytes)?;
+        parsed.inferred_unit = self.inferred_unit;
+        Ok(parsed)
+    }
+    pub fn with_source_units(mut self, units: &[NumericUnit]) -> Result<Self, String> {
+        let inferred = self.units_for_sources(units)?;
+        if inferred == self.unit() {
+            return Ok(self);
+        }
+        let subtype = u16::from_le_bytes(self.bytes[16..18].try_into().unwrap());
+        // Native squared angles use subtype 50 too; the expression supplies
+        // the actual base unit rather than the quantity category in the header.
+        if subtype == 51 || (subtype == 50 && inferred.dimensions() == (0, 2)) {
+            self.inferred_unit = (inferred != self.unit()).then_some(inferred);
+        } else if inferred != self.unit() {
+            return Err("Calculation result units disagree with its header".into());
+        }
+        Ok(self)
+    }
+
+    pub fn with_visibility(&self, visible: bool) -> Result<Self, String> {
+        let mut bytes = self.bytes.clone();
+        bytes[10] = (bytes[10] & !1) | u8::from(!visible);
+        let mut parsed = Self::parse(&bytes)?;
+        parsed.inferred_unit = self.inferred_unit;
+        Ok(parsed)
     }
     pub fn unit(&self) -> NumericUnit {
+        if let Some(unit) = self.inferred_unit {
+            return unit;
+        }
         match u16::from_le_bytes(self.bytes[16..18].try_into().unwrap()) {
             48 => NumericUnit::Length,
             49 => NumericUnit::Degrees,
@@ -1351,13 +1483,11 @@ impl ParameterCalculationGroup {
         u16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()) as usize
     }
     pub fn value_text(&self, value: f64) -> String {
-        let number = format_numeric_value(value, self.precision());
-        match self.unit() {
-            NumericUnit::Degrees => format!("{number}°"),
-            NumericUnit::Length => format!("{number} cm"),
-            NumericUnit::Area => format!("{number} cm²"),
-            NumericUnit::Scalar => number,
-        }
+        format!(
+            "{}{}",
+            format_numeric_value(value, self.precision()),
+            self.unit().suffix()
+        )
     }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -1590,12 +1720,7 @@ impl CalculationGroup {
         } else {
             format_numeric_value(value, self.precision())
         };
-        let suffix = if self.unit() == NumericUnit::Degrees {
-            "°"
-        } else {
-            ""
-        };
-        format!("{number}{suffix}")
+        format!("{number}{}", self.unit().suffix())
     }
     pub fn small_integer_expression(expression: &str) -> Result<Self, String> {
         let compact = expression
@@ -2895,7 +3020,7 @@ mod tests {
             length.value_with_source_unit(3., NumericUnit::Length),
             Some(3.)
         );
-        for expression in ["sin(v)", "sqrt(v)", "ln(v)"] {
+        for expression in ["sin(v)", "ln(v)"] {
             assert!(
                 ParameterCalculationGroup::from_expression_with_source_unit(
                     1,
@@ -2914,6 +3039,101 @@ mod tests {
         }
         let zero = ParameterCalculationGroup::from_expression(1, "n", "sgn(n)", (10, 30)).unwrap();
         assert_eq!(zero.value(-0.), Some(0.));
+    }
+
+    #[test]
+    fn dimensional_roots_powers_and_unit_algebra() {
+        use NumericUnit::{Area, Compound, Degrees, Length, Scalar};
+        for (unit, expression, value, expected_unit, expected_value, suffix) in [
+            (Area, "sqrt(v)", 9., Length, 3., " cm"),
+            (Length, "sqrt(v)", 9., Scalar, 3., ""),
+            (Degrees, "sqrt(v)", 90., Scalar, 90_f64.sqrt(), ""),
+            (Area, "v^0.5", 9., Scalar, 3., ""),
+            (
+                Area,
+                "v^2",
+                9.,
+                Compound {
+                    length: 4,
+                    degrees: 0,
+                },
+                81.,
+                " cm⁴",
+            ),
+            (
+                Degrees,
+                "v^2",
+                90.,
+                Compound {
+                    length: 0,
+                    degrees: 2,
+                },
+                8100.,
+                "°²",
+            ),
+            (Area, "sqrt(v^2)", 9., Area, 9., " cm²"),
+            (Area, "sqrt(sqrt(v^2))", 9., Length, 3., " cm"),
+            (Length, "v^(1+2)", 2., Scalar, 8., ""),
+            (Length, "v^-2", 2., Scalar, 0.25, ""),
+            (Area, "v^(2)", 9., Scalar, 81., ""),
+            (Length, "v^2.0", 3., Area, 9., " cm²"),
+            (Length, "v^sqrt(4)", 3., Scalar, 9., ""),
+            (Area, "v*v/v", 9., Area, 9., " cm²"),
+        ] {
+            let mut group = ParameterCalculationGroup::from_expression_with_source_unit(
+                1,
+                "v",
+                expression,
+                (10, 30),
+                unit,
+            )
+            .unwrap();
+            assert_eq!(group.unit(), expected_unit, "{expression}");
+            assert_eq!(
+                group.value_for_sources(&[value], &[unit]),
+                Some(expected_value)
+            );
+            assert_eq!(group.unit().suffix(), suffix);
+            group.set_precision(5).unwrap();
+            group.set_anchor((50, 80)).unwrap();
+            let remapped = group.remap_source(7).unwrap();
+            assert_eq!(remapped.unit(), expected_unit);
+            assert_eq!(
+                ParameterCalculationGroup::parse(remapped.as_bytes())
+                    .unwrap()
+                    .with_source_units(&[unit])
+                    .unwrap()
+                    .unit(),
+                expected_unit
+            );
+        }
+        let negative = ParameterCalculationGroup::from_expression_with_source_unit(
+            1,
+            "v",
+            "sqrt(v)",
+            (10, 30),
+            Area,
+        )
+        .unwrap();
+        assert_eq!(negative.value_for_sources(&[-1.], &[Area]), None);
+        let source_power =
+            ParameterCalculationGroup::from_sources(&[1, 2], "v1^v2", (10, 30), &[Length, Scalar])
+                .unwrap();
+        assert_eq!(source_power.unit(), Scalar);
+        assert_eq!(
+            source_power.value_for_sources(&[3., 2.], &[Length, Scalar]),
+            Some(9.)
+        );
+        let mut wrong_header = negative.as_bytes().to_vec();
+        wrong_header[16..18].copy_from_slice(&49u16.to_le_bytes());
+        assert!(
+            ParameterCalculationGroup::parse(&wrong_header)
+                .unwrap()
+                .with_source_units(&[Area])
+                .is_err()
+        );
+        let literal = CalculationGroup::from_expression("90°^2").unwrap();
+        assert_eq!(literal.value_text(), "8100.00°²");
     }
 
     #[test]

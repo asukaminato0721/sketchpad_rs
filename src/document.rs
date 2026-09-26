@@ -51,6 +51,12 @@ impl Kind {
     pub fn is_distance_value(&self) -> bool {
         is_distance_value_kind(self)
     }
+    pub fn is_circle(&self) -> bool {
+        is_circle_kind(self)
+    }
+    pub fn is_line(&self) -> bool {
+        straight_kind_mode(self) == Some(LineMode::Line)
+    }
     pub fn is_polygon(&self) -> bool {
         matches!(
             self,
@@ -1415,11 +1421,13 @@ fn is_straight_kind(kind: &Kind) -> bool {
 fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
     if is_segment_kind(kind) {
         Some(LineMode::Segment)
-    } else if matches!(kind, Kind::Ray(_, _)) {
+    } else if matches!(kind, Kind::Ray(_, _) | Kind::Bisector(_, _, _)) {
         Some(LineMode::Ray)
     } else if is_straight_kind(kind) {
         Some(LineMode::Line)
-    } else { None }
+    } else {
+        None
+    }
 }
 
 fn is_point_kind(kind: &Kind) -> bool {
@@ -1898,8 +1906,8 @@ fn parse_numeric_calculation(
                 .and_then(|o| numeric_kind_unit(&o.kind))
         })
         .collect::<Option<Vec<_>>>()?;
-    (group.units_for_sources(&units).ok()? == group.unit())
-        .then(|| Kind::ParameterCalculation(refs[0], group))
+    let group = group.with_source_units(&units).ok()?;
+    Some(Kind::ParameterCalculation(refs[0], group))
 }
 
 fn numeric_kind_unit(kind: &Kind) -> Option<NumericUnit> {
@@ -2301,10 +2309,10 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
-            let labeled_polygon = h[6..8] == [4, 0]
+            let labeled_shape = matches!(h[6..8], [2, 0] | [3, 0] | [4, 0])
                 && matches!(
                     code,
-                    8 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 30 | 32 | 34
+                    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
                 );
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
@@ -2329,7 +2337,7 @@ impl Document {
                     iteration_definition = Some(d.to_vec());
                 }
                 match r.kind {
-                    0x07d5 if matches!(code, 0 | 15) || labeled_polygon => match LabelAux::parse(d)
+                    0x07d5 if matches!(code, 0 | 15) || labeled_shape => match LabelAux::parse(d)
                     {
                         Ok(value) if matches!(code, 0 | 15) => label = Some(value),
                         Ok(_) => {}
@@ -2337,10 +2345,10 @@ impl Document {
                     },
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
-                    0x07d8 if matches!(code, 0 | 15) || labeled_polygon => {
+                    0x07d8 if matches!(code, 0 | 15) || labeled_shape => {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
-                        if (labeled_polygon || code == 15) && !text_style {
+                        if (labeled_shape || code == 15) && !text_style {
                             safe = false;
                         }
                     }
@@ -2460,7 +2468,7 @@ impl Document {
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !(code == 15 && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !(labeled_polygon && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !(labeled_shape && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
@@ -2847,12 +2855,12 @@ impl Document {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::Line(_, _)))
+                        && objects.get(first.saturating_sub(1)).is_some_and(|o| o.kind.is_line())
                         && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::LineEquation, first: *first, second: *second }
                     }
                     (51, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::CircleEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _)))
+                        && objects.get(first.saturating_sub(1)).is_some_and(|o| is_circle_kind(&o.kind))
                         && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first: *first, second: *second }
                     }
@@ -2898,18 +2906,12 @@ impl Document {
                         && objects.get(source - 1).is_some_and(|object| is_distance_value_kind(&object.kind)) => {
                         match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
-                            _ => match ParameterCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
-                                Ok(group) if group.source_id() as usize == source-page_base && group.expression_unit(NumericUnit::Length).ok()==Some(group.unit()) => Kind::ParameterCalculation(*source, group),
-                                _ => Kind::Unsupported(code),
-                            },
+                            _ => parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code)),
                         }
                     }
                     (48, None, [source]) if *source > 0
                         && objects.get(source - 1).is_some_and(|object| numeric_kind_unit(&object.kind).is_some()) => {
-                        match ParameterCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
-                            Ok(group) if group.source_id() as usize == source - page_base && numeric_kind_unit(&objects[source-1].kind).is_some_and(|unit|group.expression_unit(unit).ok()==Some(group.unit())) => Kind::ParameterCalculation(*source, group),
-                            _ => Kind::Unsupported(code),
-                        }
+                        parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code))
                     }
                     (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
                         match TableGroup::parse(&b[group_start..rs[i].data.end]) {
@@ -3870,7 +3872,19 @@ impl Document {
             ids[object.id] = parsed.objects.len() + index + 1;
         }
         for (index, object) in source_objects.iter().enumerate() {
-            let expected = object.kind.remap_checked(&ids)?;
+            let mut expected = object.kind.remap_checked(&ids)?;
+            if let Kind::ParameterCalculation(_, group) = &mut expected {
+                // Serialized calculation parents use IDs within their page.
+                let local = group
+                    .sources()
+                    .into_iter()
+                    .map(|id| {
+                        id.checked_sub(parsed.objects.len() as u32)
+                            .ok_or("Invalid copied calculation source")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                *group = group.remap_sources(&local)?;
+            }
             let copied = &result.objects[parsed.objects.len() + index];
             if copied.page != new_page
                 || copied.kind != expected
@@ -4696,12 +4710,7 @@ impl Document {
             _ => return None,
         };
         let value = self.measurement_value_text(id)?;
-        let unit = match object.kind.numeric_unit()? {
-            NumericUnit::Length => " cm",
-            NumericUnit::Area => " cm²",
-            NumericUnit::Degrees => "°",
-            NumericUnit::Scalar => "",
-        };
+        let unit = object.kind.numeric_unit()?.suffix();
         Some(format!("{name} = {value}{unit}"))
     }
     pub fn set_measurement_precision(
@@ -7725,6 +7734,7 @@ impl Document {
     pub fn value_equation_text(&self, id: usize) -> Option<String> {
         let value = self.value_equation_value(id)?;
         let signed = |number: f64| {
+            let number = if number == 0. { 0. } else { number };
             if number < 0. {
                 format!("−{:.2}", -number)
             } else {
@@ -7742,7 +7752,11 @@ impl Document {
             EquationValue::PointValue(_) => format!("Value of Point = {}", self.measurement_value_text(id)?),
             EquationValue::Line { slope, intercept } => {
                 let sign = if intercept < 0. { "−" } else { "+" };
-                format!("y = {}x {sign} {:.2}", signed(slope), intercept.abs())
+                if slope == 0. {
+                    format!("y = {}", signed(intercept))
+                } else {
+                    format!("y = {}x {sign} {:.2}", signed(slope), intercept.abs())
+                }
             }
             EquationValue::VerticalLine { x } => format!("x = {}", signed(x)),
             EquationValue::Circle { center, radius } => format!(
@@ -10247,6 +10261,7 @@ impl Document {
             _ => None,
         }
     }
+
     fn compact_deleted(&self, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         if !self.objects.iter().any(|o| o.deleted) {
             return Ok(bytes);
@@ -11196,12 +11211,7 @@ impl Document {
                         matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) | Kind::PointOnArc(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second)
                     }
                     ValueEquationKind::LineEquation => {
-                        matches!(
-                            self.objects
-                                .get(first.saturating_sub(1))
-                                .map(|object| &object.kind),
-                            Some(Kind::Line(_, _))
-                        ) && matches!(
+                        self.objects.get(first.saturating_sub(1)).is_some_and(|o| o.kind.is_line()) && matches!(
                             self.objects
                                 .get(second.saturating_sub(1))
                                 .map(|object| &object.kind),
@@ -11209,12 +11219,7 @@ impl Document {
                         )
                     }
                     ValueEquationKind::CircleEquation => {
-                        matches!(
-                            self.objects
-                                .get(first.saturating_sub(1))
-                                .map(|object| &object.kind),
-                            Some(Kind::Circle(_, _))
-                        ) && matches!(
+                        self.objects.get(first.saturating_sub(1)).is_some_and(|o| is_circle_kind(&o.kind)) && matches!(
                             self.objects
                                 .get(second.saturating_sub(1))
                                 .map(|object| &object.kind),
@@ -11286,17 +11291,17 @@ impl Document {
                 return Err(format!("Invalid points in angle measurement {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind, Kind::PointOnSegment(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _))))
+                && matches!(o.kind, Kind::PointOnSegment(host, _) if self.objects.get(host.saturating_sub(1)).and_then(|o| straight_kind_mode(&o.kind)) != Some(LineMode::Segment))
             {
                 return Err(format!("Invalid segment host in point {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind, Kind::PointOnRay(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Ray(_, _))))
+                && matches!(o.kind, Kind::PointOnRay(host, _) if self.objects.get(host.saturating_sub(1)).and_then(|o| straight_kind_mode(&o.kind)) != Some(LineMode::Ray))
             {
                 return Err(format!("Invalid ray host in point {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind, Kind::PointOnLine(host, _) if !matches!(self.objects.get(host.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Line(_, _))))
+                && matches!(o.kind, Kind::PointOnLine(host, _) if self.objects.get(host.saturating_sub(1)).and_then(|o| straight_kind_mode(&o.kind)) != Some(LineMode::Line))
             {
                 return Err(format!("Invalid line host in point {}", o.id));
             }
@@ -15569,7 +15574,7 @@ impl Document {
                     }
                     Kind::ParameterCalculation(source, group) => Kind::ParameterCalculation(
                         source,
-                        ParameterCalculationGroup::parse(&visibility(group.as_bytes()))?,
+                        group.with_visibility(object.visible)?,
                     ),
                     Kind::MeasuredCalculation(source, group) => Kind::MeasuredCalculation(
                         source,
@@ -20525,6 +20530,409 @@ mod tests {
             2
         );
     }
+    #[test]
+    fn native_constructed_line_equations_follow_direction_and_vertical_edits() {
+        for (name, slope, edit, expected) in [
+            (
+                "parallel",
+                0.5,
+                Point { x: 100., y: 100. },
+                EquationValue::VerticalLine {
+                    x: -3.6777083333333334,
+                },
+            ),
+            (
+                "perpendicular",
+                -2.,
+                Point { x: 180., y: 180. },
+                EquationValue::VerticalLine {
+                    x: -3.6777083333333334,
+                },
+            ),
+        ] {
+            let bytes =
+                std::fs::read(format!("tests/fixtures/{name}_line_equation_native.gsp")).unwrap();
+            let mut doc = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            assert_eq!(
+                doc.objects[11].kind,
+                Kind::ValueEquation {
+                    kind: ValueEquationKind::LineEquation,
+                    first: 5,
+                    second: 11
+                }
+            );
+            let EquationValue::Line { slope: value, .. } = doc.value_equation_value(12).unwrap()
+            else {
+                panic!("Expected line equation");
+            };
+            assert!((value - slope).abs() < 1e-12);
+            assert!(doc.move_point(2, edit));
+            let (
+                Some(EquationValue::VerticalLine { x }),
+                EquationValue::VerticalLine { x: expected_x },
+            ) = (doc.value_equation_value(12), expected)
+            else {
+                panic!("Expected vertical equation");
+            };
+            assert!((x - expected_x).abs() < 1e-12);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.value_equation_value(12),
+                doc.value_equation_value(12)
+            );
+            doc.selected.insert(12);
+            let clipboard = doc.copy_selected().unwrap();
+            let pasted = doc.paste(&clipboard).unwrap();
+            assert!(matches!(
+                doc.value_equation_value(*pasted.last().unwrap()),
+                Some(EquationValue::VerticalLine { .. })
+            ));
+            doc.selected.clear();
+            doc.selected.insert(5);
+            assert!(doc.clear_selected().unwrap().contains(&12));
+        }
+    }
+    #[test]
+    fn native_axis_equations_preserve_frame_references_and_constant_captions() {
+        for (name, host, expected, caption) in [
+            (
+                "x_axis",
+                3,
+                EquationValue::Line {
+                    slope: 0.,
+                    intercept: 0.,
+                },
+                "y = 0.00",
+            ),
+            (
+                "y_axis",
+                5,
+                EquationValue::VerticalLine { x: 0. },
+                "x = 0.00",
+            ),
+        ] {
+            let bytes =
+                std::fs::read(format!("tests/fixtures/{name}_line_equation_native.gsp")).unwrap();
+            let mut doc = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            assert_eq!(
+                doc.objects[6].kind,
+                Kind::ValueEquation {
+                    kind: ValueEquationKind::LineEquation,
+                    first: host,
+                    second: 6
+                }
+            );
+            assert_eq!(doc.value_equation_value(7), Some(expected));
+            assert_eq!(doc.value_equation_text(7).as_deref(), Some(caption));
+            assert!(doc.move_point(1, Point { x: 219., y: 145. }));
+            assert_eq!(doc.value_equation_value(7), Some(expected));
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.value_equation_text(7).as_deref(), Some(caption));
+        }
+    }
+    #[test]
+    fn line_equations_exclude_segments_rays_and_ray_bisectors() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let vertex = doc.add(Kind::Free(Point { x: 160., y: 180. }));
+        let end = doc.add(Kind::Free(Point { x: 160., y: 120. }));
+        let segment = doc.add(Kind::Segment(a, vertex));
+        let ray = doc.add(Kind::Ray(a, vertex));
+        let bisector = doc.add(Kind::Bisector(a, vertex, end));
+        for host in [segment, ray, bisector] {
+            assert!(!doc.objects[host - 1].kind.is_line());
+        }
+        assert_eq!(
+            straight_kind_mode(&doc.objects[bisector - 1].kind),
+            Some(LineMode::Ray)
+        );
+        let point = doc.add(
+            doc.constrained_point(bisector, Point { x: 140., y: 160. })
+                .unwrap(),
+        );
+        assert!(
+            matches!(doc.objects[point-1].kind, Kind::PointOnRay(host, t) if host == bisector && t > 0.)
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.objects[point - 1].kind,
+            doc.objects[point - 1].kind
+        );
+        let frame = doc
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        let Kind::CoordinateSystem(x_axis, y_axis) = doc.objects[frame - 1].kind else {
+            panic!("Expected frame");
+        };
+        for (host, expected) in [
+            (
+                x_axis,
+                EquationValue::Line {
+                    slope: 0.,
+                    intercept: 0.,
+                },
+            ),
+            (y_axis, EquationValue::VerticalLine { x: 0. }),
+        ] {
+            assert!(doc.objects[host - 1].kind.is_line());
+            let equation = doc.add(Kind::ValueEquation {
+                kind: ValueEquationKind::LineEquation,
+                first: host,
+                second: frame,
+            });
+            assert_eq!(doc.value_equation_value(equation), Some(expected));
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.value_equation_value(equation), Some(expected));
+        }
+    }
+
+    #[test]
+    fn native_equations_of_constructed_and_transformed_circles_preserve_labels() {
+        for name in ["ratio", "segment_radius"] {
+            let bytes =
+                std::fs::read(format!("tests/fixtures/{name}_circle_equation_native.gsp")).unwrap();
+            let mut doc = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            assert_eq!(
+                doc.objects[11].kind,
+                Kind::ValueEquation {
+                    kind: ValueEquationKind::CircleEquation,
+                    first: 5,
+                    second: 11
+                }
+            );
+            let EquationValue::Circle { center, radius } = doc.value_equation_value(12).unwrap()
+            else {
+                panic!("Expected circle equation");
+            };
+            assert!((center.x + 1.031875).abs() < 1e-12);
+            assert!((center.y + 1.4552083333333334).abs() < 1e-12);
+            let expected = if name == "ratio" { 0.79375 } else { 1.5875 };
+            assert!((radius - expected).abs() < 1e-12);
+            if name == "ratio" {
+                doc.set_parameter_value(1, -0.75).unwrap();
+            } else {
+                assert!(doc.move_point(3, Point { x: 130., y: 180. }));
+            }
+            let expected = if name == "ratio" { 1.190625 } else { 2.38125 };
+            let EquationValue::Circle { radius, .. } = doc.value_equation_value(12).unwrap() else {
+                panic!("Expected circle equation");
+            };
+            assert!((radius - expected).abs() < 1e-12);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.value_equation_value(12),
+                doc.value_equation_value(12)
+            );
+            doc.selected.insert(12);
+            let clipboard = doc.copy_selected().unwrap();
+            let pasted = doc.paste(&clipboard).unwrap();
+            let equation = *pasted.last().unwrap();
+            assert!(matches!(
+                doc.value_equation_value(equation),
+                Some(EquationValue::Circle { .. })
+            ));
+            doc.selected.clear();
+            doc.selected.insert(5);
+            assert!(doc.clear_selected().unwrap().contains(&12));
+        }
+    }
+    #[test]
+    fn circle_equations_follow_transformed_centers_radii_and_frame_edits() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 160., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 220., y: 180. }));
+        let center = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let mirror_end = doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let mirror = doc.add(Kind::Line(center, mirror_end));
+        let circle = doc.add(Kind::Circle(a, b));
+        let frame = doc
+            .add_default_coordinate_system(Point { x: 199., y: 125. })
+            .unwrap();
+        let hosts = [
+            Kind::ReflectedCircle(circle, mirror),
+            Kind::PolarTranslatedCircle(circle, 90., 37.79527559055118, 1.),
+            Kind::RotatedCircle(circle, center, 90.),
+            Kind::ScaledCircle(circle, center, -0.5),
+        ];
+        for kind in hosts {
+            let host = doc.add(kind);
+            let equation = doc.add(Kind::ValueEquation {
+                kind: ValueEquationKind::CircleEquation,
+                first: host,
+                second: frame,
+            });
+            let (circle_center, raw_radius) = doc.circle_points(host).unwrap();
+            let coordinates = doc
+                .graph_frame(frame)
+                .unwrap()
+                .coordinates(GraphPoint {
+                    x: circle_center.x,
+                    y: circle_center.y,
+                })
+                .unwrap();
+            let EquationValue::Circle { center, radius } =
+                doc.value_equation_value(equation).unwrap()
+            else {
+                panic!("Expected circle equation");
+            };
+            assert!(
+                (center.x - coordinates.x).abs() < 1e-12
+                    && (center.y - coordinates.y).abs() < 1e-12
+            );
+            assert!((radius - raw_radius / 37.79527559055118).abs() < 1e-12);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.value_equation_value(equation),
+                doc.value_equation_value(equation)
+            );
+        }
+        let equation = doc.objects.last().unwrap().id;
+        let before = doc.value_equation_value(equation);
+        assert!(doc.move_point(a, Point { x: 170., y: 170. }));
+        assert_ne!(doc.value_equation_value(equation), before);
+        let before = doc.value_equation_value(equation);
+        let origin = frame - 5;
+        assert!(doc.move_point(origin, Point { x: 209., y: 135. }));
+        assert_ne!(doc.value_equation_value(equation), before);
+    }
+
+    #[test]
+    fn native_transformed_path_points_measure_and_control_iteration_depth() {
+        for (shape, point, host, expression, edited, expected, depth_count) in [
+            ("segment", 5, 4, "v*4", Point { x: 120., y: 120. }, 0.75, 3),
+            ("circle", 6, 5, "v*8+1", Point { x: 130., y: 180. }, 0.5, 5),
+        ] {
+            let bytes = std::fs::read(format!(
+                "tests/fixtures/transformed_{shape}_point_native.gsp"
+            ))
+            .unwrap();
+            let mut doc = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            let position = doc.position(point).unwrap();
+            assert!(doc.constrained_point(host, position).is_some());
+            let measurement = doc.add(Kind::ValueEquation {
+                kind: ValueEquationKind::PointValue,
+                first: point,
+                second: host,
+            });
+            let value = if shape == "segment" { 0.5 } else { 0.25 };
+            assert!((doc.numeric_value(measurement).unwrap() - value).abs() < 1e-12);
+            doc.set_measurement_precision(&[measurement], 4).unwrap();
+            let depth = doc
+                .add_parameter_calculation(measurement, expression, (10, 40))
+                .unwrap();
+            let seed = doc.add(Kind::Free(Point { x: 60., y: 220. }));
+            let image = doc.add(Kind::PolarTranslatedPoint(seed, 0., 37.79527559055118, 0.5));
+            let iteration = doc
+                .add_point_iteration_with_depth_value(seed, image, depth)
+                .unwrap();
+            assert_eq!(
+                doc.point_iteration_images(iteration).unwrap().len(),
+                if shape == "segment" { 2 } else { 3 }
+            );
+            assert!(doc.move_point(point, edited));
+            assert!((doc.numeric_value(measurement).unwrap() - expected).abs() < 1e-12);
+            assert_eq!(
+                doc.point_iteration_images(iteration).unwrap().len(),
+                depth_count
+            );
+            let mut reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.numeric_value(measurement),
+                doc.numeric_value(measurement)
+            );
+            assert_eq!(
+                reopened.point_iteration_images(iteration),
+                doc.point_iteration_images(iteration)
+            );
+            reopened.selected.insert(measurement);
+            let clipboard = reopened.copy_selected().unwrap();
+            let pasted = reopened.paste(&clipboard).unwrap();
+            assert!(
+                (reopened.numeric_value(*pasted.last().unwrap()).unwrap() - expected).abs() < 1e-12
+            );
+            reopened.selected.clear();
+            reopened.selected.insert(host);
+            let removed = reopened.clear_selected().unwrap();
+            assert!(
+                removed.contains(&point)
+                    && removed.contains(&measurement)
+                    && removed.contains(&depth)
+                    && removed.contains(&iteration)
+            );
+        }
+    }
+    #[test]
+    fn constrained_points_use_supported_path_modes_and_live_transform_geometry() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let b = doc.add(Kind::Free(Point { x: 180., y: 140. }));
+        let c = doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let circle = doc.add(Kind::Circle(a, b));
+        let hosts = [
+            Kind::RotatedSegment(segment, a, 90.),
+            Kind::ScaledSegment(segment, a, -0.5),
+            Kind::ReflectedSegment(segment, doc.add(Kind::Line(a, c))),
+            Kind::Parallel(c, segment),
+            Kind::Perpendicular(c, segment),
+            Kind::PolarTranslatedCircle(circle, 90., 37.79527559055118, 1.),
+            Kind::RotatedCircle(circle, c, 30.),
+            Kind::ScaledCircle(circle, c, -0.5),
+        ];
+        for kind in hosts {
+            let host = doc.add(kind);
+            let target = if let Some((a, b, _)) = doc.line_points(host) {
+                Point {
+                    x: (a.x + b.x) * 0.5,
+                    y: (a.y + b.y) * 0.5,
+                }
+            } else {
+                let (center, radius) = doc.circle_points(host).unwrap();
+                Point {
+                    x: center.x,
+                    y: center.y - radius,
+                }
+            };
+            let constrained = doc.constrained_point(host, target).unwrap();
+            assert_eq!(
+                matches!(constrained, Kind::PointOnSegment(_, _)),
+                is_segment_kind(&doc.objects[host - 1].kind)
+            );
+            let point = doc.add(constrained);
+            let measurement = doc.add(Kind::ValueEquation {
+                kind: ValueEquationKind::PointValue,
+                first: point,
+                second: host,
+            });
+            let expected = if doc.line_points(host).is_some() {
+                0.5
+            } else {
+                0.25
+            };
+            assert!((doc.numeric_value(measurement).unwrap() - expected).abs() < 1e-12);
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert!((reopened.numeric_value(measurement).unwrap() - expected).abs() < 1e-12);
+            assert!(doc.position(point).unwrap().distance(target) < 1e-10);
+        }
+        assert_eq!(doc.constrained_point(a, Point { x: 100., y: 180. }), None);
+    }
+
     #[test]
     fn constructed_and_transformed_slope_measurements_feed_live_calculated_depth() {
         let mut doc = Document::new();
@@ -29168,6 +29576,390 @@ mod tests {
     }
 
     #[test]
+    fn native_source_exponents_discard_units_and_follow_parameter_edits() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/source_exponent_area_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/source_exponent_quantities_native.gsp").as_slice(),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            let cases = if doc.objects.len() == 7 {
+                vec![(7, 4)]
+            } else {
+                vec![(9, 4), (10, 5), (11, 8)]
+            };
+            for power in [1., 2., 0.5, 0., -1.] {
+                doc.set_parameter_value(6, power).unwrap();
+                for &(id, source) in &cases {
+                    assert_eq!(
+                        doc.objects[id - 1].kind.numeric_unit(),
+                        Some(NumericUnit::Scalar)
+                    );
+                    assert_eq!(
+                        doc.unitless_numeric_value(id),
+                        doc.numeric_value(source).map(|v| v.powf(power))
+                    );
+                }
+                if doc.objects.len() == 12 {
+                    let area = doc.numeric_value(4).unwrap();
+                    assert_eq!(doc.unitless_numeric_value(12), Some(area * area));
+                }
+                let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+                assert!(!reopened.partial_view);
+                for &(id, _) in &cases {
+                    assert_eq!(
+                        reopened.unitless_numeric_value(id),
+                        doc.unitless_numeric_value(id)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_exponent_syntax_controls_units_without_changing_values() {
+        let bytes = include_bytes!("../tests/fixtures/dimensional_exponent_forms_native.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        for x in [220., 250.] {
+            doc.move_point(2, Point { x, y: 180. });
+            let area = doc.numeric_value(4).unwrap();
+            for (id, exponent, unit) in [
+                (9, -2, NumericUnit::Scalar),
+                (
+                    10,
+                    2,
+                    NumericUnit::Compound {
+                        length: 4,
+                        degrees: 0,
+                    },
+                ),
+                (11, 2, NumericUnit::Scalar),
+                (
+                    12,
+                    2,
+                    NumericUnit::Compound {
+                        length: 4,
+                        degrees: 0,
+                    },
+                ),
+                (
+                    13,
+                    2,
+                    NumericUnit::Compound {
+                        length: 4,
+                        degrees: 0,
+                    },
+                ),
+            ] {
+                assert_eq!(doc.objects[id - 1].kind.numeric_unit(), Some(unit));
+                assert_eq!(doc.numeric_value(id), Some(area.powf(exponent as f64)));
+            }
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            for id in 9..=13 {
+                assert_eq!(
+                    reopened.objects[id - 1].kind.numeric_unit(),
+                    doc.objects[id - 1].kind.numeric_unit()
+                );
+                assert_eq!(reopened.numeric_value(id), doc.numeric_value(id));
+            }
+        }
+    }
+
+    #[test]
+    fn source_exponent_units_keep_live_depth_and_numeric_iteration_scalar() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/source_exponents_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!doc.partial_view);
+        for (power, count) in [(0.5, 1), (2., 3), (0., 1), (-1., 0)] {
+            doc.set_parameter_value(5, power).unwrap();
+            assert_eq!(
+                doc.objects[6].kind.numeric_unit(),
+                Some(NumericUnit::Scalar)
+            );
+            assert_eq!(
+                doc.point_iteration_images(9).unwrap_or_default().len(),
+                count
+            );
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.point_iteration_images(9),
+                doc.point_iteration_images(9)
+            );
+        }
+        doc.set_parameter_value(5, 2.).unwrap();
+        doc.selected.insert(9);
+        let pasted = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        let copy = pasted
+            .into_iter()
+            .find(|id| matches!(doc.objects[*id - 1].kind, Kind::PointIteration(..)))
+            .unwrap();
+        assert_eq!(doc.point_iteration_images(copy).unwrap().len(), 3);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_iteration_images(copy),
+            doc.point_iteration_images(copy)
+        );
+
+        let mut numeric = Document::from_bytes(
+            include_bytes!("../tests/fixtures/source_exponents_numeric_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        for initial in [0.5, 1.] {
+            numeric.set_parameter_value(5, initial).unwrap();
+            let base = numeric.numeric_value(4).unwrap();
+            let mut value = base.powf(initial);
+            let labels = numeric.point_parameter_iteration_labels(10).unwrap();
+            assert_eq!(labels.len(), 3);
+            for (_, text) in &labels {
+                value = base.powf(value);
+                assert_eq!(text, &format!("{value:.0}"));
+            }
+            let reopened = Document::from_bytes(&numeric.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.point_parameter_iteration_labels(10), Some(labels));
+        }
+    }
+
+    #[test]
+    fn dimensional_source_exponent_domain_errors_recover_without_losing_units() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/source_exponents_iteration_edited_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let negative = doc.add_parameter_calculation(6, "-v", (10, 100)).unwrap();
+        let power = doc
+            .add_multi_calculation(&[negative, 5], "v1^v2", (10, 130))
+            .unwrap();
+        let iteration = doc
+            .add_point_iteration_with_depth_value(1, 8, power)
+            .unwrap();
+        assert!(doc.unitless_numeric_value(power).unwrap() > 1.);
+        doc.set_parameter_value(5, 0.5).unwrap();
+        assert_eq!(doc.numeric_value(power), None);
+        assert_eq!(doc.point_iteration_images(iteration), None);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.numeric_value(power), None);
+        doc.set_parameter_value(5, 2.).unwrap();
+        assert!(doc.unitless_numeric_value(power).unwrap() > 1.);
+        assert!(doc.point_iteration_images(iteration).is_some());
+    }
+
+    #[test]
+    fn native_dimensional_roots_and_generic_quantity_headers_roundtrip() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/area_square_root_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/area_fractional_power_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/dimensional_roots_powers_native.gsp").as_slice(),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            let area = doc.numeric_value(4).unwrap();
+            let cases = if doc.objects.len() == 5 {
+                let unit =
+                    if bytes == include_bytes!("../tests/fixtures/area_square_root_native.gsp") {
+                        NumericUnit::Length
+                    } else {
+                        NumericUnit::Scalar
+                    };
+                vec![(5, area.sqrt(), unit)]
+            } else {
+                vec![
+                    (8, area, NumericUnit::Area),
+                    (9, doc.numeric_value(5).unwrap().powi(2), NumericUnit::Area),
+                    (
+                        10,
+                        doc.numeric_value(5).unwrap().sqrt(),
+                        NumericUnit::Scalar,
+                    ),
+                    (11, 90_f64.sqrt(), NumericUnit::Scalar),
+                    (
+                        12,
+                        8100.,
+                        NumericUnit::Compound {
+                            length: 0,
+                            degrees: 2,
+                        },
+                    ),
+                ]
+            };
+            for (id, value, unit) in cases {
+                assert_eq!(doc.objects[id - 1].kind.numeric_unit(), Some(unit));
+                assert!((doc.numeric_value(id).unwrap() - value).abs() < 1e-10);
+                doc.set_numeric_precision(&[id], 5).unwrap();
+
+            }
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            for object in &doc.objects {
+                assert_eq!(
+                    reopened.objects[object.id - 1].kind.numeric_unit(),
+                    object.kind.numeric_unit()
+                );
+                assert_eq!(
+                    reopened.numeric_value(object.id),
+                    doc.numeric_value(object.id)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dimensional_root_chains_follow_edits_and_undefined_sources() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/area_square_root_native.gsp"),
+            None,
+        )
+        .unwrap();
+        let squared = doc.add_parameter_calculation(4, "v^2", (10, 100)).unwrap();
+        let root = doc
+            .add_parameter_calculation(squared, "sqrt(v)", (10, 130))
+            .unwrap();
+        let length = doc
+            .add_parameter_calculation(root, "sqrt(v)", (10, 160))
+            .unwrap();
+        let scalar = doc
+            .add_parameter_calculation(4, "v^0.5", (10, 190))
+            .unwrap();
+        assert_eq!(
+            doc.objects[squared - 1].kind.numeric_unit(),
+            Some(NumericUnit::Compound {
+                length: 4,
+                degrees: 0
+            })
+        );
+        assert_eq!(
+            doc.objects[root - 1].kind.numeric_unit(),
+            Some(NumericUnit::Area)
+        );
+        assert_eq!(
+            doc.objects[length - 1].kind.numeric_unit(),
+            Some(NumericUnit::Length)
+        );
+        assert!(doc.unitless_numeric_value(length).is_none());
+        for x in [250., 220.] {
+            doc.move_point(2, Point { x, y: 180. });
+            let area = doc.numeric_value(4);
+            assert_eq!(doc.numeric_value(squared), area.map(|v| v * v));
+            assert_eq!(doc.numeric_value(root), area);
+            assert_eq!(doc.numeric_value(length), area.map(f64::sqrt));
+            assert_eq!(doc.unitless_numeric_value(scalar), area.map(f64::sqrt));
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.numeric_value(length), doc.numeric_value(length));
+        }
+        doc.selected.insert(4);
+        assert_eq!(
+            doc.clear_selected().unwrap(),
+            vec![4, 5, squared, root, length, scalar]
+        );
+        assert!(
+            !Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn higher_unit_calculations_preserve_units_on_copy_and_page_copy() {
+        for (bytes, ids) in [
+            (
+                include_bytes!("../tests/fixtures/dimensional_roots_chain_port.gsp").as_slice(),
+                vec![8, 9, 10],
+            ),
+            (
+                include_bytes!("../tests/fixtures/dimensional_roots_units_port.gsp").as_slice(),
+                vec![7, 8, 9],
+            ),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            assert!(!doc.partial_view);
+            assert_eq!(doc.encode().unwrap(), bytes);
+            for id in ids {
+                let unit = doc.objects[id - 1].kind.numeric_unit();
+                let value = doc.numeric_value(id);
+                doc.set_numeric_precision(&[id], 5).unwrap();
+                doc.selected.clear();
+                doc.selected.insert(id);
+                let pasted = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+                let copy = *pasted.last().unwrap();
+                assert_eq!(doc.objects[copy - 1].kind.numeric_unit(), unit);
+                assert_eq!(doc.numeric_value(copy), value);
+            }
+            doc.copy_page(0).unwrap();
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            // Multi-page documents retain the existing partial-view guard.
+            assert!(reopened.partial_view);
+            for object in &doc.objects {
+                assert_eq!(
+                    reopened.objects[object.id - 1].kind.numeric_unit(),
+                    object.kind.numeric_unit()
+                );
+                assert_eq!(
+                    reopened.numeric_value(object.id),
+                    doc.numeric_value(object.id)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dimensional_roots_supply_marked_distance_and_live_iteration_depth() {
+        let bytes = include_bytes!("../tests/fixtures/dimensional_roots_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        for (x, count) in [(120., 1), (140., 2), (100., 0), (120., 1)] {
+            doc.move_point(2, Point { x, y: 220. });
+            let points = doc.point_iteration_images(8).unwrap_or_default();
+            assert_eq!(points.len(), count);
+            if count > 0 {
+                let distance = (x - 80.) * std::f64::consts::PI.sqrt();
+                for (i, point) in points.iter().enumerate() {
+                    assert!((point.x - (80. + distance * (i + 2) as f64)).abs() < 1e-10);
+                    assert_eq!(point.y, 220.);
+                }
+            }
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(
+                reopened.point_iteration_images(8),
+                doc.point_iteration_images(8)
+            );
+        }
+        doc.set_numeric_precision(&[5, 6], 0).unwrap();
+        assert_eq!(doc.point_iteration_images(8).unwrap().len(), 1);
+        doc.selected.insert(8);
+        let pasted = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        let copy = pasted
+            .into_iter()
+            .find(|id| matches!(doc.objects[*id - 1].kind, Kind::PointIteration(..)))
+            .unwrap();
+        assert_eq!(doc.point_iteration_images(copy).unwrap().len(), 1);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_iteration_images(copy),
+            doc.point_iteration_images(copy)
+        );
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(4);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
     fn dimensional_length_expressions_update_units_and_marked_distance() {
         let bytes = include_bytes!("../tests/fixtures/calculation_dimensions_port.gsp");
         let mut doc = Document::from_bytes(bytes, None).unwrap();
@@ -29186,7 +29978,14 @@ mod tests {
         }
         assert!(doc.add_parameter_calculation(4, "v+1", (10, 250)).is_err());
         assert!(doc.add_parameter_calculation(4, "v+1°", (10, 250)).is_err());
-        assert!(doc.add_parameter_calculation(4, "v^3", (10, 250)).is_err());
+        let cube = doc.add_parameter_calculation(4, "v^3", (10, 250)).unwrap();
+        assert_eq!(
+            doc.objects[cube - 1].kind.numeric_unit(),
+            Some(NumericUnit::Compound {
+                length: 3,
+                degrees: 0
+            })
+        );
         assert!(doc.add_parameter_calculation(4, "v^2°", (10, 250)).is_err());
         let identity = doc.add_parameter_calculation(4, "v^1", (10, 250)).unwrap();
         assert_eq!(
@@ -29262,11 +30061,21 @@ mod tests {
             Some(NumericUnit::Scalar)
         );
         assert_eq!(doc.numeric_value(11), Some(1.));
-        assert!(
-            doc.add_parameter_calculation(7, "v^0.5", (10, 230))
-                .is_err()
+        let fractional = doc
+            .add_parameter_calculation(7, "v^0.5", (10, 230))
+            .unwrap();
+        assert_eq!(
+            doc.objects[fractional - 1].kind.numeric_unit(),
+            Some(NumericUnit::Scalar)
         );
-        assert!(doc.add_parameter_calculation(7, "v*v", (10, 230)).is_err());
+        let squared = doc.add_parameter_calculation(7, "v*v", (10, 230)).unwrap();
+        assert_eq!(
+            doc.objects[squared - 1].kind.numeric_unit(),
+            Some(NumericUnit::Compound {
+                length: 4,
+                degrees: 0
+            })
+        );
         doc.move_point(2, Point { x: 275., y: 160. });
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert!(!reopened.partial_view);
@@ -29408,7 +30217,9 @@ mod tests {
             doc.arc_angle_degrees(6).map(|v| v / 2.)
         );
         assert!(doc.add_parameter_calculation(4, "v+10", (10, 160)).is_err());
-        assert!(doc.add_parameter_calculation(6, "v*v", (10, 160)).is_err());
+        let squared = doc.add_parameter_calculation(6, "v*v", (10, 160)).unwrap();
+        assert_eq!(doc.objects[squared - 1].kind.numeric_unit(),
+            Some(NumericUnit::Compound { length: 0, degrees: 2 }));
         doc.move_point(3, Point { x: 150., y: 110. });
         assert!((doc.parameter_calculation_value(7).unwrap() - 67.5).abs() < 1e-9);
         assert!((doc.parameter_calculation_value(8).unwrap() - 145.).abs() < 1e-9);
@@ -29469,10 +30280,9 @@ mod tests {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(doc.unitless_numeric_value(5).is_none());
         assert!(doc.add_parameter_calculation(1, "n+1°", (10, 100)).is_err());
-        assert!(
-            doc.add_parameter_calculation(1, "360°*90°/n", (10, 100))
-                .is_err()
-        );
+        let squared = doc.add_parameter_calculation(1, "360°*90°/n", (10, 100)).unwrap();
+        assert_eq!(doc.objects[squared - 1].kind.numeric_unit(),
+            Some(NumericUnit::Compound { length: 0, degrees: 2 }));
         let half = doc.add_parameter_calculation(5, "v/2", (10, 100)).unwrap();
         assert_eq!(doc.parameter_calculation_value(half), Some(36.));
         assert!(doc.unitless_numeric_value(half).is_none());

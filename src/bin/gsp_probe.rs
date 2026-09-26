@@ -698,8 +698,8 @@ fn replay(path: &str) -> Result<(), String> {
                         .get(first.saturating_sub(1))
                         .map(|object| &object.kind)
                     {
-                        Some(Kind::Line(_, _)) => ValueEquationKind::LineEquation,
-                        Some(Kind::Circle(_, _)) => ValueEquationKind::CircleEquation,
+                        Some(kind) if kind.is_line() => ValueEquationKind::LineEquation,
+                        Some(kind) if kind.is_circle() => ValueEquationKind::CircleEquation,
                         _ => return Err("equation requires a line or circle".into()),
                     };
                     let second = match document.active_coordinate_system() {
