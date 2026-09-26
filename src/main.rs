@@ -286,6 +286,10 @@ struct Editor {
     parameter_value_draft: String,
     named_parameter_dialog: bool,
     parameter_name_draft: String,
+    calculation_dialog: bool,
+    calculation_draft: String,
+    iterate_dialog: bool,
+    iteration_depth_draft: String,
     plot_axis_dialog: Option<Option<usize>>,
     plot_axis_draft: String,
     plot_points_dialog: Option<PlotPointsMode>,
@@ -378,6 +382,10 @@ impl Editor {
             parameter_value_draft: "1".into(),
             named_parameter_dialog: false,
             parameter_name_draft: "a".into(),
+            calculation_dialog: false,
+            calculation_draft: "2 + 3".into(),
+            iterate_dialog: false,
+            iteration_depth_draft: "3".into(),
             plot_axis_dialog: None,
             plot_axis_draft: "1".into(),
             plot_points_dialog: None,
@@ -1490,17 +1498,13 @@ impl Editor {
             .objects
             .get(host.saturating_sub(1))
             .map(|o| &o.kind);
+        let is_circle = self.doc.circle_points(host).is_some();
         let (kind, name) = match (measurement, source) {
-            (
-                CircleMeasure::Circumference,
-                Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)),
-            ) => (Kind::CircleCircumference(host), "circumference"),
-            (CircleMeasure::Radius, Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) => {
-                (Kind::CircleRadius(host), "radius")
+            (CircleMeasure::Circumference, Some(_)) if is_circle => {
+                (Kind::CircleCircumference(host), "circumference")
             }
-            (CircleMeasure::Area, Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) => {
-                (Kind::CircleArea(host), "area")
-            }
+            (CircleMeasure::Radius, Some(_)) if is_circle => (Kind::CircleRadius(host), "radius"),
+            (CircleMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
             (CircleMeasure::Area, Some(kind)) if kind.is_polygon() => {
                 (Kind::PolygonArea(host), "area")
             }
@@ -1900,6 +1904,49 @@ impl Editor {
             Ok(id) => {
                 self.select_only(id);
                 self.status = format!("Constructed locus {id}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
+    fn iterate_selected(&mut self, depth: u32) {
+        if !(2..=3).contains(&self.selection_order.len()) {
+            self.status =
+                "Select a free point, its translated image, and optionally their segment".into();
+            return;
+        }
+        let seed = self
+            .selection_order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Free(_)));
+        let image = self.selection_order.iter().copied().find(|id| {
+            matches!(
+                self.doc.objects[*id - 1].kind,
+                Kind::PolarTranslatedPoint(_, _, _, _)
+                    | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
+            )
+        });
+        let (Some(seed), Some(image)) = (seed, image) else {
+            self.status = "Select a free point and its directly translated image".into();
+            return;
+        };
+        let result = if self.selection_order.len() == 3 {
+            let segment = self
+                .selection_order
+                .iter()
+                .copied()
+                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Segment(_, _)));
+            match segment {
+                Some(segment) => self.doc.add_segment_iteration(seed, image, segment, depth),
+                None => Err("The third selected object must be their segment".into()),
+            }
+        } else {
+            self.doc.add_point_iteration(seed, image, depth)
+        };
+        match result {
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Created iteration {id} to depth {depth}");
             }
             Err(error) => self.status = error,
         }
@@ -4128,11 +4175,12 @@ impl Editor {
                         }
                         ui.close();
                     }
-                    if ui.button("Calculate (2 + 3)").clicked() {
-                        match self.doc.add_literal_calculation((10, 38)) {
-                            Ok(id) => self.status = format!("Created calculation {id}"),
-                            Err(error) => self.status = error,
-                        }
+                    if ui.button("Calculate…").clicked() {
+                        self.calculation_draft = if self.doc.selected.len() == 1
+                            && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))) {
+                            "× 2".into()
+                        } else { "2 + 3".into() };
+                        self.calculation_dialog = true;
                         ui.close();
                     }
                     if ui.button("Tabulate Selected Parameter").clicked() {
@@ -4486,6 +4534,10 @@ impl Editor {
                     }
                     if ui.button("Rotate…").clicked() {
                         self.rotate_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Iterate Points…").clicked() {
+                        self.iterate_dialog = true;
                         ui.close();
                     }
                 });
@@ -5035,6 +5087,7 @@ impl Editor {
                                     | Kind::PlainText { .. }
                                     | Kind::Parameter(_)
                                     | Kind::Calculation(_)
+                                    | Kind::MeasuredCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _)
                                     | Kind::PointOnSegment(_, _)
@@ -5052,6 +5105,7 @@ impl Editor {
                                     }
                                     Kind::Parameter(_)
                                     | Kind::Calculation(_)
+                                    | Kind::MeasuredCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _) => {
                                         let anchor = sketchpad_rs::render::number_lines_for_object(
@@ -5097,6 +5151,7 @@ impl Editor {
                             self.doc.objects[id - 1].kind,
                             Kind::Parameter(_)
                                 | Kind::Calculation(_)
+                                | Kind::MeasuredCalculation(_, _)
                                 | Kind::ValueTable(_, _)
                                 | Kind::ValueTablePair(_, _, _)
                         ) {
@@ -6000,6 +6055,116 @@ impl Editor {
                 self.link_dialog = Some(draft);
             }
         }
+        if self.calculation_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("calculation_expression")).show(root.ctx(), |ui| {
+                ui.heading("Calculate");
+                ui.text_edit_singleline(&mut self.calculation_draft);
+                ui.label(
+                    if self.doc.selected.len() == 1
+                        && self.doc.selected.iter().next().is_some_and(|&id| {
+                            self.doc
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                        })
+                    {
+                        "Selected length × factor (0–9), or two integers with +, −, ×, ÷"
+                    } else {
+                        "Enter two integers from 0 to 99 with +, -, *, or /"
+                    },
+                );
+                ui.horizontal(|ui| {
+                    apply = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.calculation_dialog = false;
+            }
+            if apply {
+                let row = self
+                    .doc
+                    .objects
+                    .iter()
+                    .filter(|object| {
+                        !object.deleted
+                            && object.page == self.doc.active_page
+                            && (object.kind.is_measurement()
+                                || matches!(
+                                    object.kind,
+                                    Kind::Parameter(_)
+                                        | Kind::Calculation(_)
+                                        | Kind::MeasuredCalculation(_, _)
+                                ))
+                    })
+                    .count();
+                let y = (5usize + row * 33).min(i16::MAX as usize) as i16;
+                let selected_length = if self.doc.selected.len() == 1 {
+                    self.doc.selected.iter().next().copied().filter(|&id| {
+                        self.doc
+                            .objects
+                            .get(id - 1)
+                            .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                    })
+                } else {
+                    None
+                };
+                let draft = self.calculation_draft.trim();
+                let result = if let Some((source, factor)) =
+                    selected_length.zip(draft.strip_prefix(['*', '×', '·']))
+                {
+                    factor
+                        .trim()
+                        .parse::<u8>()
+                        .map_err(|_| "Enter a factor from 0 to 9".to_string())
+                        .and_then(|factor| {
+                            self.doc
+                                .add_measured_length_calculation(source, factor, (10, y))
+                        })
+                } else {
+                    self.doc.add_calculation_expression(draft, (10, y))
+                };
+                match result {
+                    Ok(id) => {
+                        self.calculation_dialog = false;
+                        self.status = format!("Created calculation {id}");
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+        }
+        if self.iterate_dialog {
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
+                ui.heading("Iterate Points");
+                ui.label("Select a free point, its translated image, and optionally their segment");
+                ui.horizontal(|ui| {
+                    ui.label("Depth");
+                    ui.text_edit_singleline(&mut self.iteration_depth_draft);
+                });
+                ui.horizontal(|ui| {
+                    apply = ui.button("Create").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+            if cancel {
+                self.iterate_dialog = false;
+            }
+            if apply {
+                match self.iteration_depth_draft.trim().parse::<u32>() {
+                    Ok(depth) => {
+                        self.iterate_selected(depth);
+                        if self.status.starts_with("Created iteration ") {
+                            self.iterate_dialog = false;
+                        }
+                    }
+                    Err(_) => self.status = "Enter an iteration depth from 1 to 128".into(),
+                }
+            }
+        }
         if self.named_parameter_dialog {
             let mut apply = false;
             let mut cancel = false;
@@ -6781,6 +6946,37 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_translation_and_segment_create_carried_iteration() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 150., y: 180. }));
+        let image = document.add(Kind::FixedRectangularTranslatedPoint(
+            seed,
+            37.79527559055118,
+            1.,
+            37.79527559055118,
+            1.,
+        ));
+        let segment = document.add(Kind::Segment(seed, image));
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![segment, image, seed];
+        editor.doc.selected.extend([seed, image, segment]);
+        editor.iterate_selected(4);
+        assert_eq!(
+            editor.doc.objects[3].kind,
+            Kind::SegmentIteration(seed, image, segment, 4)
+        );
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![4]
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
 
     #[test]
     fn define_coordinate_system_uses_selected_distances_in_order() {

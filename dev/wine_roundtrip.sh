@@ -34,14 +34,19 @@ xvfb-run -a bash -c '
   test -n "$window_id"
   echo "Selected window: $(xdotool getwindowname "$window_id")"
   xdotool windowfocus "$window_id"
+  sleep 3
   xdotool key --clearmodifiers ctrl+o
   sleep 2
   wine_path="$(winepath -w "$2" | tr -d "\r")"
   echo "Opening $wine_path"
   xdotool type --clearmodifiers --delay 1 "$wine_path"
   xdotool key Return
-  sleep 3
-  opened_name="$(xdotool getwindowname "$window_id")"
+  opened_name=""
+  for _ in $(seq 1 10); do
+    sleep 1
+    opened_name="$(xdotool getwindowname "$window_id")"
+    [[ "$opened_name" == *"$(basename "$2")"* ]] && break
+  done
   if [[ "$opened_name" != *"$(basename "$2")"* ]]; then
     "$4" -window root "${capture_prefix}_open_failed.png"
     echo "Sketchpad did not open $2: $opened_name" >&2

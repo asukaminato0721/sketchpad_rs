@@ -100,7 +100,10 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
                 group.value()
             )],
         )),
-        Kind::Calculation(group) => Some((group.anchor(), vec!["2 + 3 = 5.00".into()])),
+        Kind::Calculation(group) => Some((
+            group.anchor(),
+            vec![format!("{} = {:.2}", group.expression(), group.value())],
+        )),
         Kind::ValueTable(_, group) => {
             if let Some((name, values)) = group.named_label_values() {
                 let mut lines = vec![name];
@@ -132,6 +135,16 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
 
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
+    if let Kind::MeasuredCalculation(source, group) = &object.kind {
+        let value = doc.measured_calculation_cm(id)?;
+        let name = doc
+            .segment_length_name(*source)
+            .unwrap_or_else(|| "Length".into());
+        return Some((
+            group.anchor(),
+            vec![format!("{name} · {} = {value:.2} cm", group.factor())],
+        ));
+    }
     if let Kind::ValueTable(source, group) = &object.kind
         && let Some((name, mut values)) = group.named_label_values()
     {
@@ -877,6 +890,13 @@ pub fn svg_page_with_button_offset(
             )
             .unwrap();
         }
+        if let Some(segments) = doc.segment_iteration_images(o.id) {
+            for (start, end) in segments {
+                let start = vp.screen(start);
+                let end = vp.screen(end);
+                writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#176bd6\" stroke-width=\"2\"/>", start.x, start.y, end.x, end.y).unwrap();
+            }
+        }
     }
     svg.push_str("</g>\n<g fill=\"#176bd6\">\n");
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
@@ -894,6 +914,23 @@ pub fn svg_page_with_button_offset(
                 at.x, at.y, radius, color
             )
             .unwrap();
+        }
+    }
+    for object in doc
+        .objects
+        .iter()
+        .filter(|object| doc.is_displayed(object.id))
+    {
+        if let Some(images) = doc.point_iteration_images(object.id) {
+            for point in images {
+                let at = vp.screen(point);
+                writeln!(
+                    svg,
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"2\" fill=\"#176bd6\"/>",
+                    at.x, at.y
+                )
+                .unwrap();
+            }
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
@@ -1638,6 +1675,15 @@ impl GeometryRenderer {
                     mesh.styled_path(&[a, b], false, stroke, col);
                 }
             }
+            if let Some(segments) = doc.segment_iteration_images(o.id) {
+                for (start, end) in segments {
+                    if let Some((a, b)) =
+                        clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, vp.rect)
+                    {
+                        mesh.styled_path(&[a, b], false, stroke, col);
+                    }
+                }
+            }
             if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
                 let fill = if doc.selected.contains(&o.id) {
                     [1., 0., 1., 0.18]
@@ -1766,6 +1812,11 @@ impl GeometryRenderer {
                         color
                     },
                 );
+            }
+            if let Some(images) = doc.point_iteration_images(o.id) {
+                for point in images {
+                    mesh.disk(vp.screen(point), 2., blue);
+                }
             }
         }
         let buffer = (!mesh.vertices.is_empty()).then(|| {

@@ -15,7 +15,9 @@ use crate::plot_points_records::{self, PlotPointsMode};
 use crate::style_records::{
     self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
 };
-use crate::table_records::{CalculationGroup, ParameterGroup, TableGroup};
+use crate::table_records::{
+    CalculationGroup, MeasuredCalculationGroup, ParameterGroup, TableGroup,
+};
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
 use crate::text_style_records::{self, FontState};
@@ -151,6 +153,12 @@ impl Kind {
         if let Kind::Locus(refs, _) = self {
             return refs.clone();
         }
+        if let Kind::MeasuredCalculation(source, _) = self {
+            return vec![*source];
+        }
+        if let Kind::SegmentIteration(seed, image, segment, _) = self {
+            return vec![*seed, *image, *segment];
+        }
         match *self {
             Kind::Free(_)
             | Kind::Image { .. }
@@ -188,6 +196,8 @@ impl Kind {
                 vec![origin]
             }
             Kind::Midpoint(a, b)
+            | Kind::PointIteration(a, b, _)
+            | Kind::IterationBinding(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
             | Kind::Ray(a, b)
@@ -260,6 +270,7 @@ impl Kind {
                 vec![source, center, origin, base, target]
             }
             Kind::Polygon(_) => unreachable!(),
+            Kind::SegmentIteration(_, _, _, _) => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
             | Kind::MovementButton { .. }
@@ -270,7 +281,7 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::ValueTablePair(_, _, _) => unreachable!(),
-            Kind::Locus(_, _) => unreachable!(),
+            Kind::Locus(_, _) | Kind::MeasuredCalculation(_, _) => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
@@ -411,6 +422,9 @@ impl Kind {
             },
             Kind::Parameter(ref group) => Kind::Parameter(group.clone()),
             Kind::Calculation(ref group) => Kind::Calculation(group.clone()),
+            Kind::MeasuredCalculation(source, ref group) => {
+                Kind::MeasuredCalculation(m(source), group.clone())
+            }
             Kind::ValueTable(source, ref group) => Kind::ValueTable(m(source), group.clone()),
             Kind::ValueTablePair(first, second, ref group) => {
                 Kind::ValueTablePair(m(first), m(second), group.clone())
@@ -422,6 +436,15 @@ impl Kind {
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::Locus(ref refs, samples) => {
                 Kind::Locus(refs.iter().map(|id| m(*id)).collect(), samples)
+            }
+            Kind::PointIteration(seed, image, depth) => {
+                Kind::PointIteration(m(seed), m(image), depth)
+            }
+            Kind::SegmentIteration(seed, image, segment, depth) => {
+                Kind::SegmentIteration(m(seed), m(image), m(segment), depth)
+            }
+            Kind::IterationBinding(image, iteration) => {
+                Kind::IterationBinding(m(image), m(iteration))
             }
             Kind::GraphHorizontalUnit(a, step) => Kind::GraphHorizontalUnit(m(a), step),
             Kind::GraphVerticalUnit(a, step) => Kind::GraphVerticalUnit(m(a), step),
@@ -634,6 +657,10 @@ impl Kind {
             | (Kind::ValueTablePair(_, _, group), Kind::ValueTablePair(_, _, original)) => {
                 *group = original.remap_sources(ids)?;
             }
+            (Kind::MeasuredCalculation(source, group), Kind::MeasuredCalculation(_, original)) => {
+                *group = original
+                    .remap_source(u32::try_from(*source).map_err(|_| "Invalid measurement ID")?)?;
+            }
             _ => {}
         }
         Ok(remapped)
@@ -696,6 +723,7 @@ pub enum Kind {
     },
     Parameter(ParameterGroup),
     Calculation(CalculationGroup),
+    MeasuredCalculation(usize, MeasuredCalculationGroup),
     ValueTable(usize, TableGroup),
     ValueTablePair(usize, usize, TableGroup),
     PointOnSegment(usize, f64),
@@ -784,6 +812,10 @@ pub enum Kind {
     /// Native code 35. The reference list records the target, the driver's
     /// path, the driver, and the construction chain leading to the target.
     Locus(Vec<usize>, u32),
+    /// A single point seed mapped to its first image, repeated at a fixed depth.
+    PointIteration(usize, usize, u32),
+    SegmentIteration(usize, usize, usize, u32),
+    IterationBinding(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
     Ray(usize, usize),
@@ -1759,6 +1791,7 @@ impl Document {
             let mut function_expression: Option<Vec<u8>> = None;
             let mut function_range: Option<Vec<u8>> = None;
             let mut locus_range: Option<Vec<u8>> = None;
+            let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
             let labeled_polygon = h[6..8] == [4, 0]
                 && matches!(
@@ -1783,6 +1816,9 @@ impl Document {
                 }
                 if code == 35 && r.kind == 0x0902 {
                     locus_range = Some(d.to_vec());
+                }
+                if code == 76 && r.kind == 0x090a {
+                    iteration_definition = Some(d.to_vec());
                 }
                 match r.kind {
                     0x07d5 if matches!(code, 0 | 15) || labeled_polygon => match LabelAux::parse(d)
@@ -1912,11 +1948,12 @@ impl Document {
                     && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
-                    && !(code == 78 && matches!(r.kind, 0x0907 | 0x07d8))
+                    && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(code == 35 && r.kind == 0x0902)
+                    && !(code == 76 && r.kind == 0x090a)
                 {
                     safe = false;
                 }
@@ -2111,6 +2148,48 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (76, None, [seed, image, carried, segment])
+                        if h[6..10] == [14, 0, 64, 0]
+                            && image == carried
+                            && iteration_definition.as_ref().is_some_and(|definition| {
+                                definition.len() == 24
+                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
+                                    && u32_at(definition, 8) == 1
+                                    && (1..=128).contains(&u32_at(definition, 16))
+                                    && definition[20..24] == [0; 4]
+                            })
+                            && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
+                            && objects.get(image - 1).is_some_and(|o| matches!(o.kind,
+                                Kind::PolarTranslatedPoint(source, _, _, _)
+                                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == *seed))
+                            && objects.get(segment - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(a, b) if a == *seed && b == *image)) => {
+                        Kind::SegmentIteration(*seed, *image, *segment, u32_at(iteration_definition.as_ref().unwrap(), 16))
+                    }
+                    (76, None, [seed, image, carried])
+                        if h[6..10] == [14, 0, 64, 0]
+                            && image == carried
+                            && iteration_definition.as_ref().is_some_and(|definition| {
+                                definition.len() == 24
+                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
+                                    && u32_at(definition, 8) == 1
+                                    && (1..=128).contains(&u32_at(definition, 16))
+                                    && definition[20..24] == [0; 4]
+                            })
+                            && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
+                            && objects.get(image - 1).is_some_and(|o| matches!(o.kind,
+                                Kind::PolarTranslatedPoint(source, _, _, _)
+                                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == *seed)) => {
+                        Kind::PointIteration(*seed, *image, u32_at(iteration_definition.as_ref().unwrap(), 16))
+                    }
+                    (77, None, [image, iteration])
+                        if h[6..10] == [15, 0, 65, 0]
+                            && objects.get(iteration - 1).is_some_and(|o| match o.kind {
+                                Kind::PointIteration(_, mapped, _) => mapped == *image,
+                                Kind::SegmentIteration(_, mapped, segment, _) => mapped == *image || segment == *image,
+                                _ => false,
+                            }) => {
+                        Kind::IterationBinding(*image, *iteration)
+                    }
                     (35, None, _)
                         if refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
                             if is_locus_straight_kind(&o.kind) || is_circle_kind(&o.kind) || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
@@ -2202,6 +2281,13 @@ impl Document {
                                 Ok(expr) => Kind::FunctionDefinition(expr),
                                 Err(_) => Kind::Unsupported(code),
                             }
+                        }
+                    }
+                    (48, None, [source]) if *source > 0
+                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_))) => {
+                        match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
+                            Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
@@ -2387,7 +2473,7 @@ impl Document {
                     }
                     (40, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_circle_kind(&o.kind)) =>
                     {
                         Kind::CircleCircumference(*host)
                     }
@@ -2399,7 +2485,7 @@ impl Document {
                     }
                     (42, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_circle_kind(&o.kind)) =>
                     {
                         Kind::CircleArea(*host)
                     }
@@ -2423,7 +2509,7 @@ impl Document {
                     }
                     (46, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_circle_kind(&o.kind)) =>
                     {
                         Kind::CircleRadius(*host)
                     }
@@ -3443,6 +3529,74 @@ impl Document {
         self.checkpoint();
         self.append_object(kind)
     }
+    pub fn add_point_iteration(
+        &mut self,
+        seed: usize,
+        image: usize,
+        depth: u32,
+    ) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot add an iteration to this sketch safely".into());
+        }
+        if !(1..=128).contains(&depth)
+            || !self
+                .objects
+                .get(seed.saturating_sub(1))
+                .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
+            || !self.objects.get(image.saturating_sub(1)).is_some_and(|o| {
+                !o.deleted
+                    && matches!(o.kind,
+                Kind::PolarTranslatedPoint(source, _, _, _)
+                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed)
+            })
+            || seed >= image
+        {
+            return Err(
+                "Select a free point and its directly translated image; depth must be 1–128".into(),
+            );
+        }
+        self.checkpoint();
+        let iteration = self.append_object(Kind::PointIteration(seed, image, depth));
+        self.append_object(Kind::IterationBinding(image, iteration));
+        Ok(iteration)
+    }
+    pub fn add_segment_iteration(
+        &mut self,
+        seed: usize,
+        image: usize,
+        segment: usize,
+        depth: u32,
+    ) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot add an iteration to this sketch safely".into());
+        }
+        if !(1..=128).contains(&depth)
+            || !self
+                .objects
+                .get(seed.saturating_sub(1))
+                .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
+            || !self.objects.get(image.saturating_sub(1)).is_some_and(|o| {
+                !o.deleted
+                    && matches!(o.kind,
+                Kind::PolarTranslatedPoint(source, _, _, _)
+                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed)
+            })
+            || !self
+                .objects
+                .get(segment.saturating_sub(1))
+                .is_some_and(|o| {
+                    !o.deleted && matches!(o.kind, Kind::Segment(a, b) if a == seed && b == image)
+                })
+            || !(seed < image && image < segment)
+        {
+            return Err("Select a free point, its directly translated image, and their segment; depth must be 1–128".into());
+        }
+        self.checkpoint();
+        let iteration = self.append_object(Kind::SegmentIteration(seed, image, segment, depth));
+        self.append_object(Kind::IterationBinding(image, iteration));
+        self.append_object(Kind::IterationBinding(segment, iteration));
+        Ok(iteration)
+    }
     pub fn construct_locus(&mut self, driver: usize, target: usize) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot construct a locus in this sketch safely".into());
@@ -4094,13 +4248,69 @@ impl Document {
         Ok(())
     }
     pub fn add_literal_calculation(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || !self.objects.is_empty() {
-            return Err("The verified calculation can only be added to a blank sketch".into());
+        self.add_calculation_expression("2 + 3", anchor)
+    }
+    pub fn add_calculation_expression(
+        &mut self,
+        expression: &str,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot add a calculation in this sketch safely".into());
         }
-        let mut group = CalculationGroup::literal_two_plus_three();
+        let mut group = CalculationGroup::small_integer_expression(expression)?;
         group.set_anchor(anchor)?;
         self.checkpoint();
         Ok(self.append_object(Kind::Calculation(group)))
+    }
+    pub fn add_measured_length_calculation(
+        &mut self,
+        source: usize,
+        factor: u8,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || self.page_count != 1
+            || !self.safe_structure
+            || !self
+                .objects
+                .get(source.checked_sub(1).ok_or("Invalid measurement ID")?)
+                .is_some_and(|object| {
+                    !object.deleted && matches!(object.kind, Kind::SegmentLength(_))
+                })
+        {
+            return Err("Select a supported segment length".into());
+        }
+        let group = MeasuredCalculationGroup::multiply(
+            u32::try_from(source).map_err(|_| "Invalid measurement ID")?,
+            factor,
+            anchor,
+        )?;
+        self.checkpoint();
+        Ok(self.append_object(Kind::MeasuredCalculation(source, group)))
+    }
+    pub fn measured_calculation_cm(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::MeasuredCalculation(source, group) = &object.kind else {
+            return None;
+        };
+        if object.deleted {
+            return None;
+        }
+        Some(self.segment_length_cm(*source)? * f64::from(group.factor()))
+    }
+    pub fn segment_length_name(&self, id: usize) -> Option<String> {
+        let Kind::SegmentLength(segment) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let Kind::Segment(first, second) = self.objects.get(segment.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        Some(format!(
+            "{}{}",
+            self.coordinate_point_name(first)?,
+            self.coordinate_point_name(second)?
+        ))
     }
     pub fn tabulate_default_parameter(
         &mut self,
@@ -4172,6 +4382,7 @@ impl Document {
         match &mut kind {
             Kind::Parameter(group) => group.set_anchor(anchor)?,
             Kind::Calculation(group) => group.set_anchor(anchor)?,
+            Kind::MeasuredCalculation(_, group) => group.set_anchor(anchor)?,
             Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
                 group.set_anchor(anchor)
             }
@@ -5101,6 +5312,59 @@ impl Document {
         self.active_coordinate_system()
             .is_some_and(|id| self.objects[id - 1].visible)
     }
+    pub fn point_iteration_images(&self, id: usize) -> Option<Vec<Point>> {
+        let (seed, image, depth) = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::PointIteration(seed, image, depth)
+            | Kind::SegmentIteration(seed, image, _, depth) => (seed, image, depth),
+            _ => return None,
+        };
+        let start = self.position(seed)?;
+        let first = self.position(image)?;
+        let dx = first.x - start.x;
+        let dy = first.y - start.y;
+        Some(
+            (2..=depth + 1)
+                .map(|step| Point {
+                    x: start.x + dx * f64::from(step),
+                    y: start.y + dy * f64::from(step),
+                })
+                .collect(),
+        )
+    }
+    pub fn segment_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        let Kind::SegmentIteration(seed, image, segment, depth) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        if !matches!(self.objects.get(segment - 1)?.kind, Kind::Segment(a, b) if a == seed && b == image)
+        {
+            return None;
+        }
+        let start = self.position(seed)?;
+        let first = self.position(image)?;
+        let delta = Point {
+            x: first.x - start.x,
+            y: first.y - start.y,
+        };
+        Some(
+            (1..=depth)
+                .map(|step| {
+                    let offset = f64::from(step);
+                    (
+                        Point {
+                            x: start.x + delta.x * offset,
+                            y: start.y + delta.y * offset,
+                        },
+                        Point {
+                            x: first.x + delta.x * offset,
+                            y: first.y + delta.y * offset,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
     pub fn is_displayed(&self, id: usize) -> bool {
         let Some(object) = id.checked_sub(1).and_then(|at| self.objects.get(at)) else {
             return false;
@@ -5833,6 +6097,9 @@ impl Document {
             match &mut remapped {
                 Kind::Parameter(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
                 Kind::Calculation(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
+                Kind::MeasuredCalculation(_, group) => {
+                    group.set_anchor(shifted_anchor(group.anchor())?)?
+                }
                 Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
                     group.set_anchor(shifted_anchor(group.anchor())?);
                 }
@@ -6968,6 +7235,7 @@ impl Document {
         let kind = &self.objects.get(id.checked_sub(1)?)?.kind;
         let cm = match kind {
             Kind::SegmentLength(_) => self.segment_length_cm(id)?,
+            Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(id)?,
             Kind::PointDistance(_, _) => self.point_distance_cm(id)?,
             Kind::PolygonPerimeter(_) => self.perimeter_cm(id)?,
             Kind::CircleCircumference(_) => self.circle_circumference_cm(id)?,
@@ -8423,6 +8691,17 @@ impl Document {
                 }
                 Kind::Calculation(group) => {
                     CalculationGroup::parse(group.as_bytes())?;
+                }
+                Kind::MeasuredCalculation(source, group) => {
+                    MeasuredCalculationGroup::parse(group.as_bytes())?;
+                    if group.source_id() as usize != *source
+                        || !self
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_)))
+                    {
+                        return Err("Unsupported measured calculation source".into());
+                    }
                 }
                 Kind::ValueTable(source, group) => {
                     TableGroup::parse(group.as_bytes())?;
@@ -10387,28 +10666,13 @@ impl Document {
                             Kind::PolygonPerimeter(_) if host_kind.is_polygon() => {
                                 include_bytes!("../assets/perimeter_measurement_group.bin")
                             }
-                            Kind::CircleCircumference(_)
-                                if matches!(
-                                    host_kind,
-                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-                                ) =>
-                            {
+                            Kind::CircleCircumference(_) if is_circle_kind(host_kind) => {
                                 include_bytes!("../assets/circumference_measurement_group.bin")
                             }
-                            Kind::CircleRadius(_)
-                                if matches!(
-                                    host_kind,
-                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-                                ) =>
-                            {
+                            Kind::CircleRadius(_) if is_circle_kind(host_kind) => {
                                 include_bytes!("../assets/radius_measurement_group.bin")
                             }
-                            Kind::CircleArea(_)
-                                if matches!(
-                                    host_kind,
-                                    Kind::Circle(_, _) | Kind::CircleBySegment(_, _)
-                                ) =>
-                            {
+                            Kind::CircleArea(_) if is_circle_kind(host_kind) => {
                                 include_bytes!("../assets/area_measurement_group.bin")
                             }
                             Kind::PolygonArea(_) if host_kind.is_polygon() => {
@@ -11423,6 +11687,49 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::SegmentIteration(seed, image, segment, depth) = o.kind {
+                let mut group = *include_bytes!("../assets/segment_iteration_group.bin");
+                group[48..52].copy_from_slice(&(seed as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(image as u32).to_le_bytes());
+                group[56..60].copy_from_slice(&(image as u32).to_le_bytes());
+                group[60..64].copy_from_slice(&(segment as u32).to_le_bytes());
+                group[88..92].copy_from_slice(&depth.to_le_bytes());
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::PointIteration(seed, image, depth) = o.kind {
+                let mut group = *include_bytes!("../assets/point_iteration_group.bin");
+                group[48..52].copy_from_slice(&(seed as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(image as u32).to_le_bytes());
+                group[56..60].copy_from_slice(&(image as u32).to_le_bytes());
+                group[84..88].copy_from_slice(&depth.to_le_bytes());
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::IterationBinding(image, iteration) = o.kind {
+                let segment = matches!(
+                    self.objects.get(image - 1).map(|object| &object.kind),
+                    Some(Kind::Segment(_, _))
+                );
+                let mut group = if segment {
+                    *include_bytes!("../assets/segment_iteration_binding_group.bin")
+                } else {
+                    *include_bytes!("../assets/point_iteration_binding_group.bin")
+                };
+                group[48..52].copy_from_slice(&(image as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(iteration as u32).to_le_bytes());
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::Image { png, transform } = &o.kind {
                 let picture = ImageFile::independent_from_png(png, *transform)?;
                 let mut group = picture.picture_group().to_vec();
@@ -11455,6 +11762,17 @@ impl Document {
             }
             if let Kind::Calculation(group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
+            if let Kind::MeasuredCalculation(source, group) = &o.kind {
+                let mut bytes = group
+                    .remap_source(u32::try_from(*source).map_err(|_| "Invalid measurement ID")?)?
+                    .as_bytes()
+                    .to_vec();
                 if !o.visible {
                     bytes[10] |= 1;
                 }
@@ -12671,6 +12989,9 @@ impl Document {
             if let Some(replacement) = match &object.kind {
                 Kind::Parameter(value) => Some(value.as_bytes().to_vec()),
                 Kind::Calculation(value) => Some(value.as_bytes().to_vec()),
+                Kind::MeasuredCalculation(source, value) => {
+                    Some(value.remap_source(ids[*source] as u32)?.as_bytes().to_vec())
+                }
                 Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
                     Some(value.remap_sources(&ids)?.as_bytes().to_vec())
                 }
@@ -15529,6 +15850,20 @@ mod tests {
             clicked.objects[6].kind,
             Kind::PresentationButton { ref targets, .. } if targets == &[5, 6]
         ));
+        for bytes in [
+            include_bytes!("../tests/fixtures/two_page_animation_point_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_movement_port.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/two_page_scroll_port.gsp").as_slice(),
+        ] {
+            let mut document = Document::from_bytes(bytes, None).unwrap();
+            document.active_page = 1;
+            document.selected.insert(6);
+            assert_eq!(document.clear_selected().unwrap(), vec![6]);
+            let encoded = document.encode().unwrap();
+            let reopened = Document::from_bytes(&encoded, None).unwrap();
+            assert_eq!(reopened.objects.len(), 5);
+            assert_eq!(reopened.encode().unwrap(), encoded);
+        }
     }
 
     #[test]
@@ -16966,6 +17301,62 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
     #[test]
+    fn measured_length_calculation_import_creation_and_iteration() {
+        let native = include_bytes!("../tests/fixtures/calculation_length_times_two_native.gsp");
+        let imported = Document::from_bytes(native, None).unwrap();
+        assert!(!imported.partial_view);
+        assert_eq!(imported.encode().unwrap(), native);
+        let length = imported.segment_length_cm(4).unwrap();
+        assert!((imported.measured_calculation_cm(5).unwrap() - length * 2.).abs() < 1e-10);
+
+        let mut generated = Document::from_bytes(
+            include_bytes!("../tests/fixtures/wine_segment_length.gsp"),
+            None,
+        )
+        .unwrap();
+        let id = generated
+            .add_measured_length_calculation(4, 3, (10, 34))
+            .unwrap();
+        assert_eq!(id, 5);
+        assert!(
+            (generated.measured_calculation_cm(id).unwrap()
+                - generated.segment_length_cm(4).unwrap() * 3.)
+                .abs()
+                < 1e-10
+        );
+        assert!(generated.move_point(2, Point { x: 400., y: 218. }));
+        let moved = generated.measured_calculation_cm(id).unwrap();
+        assert!((moved - generated.segment_length_cm(4).unwrap() * 3.).abs() < 1e-10);
+        let bytes = generated.encode().unwrap();
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!((reopened.measured_calculation_cm(id).unwrap() - moved).abs() < 1e-10);
+        assert!(
+            crate::render::number_lines_for_object(&reopened, id)
+                .unwrap()
+                .1[0]
+                .contains("cm")
+        );
+
+        let mut shifted = Document::new();
+        shifted.add(Kind::Free(Point { x: 20., y: 20. }));
+        let a = shifted.add(Kind::Free(Point { x: 168., y: 304. }));
+        let b = shifted.add(Kind::Free(Point { x: 336., y: 218. }));
+        let segment = shifted.add(Kind::Segment(a, b));
+        let source = shifted.add(Kind::SegmentLength(segment));
+        shifted
+            .add_measured_length_calculation(source, 0, (10, 34))
+            .unwrap();
+        shifted.selected.insert(1);
+        shifted.clear_selected().unwrap();
+        let compact = Document::from_bytes(&shifted.encode().unwrap(), None).unwrap();
+        assert!(!compact.partial_view);
+        assert!(matches!(&compact.objects[4].kind,
+            Kind::MeasuredCalculation(4, group) if group.source_id() == 4 && group.factor() == 0));
+        assert_eq!(compact.measured_calculation_cm(5), Some(0.));
+    }
+
+    #[test]
     fn invalid_new_polygon_does_not_serialize() {
         let mut doc = Document::new();
         let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
@@ -17228,6 +17619,42 @@ mod tests {
         reopened.selected.insert(circle);
         assert_eq!(reopened.clear_selected().unwrap(), vec![circle, area]);
     }
+    #[test]
+    fn transformed_circle_measurements_follow_their_sources() {
+        for (base, host, expected) in [
+            (
+                include_bytes!("../tests/fixtures/marked_distance_circle_translation_original.gsp")
+                    .as_slice(),
+                7,
+                include_bytes!("../tests/fixtures/transformed_circle_measurements_port.gsp")
+                    .as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/ratio_dilation_circle_original.gsp").as_slice(),
+                8,
+                include_bytes!("../tests/fixtures/scaled_circle_measurements_port.gsp").as_slice(),
+            ),
+        ] {
+            let mut document = Document::from_bytes(base, None).unwrap();
+            let area = document.add(Kind::CircleArea(host));
+            let circumference = document.add(Kind::CircleCircumference(host));
+            let radius = document.add(Kind::CircleRadius(host));
+            let before = document.circle_radius_cm(radius).unwrap();
+            if host == 8 {
+                assert!(document.move_point(6, Point { x: 180., y: 120. }));
+                assert!(document.circle_radius_cm(radius).unwrap() > before);
+            }
+            let encoded = document.encode().unwrap();
+            assert_eq!(encoded, expected);
+            let reopened = Document::from_bytes(&encoded, None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.encode().unwrap(), encoded);
+            assert!(reopened.circle_area_cm2(area).unwrap() > 0.);
+            assert!(reopened.circle_circumference_cm(circumference).unwrap() > 0.);
+            assert!(reopened.circle_radius_cm(radius).unwrap() > 0.);
+        }
+    }
+
     #[test]
     fn multiple_measurements_use_original_label_spacing() {
         let original =
@@ -21958,6 +22385,61 @@ mod tests {
     }
 
     #[test]
+    fn calculations_import_and_append_after_measurements() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/calculation_two_plus_three_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/calculation_seven_plus_four_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/calculation_seven_minus_four_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/calculation_seven_times_four_native.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/calculation_seven_divide_four_native.gsp").as_slice(),
+        ] {
+            let imported = Document::from_bytes(bytes, None).unwrap();
+            assert!(!imported.partial_view);
+            assert_eq!(imported.encode().unwrap(), bytes);
+        }
+        for (expression, expected, value) in [
+            (
+                "7 * 4",
+                include_bytes!("../tests/fixtures/calculation_seven_times_four_port.gsp")
+                    .as_slice(),
+                28.,
+            ),
+            (
+                "7 / 4",
+                include_bytes!("../tests/fixtures/calculation_seven_divide_four_port.gsp")
+                    .as_slice(),
+                1.75,
+            ),
+        ] {
+            let mut document = Document::new();
+            let id = document
+                .add_calculation_expression(expression, (10, 38))
+                .unwrap();
+            assert_eq!(document.encode().unwrap(), expected);
+            let reopened = Document::from_bytes(expected, None).unwrap();
+            assert!(matches!(&reopened.objects[id - 1].kind,
+                Kind::Calculation(group) if group.value() == value));
+        }
+        let mut measured = Document::from_bytes(
+            include_bytes!("../tests/fixtures/wine_segment_length.gsp"),
+            None,
+        )
+        .unwrap();
+        let id = measured
+            .add_calculation_expression("9 - 2", (10, 38))
+            .unwrap();
+        let bytes = measured.encode().unwrap();
+        assert_eq!(
+            bytes,
+            include_bytes!("../tests/fixtures/measurement_and_calculation_port.gsp")
+        );
+        let reopened = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(matches!(&reopened.objects[id - 1].kind,
+            Kind::Calculation(group) if group.value() == 7.));
+    }
+
+    #[test]
     fn default_table_keeps_fractional_snapshots_and_native_edit() {
         let original = include_bytes!("../tests/fixtures/table_t1_tabulated_edited_original.gsp");
         let imported = Document::from_bytes(original, None).unwrap();
@@ -23265,5 +23747,77 @@ mod tests {
         assert!((changed[0][0].x - (100. + dx)).abs() < 1e-9);
         assert!((changed[0][0].y - (220. + dy)).abs() < 1e-9);
         assert!((changed[125][0].x - (300. + dx)).abs() < 1e-9);
+    }
+    #[test]
+    fn translated_point_iteration_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/point_translation_iteration_native.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[2].kind, Kind::PointIteration(1, 2, 3));
+        assert_eq!(native.objects[3].kind, Kind::IterationBinding(2, 3));
+        let images = native.point_iteration_images(3).unwrap();
+        assert_eq!(images.len(), 3);
+        assert!((images[0].x - (280. + 2. * 37.79527559055118)).abs() < 1e-8);
+
+        let port_bytes =
+            include_bytes!("../tests/fixtures/point_translation_iteration_depth5_port.gsp");
+        let mut port = Document::from_bytes(port_bytes, None).unwrap();
+        assert!(!port.partial_view);
+        assert_eq!(port.encode().unwrap(), port_bytes);
+        assert_eq!(port.point_iteration_images(3).unwrap().len(), 5);
+        assert!(port.move_point(1, Point { x: 120., y: 210. }));
+        let mut moved = Document::from_bytes(&port.encode().unwrap(), None).unwrap();
+        let images = moved.point_iteration_images(3).unwrap();
+        assert!((images[0].x - (120. + 2. * 37.79527559055118)).abs() < 1e-8);
+        assert!((images[4].y - 210.).abs() < 1e-8);
+        assert_eq!(moved.add_point_iteration(1, 2, 0).is_err(), true);
+        moved.selected.insert(3);
+        assert_eq!(moved.clear_selected().unwrap(), vec![3, 4]);
+        assert_eq!(
+            Document::from_bytes(&moved.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            2
+        );
+    }
+    #[test]
+    fn carried_segment_iteration_import_generation_and_parent_edit() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/point_translation_carried_segment_native.gsp");
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[3].kind, Kind::SegmentIteration(1, 2, 3, 3));
+        assert_eq!(native.objects[4].kind, Kind::IterationBinding(2, 4));
+        assert_eq!(native.objects[5].kind, Kind::IterationBinding(3, 4));
+
+        let port_bytes =
+            include_bytes!("../tests/fixtures/point_translation_carried_segment_port.gsp");
+        let mut port = Document::from_bytes(port_bytes, None).unwrap();
+        assert!(!port.partial_view);
+        assert_eq!(port.encode().unwrap(), port_bytes);
+        let lines = port.segment_iteration_images(4).unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].0, port.position(2).unwrap());
+        assert_eq!(port.point_iteration_images(4).unwrap().len(), 3);
+        assert!(port.move_point(1, Point { x: 120., y: 140. }));
+        let mut moved = Document::from_bytes(&port.encode().unwrap(), None).unwrap();
+        let lines = moved.segment_iteration_images(4).unwrap();
+        assert!((lines[0].0.x - (120. + 37.79527559055118)).abs() < 1e-8);
+        let seed = moved.position(1).unwrap();
+        let first = moved.position(2).unwrap();
+        assert!((lines[2].1.y - (seed.y + 4. * (first.y - seed.y))).abs() < 1e-8);
+        moved.selected.insert(4);
+        assert_eq!(moved.clear_selected().unwrap(), vec![4, 5, 6]);
+        assert_eq!(
+            Document::from_bytes(&moved.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            3
+        );
     }
 }

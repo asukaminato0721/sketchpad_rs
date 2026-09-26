@@ -17,6 +17,7 @@ const THREE_ROW_PAIR_TABLE: &[u8] =
 const FOUR_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../tests/fixtures/table_pair_four_rows_original.gsp");
 const CALCULATION: &[u8] = include_bytes!("../tests/fixtures/table_calculate_2_plus_3.gsp");
+const MEASURED_CALCULATION: &[u8] = include_bytes!("../assets/measurement_times_two_group.bin");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableGroup {
@@ -461,11 +462,169 @@ pub struct CalculationGroup {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeasuredCalculationGroup {
+    bytes: Vec<u8>,
+}
+
+impl MeasuredCalculationGroup {
+    pub fn multiply(source: u32, factor: u8, anchor: (i16, i16)) -> Result<Self, String> {
+        if source == 0 || factor > 9 {
+            return Err("Select a measurement and a factor from 0 to 9".into());
+        }
+        let mut bytes = MEASURED_CALCULATION.to_vec();
+        bytes[48..52].copy_from_slice(&source.to_le_bytes());
+        bytes[156..158].copy_from_slice(&u16::from(factor).to_le_bytes());
+        bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
+        bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        Self::parse(&bytes)
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != MEASURED_CALCULATION.len() {
+            return Err("Unsupported measured calculation length".into());
+        }
+        let records = records(bytes, 0)?;
+        if records.iter().map(|record| record.kind).collect::<Vec<_>>()
+            != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
+            || records[0].end - records[0].payload != 28
+            || records[1].end - records[1].payload != 8
+            || records[2].end - records[2].payload != 98
+            || records[3].end - records[3].payload != 2
+            || records[4].end != records[4].payload
+            || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
+            || u32::from_le_bytes(bytes[48..52].try_into().unwrap()) == 0
+            || bytes[152..156] != [0, 0x60, 2, 0x10]
+            || bytes[158..160] != [2, 0]
+            || u16::from_le_bytes(bytes[156..158].try_into().unwrap()) > 9
+        {
+            return Err("Unsupported measured calculation expression".into());
+        }
+        for (index, (&actual, &template)) in bytes.iter().zip(MEASURED_CALCULATION).enumerate() {
+            let variable = index == 10
+                || (26..28).contains(&index)
+                || (48..52).contains(&index)
+                || (72..76).contains(&index)
+                || (76..152).contains(&index)
+                || (156..158).contains(&index);
+            if !variable && actual != template {
+                return Err("Unsupported measured calculation style".into());
+            }
+        }
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    pub fn source_id(&self) -> u32 {
+        u32::from_le_bytes(self.bytes[48..52].try_into().unwrap())
+    }
+    pub fn factor(&self) -> u8 {
+        self.bytes[156]
+    }
+    pub fn anchor(&self) -> (i16, i16) {
+        (
+            i16::from_le_bytes(self.bytes[72..74].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[74..76].try_into().unwrap()),
+        )
+    }
+    pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        self.bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        Self::parse(&self.bytes)?;
+        Ok(())
+    }
+    pub fn remap_source(&self, source: u32) -> Result<Self, String> {
+        let mut result = self.clone();
+        result.bytes[48..52].copy_from_slice(&source.to_le_bytes());
+        Self::parse(&result.bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 impl CalculationGroup {
     pub fn literal_two_plus_three() -> Self {
         Self {
             bytes: object_group(CALCULATION, 2),
         }
+    }
+    pub fn small_integer_expression(expression: &str) -> Result<Self, String> {
+        let compact = expression
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>();
+        let Some(op_at) = compact.find(['+', '-', '−', '*', '×', '·', '/', '÷']) else {
+            return Err("Enter a calculation such as 12 + 34".into());
+        };
+        let operator_char = compact[op_at..].chars().next().unwrap();
+        let left_text = &compact[..op_at];
+        let right_text = &compact[op_at + operator_char.len_utf8()..];
+        let valid_operand = |text: &str| {
+            (1..=2).contains(&text.len())
+                && text.bytes().all(|byte| byte.is_ascii_digit())
+                && (text.len() == 1 || !text.starts_with('0'))
+        };
+        if !valid_operand(left_text) || !valid_operand(right_text) {
+            return Err("Calculation operands must be integers from 0 to 99".into());
+        }
+        let left: u32 = left_text.parse().unwrap();
+        let right: u32 = right_text.parse().unwrap();
+        let operator = match operator_char {
+            '+' => 0,
+            '-' | '−' => 1,
+            '*' | '×' | '·' => 2,
+            '/' | '÷' => 3,
+            _ => return Err("Calculation needs +, -, *, or /".into()),
+        };
+        if operator == 3 && right == 0 {
+            return Err("Cannot divide by zero".into());
+        }
+        let mut group = Self::literal_two_plus_three();
+        let rs = records(&group.bytes, 0)?;
+        let mut payload = group.bytes[rs[1].payload..rs[1].end].to_vec();
+        payload.truncate(92);
+        let mut tokens = Vec::new();
+        for digit in left_text.bytes() {
+            tokens.push(u16::from(digit - b'0'));
+        }
+        tokens.push(0x1000 + operator);
+        for digit in right_text.bytes() {
+            tokens.push(u16::from(digit - b'0'));
+        }
+        payload[44..46].copy_from_slice(&((tokens.len()) as u16).to_le_bytes());
+        for token in tokens {
+            payload.extend_from_slice(&token.to_le_bytes());
+        }
+        let inner_length = (payload.len() - 32) as u32;
+        payload[36..40].copy_from_slice(&inner_length.to_le_bytes());
+        let mut bytes = group.bytes[..rs[1].start].to_vec();
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&group.bytes[rs[1].end..]);
+        group.bytes = bytes;
+        let bbox = records(&group.bytes, 0)?[3].payload;
+        let x = i16::from_le_bytes(group.bytes[bbox..bbox + 2].try_into().unwrap());
+        let y = i16::from_le_bytes(group.bytes[bbox + 2..bbox + 4].try_into().unwrap());
+        let result = match operator {
+            0 => left as i32 + right as i32,
+            1 => left as i32 - right as i32,
+            2 => (left * right) as i32,
+            3 => 0,
+            _ => unreachable!(),
+        };
+        let width = if operator == 3 {
+            88 + 10 * (left_text.len().max(right_text.len()) - 1)
+        } else {
+            let base = [114, 111, 95][operator as usize];
+            let result_digits = result.unsigned_abs().to_string().len();
+            base + 10 * (left_text.len() + right_text.len() - 2 + result_digits - 1)
+                + if result < 0 { 10 } else { 0 }
+        } as i16;
+        group.bytes[bbox + 4..bbox + 6].copy_from_slice(&(x + width).to_le_bytes());
+        group.bytes[bbox + 6..bbox + 8]
+            .copy_from_slice(&(y + if operator == 3 { 55 } else { 26 }).to_le_bytes());
+        Self::parse(&group.bytes)
     }
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
@@ -474,17 +633,42 @@ impl CalculationGroup {
             return Err("Unsupported calculation record sequence".into());
         }
         let template = object_group(CALCULATION, 2);
-        if bytes.len() != template.len() {
+        if rs[0].end - rs[0].payload != 28
+            || rs[2].end - rs[2].payload != 2
+            || rs[3].end - rs[3].payload != 8
+            || rs[4].end != rs[4].payload
+        {
+            return Err("Unsupported calculation record lengths".into());
+        }
+        let payload = &bytes[rs[1].payload..rs[1].end];
+        if !(98..=102).contains(&payload.len())
+            || payload.len() % 2 != 0
+            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
+                != payload.len() - 32
+            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize
+                != (payload.len() - 92) / 2
+        {
             return Err("Unsupported calculation byte length".into());
         }
-        for (i, (actual, expected)) in bytes.iter().zip(&template).enumerate() {
+        let base = records(&template, 0)?;
+        for i in 0..rs[1].payload + 92 {
             let mutable = i == 10
+                || (26..28).contains(&i)
                 || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
-                || (rs[3].payload..rs[3].end).contains(&i);
-            if !mutable && actual != expected {
+                || matches!(i, 36 | 66 | 74 | 80 | 88)
+                || (92..=140).contains(&i);
+            if !mutable && bytes[i] != template[i] {
                 return Err("Unsupported calculation variant".into());
             }
         }
+        for index in [2, 4] {
+            if &bytes[rs[index].start..rs[index].end]
+                != &template[base[index].start..base[index].end]
+            {
+                return Err("Unsupported calculation style".into());
+            }
+        }
+        Self::parts_from_payload(payload)?;
         let result = Self {
             bytes: bytes.to_vec(),
         };
@@ -498,18 +682,74 @@ impl CalculationGroup {
             )
         };
         if (word(0), word(2)) != anchor
-            || i32::from(word(4)) - i32::from(word(0)) != 114
-            || i32::from(word(6)) - i32::from(word(2)) != 26
+            || !(80..=300).contains(&(i32::from(word(4)) - i32::from(word(0))))
+            || i32::from(word(6)) - i32::from(word(2))
+                != if result.parts().2 == 3 { 55 } else { 26 }
         {
             return Err("Calculation anchor and box disagree".into());
         }
         Ok(result)
     }
-    pub fn expression(&self) -> &str {
-        "2 + 3"
+    fn parts_from_payload(payload: &[u8]) -> Result<(u32, u32, u8), String> {
+        let tokens = payload[92..]
+            .chunks_exact(2)
+            .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let Some(op_at) = tokens
+            .iter()
+            .position(|word| (0x1000..=0x1003).contains(word))
+        else {
+            return Err("Unsupported calculation expression".into());
+        };
+        let right_end = tokens.len();
+        let left = &tokens[..op_at];
+        let right = &tokens[op_at + 1..right_end];
+        let valid_digits = |digits: &[u16]| {
+            (1..=2).contains(&digits.len())
+                && digits.iter().all(|digit| *digit <= 9)
+                && (digits.len() == 1 || digits[0] != 0)
+        };
+        if !valid_digits(left) || !valid_digits(right) || right.iter().any(|digit| *digit >= 0x1000)
+        {
+            return Err("Unsupported calculation expression".into());
+        }
+        let value = |digits: &[u16]| {
+            digits
+                .iter()
+                .fold(0u32, |value, digit| value * 10 + u32::from(*digit))
+        };
+        let (left, right, operator) = (value(left), value(right), (tokens[op_at] - 0x1000) as u8);
+        if operator == 3 && right == 0 {
+            return Err("Cannot divide by zero".into());
+        }
+        Ok((left, right, operator))
+    }
+    fn parts(&self) -> (u32, u32, u8) {
+        let rs = records(&self.bytes, 0).unwrap();
+        Self::parts_from_payload(&self.bytes[rs[1].payload..rs[1].end]).unwrap()
+    }
+    pub fn expression(&self) -> String {
+        let (left, right, op) = self.parts();
+        let operator = match op {
+            0 => "+",
+            1 => "−",
+            2 => "·",
+            3 => "÷",
+            _ => unreachable!(),
+        };
+        format!("{left} {operator} {right}")
     }
     pub fn value(&self) -> f64 {
-        5.0
+        let (left, right, op) = self.parts();
+        let left = f64::from(left);
+        let right = f64::from(right);
+        match op {
+            0 => left + right,
+            1 => left - right,
+            2 => left * right,
+            3 => left / right,
+            _ => unreachable!(),
+        }
     }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -1492,6 +1732,87 @@ mod tests {
         let blank = include_bytes!("../tests/fixtures/text_object_blank.gsp");
         let output = append_literal_sum(blank).unwrap();
         assert_eq!(object_group(&output, 1), calculation.as_bytes());
+    }
+
+    #[test]
+    fn bounded_arithmetic_imports_native_and_generates_groups() {
+        for (document, input, expression, value) in [
+            (
+                include_bytes!("../tests/fixtures/calculation_two_plus_three_native.gsp")
+                    .as_slice(),
+                "2+3",
+                "2 + 3",
+                5.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_seven_plus_four_native.gsp")
+                    .as_slice(),
+                "7+4",
+                "7 + 4",
+                11.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_seven_minus_four_native.gsp")
+                    .as_slice(),
+                "7-4",
+                "7 − 4",
+                3.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_seven_times_four_native.gsp")
+                    .as_slice(),
+                "7*4",
+                "7 · 4",
+                28.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_seven_divide_four_native.gsp")
+                    .as_slice(),
+                "7/4",
+                "7 ÷ 4",
+                1.75,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_twelve_plus_thirtyfour_native.gsp")
+                    .as_slice(),
+                "12+34",
+                "12 + 34",
+                46.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_twelve_minus_thirtyfour_native.gsp")
+                    .as_slice(),
+                "12-34",
+                "12 − 34",
+                -22.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_twelve_times_thirtyfour_native.gsp")
+                    .as_slice(),
+                "12*34",
+                "12 · 34",
+                408.,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_twelve_divide_thirtyfour_native.gsp")
+                    .as_slice(),
+                "12/34",
+                "12 ÷ 34",
+                12. / 34.,
+            ),
+        ] {
+            let original = object_group(document, 1);
+            let imported = CalculationGroup::parse(&original).unwrap();
+            assert_eq!(imported.as_bytes(), original);
+            assert_eq!(imported.expression(), expression);
+            assert_eq!(imported.value(), value);
+            let generated = CalculationGroup::small_integer_expression(input).unwrap();
+            assert_eq!(generated.expression(), expression);
+            assert_eq!(generated.value(), value);
+            CalculationGroup::parse(generated.as_bytes()).unwrap();
+        }
+        assert!(CalculationGroup::small_integer_expression("7/0").is_err());
+        assert!(CalculationGroup::small_integer_expression("100+3").is_err());
     }
 
     #[test]

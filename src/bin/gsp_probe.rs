@@ -285,6 +285,32 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_literal_calculation(number_anchor(rest)?)?;
                     println!("line {}: calculate_2_plus_3 -> object {id}", index + 1);
                 }
+                "calculate" => {
+                    let id = document.add_calculation_expression(rest, (10, 38))?;
+                    println!("line {}: calculate -> object {id}", index + 1);
+                }
+                "calculate_at" => {
+                    let parts = rest.splitn(3, ' ').collect::<Vec<_>>();
+                    if parts.len() != 3 {
+                        return Err("expected X Y EXPRESSION".into());
+                    }
+                    let x = parts[0].parse().map_err(|_| "invalid X anchor")?;
+                    let y = parts[1].parse().map_err(|_| "invalid Y anchor")?;
+                    let id = document.add_calculation_expression(parts[2], (x, y))?;
+                    println!("line {}: calculate_at -> object {id}", index + 1);
+                }
+                "calculate_length" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [source, factor] = parts.as_slice() else {
+                        return Err("expected calculate_length MEASUREMENT_ID FACTOR".into());
+                    };
+                    let source = source.parse().map_err(|_| "invalid measurement ID")?;
+                    let factor = factor
+                        .parse()
+                        .map_err(|_| "invalid multiplication factor")?;
+                    let id = document.add_measured_length_calculation(source, factor, (10, 34))?;
+                    println!("line {}: calculate_length -> object {id}", index + 1);
+                }
                 "tabulate" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let source: usize = parts
@@ -1296,6 +1322,31 @@ fn replay(path: &str) -> Result<(), String> {
                         distance,
                     ));
                     println!("line {}: translate -> object {id}", index + 1);
+                }
+                "iterate" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 3 {
+                        return Err("expected seed ID, first-image ID, and depth".into());
+                    }
+                    let seed = parts[0].parse().map_err(|_| "invalid seed ID")?;
+                    let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
+                    let depth = parts[2].parse().map_err(|_| "invalid iteration depth")?;
+                    let id = document.add_point_iteration(seed, image, depth)?;
+                    println!("line {}: iterate -> object {id}", index + 1);
+                }
+                "iterate_segment" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 4 {
+                        return Err(
+                            "expected seed ID, first-image ID, segment ID, and depth".into()
+                        );
+                    }
+                    let seed = parts[0].parse().map_err(|_| "invalid seed ID")?;
+                    let image = parts[1].parse().map_err(|_| "invalid first-image ID")?;
+                    let segment = parts[2].parse().map_err(|_| "invalid segment ID")?;
+                    let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
+                    let id = document.add_segment_iteration(seed, image, segment, depth)?;
+                    println!("line {}: iterate_segment -> object {id}", index + 1);
                 }
                 "translate_vector" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
