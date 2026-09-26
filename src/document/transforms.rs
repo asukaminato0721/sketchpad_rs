@@ -1,4 +1,4 @@
-use super::kind::is_point_kind;
+use super::kind::{is_point_kind, is_segment_kind};
 use super::{Document, Kind};
 use crate::table_records::NumericUnit;
 
@@ -33,12 +33,10 @@ impl Document {
             Some(kind) if is_point_kind(kind) && self.position(source).is_some() => {
                 Kind::CalculatedAngleRotatedPoint(source, center, angle)
             }
-            Some(Kind::Segment(_, _)) if self.line_points(source).is_some() => {
+            Some(kind) if is_segment_kind(kind) && self.line_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedSegment(source, center, angle)
             }
-            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
-                if self.circle_points(source).is_some() =>
-            {
+            Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedAngleRotatedCircle(source, center, angle)
             }
             Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {
@@ -77,12 +75,10 @@ impl Document {
             Some(kind) if is_point_kind(kind) && self.position(source).is_some() => {
                 Kind::CalculatedRatioScaledPoint(source, center, ratio)
             }
-            Some(Kind::Segment(_, _)) if self.line_points(source).is_some() => {
+            Some(kind) if is_segment_kind(kind) && self.line_points(source).is_some() => {
                 Kind::CalculatedRatioScaledSegment(source, center, ratio)
             }
-            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
-                if self.circle_points(source).is_some() =>
-            {
+            Some(kind) if kind.is_circle() && self.circle_points(source).is_some() => {
                 Kind::CalculatedRatioScaledCircle(source, center, ratio)
             }
             Some(Kind::Polygon(_)) if self.polygon_points(source).is_some() => {

@@ -4,7 +4,7 @@ use super::iteration::{
     supported_point_parameter_iteration,
 };
 use super::kind::{
-    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, straight_kind_mode,
+    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, value_plot_path_accepts, straight_kind_mode,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -137,8 +137,8 @@ impl Document {
                 | Kind::CalculatedRatioScaledPolygon(source, center, ratio) => {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedRatioScaledPoint(..) => is_point_kind(&p.kind),
-                        Kind::CalculatedRatioScaledSegment(..) => matches!(p.kind, Kind::Segment(..)),
-                        Kind::CalculatedRatioScaledCircle(..) => matches!(p.kind, Kind::Circle(..) | Kind::CircleBySegment(..)),
+                        Kind::CalculatedRatioScaledSegment(..) => is_segment_kind(&p.kind),
+                        Kind::CalculatedRatioScaledCircle(..) => p.kind.is_circle(),
                         _ => matches!(p.kind, Kind::Polygon(_)),
                     });
                     if [*source, *center, *ratio].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
@@ -156,8 +156,8 @@ impl Document {
                 | Kind::CalculatedAngleRotatedPolygon(source, center, angle) => {
                     let source_valid = self.objects.get(source.saturating_sub(1)).is_some_and(|p| !p.deleted && match o.kind {
                         Kind::CalculatedAngleRotatedPoint(..) => is_point_kind(&p.kind),
-                        Kind::CalculatedAngleRotatedSegment(..) => matches!(p.kind, Kind::Segment(..)),
-                        Kind::CalculatedAngleRotatedCircle(..) => matches!(p.kind, Kind::Circle(..) | Kind::CircleBySegment(..)),
+                        Kind::CalculatedAngleRotatedSegment(..) => is_segment_kind(&p.kind),
+                        Kind::CalculatedAngleRotatedCircle(..) => p.kind.is_circle(),
                         _ => matches!(p.kind, Kind::Polygon(_)),
                     });
                     if [*source, *center, *angle].iter().any(|id| *id == 0 || *id >= o.id) || !source_valid
@@ -182,6 +182,17 @@ impl Document {
                     };
                     if !valid_depth || !supported_mapped_point_iteration(&self.objects, seeds, branches, carried) {
                         return Err(format!("Invalid mapped point iteration {}", o.id));
+                    }
+                }
+                Kind::IterationBinding(image, iteration)
+                    if self.objects.get(iteration.saturating_sub(1)).is_some_and(|parent| matches!(parent.kind, Kind::MappedPointIteration { .. })) => {
+                    let Some(parent) = self.objects.get(iteration.saturating_sub(1)) else { unreachable!() };
+                    let Kind::MappedPointIteration { carried, .. } = &parent.kind else { unreachable!() };
+                    if *image == 0 || *image >= *iteration || *iteration >= o.id || parent.deleted || parent.page != o.page
+                        || !carried.contains(image)
+                        || !self.objects.get(image.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == o.page
+                            && (is_point_kind(&source.kind) || matches!(source.kind, Kind::Segment(..) | Kind::VectorTranslatedSegment(..)))) {
+                        return Err("Invalid mapped iteration binding".into());
                     }
                 }
                 Kind::PointIteration(seed,image,depth)=>{
@@ -620,7 +631,7 @@ impl Document {
             }
             if let Kind::PathValuePoint(source, path) = o.kind {
                 if !self.objects.get(source.saturating_sub(1)).is_some_and(|parent| !parent.deleted && parent.page == o.page && source < o.id && parent.kind.numeric_unit() == Some(NumericUnit::Scalar))
-                    || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| plot_path_accepts(&host.kind, value)))
+                    || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
                     || self.position(o.id).is_none()
                 {
                     return Err(format!("Invalid path value point {}", o.id));

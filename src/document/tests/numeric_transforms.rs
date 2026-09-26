@@ -545,3 +545,121 @@ fn measured_arc_angle_is_pinned_during_circle_iteration_and_tracks_edits() {
         doc.circle_iteration_images(12)
     );
 }
+
+#[test]
+fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
+    for (name, bytes) in [
+        (
+            "segment",
+            include_bytes!("../../../tests/fixtures/vector_rotated_segment_native.gsp").as_slice(),
+        ),
+        (
+            "circle",
+            include_bytes!("../../../tests/fixtures/vector_rotated_circle_native.gsp").as_slice(),
+        ),
+    ] {
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        let source = doc
+            .objects
+            .iter()
+            .find(|o| {
+                matches!(
+                    o.kind,
+                    Kind::VectorTranslatedSegment(..) | Kind::VectorTranslatedCircle(..)
+                )
+            })
+            .unwrap()
+            .id;
+        let center = 1;
+        let ratio = doc.add_named_parameter("r", 2., (350, 30)).unwrap();
+        let scaled = doc
+            .add_calculated_ratio_dilation(source, center, ratio)
+            .unwrap();
+        let angle = doc.add_calculation_expression("90°", (350, 60)).unwrap();
+        let rotated = doc
+            .add_calculated_angle_rotation(scaled, center, angle)
+            .unwrap();
+        let measurement = doc.add(if name == "segment" {
+            Kind::SegmentLength(rotated)
+        } else {
+            Kind::CircleRadius(rotated)
+        });
+        let expected = if name == "segment" {
+            let (a, b, _) = doc.line_points(source).unwrap();
+            2. * ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt() / 37.79527559055118
+        } else {
+            2. * doc.circle_points(source).unwrap().1 / 37.79527559055118
+        };
+        assert!((doc.numeric_value(measurement).unwrap() - expected).abs() < 1e-10);
+        doc.verify_roundtrip().unwrap();
+        let saved = doc.encode().unwrap();
+        assert_eq!(
+            saved,
+            if name == "segment" {
+                include_bytes!(
+                    "../../../tests/fixtures/calculated_transform_chain_segment_native_verified.gsp"
+                )
+                .as_slice()
+            } else {
+                include_bytes!(
+                    "../../../tests/fixtures/calculated_transform_chain_circle_native_verified.gsp"
+                )
+                .as_slice()
+            }
+        );
+        if std::env::var_os("SKETCHPAD_WRITE_TRANSFORM_CHAIN_FIXTURE").is_some() {
+            fs::write(
+                format!("/tmp/calculated_transform_chain_{name}_port.gsp"),
+                &saved,
+            )
+            .unwrap();
+        }
+        let mut reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        reopened.set_parameter_value(ratio, -3.).unwrap();
+        assert!((reopened.numeric_value(measurement).unwrap() - expected * 1.5).abs() < 1e-10);
+        reopened.verify_roundtrip().unwrap();
+        assert_eq!(
+            reopened.encode().unwrap(),
+            if name == "segment" {
+                include_bytes!("../../../tests/fixtures/calculated_transform_chain_segment_edited_native_verified.gsp").as_slice()
+            } else {
+                include_bytes!("../../../tests/fixtures/calculated_transform_chain_circle_edited_native_verified.gsp").as_slice()
+            }
+        );
+        if std::env::var_os("SKETCHPAD_WRITE_TRANSFORM_CHAIN_FIXTURE").is_some() {
+            fs::write(
+                format!("/tmp/calculated_transform_chain_{name}_edited_port.gsp"),
+                reopened.encode().unwrap(),
+            )
+            .unwrap();
+        }
+        reopened.selected.insert(rotated);
+        let pasted = reopened.paste(&reopened.copy_selected().unwrap()).unwrap();
+        let copy = pasted
+            .iter()
+            .find(|&&id| {
+                matches!(
+                    reopened.objects[id - 1].kind,
+                    Kind::CalculatedAngleRotatedSegment(..)
+                        | Kind::CalculatedAngleRotatedCircle(..)
+                )
+            })
+            .copied()
+            .unwrap();
+        let copied_value = if name == "segment" {
+            let (a, b, _) = reopened.line_points(copy).unwrap();
+            ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt() / 37.79527559055118
+        } else {
+            reopened.circle_points(copy).unwrap().1 / 37.79527559055118
+        };
+        assert!((copied_value - expected * 1.5).abs() < 1e-10);
+        reopened.verify_roundtrip().unwrap();
+        reopened.selected.clear();
+        reopened.selected.insert(ratio);
+        reopened.clear_selected().unwrap();
+        assert!(reopened.objects[rotated - 1].deleted);
+        assert!(!reopened.objects[copy - 1].deleted);
+        reopened.verify_roundtrip().unwrap();
+    }
+}

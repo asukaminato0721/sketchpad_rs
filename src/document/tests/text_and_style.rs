@@ -846,3 +846,58 @@ fn formatted_measurement_caption_replay_matches_native_verified_file() {
     assert_eq!(font.size_code, 24);
     assert!(font.bold);
 }
+
+#[test]
+fn multi_page_measurement_caption_moves_atomically_and_preserves_other_page() {
+    let native = include_bytes!("../../../tests/fixtures/two_page_point_measurements_port.gsp");
+    let mut doc = Document::from_bytes(native, None).unwrap();
+    let id = doc
+        .objects
+        .iter()
+        .find(|o| o.measurement_anchor.is_some())
+        .unwrap()
+        .id;
+    doc.active_page = doc.objects[id - 1].page;
+    let before = doc.encode().unwrap();
+    let original = doc.objects.clone();
+    let value = doc.numeric_value(id);
+    let font = doc.text_font_state(id);
+    doc.move_measurement_caption(id, (-20, 150)).unwrap();
+    let saved = doc.encode().unwrap();
+    assert_eq!(
+        saved,
+        include_bytes!(
+            "../../../tests/fixtures/two_page_measurement_caption_moved_native_verified.gsp"
+        )
+    );
+    doc.verify_roundtrip().unwrap();
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert_eq!(
+        reopened.objects[id - 1].measurement_anchor,
+        Some((-20, 150))
+    );
+    assert_eq!(reopened.numeric_value(id), value);
+    assert_eq!(reopened.text_font_state(id), font);
+    for object in &original {
+        if object.id != id {
+            assert_eq!(reopened.objects[object.id - 1], *object);
+        }
+    }
+    if std::env::var_os("SKETCHPAD_WRITE_CAPTION_FIXTURE").is_some() {
+        fs::write("/tmp/multi_page_measurement_caption_moved_port.gsp", &saved).unwrap();
+    }
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), before);
+    doc.redo();
+    assert_eq!(doc.encode().unwrap(), saved);
+    doc.active_page = 1 - doc.active_page;
+    let off_page = doc.encode().unwrap();
+    assert!(doc.move_measurement_caption(id, (25, 80)).is_err());
+    assert_eq!(doc.encode().unwrap(), off_page);
+    doc.active_page = 1 - doc.active_page;
+    let mut unknown = doc.clone();
+    unknown.objects[0].kind = Kind::Unsupported(0xffff);
+    let snapshot = unknown.objects.clone();
+    assert!(unknown.move_measurement_caption(id, (25, 80)).is_err());
+    assert_eq!(unknown.objects, snapshot);
+}

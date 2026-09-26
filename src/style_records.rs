@@ -366,6 +366,16 @@ pub fn iteration_binding_visual_style(payload: &[u8], polygon: bool) -> Option<V
     visual_style(&header)
 }
 
+/// Point bindings use byte 11 and RGB while retaining their class-15 descriptor.
+pub fn iteration_point_binding_visual_style(payload: &[u8]) -> Option<VisualStyle> {
+    if payload.len() != 28 || payload[..2] != 77u16.to_le_bytes()
+        || payload[6..10] != [15, 0, 65, 0] { return None; }
+    let mut header = payload.to_vec();
+    header[..2].copy_from_slice(&0u16.to_le_bytes());
+    header[6..10].copy_from_slice(&[1, 0, 4, 0]);
+    visual_style(&header)
+}
+
 pub fn set_iteration_binding_visual_style(
     payload: &mut [u8],
     style: VisualStyle,
@@ -380,7 +390,10 @@ pub fn set_iteration_binding_visual_style(
             header[..2].copy_from_slice(&2u16.to_le_bytes());
             header[8..10].copy_from_slice(&14u16.to_le_bytes());
         }
-        _ => return Err("Expected a carried polygon or segment style".into()),
+        VisualStyle::Point { .. } => {
+            header[..2].copy_from_slice(&0u16.to_le_bytes());
+            header[6..10].copy_from_slice(&[1, 0, 4, 0]);
+        }
     }
     set_visual_style(&mut header, style)?;
     payload[10..18].copy_from_slice(&header[10..18]);

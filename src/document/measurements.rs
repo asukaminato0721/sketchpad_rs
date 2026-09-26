@@ -97,28 +97,64 @@ impl Document {
         Some(format!("{name} = {value}{unit}"))
     }
     /// Move a numeric measurement caption without altering its geometry or value.
-    pub fn move_measurement_caption(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
+    pub fn move_measurement_caption(
+        &mut self,
+        id: usize,
+        anchor: (i16, i16),
+    ) -> Result<(), String> {
         self.move_measurement_caption_inner(id, anchor, true)
     }
-    pub fn drag_measurement_caption(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
+    pub fn drag_measurement_caption(
+        &mut self,
+        id: usize,
+        anchor: (i16, i16),
+    ) -> Result<(), String> {
         self.move_measurement_caption_inner(id, anchor, false)
     }
-    fn move_measurement_caption_inner(&mut self, id: usize, anchor: (i16, i16), checkpoint: bool) -> Result<(), String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid measurement ID")?).ok_or("Invalid measurement ID")?;
-        if object.deleted || object.page != self.active_page
-            || (object.measurement_anchor.is_none() && !object.kind.has_measurement_precision()) {
+    fn move_measurement_caption_inner(
+        &mut self,
+        id: usize,
+        anchor: (i16, i16),
+        checkpoint: bool,
+    ) -> Result<(), String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid measurement ID")?)
+            .ok_or("Invalid measurement ID")?;
+        if object.deleted
+            || object.page != self.active_page
+            || (object.measurement_anchor.is_none() && !object.kind.has_measurement_precision())
+        {
             return Err("Select a numeric measurement caption on the current page".into());
         }
-        if !self.safe_structure || self.image_read_only
-            || self.objects.iter().any(|object| matches!(object.kind, Kind::Unsupported(_)))
+        if self.image_read_only
+            || (self.page_count == 1 && !self.safe_structure)
+            || (self.page_count > 1
+                && (self.source_count != self.objects.len()
+                    || self.objects.iter().any(|object| object.deleted)))
+            || self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
         {
             return Err("Cannot move a measurement caption in this sketch safely".into());
         }
-        if object.measurement_anchor != Some(anchor) {
-            if checkpoint { self.checkpoint(); }
-            self.objects[id-1].measurement_anchor = Some(anchor);
-            self.dirty = true;
+        if object.measurement_anchor == Some(anchor) {
+            return Ok(());
         }
+        let mut candidate = self.clone();
+        candidate.objects[id - 1].measurement_anchor = Some(anchor);
+        candidate.dirty = true;
+        if self.page_count > 1 {
+            let bytes = candidate.encode()?;
+            candidate.validate_reparsed_document(&Self::from_bytes(&bytes, None)?)?;
+        }
+        if checkpoint {
+            self.checkpoint();
+            candidate.undo = self.undo.clone();
+            candidate.redo = self.redo.clone();
+        }
+        *self = candidate;
         Ok(())
     }
     pub fn set_measurement_precision(
@@ -360,17 +396,25 @@ impl Document {
                                 return t.is_finite().then_some(EquationValue::PointValue(t));
                             }
                         }
-                        self.arc_parameter(second, Point { x: point.x, y: point.y })
-                            .map(EquationValue::PointValue)
+                        self.arc_parameter(
+                            second,
+                            Point {
+                                x: point.x,
+                                y: point.y,
+                            },
+                        )
+                        .map(EquationValue::PointValue)
                     }
                     ref kind if kind.is_polygon() => {
-                        let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind else {
+                        let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind
+                        else {
                             return None;
                         };
                         if host != second {
                             return None;
                         }
-                        self.polygon_boundary_parameter(host, edge, t).map(EquationValue::PointValue)
+                        self.polygon_boundary_parameter(host, edge, t)
+                            .map(EquationValue::PointValue)
                     }
                     _ => None,
                 }

@@ -221,6 +221,7 @@ impl Editor {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
                 && (sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
+                    || sketchpad_rs::render::point_iteration_hit(v, &self.doc, object.id, p)
                     || sketchpad_rs::render::circle_iteration_hit(v, &self.doc, object.id, p))
         }) {
             return Some(object.id);

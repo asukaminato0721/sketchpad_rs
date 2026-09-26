@@ -76,6 +76,34 @@ fn native_curve_strokes_are_editable_and_svg_keeps_color_width_and_pattern() {
             curves.len()
         );
         let saved = doc.encode().unwrap();
+        let native_verified = match name {
+            "point_locus" => include_bytes!(
+                "../../../tests/fixtures/curve_style_point_locus_native_verified.gsp"
+            )
+            .as_slice(),
+            "function" => {
+                include_bytes!("../../../tests/fixtures/curve_style_function_native_verified.gsp")
+                    .as_slice()
+            }
+            "parametric" => {
+                include_bytes!("../../../tests/fixtures/curve_style_parametric_native_verified.gsp")
+                    .as_slice()
+            }
+            "polar" => {
+                include_bytes!("../../../tests/fixtures/curve_style_polar_native_verified.gsp")
+                    .as_slice()
+            }
+            "parameter_locus" => include_bytes!(
+                "../../../tests/fixtures/curve_style_parameter_locus_native_verified.gsp"
+            )
+            .as_slice(),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            saved.as_slice(),
+            native_verified,
+            "{name} native saved bytes"
+        );
         doc.verify_roundtrip().unwrap();
         let reopened = Document::from_bytes(&saved, None).unwrap();
         for &id in &curves {
@@ -84,17 +112,41 @@ fn native_curve_strokes_are_editable_and_svg_keeps_color_width_and_pattern() {
                 doc.objects[id - 1].visual_style
             );
         }
-        let points=curves.iter().flat_map(|id| {
-            reopened.function_plot_segments(*id,384).or_else(||reopened.parametric_plot_segments(*id,384))
-                .or_else(||reopened.locus_strokes(*id,384).map(|segments|segments.into_iter().map(|(a,b,_)|(a,b)).collect()))
-                .unwrap_or_default().into_iter().flat_map(|(a,b)|[a,b])
-        }).collect::<Vec<_>>();
-        assert!(!points.is_empty(),"{name} must have defined geometry");
-        let (min_x,max_x,min_y,max_y)=points.iter().fold((f64::INFINITY,f64::NEG_INFINITY,f64::INFINITY,f64::NEG_INFINITY),|(xmin,xmax,ymin,ymax),p|(xmin.min(p.x),xmax.max(p.x),ymin.min(p.y),ymax.max(p.y)));
+        let points = curves
+            .iter()
+            .flat_map(|id| {
+                reopened
+                    .function_plot_segments(*id, 384)
+                    .or_else(|| reopened.parametric_plot_segments(*id, 384))
+                    .or_else(|| {
+                        reopened
+                            .locus_strokes(*id, 384)
+                            .map(|segments| segments.into_iter().map(|(a, b, _)| (a, b)).collect())
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .flat_map(|(a, b)| [a, b])
+            })
+            .collect::<Vec<_>>();
+        assert!(!points.is_empty(), "{name} must have defined geometry");
+        let (min_x, max_x, min_y, max_y) = points.iter().fold(
+            (
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+            ),
+            |(xmin, xmax, ymin, ymax), p| {
+                (xmin.min(p.x), xmax.max(p.x), ymin.min(p.y), ymax.max(p.y))
+            },
+        );
         let vp = crate::render::Viewport {
             rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: (800./(max_x-min_x).max(1.)).min(600./(max_y-min_y).max(1.)) as f32,
-            center: Point { x:(min_x+max_x)/2., y:(min_y+max_y)/2. },
+            scale: (800. / (max_x - min_x).max(1.)).min(600. / (max_y - min_y).max(1.)) as f32,
+            center: Point {
+                x: (min_x + max_x) / 2.,
+                y: (min_y + max_y) / 2.,
+            },
         };
         let svg = crate::render::svg_page(&reopened, &vp).unwrap();
         assert!(

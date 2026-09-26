@@ -352,7 +352,8 @@ impl Document {
                         }) && self
                             .objects
                             .get(source - 1)
-                            .is_some_and(|o| !is_point_kind(&o.kind))
+                            .is_some_and(|o| !is_point_kind(&o.kind)
+                                || self.objects.get(parent - 1).is_some_and(|p| matches!(p.kind, Kind::MappedPointIteration { .. })))
                     }
                     _ => false,
                 };

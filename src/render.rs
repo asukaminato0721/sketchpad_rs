@@ -189,14 +189,22 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         ));
     }
     if let Kind::ParameterCalculation(_, group) = &object.kind {
+        if group.caption_suppressed() { return None; }
         let value = doc
             .parameter_calculation_value(id)
             .map_or_else(|| "undefined".into(), |value| group.value_text(value));
-        let expression = doc.parameter_calculation_expression(id)?;
-        let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
-        return Some((group.anchor(), vec![format!("{expression} = {value}")]));
-    }
-    if let Kind::ValueTable(source, group) = &object.kind
+        let name = object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty());
+        let caption = match (group.display_mode(), name) {
+            (1 | 3, Some(name)) => format!("{name} = {value}"),
+            (1, None) => value,
+            _ => {
+                let expression = doc.parameter_calculation_expression(id)?;
+                let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
+                format!("{expression} = {value}")
+            }
+        };
+        return Some((group.anchor(), vec![caption]));
+    } else if let Kind::ValueTable(source, group) = &object.kind
         && let Some((name, mut values)) = group.named_label_values()
     {
         if let Some(Kind::Parameter(parameter)) = doc
@@ -270,6 +278,12 @@ pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
         circles.into_iter().any(|(center, radius)| {
             (at.distance(vp.screen(center)) - (radius as f32 * vp.scale).abs()).abs() < 7.
         })
+    })
+}
+
+pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    doc.mapped_point_binding_images(id).is_some_and(|images| {
+        images.into_iter().any(|point| vp.screen(point).distance(at) < 11.)
     })
 }
 
@@ -1113,14 +1127,14 @@ pub fn svg_page_with_button_offset(
         .filter(|object| doc.is_displayed(object.id))
     {
         if let Some(images) = doc.point_iteration_images(object.id) {
+            let (radius, color) = match object.visual_style {
+                Some(VisualStyle::Point { shape, color }) => (point_radius(shape), css_color(color)),
+                _ => (2., "#176bd6".into()),
+            };
             for point in images {
                 let at = vp.screen(point);
-                writeln!(
-                    svg,
-                    "<circle cx=\"{}\" cy=\"{}\" r=\"2\" fill=\"#176bd6\"/>",
-                    at.x, at.y
-                )
-                .unwrap();
+                writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\"/>",
+                    at.x, at.y, radius, color).unwrap();
             }
         }
     }
@@ -1969,8 +1983,15 @@ impl GeometryRenderer {
                 );
             }
             if let Some(images) = doc.point_iteration_images(o.id) {
+                let (radius, color) = match o.visual_style {
+                    Some(VisualStyle::Point { shape, color }) => (point_radius(shape), rgba(color, 1.)),
+                    _ => (2., blue),
+                };
+                let highlighted = doc.selected.contains(&o.id)
+                    || matches!(o.kind, Kind::IterationBinding(_, parent) if doc.selected.contains(&parent));
                 for point in images {
-                    mesh.disk(vp.screen(point), 2., blue);
+                    mesh.disk(vp.screen(point), if highlighted {radius + 1.5} else {radius},
+                        if highlighted {selected} else {color});
                 }
             }
         }

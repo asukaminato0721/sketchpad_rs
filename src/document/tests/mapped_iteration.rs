@@ -346,7 +346,11 @@ fn mapped_iteration_native_verified_generation_and_binding_styles() {
 fn multi_page_ant_parameter_depth_edit_is_local_atomic_and_undoable() {
     let bytes = include_bytes!("../../../tests/fixtures/mapped_point_iteration_ant_native.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
-    assert!(doc.objects.iter().all(|object| !matches!(object.kind, Kind::Unsupported(_))));
+    assert!(
+        doc.objects
+            .iter()
+            .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
+    );
     doc.active_page = 0;
     assert_eq!(doc.numeric_value(25), Some(3.));
     assert_eq!(doc.numeric_value(73), Some(4.));
@@ -362,17 +366,29 @@ fn multi_page_ant_parameter_depth_edit_is_local_atomic_and_undoable() {
     assert_eq!(doc.numeric_value(25), Some(2.));
     assert_eq!(doc.objects[37..], untouched);
     assert!(doc.branch_segment_iteration_images(29).unwrap().len() < first_images.len());
-    assert_eq!(doc.branch_segment_iteration_images(76).unwrap(), second_images);
+    assert_eq!(
+        doc.branch_segment_iteration_images(76).unwrap(),
+        second_images
+    );
     let edited = doc.encode().unwrap();
     let reopened = Document::from_bytes(&edited, None).unwrap();
     assert_eq!(reopened.partial_view, doc.partial_view);
     assert_eq!(reopened.numeric_value(25), Some(2.));
     assert_eq!(reopened.numeric_value(73), Some(4.));
-    assert_eq!(reopened.branch_segment_iteration_images(29), doc.branch_segment_iteration_images(29));
-    assert_eq!(reopened.branch_segment_iteration_images(76).unwrap(), second_images);
+    assert_eq!(
+        reopened.branch_segment_iteration_images(29),
+        doc.branch_segment_iteration_images(29)
+    );
+    assert_eq!(
+        reopened.branch_segment_iteration_images(76).unwrap(),
+        second_images
+    );
     doc.undo();
     assert_eq!(doc.numeric_value(25), Some(3.));
-    assert_eq!(doc.branch_segment_iteration_images(29).unwrap(), first_images);
+    assert_eq!(
+        doc.branch_segment_iteration_images(29).unwrap(),
+        first_images
+    );
     doc.redo();
     assert_eq!(doc.numeric_value(25), Some(2.));
     doc.active_page = 1;
@@ -382,4 +398,175 @@ fn multi_page_ant_parameter_depth_edit_is_local_atomic_and_undoable() {
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.numeric_value(25), Some(2.));
     assert_eq!(reopened.numeric_value(73), Some(3.));
+}
+
+#[test]
+fn mapped_midpoint_triangle_native_point_bindings_and_simultaneous_geometry() {
+    let bytes =
+        include_bytes!("../../../tests/fixtures/mapped_midpoint_triangle_native_verified.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.encode().unwrap(), bytes);
+    assert!(
+        matches!(&doc.objects[9].kind, Kind::MappedPointIteration { seeds, branches, carried, depth }
+        if seeds == &[1,2,3] && branches == &[vec![8,9,7]] && carried == &[4,5,6,7,8,9]
+            && *depth == IterationDepth::Fixed(3))
+    );
+    for id in 11..=16 {
+        assert_eq!(doc.objects[id - 1].kind, Kind::IterationBinding(id - 7, 10));
+    }
+    let lines = doc.branch_segment_iteration_images(11).unwrap();
+    assert_eq!(lines.len(), 3);
+    assert_eq!(
+        lines[0],
+        (Point { x: 751., y: 467.5 }, Point { x: 853., y: 319.5 })
+    );
+    let points = doc.mapped_point_binding_images(14).unwrap();
+    assert_eq!(points.len(), 3);
+    assert_eq!(points[0], Point { x: 802., y: 393.5 });
+    assert!(matches!(
+        doc.objects[13].visual_style,
+        Some(VisualStyle::Point {
+            shape: PointStyle::Medium,
+            color: RgbColor {
+                red: 255,
+                green: 0,
+                blue: 0
+            }
+        })
+    ));
+    doc.selected.insert(14);
+    assert_eq!(doc.set_selected_point_style(PointStyle::Large).unwrap(), 1);
+    assert_eq!(
+        doc.set_selected_color(RgbColor {
+            red: 14,
+            green: 150,
+            blue: 210
+        })
+        .unwrap(),
+        1
+    );
+    doc.move_point(1, Point { x: 800., y: 200. });
+    assert_ne!(doc.mapped_point_binding_images(14).unwrap(), points);
+    doc.verify_roundtrip().unwrap();
+    let saved = doc.encode().unwrap();
+    assert_eq!(
+        saved.as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/mapped_midpoint_triangle_edited_native_verified.gsp"
+        )
+    );
+    if std::env::var_os("SKETCHPAD_WRITE_MAPPED_MIDPOINT_FIXTURE").is_some() {
+        fs::write("/tmp/mapped_midpoint_triangle_edited.gsp", &saved).unwrap();
+    }
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert_eq!(
+        reopened.mapped_point_binding_images(14),
+        doc.mapped_point_binding_images(14)
+    );
+    assert_eq!(
+        reopened.objects[13].visual_style,
+        doc.objects[13].visual_style
+    );
+    let vp = crate::render::Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.)),
+        scale: 1.,
+        center: Point { x: 750., y: 350. },
+    };
+    let svg = crate::render::svg_page(&reopened, &vp).unwrap();
+    assert_eq!(
+        svg.lines()
+            .filter(|line| line.contains("r=\"6\" fill=\"#0e96d2\""))
+            .count(),
+        3
+    );
+    let at = vp.screen(reopened.mapped_point_binding_images(14).unwrap()[0]);
+    assert!(crate::render::point_iteration_hit(&vp, &reopened, 14, at));
+    assert!(!crate::render::point_iteration_hit(
+        &vp,
+        &reopened,
+        14,
+        at + egui::vec2(20., 0.)
+    ));
+}
+
+#[test]
+fn mapped_midpoint_triangle_authors_explicit_bindings_and_keeps_prerequisites_distinct() {
+    let mut doc = Document::new();
+    for p in [
+        Point { x: 200., y: 100. },
+        Point { x: 100., y: 300. },
+        Point { x: 400., y: 250. },
+    ] {
+        doc.add(Kind::Free(p));
+    }
+    for (a, b) in [(1, 2), (2, 3), (3, 1)] {
+        doc.add(Kind::Segment(a, b));
+    }
+    for (a, b) in [(1, 2), (2, 3), (3, 1)] {
+        doc.add(Kind::Midpoint(a, b));
+    }
+    let carried = [4, 5, 6, 7, 8, 9];
+    let id = doc
+        .add_mapped_point_iteration_with_bindings(
+            &[1, 2, 3],
+            &[vec![8, 9, 7]],
+            &carried,
+            &carried,
+            IterationDepth::Fixed(2),
+        )
+        .unwrap();
+    assert_eq!(id, 10);
+    assert_eq!(doc.objects.len(), 16);
+    for binding in 11..=13 {
+        assert_eq!(
+            doc.branch_segment_iteration_images(binding).unwrap().len(),
+            2
+        );
+    }
+    for binding in 14..=16 {
+        assert_eq!(doc.point_iteration_images(binding).unwrap().len(), 2);
+    }
+    doc.verify_roundtrip().unwrap();
+    assert_eq!(
+        doc.encode().unwrap().as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/mapped_midpoint_triangle_generated_native_verified.gsp"
+        )
+    );
+    if std::env::var_os("SKETCHPAD_WRITE_MAPPED_MIDPOINT_FIXTURE").is_some() {
+        fs::write(
+            "/tmp/mapped_midpoint_triangle_generated.gsp",
+            doc.encode().unwrap(),
+        )
+        .unwrap();
+    }
+    doc.selected.insert(id);
+    let clip = doc.copy_selected().unwrap();
+    let pasted = doc.paste(&clip).unwrap();
+    let parent = pasted
+        .iter()
+        .copied()
+        .find(|id| matches!(doc.objects[*id - 1].kind, Kind::MappedPointIteration { .. }))
+        .unwrap();
+    assert_eq!(
+        doc.objects
+            .iter()
+            .filter(|o| matches!(o.kind,Kind::IterationBinding(_,p)if p==parent))
+            .count(),
+        6
+    );
+    doc.verify_roundtrip().unwrap();
+    let before = doc.objects.len();
+    assert!(
+        doc.add_mapped_point_iteration_with_bindings(
+            &[1, 2, 3],
+            &[vec![8, 9, 7]],
+            &carried,
+            &[1],
+            IterationDepth::Fixed(2)
+        )
+        .is_err()
+    );
+    assert_eq!(doc.objects.len(), before);
 }

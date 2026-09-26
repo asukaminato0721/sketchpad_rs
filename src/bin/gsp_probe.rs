@@ -1576,7 +1576,7 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "iterate_mapped" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
-                    if parts.len() != 4 { return Err("expected SEED_IDS BRANCH_IDS[;BRANCH_IDS...] CARRIED_IDS DEPTH_OR_value:PARAMETER".into()); }
+                    if !(4..=5).contains(&parts.len()) { return Err("expected SEED_IDS BRANCH_IDS[;BRANCH_IDS...] CARRIED_IDS DEPTH_OR_value:PARAMETER [VISIBLE_BINDING_IDS]".into()); }
                     let ids = |part: &str| part.split(',').map(|v| v.parse::<usize>().map_err(|_| "invalid mapped iteration ID")).collect::<Result<Vec<_>, _>>();
                     let seeds = ids(parts[0])?;
                     let branches = parts[1].split(';').map(ids).collect::<Result<Vec<_>, _>>()?;
@@ -1584,7 +1584,9 @@ fn replay(path: &str) -> Result<(), String> {
                     let depth = if let Some(id) = parts[3].strip_prefix("value:") {
                         IterationDepth::Value(id.parse().map_err(|_| "invalid depth parameter")?)
                     } else { IterationDepth::Fixed(parts[3].parse().map_err(|_| "invalid mapped iteration depth")?) };
-                    let id = document.add_mapped_point_iteration(&seeds, &branches, &carried, depth)?;
+                    let id = if let Some(bindings) = parts.get(4) {
+                        document.add_mapped_point_iteration_with_bindings(&seeds, &branches, &carried, &ids(bindings)?, depth)?
+                    } else { document.add_mapped_point_iteration(&seeds, &branches, &carried, depth)? };
                     println!("line {}: iterate_mapped -> object {id}", index + 1);
                 }
                 "iterate_polygon_branch" | "iterate_polygon_branch_live" => {

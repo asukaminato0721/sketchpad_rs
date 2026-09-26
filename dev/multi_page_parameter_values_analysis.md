@@ -31,7 +31,8 @@ object graph. A paired table may update either or both parameter columns. The
 writer reconstructs these changes from the changed same-page parameters and
 requires exact equality with the proposed table group. Earlier rows cannot
 change. The table setters preserve imported hidden-header state and observed
-padding bytes, failing atomically if a replacement cannot retain them. Their
+padding bytes when text alignment stays the same; a changed alignment width uses
+canonical padding and reparses before mutation. Their
 existing numeric representation supports two decimals and values within ±99.99;
 this change does not broaden that table schema.
 

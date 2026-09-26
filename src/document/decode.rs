@@ -5,7 +5,7 @@ use super::iteration::{
 };
 use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
-    is_locus_straight_kind, is_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
+    is_locus_straight_kind, is_plot_path_kind, is_value_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
     straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
@@ -314,6 +314,7 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
+                    && !(code == 48 && r.kind == 0x232e && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(code == 90 && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
@@ -655,7 +656,7 @@ impl Document {
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
                                 Kind::BranchingPolygonIteration { ref segments, polygon, .. } => polygon == *image || segments.contains(image),
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
-                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| matches!(source.kind, Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))),
+                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| is_point_kind(&source.kind) || matches!(source.kind, Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))),
                                 Kind::SegmentIteration(_, mapped, segment, _) | Kind::CircleIteration(_,mapped,segment,_) => mapped == *image || segment == *image,
                                 Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
                                 Kind::PointParameterIteration(_,_,mapped,_,label,_) => mapped==*image || label==*image,
@@ -714,7 +715,7 @@ impl Document {
                     (95, _, [source, path])
                         if axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
                             && objects.get(source - 1).is_some_and(|o| o.page == page && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
-                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_plot_path_kind(&o.kind)) => {
+                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_value_plot_path_kind(&o.kind)) => {
                         Kind::PathValuePoint(*source, *path)
                     }
                     (69, None, [x, y, frame])
@@ -1268,8 +1269,8 @@ impl Document {
                             && objects.get(angle.saturating_sub(1)).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Degrees)) => {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedAngleRotatedPoint(*source, *center, *angle),
-                            (Some(Kind::Segment(_, _)), [14, 0]) if h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
-                            (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) if h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
+                            (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedAngleRotatedSegment(*source, *center, *angle),
+                            (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedAngleRotatedCircle(*source, *center, *angle),
                             (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedAngleRotatedPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
                         }
@@ -1279,8 +1280,8 @@ impl Document {
                             && objects.get(angle.saturating_sub(1)).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Scalar)) => {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
-                            (Some(Kind::Segment(_, _)), [14, 0]) if h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
-                            (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) if h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
+                            (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
+                            (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::CalculatedRatioScaledCircle(*source, *center, *angle),
                             (Some(Kind::Polygon(vertices)), _) if h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] && polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])) => Kind::CalculatedRatioScaledPolygon(*source, *center, *angle),
                             _ => Kind::Unsupported(code),
                         }
@@ -1464,6 +1465,11 @@ impl Document {
                 None
             };
             let visual_style = if let Kind::IterationBinding(source, iteration) = &kind
+                && objects.get(iteration.saturating_sub(1)).is_some_and(|o| matches!(o.kind, Kind::MappedPointIteration { .. }))
+                && objects.get(source.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
+            {
+                style_records::iteration_point_binding_visual_style(h)
+            } else if let Kind::IterationBinding(source, iteration) = &kind
                 && objects.get(iteration.saturating_sub(1)).is_some_and(|o| {
                     matches!(
                         o.kind,

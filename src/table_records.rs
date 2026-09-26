@@ -318,7 +318,19 @@ impl ParameterGroup {
         let words = (0..word_count)
             .map(|i| u16::from_le_bytes(payload[92 + i * 2..94 + i * 2].try_into().unwrap()))
             .collect::<Vec<_>>();
-        value_from_words(&words)?;
+        let unit = match bytes.get(16..18) {
+            Some([79, 0]) => NumericUnit::Scalar,
+            Some([80, 0]) => NumericUnit::Length,
+            Some([81, 0]) => NumericUnit::Degrees,
+            _ => return Err("Unsupported parameter units".into()),
+        };
+        let value_words = match unit {
+            NumericUnit::Length if words.last() == Some(&0x0201) => &words[..words.len() - 1],
+            NumericUnit::Degrees if words.last() == Some(&0x0101) => &words[..words.len() - 1],
+            NumericUnit::Scalar => words.as_slice(),
+            _ => return Err("Parameter value units disagree with its header".into()),
+        };
+        value_from_words(value_words)?;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
         let domain = (
@@ -340,7 +352,7 @@ impl ParameterGroup {
             || !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 1 | 3)
             || rs[0].end - rs[0].payload != 28
             || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap()) & 0xffff != 0
-            || u16::from_le_bytes(bytes[rs[0].payload + 8..rs[0].payload + 10].try_into().unwrap()) != 79
+            || !matches!(u16::from_le_bytes(bytes[rs[0].payload + 8..rs[0].payload + 10].try_into().unwrap()), 79..=81)
             || rs[3].end - rs[3].payload != 2
             || rs[4].end - rs[4].payload != 8
             || rs[5].end != rs[5].payload
@@ -382,6 +394,20 @@ impl ParameterGroup {
                 .unwrap(),
         ) as usize
     }
+    pub fn unit(&self) -> NumericUnit {
+        match u16::from_le_bytes(self.bytes[16..18].try_into().unwrap()) {
+            80 => NumericUnit::Length,
+            81 => NumericUnit::Degrees,
+            _ => NumericUnit::Scalar,
+        }
+    }
+    fn native_unit_scale(&self) -> f64 {
+        match self.unit() {
+            NumericUnit::Length => 37.79527559055118,
+            NumericUnit::Degrees => CALCULATOR_PI / 180.,
+            _ => 1.,
+        }
+    }
     pub fn value(&self) -> f64 {
         if let Some(value) = self.evaluation_value {
             return f64::from_le_bytes(value);
@@ -392,23 +418,24 @@ impl ParameterGroup {
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
             .collect::<Vec<_>>();
-        value_from_words(&words).unwrap()
+        let count = words.len() - usize::from(self.unit() != NumericUnit::Scalar);
+        value_from_words(&words[..count]).unwrap()
     }
 
     pub fn value_text(&self) -> String {
-        format_numeric_value(self.value(), self.precision())
+        format!("{}{}", format_numeric_value(self.value(), self.precision()), self.unit().suffix())
     }
     pub fn animation_domain(&self) -> (f64, f64) {
         let rs = records(&self.bytes, 0).unwrap();
         let payload = &self.bytes[rs[1].payload..rs[1].end];
         (
-            f64::from_le_bytes(payload[60..68].try_into().unwrap()),
-            f64::from_le_bytes(payload[68..76].try_into().unwrap()),
+            f64::from_le_bytes(payload[60..68].try_into().unwrap()) / self.native_unit_scale(),
+            f64::from_le_bytes(payload[68..76].try_into().unwrap()) / self.native_unit_scale(),
         )
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
-        let words = decimal_words(value)?;
+        let mut words = decimal_words(value)?;
         let fractional_digits = words
             .iter()
             .position(|word| *word == 10)
@@ -428,8 +455,13 @@ impl ParameterGroup {
         payload[28..30].copy_from_slice(&(precision as u16).to_le_bytes());
         let precision_steps = [1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001];
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
-        if step == precision_steps[self.precision()] {
-            payload[52..60].copy_from_slice(&precision_steps[precision].to_le_bytes());
+        if step == precision_steps[self.precision()] * self.native_unit_scale() {
+            payload[52..60].copy_from_slice(&(precision_steps[precision] * self.native_unit_scale()).to_le_bytes());
+        }
+        match self.unit() {
+            NumericUnit::Length => words.push(0x0201),
+            NumericUnit::Degrees => words.push(0x0101),
+            _ => {}
         }
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
@@ -1319,10 +1351,17 @@ impl ParameterCalculationGroup {
         let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
         let font_index = match kinds.as_slice() {
             [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7] => 3,
+            [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x232e, 0x07d7]
+                if rs[4].payload == rs[4].end => 3,
             [0x07d0, 0x07d2, 0x0907, 0x07d5, 0x07d8, 0x07d7] => {
                 crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
                 4
             }
+            [0x07d0, 0x07d2, 0x0907, 0x07d5, 0x07d8, 0x232e, 0x07d7]
+                if rs[5].payload == rs[5].end => {
+                    crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
+                    4
+                }
             _ => return Err("Unsupported parameter calculation records".into()),
         };
         let payload = &bytes[rs[2].payload..rs[2].end];
@@ -1454,6 +1493,15 @@ impl ParameterCalculationGroup {
     }
     pub fn expression_unit(&self, source: NumericUnit) -> Result<NumericUnit, String> {
         self.expression_tree()?.unit(source)
+    }
+    pub fn display_mode(&self) -> u16 {
+        let rs = records(&self.bytes, 0).unwrap();
+        u16::from_le_bytes(self.bytes[rs[2].payload + 26..rs[2].payload + 28].try_into().unwrap())
+    }
+    /// Native mode1 displays the numeric value or its assigned name. Its
+    /// flag2 caption suppression is separate from visibility's flag1 bit.
+    pub fn caption_suppressed(&self) -> bool {
+        self.display_mode() == 1 && self.bytes[10] & 2 != 0
     }
     pub fn precision(&self) -> usize {
         let rs = records(&self.bytes, 0).unwrap();

@@ -177,3 +177,90 @@ fn native_verified_generated_polygon_point_and_linked_value_round_trip() {
     assert_eq!(doc.position(6), Some(Point { x: 150., y: 220. }));
     assert!((doc.numeric_value(7).unwrap() - 430. / 600.).abs() < 1e-12);
 }
+
+#[test]
+fn native_calculated_polygon_path_uses_live_wrapped_perimeter_values() {
+    let bytes = include_bytes!("../../../tests/fixtures/numeric_polygon_path_quarter_native.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.objects[8].kind, Kind::PathValuePoint(8, 5));
+    let label = doc.objects[8].label.clone();
+    assert!(label.is_some());
+    assert_eq!(doc.position(9), Some(Point { x: 250., y: 100. }));
+    assert_eq!(doc.encode().unwrap(), bytes);
+    // Native marker segments confirm normalized perimeter traversal and wrapping
+    // for values outside the first traversal.
+    for (value, point) in [
+        (-0.25, Point { x: 150., y: 200. }),
+        (0., Point { x: 100., y: 100. }),
+        (0.5, Point { x: 300., y: 200. }),
+        (1., Point { x: 100., y: 100. }),
+        (1.25, Point { x: 250., y: 100. }),
+    ] {
+        doc.set_parameter_value(8, value).unwrap();
+        assert_eq!(doc.position(9), Some(point));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert_eq!(reopened.position(9), Some(point));
+        assert_eq!(reopened.objects[8].label, label);
+    }
+    doc.set_parameter_value(8, 0.25).unwrap();
+    let before = doc.position(9).unwrap();
+    assert!(doc.move_point(2, Point { x: 400., y: 100. }));
+    assert_ne!(doc.position(9), Some(before));
+    assert_eq!(doc.position(9), doc.point_at_polygon_parameter(5, 0.25));
+    let calculation = doc.add_parameter_calculation(8, "p/2", (30, 20)).unwrap();
+    let created = doc.plot_parameter_on_path(calculation, Some(5)).unwrap();
+    assert_eq!(doc.position(created), doc.point_at_polygon_parameter(5, 0.125));
+    assert!(doc.plot_literal_on_path(0.25, Some(5)).is_err());
+    doc.selected.insert(9);
+    doc.selected.insert(created);
+    let clipboard = doc.copy_selected().unwrap();
+    let mut pasted = Document::new();
+    let ids = pasted.paste(&clipboard).unwrap();
+    let copied = *ids.last().unwrap();
+    assert!(matches!(pasted.objects[copied - 1].kind, Kind::PathValuePoint(..)));
+    let original = doc.position(created).unwrap();
+    assert_eq!(pasted.position(copied), Some(Point { x: original.x + 20., y: original.y + 20. }));
+    let reopened = Document::from_bytes(&pasted.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.position(copied), pasted.position(copied));
+    let original_state = doc.objects.clone();
+    assert!(doc.set_parameter_value(8, f64::NAN).is_err());
+    assert_eq!(doc.objects, original_state);
+    doc.selected.clear();
+    doc.selected.insert(8);
+    doc.clear_selected().unwrap();
+    assert!(doc.objects[8].deleted);
+    assert!(doc.objects[created - 1].deleted);
+}
+
+#[test]
+fn original_ningde_calculated_point_retains_polygon_and_scalar_dependencies() {
+    let bytes = include_bytes!("../../../tests/fixtures/numeric_polygon_path_ningde_original.gsp");
+    let doc = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(doc.objects[16].kind, Kind::PathValuePoint(16, 15));
+    assert!(matches!(&doc.objects[14].kind, Kind::Polygon(vertices) if vertices == &[11,10,9,10]));
+    assert_eq!(doc.objects[15].kind.numeric_unit(), Some(crate::table_records::NumericUnit::Scalar));
+    let value = doc.numeric_value(16).unwrap();
+    assert_eq!(doc.position(17), doc.point_at_polygon_parameter(15, value));
+    assert!(doc.position(17).is_some());
+    assert!(doc.objects[16].label.is_some());
+    assert_eq!(doc.encode().unwrap(), bytes);
+}
+
+#[test]
+fn native_verified_authored_polygon_calculated_paths_round_trip() {
+    for (bytes, parameter, point) in [
+        (include_bytes!("../../../tests/fixtures/numeric_polygon_path_generated_verified.gsp").as_slice(),
+            0.5, Point { x: 250., y: 100. }),
+        (include_bytes!("../../../tests/fixtures/numeric_polygon_path_negative_verified.gsp").as_slice(),
+            -0.5, Point { x: 150., y: 200. }),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.objects[7].kind, Kind::PathValuePoint(7, 5));
+        assert_eq!(doc.numeric_value(6), Some(parameter));
+        assert_eq!(doc.numeric_value(7), Some(parameter / 2.));
+        assert_eq!(doc.position(8), Some(point));
+        assert_eq!(doc.encode().unwrap(), bytes);
+    }
+}

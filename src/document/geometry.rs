@@ -319,7 +319,12 @@ impl Document {
                 }
                 Kind::PathLiteralPoint(path, t) => on_path(d, *path, *t, seen),
                 Kind::PathValuePoint(source, path) => {
-                    on_path(d, *path, d.numeric_value(*source)?, seen)
+                    let value = d.numeric_value(*source)?;
+                    if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
+                        d.point_at_polygon_parameter(*path, value)
+                    } else {
+                        on_path(d, *path, value, seen)
+                    }
                 }
                 Kind::NumericCoordinatePoint(x, y, frame) => {
                     let frame = d.graph_frame(*frame)?;

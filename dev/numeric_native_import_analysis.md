@@ -112,8 +112,9 @@ Native Ningde2 object17 (code95) carries a scalar calculation source16, a
 path15, label N, and caption font0. The isolated path regression rebinds the
 actual native group to cood's scalar calculation and X axis, verifying live
 updates, imported presentation preservation, authored creation, and copying.
-The original path15 is a polygon. Its numeric perimeter parameter semantics
-require a separate native probe before extending the supported path families.
+The original path15 is a polygon. Its normalized perimeter semantics, wrapped negative/oversized values, and
+live scalar calculation sources are now native-verified and implemented;
+see `dev/numeric_polygon_path_analysis.md`.
 
 A focused length threshold probe preserves the source quantity and its native
 scale: AB=2.51cm and the actual Color expression produces0.33. Native Sketchpad
@@ -128,3 +129,42 @@ Table value setters also preserve imported visibility and accepted opaque
 padding. The observed two-row default table retains its native `t` padding
 marker. Updated groups are parsed before mutation; if changed text leaves too
 little padding for a nonzero imported marker the edit is rejected atomically.
+
+Updated corpus audit after the function-argument and length-threshold fixes:
+18,905 unsupported calculations lack numeric parent units;3,313 have unsupported
+record layouts;888 unexpected tokens;732 unsupported headers;394 unsupported
+tokens;174 unclosed ordinary groups;156 invalid source tokens;117 incompatible
+units;79 unclosed function arguments;49 invalid reference counts. Function
+argument failures fell from825 to79. The standalone audit output is
+`/tmp/numeric_import_audit_updated.txt`.
+
+The raw sibling corpus contains313 native subtype80 Length parameters and123
+subtype81 degree parameters, alongside3,435 subtype79 scalar parameters.
+`fixtures/未实现的系统功能/parameter.gsp` opens/saves unchanged natively and
+displays t1=1.00°,t2=1.00cm,t3=1.00. Its numeric words are respectively
+[1,0x0101],[1,0x0201],[1]. Degree animation step/domain use native radians
+(step0.08726646259971667=5°,domain0..6.2831853071796); Length step/domain
+use native pixels (step0.3779527559055118=0.01cm,domain0..3779.5275590551178).
+The degree persisted cache is0.78539816339745 despite its displayed1.00° value:
+cache fields must remain opaque and cannot supply current parameter values.
+Typed support therefore needs separate value words, display units, animation
+conversion, header validation, unit inference, and authored/edited native probes.
+Simply accepting suffix tokens or reading cached doubles would be incorrect.
+
+The 3,313 remaining calculation record-layout failures are precisely native
+empty0x232e records immediately after the font and before the terminator
+(2,265 unnamed,1,048 named). Bounded parsing now accepts that sequence only;
+nonempty, duplicated, or misplaced attributes remain unsupported and preserve
+the input bytes. Actual cube3D object14 is sin(source×360°). Rebinding its
+source to cood's t1 proves live math with a dependent native numeric XY point:
+t1=1 gives x≈0,y2; editing t1=1.25 gives x1,y2.25. Both files open/save
+byte-identically. Native snapshots are retained under
+`numeric_empty_calculation_attribute_xy*_native_verified.gsp`.
+
+Caption control probes separate the empty attribute from presentation:
+mode1/flags0/font0 renders value-only0.00 at(10,150), retaining0x232e;
+mode1/flags2/font0 renders no caption at the same anchor after removing0x232e.
+Headerflag2 therefore suppresses the observed mode1 caption independently
+of the attribute and font. This behavior is represented separately from
+visibility's flag1 bit, preserving the imported flag bytes. Other mode/flag
+combinations are not generalized from this probe.

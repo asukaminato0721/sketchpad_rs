@@ -21,7 +21,8 @@ impl Kind {
     pub fn numeric_unit(&self) -> Option<NumericUnit> {
         match self {
             Kind::Calculation(group) => Some(group.unit()),
-            Kind::Parameter(_) | Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => {
+            Kind::Parameter(group) => Some(group.unit()),
+            Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => {
                 Some(NumericUnit::Scalar)
             }
             Kind::LengthPairCalculation(_, _, group) => match group.length_power() {
@@ -1162,7 +1163,9 @@ pub(super) fn expected_parameter_locus_refs(objects: &[Object], driver: usize, t
     let moving = objects.get(driver.checked_sub(1)?)?;
     let traced = objects.get(target.checked_sub(1)?)?;
     if driver >= target || moving.deleted || traced.deleted || moving.page != traced.page
-        || !matches!(moving.kind, Kind::Parameter(_)) || !is_point_kind(&traced.kind)
+        || !matches!(moving.kind, Kind::Parameter(_))
+        || moving.kind.numeric_unit() != Some(NumericUnit::Scalar)
+        || !is_point_kind(&traced.kind)
     { return None; }
     let mut found = BTreeSet::new();
     if !dependent_path(objects, driver, target, moving.page, &mut found, &mut BTreeSet::new())? { return None; }
@@ -1321,6 +1324,52 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
             Kind::Ray(_, _) => value >= 0.0,
             _ => true,
         }
+}
+
+/// Code 95 additionally supports polygon boundaries; literal code 123 keeps
+/// its independently checked path families.
+pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
+    is_plot_path_kind(kind) || kind.is_polygon()
+}
+
+pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
+    plot_path_accepts(kind, value) || (kind.is_polygon() && value.is_finite())
+}
+
+/// Supported polygon transforms retain their source's vertex count. Require
+/// earlier, same-page sources so malformed chains cannot loop or cross pages.
+pub(super) fn polygon_vertex_count(objects: &[Object], mut id: usize) -> Option<usize> {
+    let page = objects.get(id.checked_sub(1)?)?.page;
+    loop {
+        let object = objects.get(id.checked_sub(1)?)?;
+        if object.deleted || object.id != id || object.page != page {
+            return None;
+        }
+        let source = match &object.kind {
+            Kind::Polygon(vertices) => {
+                super::records::polygon_subtype(vertices.len())?;
+                return Some(vertices.len());
+            }
+            Kind::ReflectedPolygon(source, _)
+            | Kind::VectorTranslatedPolygon(source, _, _)
+            | Kind::PolarTranslatedPolygon(source, _, _, _)
+            | Kind::FixedRectangularTranslatedPolygon(source, _, _, _, _)
+            | Kind::MarkedDistanceTranslatedPolygon(source, _, _)
+            | Kind::RectangularMarkedTranslatedPolygon(source, _, _)
+            | Kind::MixedRectangularTranslatedPolygon(source, _, _, _)
+            | Kind::RotatedPolygon(source, _, _)
+            | Kind::CalculatedAngleRotatedPolygon(source, _, _)
+            | Kind::CalculatedRatioScaledPolygon(source, _, _)
+            | Kind::AngleRotatedPolygon(source, _, _, _, _)
+            | Kind::ScaledPolygon(source, _, _)
+            | Kind::RatioScaledPolygon(source, _, _, _, _) => *source,
+            _ => return None,
+        };
+        if source == 0 || source >= id {
+            return None;
+        }
+        id = source;
+    }
 }
 
 pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {

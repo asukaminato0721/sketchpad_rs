@@ -41,3 +41,36 @@ Regression coverage is in `document/tests/text_and_style.rs`,
 `editor/tests/precision_and_clipboard.rs`, and the native numeric import tests.
 Native measurement names and symbol typography are still separate work from
 retaining label bytes, position, and indexed caption fonts.
+
+## Moving existing captions on multiple pages
+
+An imported multi-page document carries the decoder's partial-view flag even
+when all its objects are known. Moving a saved measurement caption now accepts
+that bounded case, requiring the original object count, no deleted or unknown
+objects, and no image read-only state. A candidate document must serialize and
+reparse successfully before either live state or history changes. Active-page
+checks remain in place; save validation retains every other source object.
+
+`multi_page_measurement_caption_moves_atomically_and_preserves_other_page`
+checks a signed position (-20,150), values and fonts, unchanged other objects,
+save/reopen, undo/redo, and rejected off-page/unknown-object attempts. To generate
+the actual writer output for a native probe, run
+`SKETCHPAD_WRITE_CAPTION_FIXTURE=1 cargo test multi_page_measurement_caption_moves --lib`.
+The resulting 4,874-byte file opened and saved byte-identically in Sketchpad 5;
+the script succeeded before the byte comparison. The durable native-verified
+result is `tests/fixtures/two_page_measurement_caption_moved_native_verified.gsp`,
+and the capture prefix is `/tmp/multi_page_measurement_caption_moved_native`.
+
+## Calculation display modes
+
+The shared calculation-caption renderer distinguishes the native display modes
+verified by controlled probes. Mode 1 shows a value, optionally prefixed by its
+saved numeric name. A named mode-3 value uses its saved name (for example,
+`Color = 0.33`) rather than its full expression. Unnamed mode-3 and other modes
+retain the expression display until independently probed. Header flag 2 hides
+the observed mode-1 caption without hiding the calculation's dependent geometry;
+visibility flag 1 is separate. The native empty `0x232e` attribute does not itself
+hide the caption. The same utility supplies desktop/SVG text and picking bounds,
+so a suppressed caption leaves no numeric hit rectangle. The numeric integration
+regression checks the native named value and the controlled visible/suppressed
+cases; detailed files and probes are in `numeric_native_import_analysis.md`.

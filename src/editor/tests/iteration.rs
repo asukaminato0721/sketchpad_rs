@@ -324,3 +324,28 @@ fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
             .partial_view
     );
 }
+
+#[test]
+fn mapped_midpoint_iteration_point_binding_is_pickable_and_styles_survive_save() {
+    let doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/mapped_midpoint_triangle_native_verified.gsp"),
+        None,
+    )
+    .unwrap();
+    let mut editor = Editor::new(doc);
+    let vp = Viewport {
+        rect: egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(1000., 800.)),
+        scale: 2.,
+        center: Point { x: 750., y: 350. },
+    };
+    let point = editor.doc.mapped_point_binding_images(14).unwrap()[0];
+    assert_eq!(editor.hit(&vp, vp.screen(point)), Some(14));
+    editor.doc.selected.insert(14);
+    editor
+        .doc
+        .set_selected_point_style(sketchpad_rs::style_records::PointStyle::Large)
+        .unwrap();
+    editor.doc.verify_roundtrip().unwrap();
+    editor.doc.objects[13].visible = false;
+    assert_ne!(editor.hit(&vp, vp.screen(point)), Some(14));
+}

@@ -1,4 +1,4 @@
-use super::kind::plot_path_accepts;
+use super::kind::{plot_path_accepts, value_plot_path_accepts};
 use super::{Document, Kind, Point};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{plot_axis_records, plot_points_records, style_records};
@@ -180,7 +180,22 @@ impl Document {
             return Err("Select a scalar numeric value".into());
         }
         let value = self.numeric_value(source).ok_or("Numeric value is undefined")?;
-        self.plotted_path_position(path, value)?;
+        let host = self
+            .objects
+            .get(path.checked_sub(1).ok_or("Invalid path")?)
+            .ok_or("Invalid path")?;
+        if host.kind.is_polygon() {
+            if host.page != self.active_page
+                || host.deleted
+                || !value_plot_path_accepts(&host.kind, value)
+            {
+                return Err("Select a polygon on this page and a finite value".into());
+            }
+            self.point_at_polygon_parameter(path, value)
+                .ok_or("Polygon perimeter is undefined")?;
+        } else {
+            self.plotted_path_position(path, value)?;
+        }
         let group = plot_axis_records::encode_group([source as u32, path as u32])?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();

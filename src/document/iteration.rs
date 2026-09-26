@@ -111,7 +111,7 @@ pub(super) fn supported_branch_polygon_mapping(
         && segments.iter().all(|id| get(*id).is_some_and(|o| matches!(o.kind, Kind::Segment(a,b) if a != b && [seed,first,second].contains(&a) && [seed,first,second].contains(&b))))
 }
 
-/// Native simultaneous free-point mappings whose construction graph uses vectors and segments.
+/// Native simultaneous free-point mappings using vectors, midpoints, and segments.
 pub(super) fn supported_mapped_point_iteration(
     objects: &[Object],
     seeds: &[usize],
@@ -154,7 +154,7 @@ pub(super) fn supported_mapped_point_iteration(
             Kind::VectorTranslatedPoint(a, b, c) | Kind::VectorTranslatedSegment(a, b, c) => {
                 pending.extend([a, b, c])
             }
-            Kind::Segment(a, b) => pending.extend([a, b]),
+            Kind::Segment(a, b) | Kind::Midpoint(a, b) => pending.extend([a, b]),
             _ => return false,
         }
     }
@@ -169,39 +169,59 @@ impl Document {
         carried: &[usize],
         depth: IterationDepth,
     ) -> Result<usize, String> {
-        if self.partial_view
-            || !self.safe_structure
-            || self.page_count != 1
+        let bindings: Vec<_> = carried.iter().copied().filter(|id| {
+            self.objects.get(id.saturating_sub(1)).is_some_and(|o| matches!(o.kind,
+                Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _)))
+        }).collect();
+        self.add_mapped_point_iteration_with_bindings(seeds, branches, carried, &bindings, depth)
+    }
+
+    /// Choose visible carried bindings explicitly: native carried references also include prerequisites.
+    pub fn add_mapped_point_iteration_with_bindings(
+        &mut self, seeds: &[usize], branches: &[Vec<usize>], carried: &[usize],
+        bindings: &[usize], depth: IterationDepth,
+    ) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1
             || self.numeric_iteration_depth(depth).is_none()
             || !supported_mapped_point_iteration(&self.objects, seeds, branches, carried)
+            || bindings.is_empty()
+            || bindings.iter().copied().collect::<BTreeSet<_>>().len() != bindings.len()
+            || bindings.iter().any(|id| !carried.contains(id) || !self.objects.get(id.saturating_sub(1))
+                .is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind,
+                    Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))))
         {
-            return Err("Select simultaneous free-point vector mappings and carried segments; depth must be 1–128".into());
+            return Err("Select simultaneous free-point vector or midpoint mappings and carried point/segment bindings; depth must be 1–128".into());
         }
         self.checkpoint();
         let id = self.append_object(Kind::MappedPointIteration {
-            seeds: seeds.to_vec(),
-            branches: branches.to_vec(),
-            carried: carried.to_vec(),
-            depth,
+            seeds: seeds.to_vec(), branches: branches.to_vec(), carried: carried.to_vec(), depth,
         });
-        for source in carried {
-            if matches!(
-                self.objects[*source - 1].kind,
-                Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _)
-            ) {
-                let style = self.objects[*source - 1].visual_style;
-                let binding = self.append_object(Kind::IterationBinding(*source, id));
-                self.objects[binding - 1].visual_style = style;
-            }
+        for source in bindings {
+            let style = self.objects[*source - 1].visual_style;
+            let binding = self.append_object(Kind::IterationBinding(*source, id));
+            self.objects[binding - 1].visual_style = style;
         }
         Ok(id)
     }
 
-    fn mapped_segment_iteration_images(
-        &self,
-        source: usize,
-        iteration: usize,
-    ) -> Option<Vec<(Point, Point)>> {
+    fn mapped_segment_iteration_images(&self, source: usize, iteration: usize) -> Option<Vec<(Point, Point)>> {
+        self.mapped_iteration_images(source, iteration, |sample, id| {
+            sample.line_points(id).map(|(a, b, _)| (a, b))
+        })
+    }
+
+    pub fn mapped_point_binding_images(&self, id: usize) -> Option<Vec<Point>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = object.kind else { return None; };
+        if object.deleted || !self.objects.get(source.checked_sub(1)?)
+            .is_some_and(|o| is_point_kind(&o.kind)) { return None; }
+        self.mapped_iteration_images(source, iteration, |sample, id| sample.position(id))
+    }
+
+    fn mapped_iteration_images<T>(
+        &self, source: usize, iteration: usize,
+        mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
+    ) -> Option<Vec<T>> {
         let object = self.objects.get(iteration.checked_sub(1)?)?;
         let Kind::MappedPointIteration {
             seeds,
@@ -255,8 +275,7 @@ impl Document {
                 for (id, point) in seeds.iter().zip(state) {
                     sample.objects[*id - 1].kind = Kind::Free(*point);
                 }
-                let (a, b, _) = sample.line_points(source)?;
-                result.push((a, b));
+                result.push(evaluate(&sample, source)?);
             }
             level = next;
         }
@@ -739,6 +758,7 @@ impl Document {
         Some(orbit)
     }
     pub fn point_iteration_images(&self, id: usize) -> Option<Vec<Point>> {
+        if let Some(images) = self.mapped_point_binding_images(id) { return Some(images); }
         let (seed, image, depth) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::PointIteration(seed, image, depth) => {
                 (seed, image, self.numeric_iteration_depth(depth)?)

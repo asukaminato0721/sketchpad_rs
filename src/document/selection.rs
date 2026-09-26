@@ -135,6 +135,7 @@ impl Document {
                 object.kind,
                 Kind::PointParameterIteration(..)
                     | Kind::BranchingPolygonIteration { .. }
+                    | Kind::MappedPointIteration { .. }
                     | Kind::SegmentIteration(_, _, _, _)
                     | Kind::CircleIteration(..)
                     | Kind::RayIteration(_, _, _, _)

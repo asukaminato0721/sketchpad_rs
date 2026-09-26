@@ -747,6 +747,8 @@ impl Document {
                     } else {
                         *include_bytes!("../../assets/segment_value_depth_point_binding.bin")
                     }
+                } else if branch_polygon && crate::document::kind::is_point_kind(&self.objects[image - 1].kind) {
+                    *include_bytes!("../../assets/point_iteration_binding_group.bin")
                 } else if branch_polygon {
                     if segment {
                         *include_bytes!("../../assets/branch_polygon_iteration_segment_binding.bin")
