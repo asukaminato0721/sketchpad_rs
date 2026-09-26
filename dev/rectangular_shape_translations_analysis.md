@@ -1,0 +1,7 @@
+# Marked and mixed rectangular translations of segments and circles
+
+The existing point/polygon records define codes 18 (fixed horizontal, marked vertical), 19 (marked horizontal, fixed vertical), and 20 (both marked). Segment translations retain subtype 14 and circle translations retain subtype 28. Mixed translations carry the existing 28-byte constraint payload with the fixed value in pixels and centimeters. Code 20 has no constraint payload; its three dependencies are source, horizontal length, and vertical length.
+
+`tests/transform_rectangular_shapes_replay.txt` generates all six segment/circle combinations, then moves both marked-distance defining points. With `SKETCHPAD_WINEPREFIX=/home/w/.cache/sketchpad_rs_wine`, `dev/wine_roundtrip.sh` opened and saved the generated 3000-byte file in Sketchpad 5 successfully. A separate `cmp` confirmed byte identity. The native-verified result is `tests/fixtures/rectangular_shapes_translation_verified.gsp`.
+
+Rust regression tests cover import, all six kinds, signed fixed offsets, live marked distances, clipboard dependency remapping, dependent deletion, and save/reopen. Invalid length domains suppress dependent geometry while retaining structurally valid records for saving and later recovery. Style header classification accepts codes 18–20 for segments and circles, allowing imported/native and newly generated shapes to keep stroke styles.

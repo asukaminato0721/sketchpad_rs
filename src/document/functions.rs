@@ -235,7 +235,8 @@ impl Document {
             Kind::ParametricPlot(x, y, frame, _, _, _, mode) => {
                 Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
             }
-            _ => return Err("Select one function or parametric plot".into()),
+            Kind::ParameterLocus(ref refs, _, _, _) => Kind::ParameterLocus(refs.clone(), min, max, samples),
+            _ => return Err("Select one function, parametric plot, or parameter locus".into()),
         };
         if object.kind == updated {
             return Ok(());

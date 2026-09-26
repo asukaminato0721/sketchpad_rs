@@ -1,10 +1,10 @@
 use super::calculations::calculation_source_ids;
 use super::iteration::{
-    supported_branch_polygon_mapping, supported_point_iteration_mapping,
+    supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
     supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_locus_refs, is_point_kind, is_straight_kind, plot_path_accepts, straight_kind_mode,
+    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, straight_kind_mode,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -73,6 +73,8 @@ impl Document {
                         | Kind::PathLiteralPoint(_, _)
                         | Kind::PathValuePoint(_, _)
                         | Kind::PlottedPoint(_, _, _, _)
+                        | Kind::NumericCoordinatePoint(_, _, _)
+                        | Kind::ParameterLocus(_, _, _, _)
                 )
         });
         let only_independent_objects_deleted = self
@@ -172,6 +174,15 @@ impl Document {
                     if o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(value.saturating_sub(1)).is_some_and(|o|!o.deleted&&o.kind.is_iteration_depth_value())
                         || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
                         || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
+                }
+                Kind::MappedPointIteration { seeds, branches, carried, depth } => {
+                    let valid_depth = match depth {
+                        IterationDepth::Fixed(n) => (1..=128).contains(n),
+                        IterationDepth::Value(id) => *id > 0 && *id < o.id && self.objects.get(id - 1).is_some_and(|p| !p.deleted && p.kind.is_iteration_depth_value()),
+                    };
+                    if !valid_depth || !supported_mapped_point_iteration(&self.objects, seeds, branches, carried) {
+                        return Err(format!("Invalid mapped point iteration {}", o.id));
+                    }
                 }
                 Kind::PointIteration(seed,image,depth)=>{
                     let valid_depth=match depth {IterationDepth::Fixed(n)=>(1..=128).contains(n),IterationDepth::Value(id)=>*id>0 && *id<o.id && self.objects.get(id-1).is_some_and(|p|!p.deleted&&p.kind.is_iteration_depth_value())};
@@ -311,10 +322,10 @@ impl Document {
                     }
                 }
             }
-            if o.label.is_some() && !is_point_kind(&o.kind) {
-                return Err(format!("Invalid point label in object {}", o.id));
+            if o.label.is_some() && !is_point_kind(&o.kind) && o.kind.numeric_unit().is_none() && !matches!(o.kind, Kind::ValueEquation {..} | Kind::CoordinateMeasurement {..}) {
+                return Err(format!("Invalid object label in object {}", o.id));
             }
-            if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
+            if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) | Kind::PointOnPolygon(_, _, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnRay(_, t) if !t.is_finite() || t < 0.)
                 || matches!(o.kind, Kind::PointOnLine(_, t) if !t.is_finite())
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
@@ -340,7 +351,7 @@ impl Document {
                     || (yu - 37.79527559055118).abs() > 1e-9)
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedPoint(_, _, angle) if !angle.is_finite())
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(_, _, angle) | Kind::MarkedDistanceTranslatedCircle(_, _, angle) | Kind::MarkedDistanceTranslatedPolygon(_, _, angle) if !angle.is_finite())
-                || matches!(o.kind, Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedPolygon(_, _, fixed_cm, _) if !fixed_cm.is_finite())
+                || matches!(o.kind, Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedSegment(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedCircle(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedPolygon(_, _, fixed_cm, _) if !fixed_cm.is_finite())
                 || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) | Kind::ScaledSegment(_, _, factor) | Kind::ScaledPolygon(_, _, factor) if !factor.is_finite() || factor == 0.)
                 || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedCircle(_, _, angle) | Kind::RotatedPolygon(_, _, angle) if !angle.is_finite())
             {
@@ -459,6 +470,14 @@ impl Document {
                     || !matches!(self.objects[host - 1].kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
                 {
                     return Err(format!("Invalid segment host in midpoint {}", o.id));
+                }
+            }
+            if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
+                if !min.is_finite() || !max.is_finite() || min >= max
+                    || !(2..=4096).contains(&samples)
+                    || refs.first().zip(refs.get(1)).and_then(|(&target, &driver)| expected_parameter_locus_refs(&self.objects, driver, target)).as_ref() != Some(refs)
+                {
+                    return Err(format!("Invalid parameter locus {}", o.id));
                 }
             }
             if let Kind::Locus(ref refs, samples) = o.kind {
@@ -600,18 +619,8 @@ impl Document {
                 }
             }
             if let Kind::PathValuePoint(source, path) = o.kind {
-                if !matches!(
-                    self.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
-                    Some(Kind::Parameter(_))
-                ) || !self
-                    .objects
-                    .get(path.saturating_sub(1))
-                    .is_some_and(|host| {
-                        let Kind::Parameter(ref group) = self.objects[source - 1].kind else {
-                            return false;
-                        };
-                        plot_path_accepts(&host.kind, group.value())
-                    })
+                if !self.objects.get(source.saturating_sub(1)).is_some_and(|parent| !parent.deleted && parent.page == o.page && source < o.id && parent.kind.numeric_unit() == Some(NumericUnit::Scalar))
+                    || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| plot_path_accepts(&host.kind, value)))
                     || self.position(o.id).is_none()
                 {
                     return Err(format!("Invalid path value point {}", o.id));
@@ -625,6 +634,14 @@ impl Document {
                     || self.position(o.id).is_none()
                 {
                     return Err(format!("Invalid literal path point {}", o.id));
+                }
+            }
+            if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind {
+                if ![x, y].iter().all(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == o.page && id < o.id && source.kind.numeric_unit().is_some()))
+                    || self.objects.get(frame.saturating_sub(1)).is_none_or(|source| source.deleted || source.page != o.page || frame >= o.id || !matches!(source.kind, Kind::CoordinateSystem(_, _)))
+                    || self.graph_frame(frame).is_none()
+                {
+                    return Err(format!("Invalid numeric coordinate point {}", o.id));
                 }
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind {
@@ -674,7 +691,9 @@ impl Document {
             {
                 let hosts_match = match kind {
                     ValueEquationKind::PointValue => {
-                        matches!(self.objects.get(first.saturating_sub(1)).map(|object| &object.kind), Some(Kind::PointOnSegment(host, _) | Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) | Kind::PointOnArc(host, _) | Kind::PointOnCircle(host, _, _)) if *host == second)
+                        self.objects.get(first.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                            && self.objects.get(second.saturating_sub(1)).is_some_and(|object| is_straight_kind(&object.kind) || object.kind.is_circle() || is_arc_kind(&object.kind)
+                                || matches!(self.objects[first-1].kind, Kind::PointOnPolygon(host, _, _) if host == second))
                     }
                     ValueEquationKind::LineEquation => {
                         self.objects
@@ -762,6 +781,11 @@ impl Document {
             {
                 return Err(format!("Invalid points in angle measurement {}", o.id));
             }
+            if let Kind::PointOnPolygon(host, edge, _) = o.kind {
+                if !matches!(self.objects.get(host.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Polygon(vertices)) if edge < vertices.len()) {
+                    return Err(format!("Invalid polygon boundary constraint {}", o.id));
+                }
+            }
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnSegment(host, _) if self.objects.get(host.saturating_sub(1)).and_then(|o| straight_kind_mode(&o.kind)) != Some(LineMode::Segment))
             {
@@ -838,19 +862,15 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::MarkedDistanceTranslatedPoint(source, distance, _)
-                    if self.position(source).is_none()
-                    || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
-                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
-                    || self.distance_value_pixels(distance).is_none())
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
             {
                 return Err(format!("Invalid marked distance translation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(source, distance, _)
                     if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
-                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
-                    || self.distance_value_pixels(distance).is_none()
-                    || self.line_points(o.id).is_none())
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
             {
                 return Err(format!(
                     "Invalid marked-distance segment translation {}",
@@ -860,9 +880,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::MarkedDistanceTranslatedCircle(source, distance, _)
                     if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
-                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
-                    || self.distance_value_pixels(distance).is_none()
-                    || self.circle_points(o.id).is_none())
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
             {
                 return Err(format!(
                     "Invalid marked-distance circle translation {}",
@@ -871,20 +889,48 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::MixedRectangularTranslatedPoint(source, distance, _, _)
-                    if self.position(source).is_none()
-                    || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
-                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
-                    || self.distance_value_pixels(distance).is_none())
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
+            {
+                return Err(format!("Invalid mixed rectangular translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::MixedRectangularTranslatedSegment(source, distance, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
+            {
+                return Err(format!("Invalid mixed rectangular translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::MixedRectangularTranslatedCircle(source, distance, _, _)
+                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    || !self.objects.get(distance.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value()))
             {
                 return Err(format!("Invalid mixed rectangular translation {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
-                if self.position(source).is_none()
-                || !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
+                if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
                 || [horizontal, vertical].iter().any(|&id| {
                     !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
-                    || self.distance_value_pixels(id).is_none()
+                }))
+            {
+                return Err(format!("Invalid rectangular marked translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
+                if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                || [horizontal, vertical].iter().any(|&id| {
+                    !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
+                }))
+            {
+                return Err(format!("Invalid rectangular marked translation {}", o.id));
+            }
+            if i >= self.source_count
+                && matches!(o.kind, Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical)
+                if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                || [horizontal, vertical].iter().any(|&id| {
+                    !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())
                 }))
             {
                 return Err(format!("Invalid rectangular marked translation {}", o.id));
@@ -901,7 +947,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::VectorTranslatedSegment(source, start, end)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| !object.deleted && is_segment_kind(&object.kind))
                     || [start, end].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()))
                     || self.line_points(o.id).is_none())
             {
@@ -909,7 +955,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::VectorTranslatedCircle(source, start, end)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| !object.deleted && object.kind.is_circle())
                     || [start, end].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(id).is_none()))
                     || self.circle_points(o.id).is_none())
             {
@@ -926,8 +972,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::MarkedDistanceTranslatedPolygon(source, distance, _)
                     if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
-                    || self.distance_value_pixels(distance).is_none()
-                    || self.polygon_points(o.id).is_none())
+                    || [distance].iter().any(|&id| !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())))
             {
                 return Err(format!(
                     "Invalid interior or distance in translation {}",
@@ -937,9 +982,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical)
                     if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
-                    || self.distance_value_pixels(horizontal).is_none()
-                    || self.distance_value_pixels(vertical).is_none()
-                    || self.polygon_points(o.id).is_none())
+                    || [horizontal, vertical].iter().any(|&id| !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())))
             {
                 return Err(format!(
                     "Invalid interior or distances in translation {}",
@@ -949,8 +992,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::MixedRectangularTranslatedPolygon(source, distance, _, _)
                     if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Polygon(_)))
-                    || self.distance_value_pixels(distance).is_none()
-                    || self.polygon_points(o.id).is_none())
+                    || [distance].iter().any(|&id| !self.objects.get(id.saturating_sub(1)).is_some_and(|object| object.kind.is_distance_value())))
             {
                 return Err(format!(
                     "Invalid interior or distance in mixed translation {}",
@@ -1146,9 +1188,6 @@ impl Document {
                     o.kind,
                     Kind::PolarTranslatedPoint(_, _, _, _)
                         | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
-                        | Kind::MarkedDistanceTranslatedPoint(_, _, _)
-                        | Kind::MixedRectangularTranslatedPoint(_, _, _, _)
-                        | Kind::RectangularMarkedTranslatedPoint(_, _, _)
                         | Kind::VectorTranslatedPoint(_, _, _)
                         | Kind::ReflectedPoint(_, _)
                         | Kind::ScaledPoint(_, _, _)
@@ -1338,6 +1377,10 @@ impl Document {
                             && saved.function_anchor != current.function_anchor
                         || current.function_name.is_some()
                             && saved.function_name != current.function_name
+                        || current.measurement_anchor.is_some()
+                            && saved.measurement_anchor != current.measurement_anchor
+                        || current.measurement_precision.is_some()
+                            && saved.measurement_precision != current.measurement_precision
                 })
         {
             return Err("Serialized sketch does not preserve the edited objects".into());

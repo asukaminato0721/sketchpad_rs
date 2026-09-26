@@ -94,10 +94,11 @@ impl Editor {
         text: &str,
     ) -> egui::Rect {
         let at = self.doc.objects[id - 1]
-            .function_anchor
+            .measurement_anchor.or(self.doc.objects[id - 1].function_anchor)
             .map(|(x, y)| v.rect.min + egui::vec2(x as f32 + 2., y as f32 + 7.))
             .unwrap_or_else(|| v.rect.min + egui::vec2(12., 12. + row as f32 * 20.));
-        egui::Rect::from_min_size(at, egui::vec2(text.chars().count() as f32 * 9., 19.))
+        let size = self.doc.text_font_state(id).map_or(16., |style| f32::from(style.size_code));
+        egui::Rect::from_min_size(at, egui::vec2(text.chars().count() as f32 * size * 0.6, size + 3.))
     }
     pub(super) fn button_offset(&self, v: &Viewport) -> egui::Vec2 {
         egui::vec2(
@@ -311,7 +312,8 @@ impl Editor {
                         }
                         Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
-                        | Kind::Locus(_, _) => {
+                        | Kind::Locus(_, _)
+                        | Kind::ParameterLocus(_, _, _, _) => {
                             if let Some(polygons) = self.doc.locus_polygon_surfaces(o.id, 125)
                                 && polygons.iter().any(|points| {
                                     points

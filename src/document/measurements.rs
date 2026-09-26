@@ -96,6 +96,31 @@ impl Document {
         let unit = object.kind.numeric_unit()?.suffix();
         Some(format!("{name} = {value}{unit}"))
     }
+    /// Move a numeric measurement caption without altering its geometry or value.
+    pub fn move_measurement_caption(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
+        self.move_measurement_caption_inner(id, anchor, true)
+    }
+    pub fn drag_measurement_caption(&mut self, id: usize, anchor: (i16, i16)) -> Result<(), String> {
+        self.move_measurement_caption_inner(id, anchor, false)
+    }
+    fn move_measurement_caption_inner(&mut self, id: usize, anchor: (i16, i16), checkpoint: bool) -> Result<(), String> {
+        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid measurement ID")?).ok_or("Invalid measurement ID")?;
+        if object.deleted || object.page != self.active_page
+            || (object.measurement_anchor.is_none() && !object.kind.has_measurement_precision()) {
+            return Err("Select a numeric measurement caption on the current page".into());
+        }
+        if !self.safe_structure || self.image_read_only
+            || self.objects.iter().any(|object| matches!(object.kind, Kind::Unsupported(_)))
+        {
+            return Err("Cannot move a measurement caption in this sketch safely".into());
+        }
+        if object.measurement_anchor != Some(anchor) {
+            if checkpoint { self.checkpoint(); }
+            self.objects[id-1].measurement_anchor = Some(anchor);
+            self.dirty = true;
+        }
+        Ok(())
+    }
     pub fn set_measurement_precision(
         &mut self,
         ids: &[usize],
@@ -315,19 +340,37 @@ impl Document {
                         value_equation_records::segment_point_value(point, screen(a), screen(b))
                     }
                     ref kind if kind.is_circle() => {
-                        let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind
-                        else {
+                        if let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind {
+                            if host == second {
+                                return value_equation_records::circle_point_value(x, y);
+                            }
+                        }
+                        let (center, _) = self.circle_points(second)?;
+                        let dx = point.x - center.x;
+                        let dy = center.y - point.y;
+                        let length = dx.hypot(dy);
+                        if !length.is_finite() || length == 0. {
                             return None;
-                        };
-                        (host == second)
-                            .then(|| value_equation_records::circle_point_value(x, y))
-                            .flatten()
+                        }
+                        value_equation_records::circle_point_value(dx / length, dy / length)
                     }
                     Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
-                        let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind else {
+                        if let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind {
+                            if host == second {
+                                return t.is_finite().then_some(EquationValue::PointValue(t));
+                            }
+                        }
+                        self.arc_parameter(second, Point { x: point.x, y: point.y })
+                            .map(EquationValue::PointValue)
+                    }
+                    ref kind if kind.is_polygon() => {
+                        let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind else {
                             return None;
                         };
-                        (host == second && t.is_finite()).then_some(EquationValue::PointValue(t))
+                        if host != second {
+                            return None;
+                        }
+                        self.polygon_boundary_parameter(host, edge, t).map(EquationValue::PointValue)
                     }
                     _ => None,
                 }

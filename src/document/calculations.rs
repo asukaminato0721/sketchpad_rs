@@ -107,12 +107,21 @@ impl Document {
         value: f64,
         checkpoint: bool,
     ) -> Result<(), String> {
-        if self.partial_view || self.page_count != 1 || id == 0 {
+        if id == 0 || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
+            || (self.page_count > 1 && (self.image_read_only
+                || self.source_count != self.objects.len()
+                || self.objects.iter().any(|object| object.deleted || matches!(object.kind, Kind::Unsupported(_))))) {
             return Err("Cannot edit a parameter in this sketch".into());
         }
-        let Some(Kind::Parameter(group)) = self.objects.get(id - 1).map(|o| &o.kind) else {
+        let object = self.objects.get(id - 1).ok_or("Select a parameter")?;
+        if object.deleted || object.page != self.active_page
+            || (self.page_count > 1 && id > self.source_count) {
+            return Err("Select a saved parameter on the current page".into());
+        }
+        let Kind::Parameter(group) = &object.kind else {
             return Err("Select a parameter".into());
         };
+        let page = object.page;
         let mut group = group.clone();
         group.set_value(value)?;
         let mut tables = Vec::new();
@@ -120,9 +129,13 @@ impl Document {
         if group.name() == "t[1]" {
             for (index, object) in self.objects.iter().enumerate() {
                 if let Kind::ValueTable(source, table) = &object.kind
+                    && !object.deleted
                     && *source == id
                     && table.default_values().is_some()
                 {
+                    if object.page != page {
+                        return Err("Parameter table crosses sketch pages".into());
+                    }
                     let mut changed = table.clone();
                     changed.set_last_default_value(value)?;
                     single_tables.push((index, *source, changed));
@@ -132,7 +145,10 @@ impl Document {
         if matches!(group.name(), "t[1]" | "t[2]") {
             for (index, object) in self.objects.iter().enumerate() {
                 if let Kind::ValueTablePair(first, second, table) = &object.kind {
-                    if *first == id || *second == id {
+                    if !object.deleted && (*first == id || *second == id) {
+                        if object.page != page {
+                            return Err("Parameter table crosses sketch pages".into());
+                        }
                         let mut changed = table.clone();
                         changed.set_last_pair_axis_value(usize::from(*second == id), value)?;
                         tables.push((index, *first, *second, changed));
@@ -140,16 +156,25 @@ impl Document {
                 }
             }
         }
-        if checkpoint {
-            self.checkpoint();
-        }
-        self.objects[id - 1].kind = Kind::Parameter(group);
+        let mut candidate = self.clone();
+        candidate.objects[id - 1].kind = Kind::Parameter(group);
         for (index, source, table) in single_tables {
-            self.objects[index].kind = Kind::ValueTable(source, table);
+            candidate.objects[index].kind = Kind::ValueTable(source, table);
         }
         for (index, first, second, table) in tables {
-            self.objects[index].kind = Kind::ValueTablePair(first, second, table);
+            candidate.objects[index].kind = Kind::ValueTablePair(first, second, table);
         }
+        candidate.dirty = true;
+        if self.page_count > 1 {
+            let bytes = candidate.encode()?;
+            candidate.validate_reparsed_document(&Self::from_bytes(&bytes, None)?)?;
+        }
+        if checkpoint {
+            self.checkpoint();
+            candidate.undo = self.undo.clone();
+            candidate.redo = self.redo.clone();
+        }
+        *self = candidate;
         Ok(())
     }
     pub fn add_calculation_expression(

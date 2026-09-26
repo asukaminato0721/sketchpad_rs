@@ -9,17 +9,34 @@ fn word(bytes: &[u8], at: usize) -> u32 {
 
 /// Returns the local IDs of the value and its path.
 pub fn decode_group(group: &[u8]) -> Result<[u32; 2], String> {
-    if group.len() != 64
+    if group.len() < 64
         || word(group, 0) != 28
         || word(group, 4) != 0x07d0
         || word(group, 8) != 95
         || word(group, 36) != 12
         || word(group, 40) != 0x07d2
         || word(group, 44) != 2
-        || word(group, 56) != 0
-        || word(group, 60) != 0x07d7
     {
         return Err("Unsupported Plot Value on Axis group".into());
+    }
+    // Native calculation-driven path points can carry a point label and its
+    // caption font after the references. These are presentation, not sources.
+    let mut end = 56;
+    if word(group, end + 4) == 0x07d5 {
+        let len = word(group, end) as usize;
+        let data = end.checked_add(8).and_then(|start| {
+            start.checked_add(len).and_then(|stop| group.get(start..stop))
+        }).ok_or("Invalid Plot Value point label")?;
+        crate::text_records::LabelAux::parse(data)?;
+        end += 8 + len + len % 2;
+        if group.get(end..end + 10).is_none()
+            || word(group, end) != 2 || word(group, end + 4) != 0x07d8 {
+            return Err("Missing Plot Value point label font".into());
+        }
+        end += 10;
+    }
+    if group.len() != end + 8 || word(group, end) != 0 || word(group, end + 4) != 0x07d7 {
+        return Err("Unsupported Plot Value on Axis suffix".into());
     }
     let refs = [word(group, 48), word(group, 52)];
     if refs[0] == 0 || refs[1] == 0 || refs[0] == refs[1] {

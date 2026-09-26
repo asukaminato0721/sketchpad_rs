@@ -17,7 +17,9 @@ fn dimensional_length_expressions_update_units_and_marked_distance() {
         assert_eq!(doc.objects[id - 1].kind.numeric_unit(), Some(unit));
         assert!((doc.numeric_value(id).unwrap() - value).abs() < 1e-10);
     }
-    assert!(doc.add_parameter_calculation(4, "v+1", (10, 250)).is_err());
+    let threshold = doc.add_parameter_calculation(4, "v+1", (10, 250)).unwrap();
+    assert_eq!(doc.objects[threshold - 1].kind.numeric_unit(), Some(NumericUnit::Length));
+    assert_eq!(doc.numeric_value(threshold), Some(length + 1.));
     assert!(doc.add_parameter_calculation(4, "v+1°", (10, 250)).is_err());
     let cube = doc.add_parameter_calculation(4, "v^3", (10, 250)).unwrap();
     assert_eq!(

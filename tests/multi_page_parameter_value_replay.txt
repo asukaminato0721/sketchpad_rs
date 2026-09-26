@@ -1,0 +1,13 @@
+open tests/fixtures/mapped_point_iteration_ant_native.gsp
+page 1
+parameter_value 25 2
+save /tmp/mapped_point_iteration_ant_parameter_edited_port.gsp
+open tests/fixtures/two_page_parameter_tables_port.gsp
+page 1
+save /tmp/two_page_parameter_tables_port.gsp
+page 1
+parameter_value 1 -12.34
+parameter_value 2 7.5
+save /tmp/two_page_parameter_tables_edited_port.gsp
+parameter_value 1 8
+save /tmp/two_page_parameter_tables_integer_port.gsp

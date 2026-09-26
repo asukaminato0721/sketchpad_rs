@@ -7,21 +7,37 @@ use crate::text_style_records::FontState;
 use crate::{text_object, text_style_records};
 
 impl Document {
+    fn can_edit_literal_text(&self) -> bool {
+        if self.page_count == 1 {
+            !self.partial_view
+        } else {
+            !self.image_read_only
+                && self
+                    .objects
+                    .iter()
+                    .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
+                && self.objects[self.source_count..]
+                    .iter()
+                    .all(|object| super::kind::is_multi_page_addition_kind(&object.kind))
+        }
+    }
+
     pub fn add_text(&mut self, text: &str, at: Point) -> Result<usize, String> {
         let x = i16::try_from(at.x.round() as i64).map_err(|_| "Text x is out of range")?;
         let y = i16::try_from(at.y.round() as i64).map_err(|_| "Text y is out of range")?;
-        let rect = TextRect::roomy_at(x, y, text)?;
-        text_object::encode_plain_text_group(text, rect)?;
-        if self.partial_view || self.page_count != 1 {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let rect = TextRect::roomy_at(x, y, &normalized)?;
+        text_object::encode_plain_text_group(&normalized, rect)?;
+        if !self.can_edit_literal_text() {
             return Err("Cannot add text to this sketch safely".into());
         }
         Ok(self.add(Kind::PlainText {
-            text: text.to_owned(),
+            text: normalized,
             rect,
         }))
     }
     pub fn edit_text(&mut self, id: usize, text: &str) -> Result<(), String> {
-        if self.partial_view {
+        if !self.can_edit_literal_text() {
             return Err("Cannot edit text in a sketch with unsupported records safely".into());
         }
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -37,6 +53,9 @@ impl Document {
         else {
             return Err("Object is not free text".into());
         };
+        if object.deleted || object.page != self.active_page {
+            return Err("Text is not on the active page".into());
+        }
         let rect = TextRect::roomy_at(rect.left, rect.top, text)?;
         text_object::encode_plain_text_group(text, rect)?;
         let rich = if current != text {
@@ -110,11 +129,19 @@ impl Document {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if !matches!(object.kind, Kind::PlainText { .. })
             && !(is_point_kind(&object.kind) && object.label.is_some())
+            && object.kind.numeric_unit().is_none()
+            && !matches!(
+                object.kind,
+                Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+            )
         {
             return None;
         }
         if let Some(style) = &object.text_style_override {
             return Some(style.clone());
+        }
+        if object.header_offset.is_none() && object.kind.numeric_unit().is_some() {
+            return None;
         }
         let style = if let Some(header) = object.header_offset {
             let rs = records(&self.original).ok()?;
@@ -142,7 +169,7 @@ impl Document {
         &mut self,
         command: TextStyleCommand,
     ) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 {
+        if !self.can_edit_literal_text() {
             return Err("Cannot format text in this sketch safely".into());
         }
         let updates = self
@@ -154,7 +181,8 @@ impl Document {
                     !object.deleted
                         && object.page == self.active_page
                         && (matches!(object.kind, Kind::PlainText { .. })
-                            || (is_point_kind(&object.kind) && object.label.is_some()))
+                            || (is_point_kind(&object.kind) && object.label.is_some())
+                            || object.measurement_anchor.is_some())
                 })
             })
             .map(|id| {
@@ -190,7 +218,7 @@ impl Document {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if updates.is_empty() {
-            return Err("Select free text to format".into());
+            return Err("Select text, a labeled point, or a measurement caption to format".into());
         }
         let count = updates.len();
         self.checkpoint();
@@ -200,7 +228,7 @@ impl Document {
         Ok(count)
     }
     pub fn set_selected_text_family(&mut self, family: &str) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 {
+        if !self.can_edit_literal_text() {
             return Err("Cannot format text in this sketch safely".into());
         }
         text_style_records::encode_font_family_payload(family)?;
@@ -213,7 +241,8 @@ impl Document {
                     !object.deleted
                         && object.page == self.active_page
                         && (matches!(object.kind, Kind::PlainText { .. })
-                            || (is_point_kind(&object.kind) && object.label.is_some()))
+                            || (is_point_kind(&object.kind) && object.label.is_some())
+                            || object.measurement_anchor.is_some())
                 })
             })
             .map(|id| {
@@ -223,7 +252,7 @@ impl Document {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if updates.is_empty() {
-            return Err("Select free text or labeled points to format".into());
+            return Err("Select text, a labeled point, or a measurement caption to format".into());
         }
         let count = updates.len();
         self.checkpoint();
@@ -307,7 +336,7 @@ impl Document {
         end: usize,
         mut modify: impl FnMut(&mut text_object::RichRunStyle, &FontState) -> Result<(), String>,
     ) -> Result<(), String> {
-        if self.partial_view || self.page_count != 1 {
+        if !self.can_edit_literal_text() {
             return Err("Cannot format text in this sketch safely".into());
         }
         let object = self

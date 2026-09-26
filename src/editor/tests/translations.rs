@@ -334,3 +334,34 @@ fn rectangular_circle_and_vector_shape_translation() {
     );
     assert!(editor.doc.circle_points(translated).is_some());
 }
+
+#[test]
+fn marked_and_mixed_rectangular_translation_accepts_segments_and_circles() {
+    let mut editor = Editor::new(Document::new());
+    let a = editor.doc.add(Kind::Free(Point { x: 100., y: 200. }));
+    let b = editor.doc.add(Kind::Free(Point { x: 150., y: 200. }));
+    let segment = editor.doc.add(Kind::Segment(a, b));
+    let circle = editor.doc.add(Kind::Circle(a, b));
+    let distance = editor.doc.add(Kind::PointDistance(a, b));
+    editor.marked_rectangular_distances = Some((distance, distance));
+    for mode in [
+        TranslationMode::RectangularMarked,
+        TranslationMode::RectangularHorizontalFixed,
+        TranslationMode::RectangularVerticalFixed,
+    ] {
+        editor.translation_mode = mode;
+        for source in [segment, circle] {
+            editor.select_only(source);
+            let before = editor.doc.objects.len();
+            editor.translate_selected();
+            let id = editor.doc.objects.len();
+            assert_eq!(id, before + 1, "{}", editor.status);
+            assert!(editor.doc.line_points(id).is_some() || editor.doc.circle_points(id).is_some());
+        }
+    }
+    assert!(
+        !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+            .unwrap()
+            .partial_view
+    );
+}

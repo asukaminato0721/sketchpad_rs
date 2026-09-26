@@ -1,0 +1,18 @@
+new
+point 180 180
+point 220 200
+translate_vector 2 1 2
+translate_vector 1 2 1
+segment 1 2
+iterate_mapped 1,2 2,3;4,1 5,3,4 3
+save /tmp/sketchpad_mapped_point_iteration_branches.gsp
+new
+named_parameter n 2 10 10
+point 100 160
+point 140 180
+translate_vector 3 2 3
+segment 2 3
+iterate_mapped 2,3 3,4 5,4 value:1
+parameter_value 1 4
+move 3 150 170
+save /tmp/sketchpad_mapped_point_iteration_live.gsp

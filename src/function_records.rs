@@ -1,6 +1,24 @@
-//! Arithmetic and trigonometric function expressions observed in Sketchpad 5 files.
+//! Native arithmetic and built-in function expressions from Sketchpad 5 files.
 
 const MAX_EXPRESSION_WORDS: usize = 64;
+
+// Native unary opcodes, also documented by the sibling gsp-rs expression decoder.
+const FUNCTIONS: &[(&str, u16)] = &[
+    ("sin", 0x2000),
+    ("cos", 0x2001),
+    ("tan", 0x2002),
+    ("abs", 0x2006),
+    ("sqrt", 0x2007),
+    ("ln", 0x2008),
+    ("log", 0x2009),
+];
+
+fn function_name(code: u16) -> Option<&'static str> {
+    FUNCTIONS
+        .iter()
+        .find(|(_, value)| *value == code)
+        .map(|(name, _)| *name)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleFunction {
@@ -21,22 +39,16 @@ impl SimpleFunction {
         let mut function_open = false;
         let mut parentheses = Vec::new();
         while index < chars.len() {
-            if chars[index..].starts_with(&['s', 'i', 'n']) {
-                words.push(0x2000);
+            if let Some((name, code)) = FUNCTIONS.iter().find(|(name, _)| {
+                chars[index..]
+                    .iter()
+                    .copied()
+                    .take(name.len())
+                    .eq(name.chars())
+            }) {
+                words.push(*code);
                 function_open = true;
-                index += 3;
-                continue;
-            }
-            if chars[index..].starts_with(&['c', 'o', 's']) {
-                words.push(0x2001);
-                function_open = true;
-                index += 3;
-                continue;
-            }
-            if chars[index..].starts_with(&['t', 'a', 'n']) {
-                words.push(0x2002);
-                function_open = true;
-                index += 3;
+                index += name.len();
                 continue;
             }
             let c = chars[index];
@@ -113,7 +125,7 @@ impl SimpleFunction {
                     continue;
                 }
             }
-            if matches!(*word, 0x2000..=0x2002) {
+            if function_name(*word).is_some() {
                 function_open = true;
             } else if *word == 0x000b {
                 parentheses.push(function_open);
@@ -146,6 +158,10 @@ impl SimpleFunction {
                 0x2000 => "sin",
                 0x2001 => "cos",
                 0x2002 => "tan",
+                0x2006 => "abs",
+                0x2007 => "sqrt",
+                0x2008 => "ln",
+                0x2009 => "log",
                 _ => "?",
             });
         }
@@ -222,7 +238,7 @@ impl<'a> ArithmeticParser<'a> {
                 value
             }
             0x000f => self.x,
-            0x2000..=0x2002 => {
+            code if function_name(code).is_some() => {
                 if self.words.get(self.index) != Some(&0x000b) {
                     return Err("Missing function argument".into());
                 }
@@ -240,7 +256,12 @@ impl<'a> ArithmeticParser<'a> {
                 match word {
                     0x2000 => angle.sin(),
                     0x2001 => angle.cos(),
-                    _ => angle.tan(),
+                    0x2002 => angle.tan(),
+                    0x2006 => argument.abs(),
+                    0x2007 => argument.sqrt(),
+                    0x2008 => argument.ln(),
+                    0x2009 => argument.log10(),
+                    _ => unreachable!(),
                 }
             }
             0..=9 | 0x000a => {
@@ -423,7 +444,24 @@ impl SymbolicExpr {
             ),
             Self::Binary(0x1004, base, exponent) => {
                 let Some(power) = exponent.number() else {
-                    return Err("Symbolic derivative requires a constant exponent".into());
+                    // d(u^v) = u^v * (v' ln(u) + v u'/u).
+                    return Ok(Self::binary(
+                        0x1002,
+                        self.clone(),
+                        Self::binary(
+                            0x1000,
+                            Self::binary(
+                                0x1002,
+                                exponent.derivative()?,
+                                Self::Call(0x2008, base.clone()),
+                            ),
+                            Self::binary(
+                                0x1003,
+                                Self::binary(0x1002, (**exponent).clone(), base.derivative()?),
+                                (**base).clone(),
+                            ),
+                        ),
+                    ));
                 };
                 Self::binary(
                     0x1002,
@@ -454,6 +492,28 @@ impl SymbolicExpr {
                     Self::Number(2.),
                 ),
             ),
+            Self::Call(0x2006, argument) => Self::binary(
+                0x1002,
+                Self::binary(0x1003, (**argument).clone(), self.clone()),
+                argument.derivative()?,
+            ),
+            Self::Call(0x2007, argument) => Self::binary(
+                0x1003,
+                argument.derivative()?,
+                Self::binary(0x1002, Self::Number(2.), self.clone()),
+            ),
+            Self::Call(0x2008, argument) => {
+                Self::binary(0x1003, argument.derivative()?, (**argument).clone())
+            }
+            Self::Call(0x2009, argument) => Self::binary(
+                0x1003,
+                argument.derivative()?,
+                Self::binary(
+                    0x1002,
+                    (**argument).clone(),
+                    Self::Call(0x2008, Box::new(Self::Number(10.))),
+                ),
+            ),
             _ => return Err("Unsupported symbolic derivative".into()),
         })
     }
@@ -472,11 +532,7 @@ impl SymbolicExpr {
             Self::Variable => "x".into(),
             Self::Neg(value) => format!("-{}", value.render(6)),
             Self::Call(code, value) => {
-                let name = match code {
-                    0x2000 => "sin",
-                    0x2001 => "cos",
-                    _ => "tan",
-                };
+                let name = function_name(*code).expect("validated unary opcode");
                 format!("{name}({})", value.render(0))
             }
             Self::Binary(code, left, right) => {
@@ -538,16 +594,19 @@ impl<'a> SymbolicParser<'a> {
                 value
             }
             0x000f => SymbolicExpr::Variable,
-            0x2000..=0x2002 => {
-                if self.words.get(self.index) != Some(&0x000b) {
-                    return Err("Missing function argument".into());
+            code if function_name(code).is_some() => {
+                let grouped = self.words.get(self.index) == Some(&0x000b);
+                if grouped {
+                    self.index += 1;
                 }
-                self.index += 1;
                 let argument = self.expression(0)?;
-                if self.words.get(self.index..self.index + 2) != Some(&[0x000c, 0x000c][..]) {
-                    return Err("Unclosed function argument".into());
+                let closing = if grouped { 2 } else { 1 };
+                for _ in 0..closing {
+                    if self.words.get(self.index) != Some(&0x000c) {
+                        return Err("Unclosed function argument".into());
+                    }
+                    self.index += 1;
                 }
-                self.index += 2;
                 SymbolicExpr::Call(word, Box::new(argument))
             }
             0..=9 | 0x000a => {
@@ -665,10 +724,19 @@ pub fn decode_simple_expression(data: &[u8]) -> Result<SimpleFunction, String> {
         .collect::<Vec<_>>();
     match SimpleFunction::from_words(&words) {
         Ok(expression) => Ok(expression),
-        Err(_) if words.len() == 3 && matches!(words[0], 0x2000..=0x2002) && words[2] == 0x000c => {
-            SimpleFunction::from_words(&[words[0], 0x000b, words[1], 0x000c, 0x000c])
+        Err(_) => {
+            // Native payloads can omit the argument's explicit opening/closing
+            // parentheses, retaining just the unary terminator (e.g. sqrt 6 )).
+            let mut parser = SymbolicParser {
+                words: &words,
+                index: 0,
+            };
+            let expression = parser.expression(0)?;
+            if parser.index != words.len() {
+                return Err("Invalid function expression".into());
+            }
+            SimpleFunction::parse(&expression.render(0))
         }
-        Err(error) => Err(error),
     }
 }
 
@@ -1133,6 +1201,94 @@ pub fn encode_minimal_plot_document(expression: SimpleFunction) -> Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_functions_nested_calls_and_variable_power_derivatives() {
+        for (source, x, expected) in [
+            ("abs(x)", -3., 3.),
+            ("sqrt(x)", 9., 3.),
+            ("ln(x)", 1., 0.),
+            ("log(x)", 100., 2.),
+            ("sqrt(abs(x))+log(x^2)", -4., 2. + 16_f64.log10()),
+            ("ln(sqrt(x))", 4., 2_f64.ln()),
+        ] {
+            let function = SimpleFunction::parse(source).unwrap();
+            assert!((function.evaluate(x) - expected).abs() < 1e-12, "{source}");
+            assert_eq!(
+                SimpleFunction::parse(function.display().strip_prefix("f(x) = ").unwrap()).unwrap(),
+                function
+            );
+            assert!(!function.uses_trigonometry());
+            let bytes = encode_minimal_plot_document(function).unwrap();
+            assert_eq!(decode_minimal_plot(&bytes).unwrap().expression, function);
+        }
+        for source in [
+            "abs(x)",
+            "sqrt(x)",
+            "ln(x)",
+            "log(x)",
+            "x^x",
+            "2^x",
+            "(x+1)^(x-1)",
+            "ln(sqrt(x))",
+        ] {
+            let function = SimpleFunction::parse(source).unwrap();
+            let derivative = function.symbolic_derivative().unwrap();
+            let x = 1.3;
+            let slope = (function.evaluate(x + 1e-6) - function.evaluate(x - 1e-6)) / 2e-6;
+            assert!(
+                (derivative.evaluate(x) - slope).abs() < 1e-6,
+                "{source}: {}",
+                derivative.display()
+            );
+        }
+        for source in ["sqrt(-1)", "ln(-1)", "log(-1)"] {
+            assert!(SimpleFunction::parse(source).unwrap().evaluate(0.).is_nan());
+        }
+        assert!(
+            SimpleFunction::parse("abs(x)")
+                .unwrap()
+                .symbolic_derivative()
+                .unwrap()
+                .evaluate(0.)
+                .is_nan()
+        );
+        for source in ["sqrt()", "log(x", "abs x", "ln(x))", "sqrtx", "sgn(x)"] {
+            assert!(SimpleFunction::parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn native_compact_unary_arguments_decode_with_their_terminators() {
+        let source = include_bytes!("../tests/fixtures/function_plot_identity.gsp");
+        let record = records(source)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.kind == 0x0907)
+            .unwrap();
+        for (words, text) in [
+            (vec![0x2007, 6, 0x000c], "sqrt(6)"),
+            (vec![0x2008, 0x000f, 0x000c], "ln(x)"),
+            (vec![0x2006, 0x000f, 0x1001, 2, 0x000c], "abs(x-2)"),
+            (vec![0x2007, 0x2006, 0x000f, 0x000c, 0x000c], "sqrt(abs(x))"),
+        ] {
+            let mut data = payload(source, record)[..92].to_vec();
+            data[36..40].copy_from_slice(&((60 + words.len() * 2) as u32).to_le_bytes());
+            data[44..48].copy_from_slice(&(words.len() as u32).to_le_bytes());
+            for word in words {
+                data.extend_from_slice(&u16::to_le_bytes(word));
+            }
+            assert_eq!(
+                decode_simple_expression(&data).unwrap(),
+                SimpleFunction::parse(text).unwrap()
+            );
+            data.truncate(data.len() - 2);
+            let payload_len = data.len();
+            data[36..40].copy_from_slice(&((payload_len - 32) as u32).to_le_bytes());
+            data[44..48].copy_from_slice(&(((payload_len - 92) / 2) as u32).to_le_bytes());
+            assert!(decode_simple_expression(&data).is_err());
+        }
+    }
 
     #[test]
     fn original_identity_and_square_decode() {

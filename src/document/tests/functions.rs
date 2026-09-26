@@ -631,3 +631,133 @@ fn plot_property_edits_reopen_and_limit_render_samples() {
         include_bytes!("../../../tests/fixtures/parametric_new_range_generated.gsp")
     );
 }
+
+#[test]
+fn extended_functions_and_variable_power_derivatives_remain_live_after_reopening() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/function_plot_identity.gsp"),
+        None,
+    )
+    .unwrap();
+    doc.set_function_expression(7, SimpleFunction::parse("x^x").unwrap())
+        .unwrap();
+    doc.set_plot_range(8, 0.5, 2., 17).unwrap();
+    let derivative = doc.add_derivative_function(7).unwrap();
+    let derivative_plot = doc
+        .plot_function(derivative, Point { x: 199., y: 125. })
+        .unwrap();
+    doc.set_plot_range(derivative_plot, 0.5, 2., 17).unwrap();
+    let before = doc.function_plot_points(derivative_plot, 17).unwrap();
+    let bytes = doc.encode().unwrap();
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    assert_eq!(
+        reopened.function_plot_points(derivative_plot, 17).unwrap(),
+        before
+    );
+
+    doc.set_function_expression(7, SimpleFunction::parse("ln(sqrt(x))").unwrap())
+        .unwrap();
+    let updated = doc.function_plot_points(derivative_plot, 17).unwrap();
+    assert_ne!(updated, before);
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(
+        reopened.function_plot_points(derivative_plot, 17).unwrap(),
+        updated
+    );
+    assert_eq!(
+        reopened.function_display_text(7).as_deref(),
+        Some("f(x) = ln(sqrt(x))")
+    );
+    doc.undo();
+    assert_eq!(
+        doc.function_plot_points(derivative_plot, 17).unwrap(),
+        before
+    );
+    doc.redo();
+    assert_eq!(
+        doc.function_plot_points(derivative_plot, 17).unwrap(),
+        updated
+    );
+}
+
+#[test]
+fn logarithm_and_root_plots_skip_undefined_domains() {
+    for text in ["sqrt(x)", "ln(x)", "log(x)"] {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/function_plot_identity.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.set_function_expression(7, SimpleFunction::parse(text).unwrap())
+            .unwrap();
+        doc.set_plot_range(8, -2., 2., 17).unwrap();
+        assert!(doc.function_plot_points(8, 17).is_none());
+        let segments = doc.function_plot_segments(8, 17).unwrap();
+        assert!(!segments.is_empty());
+        let frame = doc.graph_frame(6).unwrap();
+        for (left, right) in segments {
+            assert!(
+                frame
+                    .coordinates(crate::graph::GraphPoint {
+                        x: left.x,
+                        y: left.y
+                    })
+                    .unwrap()
+                    .x
+                    >= 0.
+            );
+            assert!(
+                frame
+                    .coordinates(crate::graph::GraphPoint {
+                        x: right.x,
+                        y: right.y
+                    })
+                    .unwrap()
+                    .x
+                    >= 0.
+            );
+        }
+    }
+}
+
+#[test]
+fn extended_function_generated_files_roundtrip_as_editable_documents() {
+    for (bytes, expected) in [
+        (
+            include_bytes!("../../../tests/fixtures/function_extensions_generated.gsp").as_slice(),
+            "sqrt(abs(x))+ln(x^2+1)+log(x^2+1)",
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/function_variable_derivative_generated.gsp")
+                .as_slice(),
+            "x^x",
+        ),
+        (
+            include_bytes!(
+                "../../../tests/fixtures/function_extended_derivative_edited_generated.gsp"
+            )
+            .as_slice(),
+            "ln(sqrt(x))",
+        ),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(
+            doc.function_expression(7).unwrap(),
+            SimpleFunction::parse(expected).unwrap()
+        );
+        assert_eq!(doc.encode().unwrap(), bytes);
+        if doc.objects.len() == 10 {
+            assert_eq!(
+                doc.function_expression(9).unwrap(),
+                SimpleFunction::parse(expected)
+                    .unwrap()
+                    .symbolic_derivative()
+                    .unwrap()
+            );
+        }
+    }
+}

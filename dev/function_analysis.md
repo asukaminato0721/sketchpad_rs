@@ -125,3 +125,40 @@ system are supported. Parameters, nested definitions, other trigonometric functi
 other function types, nonnumeric plot ranges, and more complex discontinuities still
 need original-file probes and a wider expression parser. Unsupported variants
 remain read-only through the conservative document safety check.
+
+## Additional built-ins and variable powers
+
+The sibling `gsp-rs/src/runtime/functions/expr.rs` decoder identifies `abs`,
+`sqrt`, `ln`, and `log` as opcodes `0x2006` through `0x2009`. Its native
+square-root payload regression also demonstrates compact argument tokens
+`0x2007, 6, 0x000c`. The port accepts these compact unary arguments when
+reading native payloads and stores explicit, terminated argument groups for
+new expressions. Nested calls retain each argument boundary. Unknown opcodes
+and incomplete argument terminators remain errors.
+
+`function_extensions_generated.gsp` contains
+`sqrt(abs(x))+ln(x^2+1)+log(x^2+1)`. The generated file opened in native
+Sketchpad with the expected formula and symmetric curve, and saved
+byte-identically (2714 bytes). The parser, evaluator, formula display, expression
+writer, and editor all accept these four additional built-ins. Square roots
+and logarithms outside their real domains produce undefined values; plotting
+skips those segments.
+
+The symbolic differentiator implements the abs, sqrt, ln, and log chain rules
+and the variable-exponent rule `d(u^v) = u^v*(v'*ln(u)+v*u'/u)`.
+The abs derivative is undefined where its argument is zero. Constant powers
+retain their existing rule, including powers of negative bases with integer
+exponents. General variable powers use the real logarithm and are undefined
+where its base is nonpositive. Numeric-slope regressions cover `x^x`, `2^x`,
+`(x+1)^(x-1)`, and the additional built-ins. Document regressions cover edits
+from `x^x` to `ln(sqrt(x))`, dependent derivative-cache and curve refresh,
+save/reopen, undo, and redo. Generated examples are preserved as
+`function_variable_derivative_generated.gsp` and
+`function_extended_derivative_edited_generated.gsp`.
+
+Both generated derivative examples opened in native Sketchpad with their
+source formula, derivative formula, and both curves visible. Native save was
+byte-identical for `function_variable_derivative_generated.gsp` (2974 bytes)
+and `function_extended_derivative_edited_generated.gsp` (2990 bytes).
+`tests/function_extensions_replay.txt` reproduces all three generated files;
+`cargo test --lib function` checks the expression and document regressions.

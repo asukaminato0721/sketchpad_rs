@@ -52,6 +52,25 @@ fn svg_stroke(style: Option<VisualStyle>) -> String {
     }
 }
 
+// Keep each connected curve together so dash phase survives sample boundaries.
+fn curve_screen_paths(vp: &Viewport, segments: &[(Point, Point, LineMode)]) -> Vec<Vec<Pos2>> {
+    let mut paths = Vec::new();
+    let mut current: Vec<Pos2> = Vec::new();
+    for &(start,end,mode) in segments {
+        if let Some((a,b)) = clipped_line(vp.screen(start),vp.screen(end),mode,vp.rect) {
+            if current.last().copied() == Some(a) && mode == LineMode::Segment {
+                current.push(b);
+            } else {
+                if !current.is_empty() { paths.push(std::mem::take(&mut current)); }
+                current.extend([a,b]);
+            }
+            if mode != LineMode::Segment { paths.push(std::mem::take(&mut current)); }
+        } else if !current.is_empty() { paths.push(std::mem::take(&mut current)); }
+    }
+    if !current.is_empty() { paths.push(current); }
+    paths
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -135,9 +154,10 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
     if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
-        let value = doc
-            .length_pair_calculation_value(id)
-            .map_or_else(|| "undefined".into(), |value| crate::table_records::format_numeric_value(value, group.precision()));
+        let value = doc.length_pair_calculation_value(id).map_or_else(
+            || "undefined".into(),
+            |value| crate::table_records::format_numeric_value(value, group.precision()),
+        );
         let unit = match group.length_power() {
             1 => " cm",
             2 => " cm²",
@@ -152,7 +172,10 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         ));
     }
     if let Kind::MeasuredCalculation(source, group) = &object.kind {
-        let value = crate::table_records::format_numeric_value(doc.measured_calculation_cm(id)?, group.precision());
+        let value = crate::table_records::format_numeric_value(
+            doc.measured_calculation_cm(id)?,
+            group.precision(),
+        );
         let name = doc
             .length_measurement_name(*source)
             .unwrap_or_else(|| "Length".into());
@@ -923,14 +946,21 @@ pub fn svg_page_with_button_offset(
             })
             .or_else(|| doc.locus_strokes(o.id, 384))
         {
-            for (start, end, mode) in segments {
-                if let Some((a, b)) = clipped_line(vp.screen(start), vp.screen(end), mode, r) {
-                    writeln!(
-                        svg,
-                        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",
-                        a.x, a.y, b.x, b.y
-                    )
-                    .unwrap();
+            if matches!(o.visual_style, Some(VisualStyle::Stroke { .. })) {
+                for path in curve_screen_paths(vp, &segments) {
+                    let points = path.iter().map(|p| format!("{},{}",p.x,p.y)).collect::<Vec<_>>().join(" ");
+                    writeln!(svg,"<polyline points=\"{}\"{}/>",points,svg_stroke(o.visual_style)).unwrap();
+                }
+            } else {
+                for (start, end, mode) in segments {
+                    if let Some((a, b)) = clipped_line(vp.screen(start), vp.screen(end), mode, r) {
+                        writeln!(
+                            svg,
+                            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#b43a9b\"/>",
+                            a.x, a.y, b.x, b.y
+                        )
+                        .unwrap();
+                    }
                 }
             }
         }
@@ -1265,50 +1295,39 @@ pub fn svg_page_with_button_offset(
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
-        if let Some(text) = doc.measurement_text(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">{}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                xml_text(&text)
-            ).unwrap();
-            row += 1;
-        }
-        if matches!(object.kind, Kind::SlopeMeasurement(_, _)) {
-            let value = doc
-                .measurement_value_text(object.id)
-                .unwrap_or_else(|| "undefined".into());
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">Slope = {}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                value
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(value) = doc.coordinate_measure_text(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">{}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                xml_text(&value)
-            )
-            .unwrap();
-            row += 1;
-        }
-        if let Some(value) = doc.value_equation_text(object.id) {
-            writeln!(
-                svg,
-                "<text x=\"{}\" y=\"{}\">{}</text>",
-                r.min.x + 12.,
-                r.min.y + 28. + row as f32 * 20.,
-                xml_text(&value)
-            )
-            .unwrap();
+        let caption = doc
+            .measurement_text(object.id)
+            .or_else(|| {
+                matches!(object.kind, Kind::SlopeMeasurement(_, _)).then(|| {
+                    format!(
+                        "Slope = {}",
+                        doc.measurement_value_text(object.id)
+                            .unwrap_or_else(|| "undefined".into())
+                    )
+                })
+            })
+            .or_else(|| doc.coordinate_measure_text(object.id))
+            .or_else(|| doc.value_equation_text(object.id));
+        if let Some(text) = caption {
+            let style = doc.text_font_state(object.id);
+            let size = style.as_ref().map_or(16, |style| style.size_code);
+            let (x, y) = object
+                .measurement_anchor
+                .map(|(x, y)| {
+                    (
+                        r.min.x + x as f32 + 2.,
+                        r.min.y + y as f32 + 7. + size as f32 * 0.85,
+                    )
+                })
+                .unwrap_or((
+                    r.min.x + 12.,
+                    r.min.y + 12. + row as f32 * 20. + size as f32 * 0.85,
+                ));
+            writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
+                x, y, xml_text(style.as_ref().map_or("sans-serif", |style| &style.family)).replace('"', "&quot;"), size,
+                if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" }, xml_text(&text)).unwrap();
             row += 1;
         }
         if let Kind::FunctionDefinition(expression) = object.kind {
@@ -1832,20 +1851,24 @@ impl GeometryRenderer {
                 })
                 .or_else(|| doc.locus_strokes(o.id, 384))
             {
-                for (start, end, mode) in segments {
-                    if let Some((a, b)) =
-                        clipped_line(vp.screen(start), vp.screen(end), mode, vp.rect)
-                    {
-                        mesh.line(
-                            a,
-                            b,
-                            2.,
-                            if doc.selected.contains(&o.id) {
-                                selected
-                            } else {
-                                [0.70, 0.23, 0.60, 1.]
-                            },
-                        );
+                if matches!(o.visual_style,Some(VisualStyle::Stroke { .. })) {
+                    for path in curve_screen_paths(vp,&segments) { mesh.styled_path(&path,false,stroke,col); }
+                } else {
+                    for (start, end, mode) in segments {
+                        if let Some((a, b)) =
+                            clipped_line(vp.screen(start), vp.screen(end), mode, vp.rect)
+                        {
+                            mesh.line(
+                                a,
+                                b,
+                                2.,
+                                if doc.selected.contains(&o.id) {
+                                    selected
+                                } else {
+                                    [0.70, 0.23, 0.60, 1.]
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -1854,6 +1877,8 @@ impl GeometryRenderer {
                 | Kind::CircleBySegment(_, _)
                 | Kind::PolarTranslatedCircle(_, _, _, _)
                 | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+                | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
+                | Kind::RectangularMarkedTranslatedCircle(_, _, _)
                 | Kind::VectorTranslatedCircle(_, _, _)
                 | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                 | Kind::AngleRotatedCircle(_, _, _, _, _)
@@ -1995,6 +2020,22 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn styled_point_curve_samples_keep_dash_phase_and_undefined_breaks() {
+        let vp=Viewport {rect:Rect::from_min_size(Pos2::ZERO,egui::vec2(300.,300.)),scale:1.,center:Point{x:0.,y:0.}};
+        let samples=(0..30).map(|x|(Point{x:x as f64,y:0.},Point{x:x as f64+1.,y:0.},LineMode::Segment)).collect::<Vec<_>>();
+        let paths=curve_screen_paths(&vp,&samples);
+        assert_eq!(paths.len(),1); assert_eq!(paths[0].len(),31);
+        let mut mesh=Mesh {vertices:Vec::new(),width:300.,height:300.,ppp:1.};
+        let color=[0.1,0.6,0.8,1.];
+        mesh.styled_path(&paths[0],false,SegmentLineStyle {width:LineWidth::Thick,pattern:LinePattern::Dashed},color);
+        assert_eq!(mesh.vertices.len(),108); // 18 painted 1px samples, 12 gap samples.
+        assert!(mesh.vertices.iter().all(|v|v.color==color));
+        assert!(!mesh.vertices.iter().any(|v| {let x=(v.pos[0]+1.)*150.;x>159.1&&x<164.9}));
+        let broken=[(Point{x:0.,y:0.},Point{x:1.,y:0.},LineMode::Segment),(Point{x:1.,y:0.},Point{x:2.,y:0.},LineMode::Segment),(Point{x:10.,y:0.},Point{x:11.,y:0.},LineMode::Segment)];
+        assert_eq!(curve_screen_paths(&vp,&broken).iter().map(Vec::len).collect::<Vec<_>>(),vec![3,2]);
+    }
+
     #[test]
     fn carried_circle_export_and_hit_respect_binding_visibility_and_style() {
         let mut doc = Document::from_bytes(

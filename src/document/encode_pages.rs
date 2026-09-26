@@ -217,7 +217,12 @@ impl Document {
                 0x2328 if !inside_group => continue,
                 _ => {}
             }
+            let literal_text_record = matches!(record.kind, 0x08fc | 0x0898)
+                && current_page
+                    .and_then(|page| page_objects[page].get(group_ordinal.saturating_sub(1)))
+                    .is_some_and(|object| matches!(object.kind, Kind::PlainText { .. }));
             if inside_group
+                && !literal_text_record
                 && !matches!(
                     record.kind,
                     0x07d0 | 0x07d2 | 0x07d3 | 0x07d5 | 0x07d7 | 0x07d8 | 0x0899 | 0x0903 | 0x0906
@@ -456,6 +461,17 @@ impl Document {
                 .count();
             for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
+                    Kind::PlainText { text, rect } => {
+                        let mut group = if let Some(template) = &object.rich_text_override {
+                            template.encode_group(text, *rect)?
+                        } else {
+                            crate::text_object::encode_plain_text_group(text, *rect)?
+                        };
+                        if !object.visible {
+                            group[10] |= 1;
+                        }
+                        groups.extend_from_slice(&group);
+                    }
                     Kind::Free(point) => {
                         if !point.x.is_finite() || !point.y.is_finite() {
                             return Err("Multi-page point coordinates must be finite".into());
@@ -539,6 +555,51 @@ impl Document {
                         constraint.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut groups, 0x07d3, &constraint);
                         put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::PointOnPolygon(host, edge, t) => {
+                        let host_object = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .ok_or("Missing polygon host")?;
+                        let Kind::Polygon(vertices) = &host_object.kind else {
+                            return Err("Invalid polygon boundary host".into());
+                        };
+                        if host_object.page != page
+                            || *edge >= vertices.len()
+                            || !t.is_finite()
+                            || !(0.0..=1.0).contains(t)
+                        {
+                            return Err("Invalid polygon boundary constraint".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, *host)?;
+                        let mut object_header = header(15);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        object_header[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x7d0, &object_header);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
+                        let mut references = 1u32.to_le_bytes().to_vec();
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x7d2, &references);
+                        let mut constraint = 15u16.to_le_bytes().to_vec();
+                        constraint.extend_from_slice(
+                            &polygon_subtype(vertices.len())
+                                .ok_or("Too many polygon vertices")?
+                                .to_le_bytes(),
+                        );
+                        constraint.extend_from_slice(&t.to_le_bytes());
+                        constraint.extend_from_slice(&(*edge as u32).to_le_bytes());
+                        constraint.extend_from_slice(&[255, 255, 0, 0]);
+                        put_record(&mut groups, 0x7d3, &constraint);
+                        put_record(&mut groups, 0x7d7, &[]);
                     }
                     Kind::PointOnCircle(host, x, y) => {
                         if !x.is_finite() || !y.is_finite() || (x * x + y * y - 1.).abs() > 1e-6 {
@@ -1163,13 +1224,80 @@ impl Document {
             out.splice(insert_at..insert_at, groups);
         }
         records(&out)?;
-        Ok(out)
+        self.patch_multi_page_text(out)
     }
     pub(super) fn encode_multi_page_state(&self) -> Result<Vec<u8>, String> {
         if self.source_count != self.objects.len() {
             return Err("Multi-page state edit cannot add objects".into());
         }
-        self.encode_multi_page_source_state()
+        self.patch_multi_page_text(self.encode_multi_page_source_state()?)
+    }
+    fn patch_multi_page_text(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        // Serialized groups are ordered by page, while additions have global IDs.
+        let mut ordered = self.clone();
+        ordered
+            .objects
+            .sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        let rs = records(&bytes)?;
+        let mut edits = Vec::new();
+        let starts = rs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| (record.kind == 0x07d0).then_some(index))
+            .collect::<Vec<_>>();
+        if starts.len() != ordered.objects.len() {
+            return Err("Multi-page object group count mismatch".into());
+        }
+        for (object, start) in ordered.objects.iter().zip(starts) {
+            let Kind::PlainText { text, rect } = &object.kind else {
+                continue;
+            };
+            let group = rs[start + 1..]
+                .iter()
+                .take_while(|record| record.kind != 0x07d7)
+                .collect::<Vec<_>>();
+            let rich = group
+                .iter()
+                .find(|record| record.kind == 0x08fc)
+                .ok_or("Missing free-text payload")?;
+            let bbox = group
+                .iter()
+                .find(|record| record.kind == 0x0898)
+                .ok_or("Missing free-text box")?;
+            let (old_text, old_rect) = crate::text_object::decode_plain_text(
+                &bytes[rich.data.clone()],
+                &bytes[bbox.data.clone()],
+            )?;
+            if old_text == *text && old_rect == *rect && object.rich_text_override.is_none() {
+                continue;
+            }
+            let (new_rich, new_bbox) = if let Some(template) = &object.rich_text_override {
+                template.encode_parts(text, *rect)?
+            } else {
+                crate::text_object::encode_from_template(
+                    &bytes[rich.data.clone()],
+                    &bytes[bbox.data.clone()],
+                    text,
+                    *rect,
+                )?
+            };
+            for (record, payload) in [(*rich, new_rich), (*bbox, new_bbox.to_vec())] {
+                if bytes[record.data.clone()] != payload {
+                    let mut replacement = Vec::new();
+                    put_record(&mut replacement, record.kind, &payload);
+                    edits.push((
+                        record.start,
+                        record.data.end + record.data.len() % 2,
+                        replacement,
+                    ));
+                }
+            }
+        }
+        edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
+        for (start, end, replacement) in edits {
+            bytes.splice(start..end, replacement);
+        }
+        ordered.patch_text_font_overrides(bytes)
     }
     fn encode_multi_page_source_state(&self) -> Result<Vec<u8>, String> {
         let original = Self::from_bytes(&self.original, None)?;
@@ -1189,6 +1317,13 @@ impl Document {
         }
         let rs = records(&self.original)?;
         let mut out = self.original.clone();
+        let mut numeric_edits = Vec::new();
+        let changed_parameters = original.objects.iter().zip(&self.objects[..self.source_count])
+            .filter_map(|(saved, current)| match (&saved.kind, &current.kind) {
+                (Kind::Parameter(before), Kind::Parameter(after)) if before != after =>
+                    Some((current.id, (current.page, after.name().to_owned(), after.value()))),
+                _ => None,
+            }).collect::<std::collections::BTreeMap<_, _>>();
         for (saved, current) in original
             .objects
             .iter()
@@ -1196,6 +1331,80 @@ impl Document {
         {
             let mut expected = saved.clone();
             expected.visible = current.visible;
+            if saved.measurement_anchor.is_some() {
+                expected.measurement_anchor = current.measurement_anchor;
+            }
+            if matches!(
+                (&saved.kind, &current.kind),
+                (Kind::PlainText { .. }, Kind::PlainText { .. })
+            ) {
+                expected.kind = current.kind.clone();
+                expected.rich_text_override = current.rich_text_override.clone();
+            }
+            let numeric_replacement = match (&saved.kind, &current.kind) {
+                (Kind::Parameter(before), Kind::Parameter(after)) if before != after => {
+                    let mut changed = before.clone();
+                    changed.set_value(after.value())?;
+                    if changed != *after && after.precision() >= before.precision() {
+                        // A previous fractional edit can raise precision permanently.
+                        // Reproduce only effects of the existing typed value setter.
+                        changed = before.clone();
+                        changed.set_value(10_f64.powi(-(after.precision() as i32)))?;
+                        changed.set_value(after.value())?;
+                    }
+                    if changed != *after {
+                        return Err("Multi-page parameter edit changes more than its value".into());
+                    }
+                    expected.kind = current.kind.clone();
+                    Some(after.as_bytes().to_vec())
+                }
+                (Kind::ValueTable(old_source, before), Kind::ValueTable(source, after))
+                    if old_source == source && before != after => {
+                    let (page, name, value) = changed_parameters.get(source)
+                        .ok_or("Multi-page table edit requires its parameter value change")?;
+                    if *page != current.page || name != "t[1]" || before.default_values().is_none() {
+                        return Err("Unsupported multi-page parameter table edit".into());
+                    }
+                    let mut changed = before.clone();
+                    changed.set_last_default_value(*value)?;
+                    if changed != *after {
+                        return Err("Multi-page table edit changes unsupported rows".into());
+                    }
+                    expected.kind = current.kind.clone();
+                    Some(after.as_bytes().to_vec())
+                }
+                (Kind::ValueTablePair(old_first, old_second, before), Kind::ValueTablePair(first, second, after))
+                    if old_first == first && old_second == second && before != after => {
+                    let mut changed = before.clone();
+                    let mut updated = false;
+                    for (axis, source) in [first, second].iter().enumerate() {
+                        if let Some((page, name, value)) = changed_parameters.get(source) {
+                            if *page != current.page || !matches!(name.as_str(), "t[1]" | "t[2]") {
+                                return Err("Unsupported multi-page parameter table edit".into());
+                            }
+                            changed.set_last_pair_axis_value(axis, *value)?;
+                            updated = true;
+                        }
+                    }
+                    if !updated || changed != *after {
+                        return Err("Multi-page table edit changes unsupported rows".into());
+                    }
+                    expected.kind = current.kind.clone();
+                    Some(after.as_bytes().to_vec())
+                }
+                _ => None,
+            };
+            if matches!(saved.kind, Kind::PlainText { .. })
+                || (is_point_kind(&saved.kind) && saved.label.is_some())
+                || saved.kind.numeric_unit().is_some()
+                || matches!(
+                    saved.kind,
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                )
+            {
+                expected.text_style_override = current.text_style_override.clone();
+            }
+
             if saved.kind.has_measurement_precision()
                 && current
                     .measurement_precision
@@ -1233,6 +1442,16 @@ impl Document {
                 }
                 (Kind::PointOnArc(old_host, _), Kind::PointOnArc(host, t))
                     if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnPolygon(old_host, _, _), Kind::PointOnPolygon(host, edge, t))
+                    if old_host == host
+                        && t.is_finite()
+                        && (0.0..=1.0).contains(t)
+                        && self
+                            .polygon_points(*host)
+                            .is_some_and(|vertices| *edge < vertices.len()) =>
                 {
                     expected.kind = current.kind.clone();
                 }
@@ -1302,6 +1521,7 @@ impl Document {
                         | Kind::PointOnRay(_, _)
                         | Kind::PointOnLine(_, _)
                         | Kind::PointOnArc(_, _)
+                        | Kind::PointOnPolygon(_, _, _)
                         | Kind::PointOnCircle(_, _, _)
                 )
             {
@@ -1337,6 +1557,17 @@ impl Document {
                         out.get_mut(at + 4..at + 12)
                             .ok_or("Short arc-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnPolygon(_, edge, t) => {
+                        if out.get(at..at + 2) != Some(&[15, 0]) {
+                            return Err("Invalid polygon-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short polygon-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                        out.get_mut(at + 12..at + 16)
+                            .ok_or("Short polygon-point constraint")?
+                            .copy_from_slice(&(*edge as u32).to_le_bytes());
                     }
                     Kind::PointOnCircle(_, x, y) => {
                         if out.get(at..at + 4) != Some(&[15, 0, 28, 0]) {
@@ -1382,6 +1613,22 @@ impl Document {
                 }
                 out[header..header + 4].copy_from_slice(&class.to_le_bytes());
             }
+            if let Some(mut replacement) = numeric_replacement {
+                let start_index = rs.iter().position(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing saved numeric group header")?;
+                let end_record = rs[start_index..].iter().find(|record| record.kind == 0x07d7)
+                    .ok_or("Missing saved numeric group terminator")?;
+                let start = rs[start_index].start;
+                let end = end_record.data.end + end_record.data.len() % 2;
+                if replacement.len() < 36 || rs[start_index].data.len() != 28 {
+                    return Err("Invalid saved numeric group header".into());
+                }
+                replacement[..36].copy_from_slice(&out[start..header + 28]);
+                numeric_edits.push((start, end, replacement));
+            }
+        }
+        for (start, end, replacement) in numeric_edits.into_iter().rev() {
+            out.splice(start..end, replacement);
         }
         records(&out)?;
         Ok(out)

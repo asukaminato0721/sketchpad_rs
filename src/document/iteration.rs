@@ -111,7 +111,157 @@ pub(super) fn supported_branch_polygon_mapping(
         && segments.iter().all(|id| get(*id).is_some_and(|o| matches!(o.kind, Kind::Segment(a,b) if a != b && [seed,first,second].contains(&a) && [seed,first,second].contains(&b))))
 }
 
+/// Native simultaneous free-point mappings whose construction graph uses vectors and segments.
+pub(super) fn supported_mapped_point_iteration(
+    objects: &[Object],
+    seeds: &[usize],
+    branches: &[Vec<usize>],
+    carried: &[usize],
+) -> bool {
+    let get = |id: usize| {
+        id.checked_sub(1)
+            .and_then(|i| objects.get(i))
+            .filter(|o| !o.deleted)
+    };
+    if !(2..=16).contains(&seeds.len())
+        || !(1..=8).contains(&branches.len())
+        || carried.is_empty()
+        || seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len()
+        || carried.iter().copied().collect::<BTreeSet<_>>().len() != carried.len()
+        || !seeds
+            .iter()
+            .all(|id| get(*id).is_some_and(|o| matches!(o.kind, Kind::Free(_))))
+        || branches.iter().any(|b| {
+            b.len() != seeds.len()
+                || !b
+                    .iter()
+                    .all(|id| get(*id).is_some_and(|o| is_point_kind(&o.kind)))
+        })
+    {
+        return false;
+    }
+    let mut pending: Vec<_> = branches.iter().flatten().chain(carried).copied().collect();
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(object) = get(id) else {
+            return false;
+        };
+        match object.kind {
+            Kind::Free(_) => {}
+            Kind::VectorTranslatedPoint(a, b, c) | Kind::VectorTranslatedSegment(a, b, c) => {
+                pending.extend([a, b, c])
+            }
+            Kind::Segment(a, b) => pending.extend([a, b]),
+            _ => return false,
+        }
+    }
+    true
+}
+
 impl Document {
+    pub fn add_mapped_point_iteration(
+        &mut self,
+        seeds: &[usize],
+        branches: &[Vec<usize>],
+        carried: &[usize],
+        depth: IterationDepth,
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || !self.safe_structure
+            || self.page_count != 1
+            || self.numeric_iteration_depth(depth).is_none()
+            || !supported_mapped_point_iteration(&self.objects, seeds, branches, carried)
+        {
+            return Err("Select simultaneous free-point vector mappings and carried segments; depth must be 1–128".into());
+        }
+        self.checkpoint();
+        let id = self.append_object(Kind::MappedPointIteration {
+            seeds: seeds.to_vec(),
+            branches: branches.to_vec(),
+            carried: carried.to_vec(),
+            depth,
+        });
+        for source in carried {
+            if matches!(
+                self.objects[*source - 1].kind,
+                Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _)
+            ) {
+                let style = self.objects[*source - 1].visual_style;
+                let binding = self.append_object(Kind::IterationBinding(*source, id));
+                self.objects[binding - 1].visual_style = style;
+            }
+        }
+        Ok(id)
+    }
+
+    fn mapped_segment_iteration_images(
+        &self,
+        source: usize,
+        iteration: usize,
+    ) -> Option<Vec<(Point, Point)>> {
+        let object = self.objects.get(iteration.checked_sub(1)?)?;
+        let Kind::MappedPointIteration {
+            seeds,
+            branches,
+            carried,
+            depth,
+        } = &object.kind
+        else {
+            return None;
+        };
+        if object.deleted || !carried.contains(&source) {
+            return None;
+        }
+        let depth = self.numeric_iteration_depth(*depth)?;
+        let initial: Vec<_> = seeds
+            .iter()
+            .map(|id| self.position(*id))
+            .collect::<Option<_>>()?;
+        let mut level = vec![initial];
+        let mut sample = self.clone();
+        let mut result = Vec::new();
+        for _ in 0..depth {
+            let mut next = Vec::new();
+            let mut seen = BTreeSet::new();
+            for state in &level {
+                for (id, point) in seeds.iter().zip(state) {
+                    sample.objects[*id - 1].kind = Kind::Free(*point);
+                }
+                for branch in branches {
+                    let mapped: Vec<_> = branch
+                        .iter()
+                        .map(|id| sample.position(*id))
+                        .collect::<Option<_>>()?;
+                    if mapped.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+                        return None;
+                    }
+                    let key: Vec<_> = mapped
+                        .iter()
+                        .map(|p| (p.x.to_bits(), p.y.to_bits()))
+                        .collect();
+                    if seen.insert(key) {
+                        next.push(mapped);
+                    }
+                }
+            }
+            // Avoid exponential resource use on mappings with no coincident states.
+            if next.len() > 20_000 || result.len() + next.len() > 100_000 {
+                return None;
+            }
+            for state in &next {
+                for (id, point) in seeds.iter().zip(state) {
+                    sample.objects[*id - 1].kind = Kind::Free(*point);
+                }
+                let (a, b, _) = sample.line_points(source)?;
+                result.push((a, b));
+            }
+            level = next;
+        }
+        Some(result)
+    }
     pub fn add_point_iteration(
         &mut self,
         seed: usize,
@@ -259,6 +409,14 @@ impl Document {
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
         };
+        if !o.deleted
+            && matches!(
+                self.objects.get(iteration.checked_sub(1)?)?.kind,
+                Kind::MappedPointIteration { .. }
+            )
+        {
+            return self.mapped_segment_iteration_images(source, iteration);
+        }
         if o.deleted
             || !matches!(&self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::BranchingPolygonIteration { segments,.. } if segments.contains(&source))
         {

@@ -1,0 +1,15 @@
+new
+text 50 90 Source caption
+add_page
+page 1
+edit_text 1 Source caption expanded\nSecond line
+format_text 1 bold
+format_range 1 0 6 italic
+copy 1
+page 2
+paste
+text 100 220 Unicode 日本語
+page 1
+text 50 280 Earlier page addition
+check
+save /tmp/sketchpad_replay_multi_page_text.gsp

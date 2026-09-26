@@ -81,6 +81,8 @@ impl Kind {
                 | Kind::CircleBySegment(_, _)
                 | Kind::PolarTranslatedCircle(_, _, _, _)
                 | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+                | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
+                | Kind::RectangularMarkedTranslatedCircle(_, _, _)
                 | Kind::VectorTranslatedCircle(_, _, _)
                 | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                 | Kind::AngleRotatedCircle(_, _, _, _, _)
@@ -235,7 +237,7 @@ impl Kind {
         if let Kind::ValueTablePair(first, second, _) = self {
             return vec![*first, *second];
         }
-        if let Kind::Locus(refs, _) = self {
+        if let Kind::Locus(refs, _) | Kind::ParameterLocus(refs, _, _, _) = self {
             return refs.clone();
         }
         if let Kind::MeasuredCalculation(source, _) = self {
@@ -277,6 +279,13 @@ impl Kind {
         {
             return vec![*source, *center, *angle];
         }
+        if let Kind::MappedPointIteration { seeds, branches, carried, depth } = self {
+            let mut parents = seeds.clone();
+            parents.extend(branches.iter().flatten().copied());
+            parents.extend(carried);
+            if let IterationDepth::Value(id) = depth { parents.push(*id); }
+            return parents;
+        }
         if let Kind::BranchingPolygonIteration {
             seed,
             first,
@@ -316,6 +325,7 @@ impl Kind {
             | Kind::ValueTable(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
+            | Kind::PointOnPolygon(host, _, _)
             | Kind::PolarTranslatedPoint(host, _, _, _)
             | Kind::PolarTranslatedSegment(host, _, _, _)
             | Kind::PolarTranslatedCircle(host, _, _, _)
@@ -365,7 +375,8 @@ impl Kind {
             | Kind::FunctionPlot(a, b, _, _, _)
             | Kind::PathValuePoint(a, b)
             | Kind::PlottedPoint(a, b, _, _) => vec![a, b],
-            Kind::ParametricPlot(x, y, frame, _, _, _, _) => vec![x, y, frame],
+            Kind::ParametricPlot(x, y, frame, _, _, _, _)
+            | Kind::NumericCoordinatePoint(x, y, frame) => vec![x, y, frame],
             Kind::DerivativeFunction(source, _) => vec![source],
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
@@ -388,11 +399,17 @@ impl Kind {
             Kind::MarkedDistanceTranslatedSegment(source, distance, _)
             | Kind::MarkedDistanceTranslatedCircle(source, distance, _)
             | Kind::MarkedDistanceTranslatedPolygon(source, distance, _) => vec![source, distance],
-            Kind::MixedRectangularTranslatedPoint(source, distance, _, _) => vec![source, distance],
+            Kind::MixedRectangularTranslatedPoint(source, distance, _, _)
+            | Kind::MixedRectangularTranslatedSegment(source, distance, _, _)
+            | Kind::MixedRectangularTranslatedCircle(source, distance, _, _) => {
+                vec![source, distance]
+            }
             Kind::MixedRectangularTranslatedPolygon(source, distance, _, _) => {
                 vec![source, distance]
             }
-            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+            Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+            | Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
+            | Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
                 vec![source, horizontal, vertical]
             }
             Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
@@ -416,6 +433,7 @@ impl Kind {
             }
             Kind::Polygon(_)
             | Kind::BranchingPolygonIteration { .. }
+            | Kind::MappedPointIteration { .. }
             | Kind::CalculatedAngleRotatedPoint(_, _, _)
             | Kind::CalculatedRatioScaledPoint(_, _, _)
             | Kind::CalculatedAngleRotatedSegment(_, _, _)
@@ -439,14 +457,23 @@ impl Kind {
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::ValueTablePair(_, _, _) => unreachable!(),
             Kind::Locus(_, _)
+            | Kind::ParameterLocus(_, _, _, _)
             | Kind::MeasuredCalculation(_, _)
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
         }
     }
-    fn remap(&self, ids: &[usize]) -> Self {
+    pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::MappedPointIteration { seeds, branches, carried, depth } = self {
+            return Kind::MappedPointIteration {
+                seeds: seeds.iter().map(|id| m(*id)).collect(),
+                branches: branches.iter().map(|branch| branch.iter().map(|id| m(*id)).collect()).collect(),
+                carried: carried.iter().map(|id| m(*id)).collect(),
+                depth: match depth { IterationDepth::Fixed(n) => IterationDepth::Fixed(*n), IterationDepth::Value(id) => IterationDepth::Value(m(*id)) },
+            };
+        }
         if let Kind::BranchingPolygonIteration {
             seed,
             first,
@@ -622,8 +649,12 @@ impl Kind {
             Kind::PointOnLine(a, t) => Kind::PointOnLine(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::PointOnPolygon(a, edge, t) => Kind::PointOnPolygon(m(a), edge, t),
             Kind::Locus(ref refs, samples) => {
                 Kind::Locus(refs.iter().map(|id| m(*id)).collect(), samples)
+            }
+            Kind::ParameterLocus(ref refs, min, max, samples) => {
+                Kind::ParameterLocus(refs.iter().map(|id| m(*id)).collect(), min, max, samples)
             }
             Kind::PointIteration(seed, image, depth) => Kind::PointIteration(
                 m(seed),
@@ -697,6 +728,7 @@ impl Kind {
             Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
             Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
             Kind::PlottedPoint(a, b, mode, stored) => Kind::PlottedPoint(m(a), m(b), mode, stored),
+            Kind::NumericCoordinatePoint(x, y, frame) => Kind::NumericCoordinatePoint(m(x), m(y), m(frame)),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -783,6 +815,28 @@ impl Kind {
                     fixed_horizontal,
                 )
             }
+            Kind::MixedRectangularTranslatedSegment(
+                source,
+                distance,
+                fixed_cm,
+                fixed_horizontal,
+            ) => Kind::MixedRectangularTranslatedSegment(
+                m(source),
+                m(distance),
+                fixed_cm,
+                fixed_horizontal,
+            ),
+            Kind::MixedRectangularTranslatedCircle(
+                source,
+                distance,
+                fixed_cm,
+                fixed_horizontal,
+            ) => Kind::MixedRectangularTranslatedCircle(
+                m(source),
+                m(distance),
+                fixed_cm,
+                fixed_horizontal,
+            ),
             Kind::MixedRectangularTranslatedPolygon(
                 source,
                 distance,
@@ -796,6 +850,12 @@ impl Kind {
             ),
             Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
                 Kind::RectangularMarkedTranslatedPoint(m(source), m(horizontal), m(vertical))
+            }
+            Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical) => {
+                Kind::RectangularMarkedTranslatedSegment(m(source), m(horizontal), m(vertical))
+            }
+            Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
+                Kind::RectangularMarkedTranslatedCircle(m(source), m(horizontal), m(vertical))
             }
             Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
                 Kind::RectangularMarkedTranslatedPolygon(m(source), m(horizontal), m(vertical))
@@ -891,7 +951,8 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
-            Kind::Polygon(_) | Kind::BranchingPolygonIteration { .. } => unreachable!(),
+            Kind::Polygon(_) | Kind::BranchingPolygonIteration { .. }
+            | Kind::MappedPointIteration { .. } => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
             | Kind::MovementButton { .. }
@@ -936,12 +997,14 @@ impl Kind {
 pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
     matches!(
         kind,
-        Kind::Free(_)
+        Kind::PlainText { .. }
+            | Kind::Free(_)
             | Kind::PointOnSegment(_, _)
             | Kind::PointOnRay(_, _)
             | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
+            | Kind::PointOnPolygon(_, _, _)
             | Kind::Segment(_, _)
             | Kind::Circle(_, _)
             | Kind::Line(_, _)
@@ -991,6 +1054,8 @@ pub(super) fn is_segment_kind(kind: &Kind) -> bool {
         Kind::Segment(_, _)
             | Kind::PolarTranslatedSegment(_, _, _, _)
             | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+            | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
+            | Kind::RectangularMarkedTranslatedSegment(_, _, _)
             | Kind::VectorTranslatedSegment(_, _, _)
             | Kind::MarkedDistanceTranslatedSegment(_, _, _)
             | Kind::AngleRotatedSegment(_, _, _, _, _)
@@ -1009,6 +1074,8 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
         Kind::Segment(_, _)
             | Kind::PolarTranslatedSegment(_, _, _, _)
             | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+            | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
+            | Kind::RectangularMarkedTranslatedSegment(_, _, _)
             | Kind::VectorTranslatedSegment(_, _, _)
             | Kind::MarkedDistanceTranslatedSegment(_, _, _)
             | Kind::AngleRotatedSegment(_, _, _, _, _)
@@ -1050,12 +1117,14 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
             | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
+            | Kind::PointOnPolygon(_, _, _)
             | Kind::GraphHorizontalUnit(_, _)
             | Kind::GraphVerticalUnit(_, _)
             | Kind::DistanceVerticalUnit(_, _, _)
             | Kind::PathLiteralPoint(_, _)
             | Kind::PathValuePoint(_, _)
             | Kind::PlottedPoint(_, _, _, _)
+            | Kind::NumericCoordinatePoint(_, _, _)
             | Kind::PolarTranslatedPoint(_, _, _, _)
             | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
             | Kind::MarkedDistanceTranslatedPoint(_, _, _)
@@ -1074,6 +1143,32 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
             | Kind::LineCircleIntersection(_, _, _)
             | Kind::CircleCircleIntersection(_, _, _)
     )
+}
+
+pub(super) fn expected_parameter_locus_refs(objects: &[Object], driver: usize, target: usize) -> Option<Vec<usize>> {
+    fn dependent_path(objects: &[Object], driver: usize, current: usize, page: usize, found: &mut BTreeSet<usize>, visited: &mut BTreeSet<usize>) -> Option<bool> {
+        let object = objects.get(current.checked_sub(1)?)?;
+        if object.deleted || object.page != page { return None; }
+        if current == driver { return Some(true); }
+        if !visited.insert(current) { return Some(found.contains(&current)); }
+        let mut dependent = false;
+        for parent in object.kind.dependencies() {
+            if parent >= current { return None; }
+            dependent |= dependent_path(objects, driver, parent, page, found, visited)?;
+        }
+        if dependent { found.insert(current); }
+        Some(dependent)
+    }
+    let moving = objects.get(driver.checked_sub(1)?)?;
+    let traced = objects.get(target.checked_sub(1)?)?;
+    if driver >= target || moving.deleted || traced.deleted || moving.page != traced.page
+        || !matches!(moving.kind, Kind::Parameter(_)) || !is_point_kind(&traced.kind)
+    { return None; }
+    let mut found = BTreeSet::new();
+    if !dependent_path(objects, driver, target, moving.page, &mut found, &mut BTreeSet::new())? { return None; }
+    let mut refs = vec![target, driver];
+    refs.extend(found);
+    Some(refs)
 }
 
 pub(super) fn expected_locus_refs(
@@ -1255,8 +1350,10 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnLine(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
+        | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
+        | Kind::NumericCoordinatePoint(_, _, _)
         | Kind::PolarTranslatedPoint(_, _, _, _)
         | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
         | Kind::MarkedDistanceTranslatedPoint(_, _, _)
@@ -1280,6 +1377,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         Kind::Segment(_, _)
         | Kind::PolarTranslatedSegment(_, _, _, _)
         | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+        | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
+        | Kind::RectangularMarkedTranslatedSegment(_, _, _)
         | Kind::VectorTranslatedSegment(_, _, _)
         | Kind::MarkedDistanceTranslatedSegment(_, _, _)
         | Kind::AngleRotatedSegment(_, _, _, _, _)
@@ -1298,6 +1397,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::CircleBySegment(_, _)
         | Kind::PolarTranslatedCircle(_, _, _, _)
         | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+        | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
+        | Kind::RectangularMarkedTranslatedCircle(_, _, _)
         | Kind::VectorTranslatedCircle(_, _, _)
         | Kind::MarkedDistanceTranslatedCircle(_, _, _)
         | Kind::AngleRotatedCircle(_, _, _, _, _)
@@ -1309,6 +1410,14 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::RatioScaledCircle(_, _, _, _, _)
         | Kind::ThreePointArc(_, _, _)
         | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
+        Kind::FunctionPlot(_,_,_,_,_) => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
+            color: RgbColor { red:128, green:0, blue:128 },
+        }),
+        Kind::ParametricPlot(_,_,_,_,_,_,_) => Some(VisualStyle::Stroke {
+            line, color: RgbColor { red:128, green:0, blue:128 },
+        }),
+        Kind::ParameterLocus(_,_,_,_) => Some(point_locus_visual_style()),
         Kind::Polygon(_)
         | Kind::ReflectedPolygon(_, _)
         | Kind::VectorTranslatedPolygon(_, _, _)
@@ -1332,4 +1441,9 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         }),
         _ => None,
     }
+}
+
+/// Class 6/subtype 42 point-locus templates use a medium solid maroon stroke.
+pub(super) fn point_locus_visual_style() -> VisualStyle {
+    VisualStyle::Stroke { line: SegmentLineStyle { width:LineWidth::Medium, pattern:LinePattern::Solid }, color:RgbColor { red:128,green:0,blue:0 } }
 }

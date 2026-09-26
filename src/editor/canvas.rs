@@ -27,7 +27,7 @@ impl Editor {
                 if response.drag_started() && self.tool == Tool::Select {
                     if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
                         if let Some(id) = self.hit(&vp, p) {
-                            if matches!(
+                            if self.doc.objects[id - 1].measurement_anchor.is_some() || matches!(
                                 self.doc.objects[id - 1].kind,
                                 Kind::Free(_)
                                     | Kind::GraphVerticalUnit(_, _)
@@ -46,7 +46,9 @@ impl Editor {
                                     | Kind::PointOnCircle(_, _, _)
                                     | Kind::PointOnArc(_, _)
                             ) {
-                                self.drag_offset = match &self.doc.objects[id - 1].kind {
+                                self.drag_offset = if let Some((x,y)) = self.doc.objects[id-1].measurement_anchor {
+                                    p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
+                                } else { match &self.doc.objects[id - 1].kind {
                                     Kind::PlainText { rect, .. } => {
                                         p - vp.screen(Point {
                                             x: rect.left.into(),
@@ -75,7 +77,7 @@ impl Editor {
                                         })
                                     }
                                     _ => egui::Vec2::ZERO,
-                                };
+                                }};
                                 self.doc.checkpoint();
                                 self.animations.retain(|track| track.id != id);
                                 self.movements.retain(|track| track.source != id);
@@ -87,7 +89,12 @@ impl Editor {
                 }
                 if response.dragged() {
                     if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
-                        if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
+                        if self.doc.objects[id-1].measurement_anchor.is_some() {
+                            let at = p - self.drag_offset - vp.rect.min;
+                            if let Err(error) = self.doc.drag_measurement_caption(id, (at.x.round() as i16, at.y.round() as i16)) {
+                                self.status = error;
+                            }
+                        } else if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
                             if let Err(error) =
                                 self.doc.drag_image(id, vp.world(p - self.drag_offset))
                             {
@@ -144,7 +151,8 @@ impl Editor {
                                 .into();
                         }
                         Kind::FunctionPlot(_, _, min, max, samples)
-                        | Kind::ParametricPlot(_, _, _, min, max, samples, _) => {
+                        | Kind::ParametricPlot(_, _, _, min, max, samples, _)
+                        | Kind::ParameterLocus(_, min, max, samples) => {
                             self.plot_range_dialog = Some(id);
                             self.plot_min_draft = min.to_string();
                             self.plot_max_draft = max.to_string();
@@ -477,13 +485,22 @@ impl Editor {
                         ui.painter()
                             .rect_filled(rect, 0., egui::Color32::from_rgb(255, 188, 230));
                     }
-                    ui.painter().text(
-                        rect.min,
-                        egui::Align2::LEFT_TOP,
-                        text,
-                        egui::FontId::proportional(16.),
-                        egui::Color32::from_gray(35),
-                    );
+                    let style = self.doc.text_font_state(id);
+                    let size = style.as_ref().map_or(16., |style| f32::from(style.size_code));
+                    let font_id = self.canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size);
+                    let color = egui::Color32::from_gray(35);
+                    let format = egui::text::TextFormat {
+                        font_id,
+                        color,
+                        italics: style.as_ref().is_some_and(|style| style.italic),
+                        underline: if style.as_ref().is_some_and(|style| style.underline) { egui::Stroke::new(1., color) } else { egui::Stroke::NONE },
+                        ..Default::default()
+                    };
+                    let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
+                    ui.painter().galley(rect.min, galley.clone(), color);
+                    if style.as_ref().is_some_and(|style| style.bold) {
+                        ui.painter().galley(rect.min + egui::vec2(0.7, 0.), galley, color);
+                    }
                 }
             });
         rect

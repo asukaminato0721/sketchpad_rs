@@ -363,3 +363,28 @@ fn marked_ratio_drives_dynamic_dilation() {
         Some((Point { x: 160., y: 120. }, 30.))
     );
 }
+
+#[test]
+fn polygon_boundary_point_command_animates_and_saves() {
+    let mut editor = Editor::new(Document::new());
+    let vertices = [(0., 0.), (120., 0.), (120., 60.), (0., 60.)]
+        .into_iter()
+        .map(|(x, y)| editor.doc.add(Kind::Free(Point { x, y })))
+        .collect::<Vec<_>>();
+    let polygon = editor.doc.add(Kind::Polygon(vertices));
+    editor.select_only(polygon);
+    editor.point_on_object();
+    let point = editor.doc.objects.len();
+    assert_eq!(
+        editor.doc.objects[point - 1].kind,
+        Kind::PointOnPolygon(polygon, 0, 0.5)
+    );
+    editor.select_only(point);
+    editor.animate_selected();
+    assert_eq!(editor.animations.len(), 1);
+    let before = editor.doc.position(point).unwrap();
+    editor.tick_animation(0.1);
+    assert_ne!(editor.doc.position(point).unwrap(), before);
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.position(point), editor.doc.position(point));
+}

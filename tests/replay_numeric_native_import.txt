@@ -1,0 +1,11 @@
+# Native scalar parameter, calculation, numeric coordinate point, and parameter trace.
+open tests/fixtures/numeric_cood_trace_native.gsp
+parameter_value 1 3.5
+save /tmp/sketchpad_numeric_cood_trace_edited.gsp
+locus 1 9
+save /tmp/sketchpad_numeric_cood_trace_added_locus.gsp
+move 3 200 250
+save /tmp/sketchpad_numeric_cood_trace_visible.gsp
+copy 10
+paste
+save /tmp/sketchpad_numeric_cood_trace_copied.gsp

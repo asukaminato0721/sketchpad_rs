@@ -438,3 +438,49 @@ fn copying_page_preserves_name_and_page_link_target() {
     assert_eq!(reopened.page_names, document.page_names);
     assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
 }
+
+#[test]
+fn copying_and_reordering_parameter_table_pages_preserves_local_sources() {
+    let bytes = include_bytes!("../../../tests/fixtures/two_page_parameter_tables_port.gsp");
+    let mut document = Document::from_bytes(bytes, None).unwrap();
+    assert!(
+        document
+            .objects
+            .iter()
+            .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
+    );
+    let original = document.encode().unwrap();
+    let count = document.objects.len();
+    document.copy_page(1).unwrap();
+    assert_eq!(document.page_count, 3);
+    let copied = document.encode().unwrap();
+    let reopened = Document::from_bytes(&copied, None).unwrap();
+    assert_eq!(reopened.objects, document.objects);
+    for object in document.objects.iter().filter(|object| object.page == 2) {
+        let source = &document.objects[object.id - count / 2 - 1];
+        assert_eq!(source.page, 1);
+        assert_eq!(
+            document.numeric_value(object.id),
+            document.numeric_value(source.id)
+        );
+        match (&source.kind, &object.kind) {
+            (Kind::ValueTable(_, before), Kind::ValueTable(_, after))
+            | (Kind::ValueTablePair(_, _, before), Kind::ValueTablePair(_, _, after)) => {
+                assert_eq!(before.as_bytes(), after.as_bytes())
+            }
+            _ => {}
+        }
+    }
+    document.undo();
+    assert_eq!(document.encode().unwrap(), original);
+    document.redo();
+    assert_eq!(document.encode().unwrap(), copied);
+    document.move_page(2, 0).unwrap();
+    let moved = document.encode().unwrap();
+    assert_eq!(
+        Document::from_bytes(&moved, None).unwrap().objects,
+        document.objects
+    );
+    document.undo();
+    assert_eq!(document.encode().unwrap(), copied);
+}

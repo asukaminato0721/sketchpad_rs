@@ -1,0 +1,5 @@
+open tests/fixtures/two_page_parameter_tables_port.gsp
+copy_page 2
+save /tmp/parameter_table_pages_copied_port.gsp
+move_page 3 1
+save /tmp/parameter_table_pages_reordered_port.gsp

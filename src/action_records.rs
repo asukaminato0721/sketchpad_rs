@@ -179,6 +179,7 @@ pub struct PresentationButtonGroup {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkUrlButtonGroup {
     records: [Record; 6],
+    text_alignment: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,7 +213,7 @@ impl LinkPageButtonGroup {
         let mut group = Self::parse(include_bytes!("../assets/action_link_page_group.bin"))?;
         group.set_target_page(target_page)?;
         group.set_label(label)?;
-        group.set_screen_anchor(anchor);
+        group.set_screen_anchor(anchor)?;
         Ok(group)
     }
 
@@ -294,16 +295,14 @@ impl LinkPageButtonGroup {
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[1].payload;
-        (
-            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
-            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
-        )
+        caption_rect_anchor(&self.records[4].payload)
     }
 
-    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        translate_caption_rect(&mut self.records[4].payload, anchor)?;
         self.records[1].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
         self.records[1].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        Ok(())
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
@@ -328,7 +327,18 @@ impl LinkUrlButtonGroup {
                 OBJECT_END,
             ],
         )?;
-        let group = Self { records };
+        // Some native URL records pad their string payload to four bytes.
+        let action = &records[1].payload;
+        let text_alignment = if action.len() >= 26 {
+            let end = 26usize + usize::from(u16_at(action, 24));
+            if action.len() > (end + 2) & !1 { 4 } else { 2 }
+        } else {
+            2
+        };
+        let group = Self {
+            records,
+            text_alignment,
+        };
         group.validate()?;
         Ok(group)
     }
@@ -341,7 +351,7 @@ impl LinkUrlButtonGroup {
         let mut group = Self::parse(include_bytes!("../assets/action_link_url_group.bin"))?;
         group.set_url(url)?;
         group.set_label(label)?;
-        group.set_screen_anchor(anchor);
+        group.set_screen_anchor(anchor)?;
         Ok(group)
     }
 
@@ -357,13 +367,13 @@ impl LinkUrlButtonGroup {
             || u32_at(action, 4) as usize != action.len()
             || u32_at(action, 8) != 12
             || u16_at(action, 12) != 6
-            || u16_at(action, 14) != 0
+            // Native word 14 may contain opaque data (Ant: 0x3264); keep it verbatim.
             || u32_at(action, 16) != 0
-            || !valid_zero_terminated_text(action, 24)
+            || !valid_url_zero_terminated_text(action, 24)
         {
             return Err("Unsupported Link URL action".into());
         }
-        if label.len() < 26 || !valid_zero_terminated_text(label, 22) {
+        if label.len() < 26 || !valid_url_zero_terminated_text(label, 22) {
             return Err("Link URL label is truncated".into());
         }
         if self.records[3].payload.len() != 2
@@ -389,7 +399,10 @@ impl LinkUrlButtonGroup {
     }
 
     pub fn set_url(&mut self, url: &str) -> Result<(), String> {
-        set_zero_terminated_text(&mut self.records[1], 24, url)?;
+        if self.url_utf8().is_ok_and(|current| current == url) {
+            return Ok(());
+        }
+        set_zero_terminated_text_aligned(&mut self.records[1], 24, url, self.text_alignment)?;
         let payload_len = self.records[1].payload.len() as u32;
         self.records[1].payload[4..8].copy_from_slice(&payload_len.to_le_bytes());
         Ok(())
@@ -404,20 +417,22 @@ impl LinkUrlButtonGroup {
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        set_zero_terminated_text(&mut self.records[2], 22, label)
+        if self.label_utf8().is_ok_and(|current| current == label) {
+            return Ok(());
+        }
+        set_zero_terminated_text_aligned(&mut self.records[2], 22, label, self.text_alignment)
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[1].payload;
-        (
-            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
-            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
-        )
+        // Native rendering uses 08a2, not the duplicate action coordinates.
+        caption_rect_anchor(&self.records[4].payload)
     }
 
-    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        translate_caption_rect(&mut self.records[4].payload, anchor)?;
         self.records[1].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
         self.records[1].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        Ok(())
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
@@ -427,6 +442,45 @@ impl LinkUrlButtonGroup {
     pub fn encode(&self) -> Vec<u8> {
         encode_records(&self.records)
     }
+}
+
+fn caption_rect_anchor(rect: &[u8]) -> (i16, i16) {
+    (
+        i16::from_le_bytes(rect[..2].try_into().unwrap()),
+        i16::from_le_bytes(rect[2..4].try_into().unwrap()),
+    )
+}
+
+fn translate_caption_rect(rect: &mut [u8], anchor: (i16, i16)) -> Result<(), String> {
+    let before = caption_rect_anchor(rect);
+    let delta = [
+        i32::from(anchor.0) - i32::from(before.0),
+        i32::from(anchor.1) - i32::from(before.1),
+    ];
+    let mut shifted = [0u8; 8];
+    for (index, coordinate) in rect.chunks_exact(2).enumerate() {
+        let value =
+            i32::from(i16::from_le_bytes(coordinate.try_into().unwrap())) + delta[index % 2];
+        let value = i16::try_from(value)
+            .map_err(|_| "Link caption rectangle exceeds native coordinate range")?;
+        shifted[index * 2..index * 2 + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    rect.copy_from_slice(&shifted);
+    Ok(())
+}
+
+// Native URL buttons use either even-byte or four-byte string payload alignment.
+fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
+    if payload.len() < length_offset + 4 {
+        return false;
+    }
+    let end = length_offset + 2 + usize::from(u16_at(payload, length_offset));
+    end < payload.len()
+        && payload[end] == 0
+        && payload[end + 1..].iter().all(|byte| *byte == 0)
+        && [2usize, 4]
+            .iter()
+            .any(|alignment| payload.len() == (end + alignment) & !(alignment - 1))
 }
 
 fn valid_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
@@ -449,6 +503,15 @@ fn set_zero_terminated_text(
     length_offset: usize,
     text: &str,
 ) -> Result<(), String> {
+    set_zero_terminated_text_aligned(record, length_offset, text, 2)
+}
+
+fn set_zero_terminated_text_aligned(
+    record: &mut Record,
+    length_offset: usize,
+    text: &str,
+    alignment: usize,
+) -> Result<(), String> {
     let bytes = text.as_bytes();
     let length = u16::try_from(bytes.len()).map_err(|_| "Link URL text is too long")?;
     if bytes.contains(&0) {
@@ -458,7 +521,7 @@ fn set_zero_terminated_text(
     record.payload.extend_from_slice(&length.to_le_bytes());
     record.payload.extend_from_slice(bytes);
     record.payload.push(0);
-    if record.payload.len() % 2 != 0 {
+    while record.payload.len() % alignment != 0 {
         record.payload.push(0);
     }
     record.padding = None;
@@ -1487,6 +1550,80 @@ mod tests {
         assert_eq!(reopened.target_ids(), vec![3, 4]);
         assert_eq!(reopened.mode(), PresentationMode::Sequential);
         assert_eq!(reopened.label_utf8().unwrap(), "Run Presentation");
+    }
+
+    #[test]
+    fn native_page_link_moves_its_caption_rectangle_without_changing_destination() {
+        let bytes = link_page_group(include_bytes!(
+            "../tests/fixtures/action_link_page_two_original.gsp"
+        ));
+        let mut group = LinkPageButtonGroup::parse(&bytes).unwrap();
+        assert_eq!(group.screen_anchor(), (10, 5));
+        assert_eq!(group.records[4].payload, [10, 0, 5, 0, 55, 0, 27, 0]);
+        assert!(group.set_screen_anchor((i16::MAX, 575)).is_err());
+        assert_eq!(group.encode(), bytes); // Coordinate failure is atomic.
+        group.set_screen_anchor((90, 575)).unwrap();
+        assert_eq!(group.screen_anchor(), (90, 575));
+        assert_eq!(group.records[4].payload, [90, 0, 63, 2, 135, 0, 85, 2]);
+        assert_eq!(group.target_page(), 1);
+        let opened = LinkPageButtonGroup::parse(&group.encode()).unwrap();
+        assert_eq!(opened.screen_anchor(), (90, 575));
+        assert_eq!(opened.target_page(), 1);
+        let native = LinkPageButtonGroup::parse(&link_page_group(include_bytes!(
+            "../tests/fixtures/action_link_page_caption_moved_verified.gsp"
+        )))
+        .unwrap();
+        assert_eq!(native.screen_anchor(), (90, 575));
+        assert_eq!(native.target_page(), 1);
+    }
+
+    #[test]
+    fn native_link_url_four_byte_padding_and_opaque_word_survive_edits() {
+        let file = include_bytes!("../tests/fixtures/mapped_point_iteration_ant_native.gsp");
+        let bytes = link_url_group(file);
+        let mut group = LinkUrlButtonGroup::parse(&bytes).unwrap();
+        assert_eq!(group.url_utf8().unwrap(), "http://exjh.com");
+        assert_eq!(group.screen_anchor(), (33, 575));
+        assert_eq!(u16_at(&group.records[1].payload, 14), 0x3264);
+        assert_eq!(group.records[1].payload.len(), 44);
+        group.set_url("http://exjh.com").unwrap();
+        group.set_label("http://exjh.com").unwrap();
+        assert_eq!(group.encode(), bytes);
+        group.set_screen_anchor((90, 575)).unwrap();
+        group.set_url("http://exjk.com").unwrap();
+        group.set_label("http://exjk.com").unwrap();
+        let mut opened = LinkUrlButtonGroup::parse(&group.encode()).unwrap();
+        assert_eq!(opened.url_utf8().unwrap(), "http://exjk.com");
+        assert_eq!(opened.label_utf8().unwrap(), "http://exjk.com");
+        assert_eq!(opened.screen_anchor(), (90, 575));
+        assert_eq!(opened.records[4].payload, [90u8, 0, 63, 2, 195, 0, 83, 2]);
+        let before = opened.encode();
+        assert!(opened.set_screen_anchor((i16::MAX, 575)).is_err());
+        assert_eq!(opened.encode(), before);
+        let mut mismatch = opened.clone();
+        mismatch.records[1].payload[20..22].copy_from_slice(&33i16.to_le_bytes());
+        assert_eq!(mismatch.screen_anchor(), (90, 575));
+        assert_eq!(u16_at(&opened.records[1].payload, 14), 0x3264);
+        assert_eq!(opened.records[1].payload.len(), 44);
+        if std::env::var_os("SKETCHPAD_WRITE_MAPPED_FIXTURE").is_some() {
+            let start = file
+                .windows(bytes.len())
+                .position(|window| window == bytes)
+                .unwrap();
+            let mut edited = file.to_vec();
+            edited[start..start + bytes.len()].copy_from_slice(&group.encode());
+            std::fs::write("/tmp/mapped_point_iteration_ant_url_edited.gsp", edited).unwrap();
+        }
+        opened.set_url("https://example.org/").unwrap();
+        assert_eq!(opened.records[1].payload.len() % 4, 0);
+        let mut invalid = group.clone();
+        *invalid.records[1].payload.last_mut().unwrap() = 1;
+        assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
+        let mut invalid = group.clone();
+        invalid.records[1].payload.extend([0; 4]);
+        let len = invalid.records[1].payload.len() as u32;
+        invalid.records[1].payload[4..8].copy_from_slice(&len.to_le_bytes());
+        assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
     }
 
     #[test]

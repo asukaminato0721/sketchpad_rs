@@ -114,7 +114,10 @@ impl Editor {
         if self.doc.partial_view
             && self.tool != Tool::Select
             && !(self.doc.page_count > 1
-                && matches!(self.tool, Tool::Point | Tool::Segment | Tool::Circle))
+                && matches!(
+                    self.tool,
+                    Tool::Point | Tool::Segment | Tool::Circle | Tool::Text
+                ))
         {
             self.status =
                 "This page contains unsupported records; construction cannot be saved safely"

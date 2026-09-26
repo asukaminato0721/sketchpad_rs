@@ -13,10 +13,14 @@ use sketchpad_rs::plot_points_records::PlotPointsMode;
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
-use std::{env, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn usage() -> String {
-    "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | demo OUTPUT.gsp [1..9] | replay SCRIPT | svg INPUT.gsp OUTPUT.svg"
+    "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | coverage FILE_OR_DIRECTORY... | demo OUTPUT.gsp [1..9] | replay SCRIPT | svg INPUT.gsp OUTPUT.svg"
         .into()
 }
 
@@ -175,6 +179,113 @@ fn verify(paths: &[String]) -> Result<(), String> {
             }
         }
     }
+    if failures == 0 {
+        Ok(())
+    } else {
+        Err(format!("{failures} document(s) failed"))
+    }
+}
+
+// Byte retention and object decoding are separate gates. This report makes
+// unsupported payload families visible even when every untouched file saves.
+fn coverage(paths: &[String]) -> Result<(), String> {
+    fn collect(path: &Path, files: &mut BTreeSet<PathBuf>) -> Result<(), String> {
+        if path.is_dir() {
+            for entry in
+                fs::read_dir(path).map_err(|error| format!("{}: {error}", path.display()))?
+            {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let kind = entry.file_type().map_err(|error| error.to_string())?;
+                if kind.is_dir() {
+                    collect(&entry.path(), files)?;
+                } else if kind.is_file()
+                    && entry
+                        .path()
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("gsp"))
+                {
+                    files.insert(entry.path());
+                }
+            }
+        } else {
+            files.insert(path.to_path_buf());
+        }
+        Ok(())
+    }
+    if paths.is_empty() {
+        return Err(usage());
+    }
+    let mut files = BTreeSet::new();
+    for path in paths {
+        collect(Path::new(path), &mut files)?;
+    }
+    if files.is_empty() {
+        return Err("No .gsp files found".into());
+    }
+    let mut unsupported: BTreeMap<u16, (usize, BTreeSet<PathBuf>)> = BTreeMap::new();
+    let (mut full, mut partial, mut objects, mut preserved, mut failures, mut partial_views) =
+        (0, 0, 0, 0, 0, 0);
+    for path in &files {
+        let result = (|| -> Result<Document, String> {
+            let bytes = fs::read(path).map_err(|error| error.to_string())?;
+            let document = Document::from_bytes(&bytes, None)?;
+            if document.encode()? == bytes {
+                preserved += 1;
+            } else {
+                return Err("round trip changed source bytes".into());
+            }
+            Ok(document)
+        })();
+        match result {
+            Ok(document) => {
+                partial_views += usize::from(document.partial_view);
+                if document
+                    .objects
+                    .iter()
+                    .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+                {
+                    partial += 1;
+                } else {
+                    full += 1;
+                }
+                objects += document.objects.len();
+                for object in &document.objects {
+                    if let Kind::Unsupported(code) = object.kind {
+                        let (count, examples) = unsupported.entry(code).or_default();
+                        *count += 1;
+                        examples.insert(path.clone());
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("FAIL {}: {error}", path.display());
+                failures += 1;
+            }
+        }
+    }
+    println!(
+        "Documents: {} total, {full} with all object kinds decoded, {partial} with unsupported objects, {failures} failed",
+        files.len()
+    );
+    println!(
+        "Byte-preserving round trips: {preserved}/{}; object slots: {objects}",
+        files.len()
+    );
+    println!(
+        "Partial views: {partial_views}/{} (includes multi-page structural edit restrictions)",
+        files.len()
+    );
+    println!("Unsupported object codes (code, objects, documents, first example):");
+    let mut families: Vec<_> = unsupported.into_iter().collect();
+    families.sort_by_key(|(code, (count, _))| (std::cmp::Reverse(*count), *code));
+    for (code, (count, examples)) in families {
+        println!(
+            "{code:5} {count:7} {:5} {}",
+            examples.len(),
+            examples.first().unwrap().display()
+        );
+    }
+    println!("Object decoding does not establish editing or command parity.");
     if failures == 0 {
         Ok(())
     } else {
@@ -685,6 +796,7 @@ fn replay(path: &str) -> Result<(), String> {
                             | Kind::PointOnRay(host, _)
                             | Kind::PointOnLine(host, _)
                             | Kind::PointOnArc(host, _)
+                            | Kind::PointOnPolygon(host, _, _)
                             | Kind::PointOnCircle(host, _, _),
                         ) => *host,
                         _ => {
@@ -1391,7 +1503,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
                     let kind = document
                         .constrained_point(host, Point { x, y })
-                        .ok_or("host must be a nondegenerate straight path, circle, or arc")?;
+                        .ok_or("host must be a nondegenerate straight path, circle, arc, or polygon")?;
                     let id = document.add(kind);
                     println!("line {}: point_on -> object {id}", index + 1);
                 }
@@ -1461,6 +1573,19 @@ fn replay(path: &str) -> Result<(), String> {
                         IterationDepth::Fixed(depth),
                     )?;
                     println!("line {}: iterate_circle -> object {id}", index + 1);
+                }
+                "iterate_mapped" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    if parts.len() != 4 { return Err("expected SEED_IDS BRANCH_IDS[;BRANCH_IDS...] CARRIED_IDS DEPTH_OR_value:PARAMETER".into()); }
+                    let ids = |part: &str| part.split(',').map(|v| v.parse::<usize>().map_err(|_| "invalid mapped iteration ID")).collect::<Result<Vec<_>, _>>();
+                    let seeds = ids(parts[0])?;
+                    let branches = parts[1].split(';').map(ids).collect::<Result<Vec<_>, _>>()?;
+                    let carried = ids(parts[2])?;
+                    let depth = if let Some(id) = parts[3].strip_prefix("value:") {
+                        IterationDepth::Value(id.parse().map_err(|_| "invalid depth parameter")?)
+                    } else { IterationDepth::Fixed(parts[3].parse().map_err(|_| "invalid mapped iteration depth")?) };
+                    let id = document.add_mapped_point_iteration(&seeds, &branches, &carried, depth)?;
+                    println!("line {}: iterate_mapped -> object {id}", index + 1);
                 }
                 "iterate_polygon_branch" | "iterate_polygon_branch_live" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
@@ -1820,16 +1945,21 @@ fn replay(path: &str) -> Result<(), String> {
                         .iter()
                         .map(|part| part.parse::<usize>().map_err(|_| "invalid object ID"))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let kind = if matches!(
-                        document
-                            .objects
-                            .get(ids[0].saturating_sub(1))
-                            .map(|o| &o.kind),
-                        Some(Kind::Polygon(_))
-                    ) {
-                        Kind::RectangularMarkedTranslatedPolygon(ids[0], ids[1], ids[2])
-                    } else {
-                        Kind::RectangularMarkedTranslatedPoint(ids[0], ids[1], ids[2])
+                    let kind = match document
+                        .objects
+                        .get(ids[0].saturating_sub(1))
+                        .map(|o| &o.kind)
+                    {
+                        Some(Kind::Segment(_, _)) => {
+                            Kind::RectangularMarkedTranslatedSegment(ids[0], ids[1], ids[2])
+                        }
+                        Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
+                            Kind::RectangularMarkedTranslatedCircle(ids[0], ids[1], ids[2])
+                        }
+                        Some(Kind::Polygon(_)) => {
+                            Kind::RectangularMarkedTranslatedPolygon(ids[0], ids[1], ids[2])
+                        }
+                        _ => Kind::RectangularMarkedTranslatedPoint(ids[0], ids[1], ids[2]),
                     };
                     let id = document.add(kind);
                     println!(
@@ -1850,26 +1980,37 @@ fn replay(path: &str) -> Result<(), String> {
                         "vertical_fixed" => false,
                         _ => return Err("expected horizontal_fixed or vertical_fixed".into()),
                     };
-                    let kind = if matches!(
-                        document
-                            .objects
-                            .get(source.saturating_sub(1))
-                            .map(|o| &o.kind),
-                        Some(Kind::Polygon(_))
-                    ) {
-                        Kind::MixedRectangularTranslatedPolygon(
+                    let kind = match document
+                        .objects
+                        .get(source.saturating_sub(1))
+                        .map(|o| &o.kind)
+                    {
+                        Some(Kind::Segment(_, _)) => Kind::MixedRectangularTranslatedSegment(
                             source,
                             distance,
                             fixed_cm,
                             fixed_horizontal,
-                        )
-                    } else {
-                        Kind::MixedRectangularTranslatedPoint(
+                        ),
+                        Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
+                            Kind::MixedRectangularTranslatedCircle(
+                                source,
+                                distance,
+                                fixed_cm,
+                                fixed_horizontal,
+                            )
+                        }
+                        Some(Kind::Polygon(_)) => Kind::MixedRectangularTranslatedPolygon(
                             source,
                             distance,
                             fixed_cm,
                             fixed_horizontal,
-                        )
+                        ),
+                        _ => Kind::MixedRectangularTranslatedPoint(
+                            source,
+                            distance,
+                            fixed_cm,
+                            fixed_horizontal,
+                        ),
                     };
                     let id = document.add(kind);
                     println!(
@@ -2105,6 +2246,7 @@ fn replay(path: &str) -> Result<(), String> {
                                 | Kind::PointOnLine(_, _)
                                 | Kind::PointOnCircle(_, _, _)
                                 | Kind::PointOnArc(_, _)
+                                | Kind::PointOnPolygon(_, _, _)
                         )
                     ) {
                         return Err("move requires a movable point".into());
@@ -2309,6 +2451,7 @@ fn run() -> Result<(), String> {
         [command, path] if command == "inspect" => inspect(path),
         [command, before, after] if command == "diff" => diff(before, after),
         [command, paths @ ..] if command == "verify" => verify(paths),
+        [command, paths @ ..] if command == "coverage" => coverage(paths),
         [command, path] if command == "demo" => demo(path, 9),
         [command, path, steps] if command == "demo" => demo(
             path,

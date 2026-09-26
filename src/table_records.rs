@@ -167,6 +167,9 @@ fn object_group(document: &[u8], ordinal: usize) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterGroup {
     bytes: Vec<u8>,
+    // Sampling a native parameter trace must use the exact floating-point
+    // driver without rewriting its saved decimal spelling or presentation.
+    evaluation_value: Option<[u8; 8]>,
 }
 
 fn decimal_words(value: f64) -> Result<Vec<u16>, String> {
@@ -238,12 +241,14 @@ impl ParameterGroup {
     pub fn default_value() -> Self {
         Self {
             bytes: object_group(DEFAULT_PARAMETER, 1),
+            evaluation_value: None,
         }
     }
 
     pub fn second_default_value() -> Self {
         Self {
             bytes: object_group(TWO_PARAMETERS, 2),
+            evaluation_value: None,
         }
     }
 
@@ -258,6 +263,7 @@ impl ParameterGroup {
         }
         let mut group = Self {
             bytes: object_group(NAMED_PARAMETER, 1),
+            evaluation_value: None,
         };
         group.set_value(value)?;
         let rs = records(&group.bytes, 0)?;
@@ -315,84 +321,40 @@ impl ParameterGroup {
         value_from_words(&words)?;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
-        if precision > 5 || step != [1., 0.1, 0.01, 0.001, 0.0001, 0.00001][usize::from(precision)]
+        let domain = (
+            f64::from_le_bytes(payload[60..68].try_into().unwrap()),
+            f64::from_le_bytes(payload[68..76].try_into().unwrap()),
+        );
+        if precision > 5 || !step.is_finite() || step <= 0.
+            || !domain.0.is_finite() || !domain.1.is_finite() || domain.0 > domain.1
         {
-            return Err("Unsupported parameter precision".into());
+            return Err("Unsupported parameter precision or animation domain".into());
         }
-        let templates = [
-            object_group(DEFAULT_PARAMETER, 1),
-            object_group(TWO_PARAMETERS, 2),
-            object_group(NAMED_PARAMETER, 1),
-        ];
-        let supported = templates.iter().any(|template| {
-            let base = records(template, 0).unwrap();
-            rs.iter().enumerate().all(|(record_index, actual)| {
-                let expected = base[record_index];
-                if record_index == 1 {
-                    let actual_payload = &bytes[actual.payload..actual.end];
-                    let expected_payload = &template[expected.payload..expected.end];
-                    (0..92).all(|i| {
-                        let animated_cache = actual_payload[80..88] == [0; 8]
-                            && expected_payload[80..88] == 1_f64.to_le_bytes();
-                        let mutable = (12..16).contains(&i)
-                            || (22..24).contains(&i)
-                            || (28..32).contains(&i)
-                            || (36..40).contains(&i)
-                            || (44..46).contains(&i)
-                            || (48..50).contains(&i)
-                            || (52..60).contains(&i)
-                            || animated_cache && (80..88).contains(&i);
-                        mutable || actual_payload[i] == expected_payload[i]
-                    })
-                } else if record_index == 2 {
-                    let actual_payload = &bytes[actual.payload..actual.end];
-                    if actual_payload.len() < 26 {
-                        false
-                    } else if u32::from_le_bytes(actual_payload[..4].try_into().unwrap()) == 6 {
-                        let expected_record = &template[expected.start..expected.end];
-                        &bytes[actual.start..actual.end] == expected_record
-                    } else {
-                        let named = object_group(NAMED_PARAMETER, 1);
-                        let label_records = records(&named, 0).unwrap();
-                        let expected_payload =
-                            &named[label_records[2].payload..label_records[2].end];
-                        actual_payload[..22] == expected_payload[..22] && {
-                            let name_len =
-                                u16::from_le_bytes(actual_payload[22..24].try_into().unwrap())
-                                    as usize;
-                            let name = actual_payload.get(24..24 + name_len);
-                            name_len > 0
-                                && name_len <= 32
-                                && actual_payload.len() == 24 + name_len + 1 + ((name_len + 1) % 2)
-                                && actual_payload[24 + name_len..].iter().all(|ch| *ch == 0)
-                                && name.is_some_and(|name| {
-                                    name[0].is_ascii_alphabetic()
-                                        && name
-                                            .iter()
-                                            .all(|ch| ch.is_ascii_alphanumeric() || *ch == b'_')
-                                })
-                        }
-                    }
-                } else {
-                    let actual_record = &bytes[actual.start..actual.end];
-                    let expected_record = &template[expected.start..expected.end];
-                    actual_record.len() == expected_record.len()
-                        && actual_record.iter().zip(expected_record).enumerate().all(
-                            |(i, (a, e))| {
-                                record_index == 0 && (i == 10 || (26..28).contains(&i))
-                                    || record_index == 3 && i >= 8
-                                    || record_index == 4 && i >= 8
-                                    || a == e
-                            },
-                        )
-                }
-            })
-        });
-        if !supported {
+        // The native numeric prefix identifies the value representation. Colors,
+        // label flags, font indices and persisted caches do not identify its math.
+        let template = object_group(DEFAULT_PARAMETER, 1);
+        let base = records(&template, 0)?;
+        let expected = &template[base[1].payload..base[1].end];
+        let immutable = [0..12, 16..22, 24..26, 32..36, 40..44, 46..48];
+        if immutable.iter().any(|range| payload[range.clone()] != expected[range.clone()])
+            || !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 1 | 3)
+            || rs[0].end - rs[0].payload != 28
+            || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap()) & 0xffff != 0
+            || u16::from_le_bytes(bytes[rs[0].payload + 8..rs[0].payload + 10].try_into().unwrap()) != 79
+            || rs[3].end - rs[3].payload != 2
+            || rs[4].end - rs[4].payload != 8
+            || rs[5].end != rs[5].payload
+        {
             return Err("Unsupported parameter variant".into());
+        }
+        let label = crate::text_records::LabelAux::parse(&bytes[rs[2].payload..rs[2].end])?;
+        let name = label.name_utf8().map_err(|_| "Parameter name is not UTF-8")?;
+        if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+            return Err("Unsupported parameter name".into());
         }
         let group = Self {
             bytes: bytes.to_vec(),
+            evaluation_value: None,
         };
         let at = group.anchor();
         let bbox = group.bbox();
@@ -421,6 +383,9 @@ impl ParameterGroup {
         ) as usize
     }
     pub fn value(&self) -> f64 {
+        if let Some(value) = self.evaluation_value {
+            return f64::from_le_bytes(value);
+        }
         let rs = records(&self.bytes, 0).unwrap();
         let payload = &self.bytes[rs[1].payload..rs[1].end];
         let words = payload[92..]
@@ -461,8 +426,11 @@ impl ParameterGroup {
         let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
         payload[28..30].copy_from_slice(&(precision as u16).to_le_bytes());
-        payload[52..60]
-            .copy_from_slice(&[1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001][precision].to_le_bytes());
+        let precision_steps = [1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001];
+        let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
+        if step == precision_steps[self.precision()] {
+            payload[52..60].copy_from_slice(&precision_steps[precision].to_le_bytes());
+        }
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
         }
@@ -480,7 +448,13 @@ impl ParameterGroup {
         updated[right..right + 2].copy_from_slice(&new_right.to_le_bytes());
         Self::parse(&updated)?;
         self.bytes = updated;
+        self.evaluation_value = None;
         Ok(())
+    }
+    pub(crate) fn set_evaluation_value(&mut self, value: f64) -> bool {
+        if !value.is_finite() { return false; }
+        self.evaluation_value = Some(value.to_le_bytes());
+        true
     }
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -906,6 +880,14 @@ impl ParameterExpr {
                 let (left, right) = (a.units(sources)?, b.units(sources)?);
                 match *op {
                     0x1000 | 0x1001 if left == right => Ok(left),
+                    // Native measured lengths can use bare decimal
+                    // thresholds (for example sgn((x-2)*(3-x)), with x in cm).
+                    // The literal adopts the other operand's units. A scalar
+                    // source or computed scalar expression remains distinct.
+                    0x1000 | 0x1001
+                        if left == NumericUnit::Length && right == Scalar && b.is_bare_decimal() => Ok(left),
+                    0x1000 | 0x1001
+                        if left == Scalar && right == NumericUnit::Length && a.is_bare_decimal() => Ok(right),
                     0x1002 | 0x1003 => {
                         let (al, ad) = left.dimensions();
                         let (bl, bd) = right.dimensions();
@@ -949,6 +931,10 @@ impl ParameterExpr {
                 }
             }
         }
+    }
+
+    fn is_bare_decimal(&self) -> bool {
+        matches!(self, Self::Literal(_, text) if text.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
     }
 
     fn display(&self, source_name: &str) -> String {
@@ -1029,20 +1015,20 @@ impl<'a> ParameterExprParser<'a> {
         }
         if calculation_function_name(word).is_some() {
             self.at += 1;
-            // Native UI emits an implicit opening parenthesis. Existing saved
-            // formulas can also wrap the argument in an explicit pair.
-            let explicit = self.words.get(self.at) == Some(&11);
-            if explicit {
-                self.at += 1;
-            }
+            // A function has an implicit opener. A following token 11 is a
+            // normal grouped subexpression; its trailing operators still belong
+            // to the argument until the function's one unmatched closing token.
             let argument = self.expression()?;
-            let closing = if explicit { 2 } else { 1 };
-            for _ in 0..closing {
-                if self.words.get(self.at) != Some(&12) {
-                    return Err("Unclosed function argument".into());
-                }
-                self.at += 1;
+            if self.words.get(self.at) != Some(&12) {
+                return Err("Unclosed function argument".into());
             }
+            self.at += 1;
+            // Our writer wraps an entire argument in one explicit group. Avoid
+            // adding a redundant pair when displaying that established layout.
+            let argument = match argument {
+                ParameterExpr::Group(inner) => *inner,
+                other => other,
+            };
             return Ok(ParameterExpr::Call(word, Box::new(argument)));
         }
         if word == 13 || word == 14 {
@@ -1330,49 +1316,40 @@ impl ParameterCalculationGroup {
     }
     fn validate_single_layout(bytes: &[u8]) -> Result<(), String> {
         let rs = records(bytes, 0)?;
-        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
-        {
-            return Err("Unsupported parameter calculation records".into());
-        }
-        let template = object_group(PARAMETER_CALCULATION_NATIVE, 2);
-        let template_records = records(&template, 0)?;
-        let expression_len = rs[2].end - rs[2].payload;
-        let token_count = expression_len.saturating_sub(92) / 2;
+        let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
+        let font_index = match kinds.as_slice() {
+            [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7] => 3,
+            [0x07d0, 0x07d2, 0x0907, 0x07d5, 0x07d8, 0x07d7] => {
+                crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
+                4
+            }
+            _ => return Err("Unsupported parameter calculation records".into()),
+        };
+        let payload = &bytes[rs[2].payload..rs[2].end];
+        let token_count = payload.len().saturating_sub(92) / 2;
         if rs[0].end - rs[0].payload != 28
             || rs[1].end - rs[1].payload != 8
-            || !(1..=32).contains(&token_count)
-            || expression_len != 92 + 2 * token_count
-            || bytes.len() != 170 + 2 * token_count
-            || rs[3].end - rs[3].payload != 2
-            || rs[4].end != rs[4].payload
+            || !(1..=256).contains(&token_count)
+            || payload.len() != 92 + 2 * token_count
+            || rs[font_index].end - rs[font_index].payload != 2
+            || rs.last().unwrap().end != rs.last().unwrap().payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
-            || u32::from_le_bytes(bytes[48..52].try_into().unwrap()) == 0
-            || !matches!(
-                u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
-                48..=51
-            )
-            || u32::from_le_bytes(bytes[96..100].try_into().unwrap()) as usize
-                != expression_len - 32
-            || u16::from_le_bytes(bytes[104..106].try_into().unwrap()) as usize != token_count
+            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 48..=51)
+            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize != payload.len() - 32
+            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize != token_count
         {
             return Err("Unsupported parameter calculation header".into());
         }
-        for (index, (&actual, &expected)) in bytes[..152].iter().zip(&template[..152]).enumerate() {
-            let variable = index == 10
-                || (16..18).contains(&index)
-                || (26..28).contains(&index)
-                || (48..52).contains(&index)
-                || (52..56).contains(&index)
-                || (72..152).contains(&index);
-            if !variable && actual != expected {
-                return Err("Unsupported parameter calculation style".into());
+        let template = object_group(PARAMETER_CALCULATION_NATIVE, 2);
+        let template_records = records(&template, 0)?;
+        let expected = &template[template_records[2].payload..template_records[2].end];
+        for range in [0..12, 16..22, 24..26, 32..36, 40..44, 46..48] {
+            if payload[range.clone()] != expected[range] {
+                return Err("Unsupported calculation numeric representation".into());
             }
         }
-        if bytes[rs[3].start..rs[3].payload]
-            != template[template_records[3].start..template_records[3].payload]
-            || bytes[rs[4].start..] != template[template_records[4].start..]
-        {
-            return Err("Unsupported parameter calculation font".into());
+        if !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 0 | 1 | 3) {
+            return Err("Unsupported calculation display mode".into());
         }
         Ok(())
     }
@@ -1802,68 +1779,50 @@ impl CalculationGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         calculation_precision(bytes)?;
         let rs = records(bytes, 0)?;
-        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
-        {
-            return Err("Unsupported calculation record sequence".into());
-        }
-        let template = object_group(CALCULATION, 2);
+        let font_index = match rs.iter().map(|r| r.kind).collect::<Vec<_>>().as_slice() {
+            [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7] => 2,
+            [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7] => {
+                crate::text_records::LabelAux::parse(&bytes[rs[2].payload..rs[2].end])?;
+                3
+            }
+            _ => return Err("Unsupported calculation record sequence".into()),
+        };
         if rs[0].end - rs[0].payload != 28
-            || rs[2].end - rs[2].payload != 2
-            || rs[3].end - rs[3].payload != 8
-            || rs[4].end != rs[4].payload
+            || rs[font_index].end - rs[font_index].payload != 2
+            || rs[font_index + 1].end - rs[font_index + 1].payload != 8
+            || rs.last().unwrap().end != rs.last().unwrap().payload
+            || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 0
+            || u16::from_le_bytes(bytes[16..18].try_into().unwrap()) != 51
         {
-            return Err("Unsupported calculation record lengths".into());
+            return Err("Unsupported calculation record lengths or subtype".into());
         }
         let payload = &bytes[rs[1].payload..rs[1].end];
-        if !(94..=156).contains(&payload.len())
+        if !(94..=604).contains(&payload.len())
             || payload.len() % 2 != 0
-            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
-                != payload.len() - 32
-            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize
-                != (payload.len() - 92) / 2
+            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize != payload.len() - 32
+            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize != (payload.len() - 92) / 2
         {
             return Err("Unsupported calculation byte length".into());
         }
+        let template = object_group(CALCULATION, 2);
         let base = records(&template, 0)?;
-        for i in 0..rs[1].payload + 92 {
-            let mutable = i == 10
-                || (26..28).contains(&i)
-                || (rs[1].payload + 12..rs[1].payload + 16).contains(&i)
-                || (rs[1].payload + 28..rs[1].payload + 30).contains(&i)
-                || matches!(i, 36 | 66 | 74 | 80 | 88)
-                || (92..=140).contains(&i);
-            if !mutable && bytes[i] != template[i] {
-                return Err("Unsupported calculation variant".into());
+        let expected = &template[base[1].payload..base[1].end];
+        for range in [0..12, 16..22, 24..26, 32..36, 40..44, 46..48] {
+            if payload[range.clone()] != expected[range] {
+                return Err("Unsupported calculation numeric representation".into());
             }
         }
-        for index in [2, 4] {
-            if &bytes[rs[index].start..rs[index].end]
-                != &template[base[index].start..base[index].end]
-            {
-                return Err("Unsupported calculation style".into());
-            }
+        if !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 0 | 1 | 3) {
+            return Err("Unsupported calculation display mode".into());
         }
-        let result = Self {
-            bytes: bytes.to_vec(),
-        };
+        let result = Self { bytes: bytes.to_vec() };
         result.expression_tree()?;
         let anchor = result.anchor();
-        let bbox = rs[3].payload;
-        let word = |offset| {
-            i16::from_le_bytes(
-                result.bytes[bbox + offset..bbox + offset + 2]
-                    .try_into()
-                    .unwrap(),
-            )
-        };
+        let bbox = rs[font_index + 1].payload;
+        let word = |offset| i16::from_le_bytes(bytes[bbox + offset..bbox + offset + 2].try_into().unwrap());
         if (word(0), word(2)) != anchor
-            || !(80..=300).contains(&(i32::from(word(4)) - i32::from(word(0))))
-            || i32::from(word(6)) - i32::from(word(2))
-                != if Self::parts_from_payload(payload).is_ok_and(|p| p.2 == 3) {
-                    55
-                } else {
-                    26
-                }
+            || !(1..=2048).contains(&(i32::from(word(4)) - i32::from(word(0))))
+            || !(1..=2048).contains(&(i32::from(word(6)) - i32::from(word(2))))
         {
             return Err("Calculation anchor and box disagree".into());
         }
@@ -1939,7 +1898,7 @@ impl CalculationGroup {
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
-        let bbox = rs[3].payload;
+        let bbox = rs.iter().find(|record| record.kind == 0x08a3).unwrap().payload;
         let delta = (
             i32::from(anchor.0) - i32::from(before.0),
             i32::from(anchor.1) - i32::from(before.1),
@@ -2419,8 +2378,25 @@ impl TableGroup {
             self.pair_source_ids().ok_or("Invalid pair table sources")?,
         )?;
         changed[10] = self.bytes[10];
-        self.bytes = changed;
-        Self::parse_pair(&self.bytes)?;
+        let old_records = records(&self.bytes, 0)?;
+        let new_records = records(&changed, 0)?;
+        let old_layout = &self.bytes[old_records[2].payload..old_records[2].end];
+        let text_end = |rows: &[[f64; 2]]| -> Result<usize, String> {
+            rows.iter().try_fold(72, |end, [x, y]| {
+                Ok(end + 4 + table_value_text(*x)?.len() + 3 + table_value_text(*y)?.len())
+            })
+        };
+        let old_text_end = text_end(&self.pair_values().ok_or("Invalid pair table")?)?;
+        let new_text_end = text_end(&all)?;
+        let old_padding = &old_layout[old_text_end..];
+        let new_padding = new_records[2].end - new_records[2].payload - new_text_end;
+        // Alignment bytes retain their native spelling when the row widths
+        // are unchanged. Different row widths require fresh alignment.
+        if old_padding.len() == new_padding {
+            changed[new_records[2].end - new_padding..new_records[2].end]
+                .copy_from_slice(old_padding);
+        }
+        *self = Self::parse_pair(&changed)?;
         Ok(())
     }
 
@@ -2521,7 +2497,20 @@ impl TableGroup {
             .default_values()
             .ok_or("Not a default parameter table")?;
         *values.last_mut().ok_or("Table has no rows")? = value;
-        self.bytes = canonical_table_values(self.source_id(), self.anchor(), &values)?;
+        let old_records = records(&self.bytes, 0)?;
+        let marker = self.rows() == 2
+            && self.bytes[old_records[2].end - 2..old_records[2].end] == [b't', 0];
+        let mut changed = canonical_table_values(self.source_id(), self.anchor(), &values)?;
+        changed[10] = self.bytes[10];
+        if marker {
+            let new_records = records(&changed, 0)?;
+            let end = new_records[2].end;
+            if changed[end - 2..end] != [0, 0] {
+                return Err("Table edit cannot preserve native padding".into());
+            }
+            changed[end - 2] = b't';
+        }
+        *self = Self::parse(&changed)?;
         Ok(())
     }
 

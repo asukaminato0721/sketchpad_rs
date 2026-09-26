@@ -233,6 +233,7 @@ impl Document {
                         function_name: matches!(object.kind, Kind::FunctionDefinition(_))
                             .then(|| object.function_name.clone().unwrap_or_else(|| "f".into())),
                         measurement_precision: object.measurement_precision,
+                        measurement_anchor: object.measurement_anchor,
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
@@ -265,6 +266,7 @@ impl Document {
             function_anchor,
             function_name,
             measurement_precision,
+            measurement_anchor,
         } in &clipboard.objects
         {
             if kind
@@ -349,6 +351,14 @@ impl Document {
                 function_anchor,
                 function_name,
                 measurement_precision: *measurement_precision,
+                measurement_anchor: measurement_anchor
+                    .map(|(x, y)| {
+                        Ok::<_, String>((
+                            x.checked_add(20).ok_or("Measurement x is out of range")?,
+                            y.checked_add(20).ok_or("Measurement y is out of range")?,
+                        ))
+                    })
+                    .transpose()?,
             });
             if let Some(style) = frame_style {
                 candidate.frame_styles.insert(id, *style);

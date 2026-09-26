@@ -39,7 +39,7 @@ fn is_point_header(payload: &[u8]) -> bool {
             | (1, 11)
             | (15, 10)
             | (9 | 11 | 12 | 13 | 14, 45)
-            | (67 | 68 | 95 | 123, 56)
+            | (67 | 68 | 69 | 95 | 123, 56)
     )
 }
 
@@ -102,7 +102,10 @@ fn is_circle_header(payload: &[u8]) -> bool {
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     matches!(
         (code, subtype),
-        (3 | 4 | 16 | 17 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34, 28)
+        (
+            3 | 4 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+            28
+        )
     )
 }
 
@@ -184,7 +187,10 @@ fn is_segment_header(payload: &[u8]) -> bool {
                 u16::from_le_bytes([payload[0], payload[1]]),
                 u16::from_le_bytes([payload[8], payload[9]])
             ),
-            (2 | 16 | 17 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34, 14)
+            (
+                2 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+                14
+            )
         )
 }
 
@@ -203,11 +209,16 @@ pub fn circle_line_style(payload: &[u8]) -> Option<CircleLineStyle> {
 }
 
 fn is_straight_or_arc_header(payload: &[u8]) -> bool {
-    (payload.len() == 16 || payload.len() == 28)
-        && matches!(
-            u16::from_le_bytes([payload[0], payload[1]]),
-            5 | 6 | 7 | 63 | 64 | 79 | 81
-        )
+    if payload.len() != 16 && payload.len() != 28 {
+        return false;
+    }
+    let code = u16::from_le_bytes([payload[0], payload[1]]);
+    matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 81)
+        || (payload[6..8] == [6, 0]
+            && matches!(
+                (code, u16::from_le_bytes([payload[8], payload[9]])),
+                (35 | 97, 42) | (72, 58) | (126 | 127, 99)
+            ))
 }
 
 pub fn straight_or_arc_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {
@@ -252,7 +263,7 @@ pub fn set_straight_or_arc_line_style(
     style: SegmentLineStyle,
 ) -> Result<(), String> {
     if !is_straight_or_arc_header(payload) {
-        return Err("Expected a line, ray, or arc object header".into());
+        return Err("Expected a line, ray, arc, or point-curve object header".into());
     }
     payload[10] = (style.pattern as u8) << 4 | style.width as u8;
     Ok(())
@@ -268,7 +279,7 @@ pub fn straight_or_arc_color(payload: &[u8]) -> Option<RgbColor> {
 
 pub fn set_straight_or_arc_color(payload: &mut [u8], color: RgbColor) -> Result<(), String> {
     if !is_straight_or_arc_header(payload) {
-        return Err("Expected a line, ray, or arc object header".into());
+        return Err("Expected a line, ray, arc, or point-curve object header".into());
     }
     payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
     Ok(())
@@ -788,6 +799,71 @@ mod tests {
             ))),
             None
         );
+    }
+
+    #[test]
+    fn point_curve_headers_use_native_strokes_without_casting_swept_loci() {
+        for bytes in [
+            include_bytes!("../tests/fixtures/locus_midpoint_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/function_plot_identity.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/parametric_rectangular_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/parametric_polar_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/numeric_cood_trace_added_locus_native_verified.gsp")
+                .as_slice(),
+        ] {
+            let header = records_headers(bytes)
+                .into_iter()
+                .find(|h| matches!(u16::from_le_bytes([h[0], h[1]]), 35 | 72 | 97 | 126 | 127))
+                .unwrap();
+            assert!(matches!(
+                visual_style(&header),
+                Some(VisualStyle::Stroke { .. })
+            ));
+            let mut changed = header.clone();
+            set_visual_style(
+                &mut changed,
+                VisualStyle::Stroke {
+                    line: SegmentLineStyle {
+                        width: LineWidth::Thick,
+                        pattern: LinePattern::Dashed,
+                    },
+                    color: RgbColor {
+                        red: 14,
+                        green: 150,
+                        blue: 210,
+                    },
+                },
+            )
+            .unwrap();
+            for index in 0..header.len() {
+                if ![10, 12, 13, 14].contains(&index) {
+                    assert_eq!(changed[index], header[index]);
+                }
+            }
+        }
+        for bytes in [
+            include_bytes!("../tests/fixtures/locus_segment_target_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/locus_circle_target_original.gsp").as_slice(),
+            include_bytes!("../tests/fixtures/locus_vector_polygon_target_original.gsp").as_slice(),
+        ] {
+            let mut header = records_headers(bytes)
+                .into_iter()
+                .find(|h| u16::from_le_bytes([h[0], h[1]]) == 35)
+                .unwrap();
+            assert_eq!(header[8], 43);
+            assert_eq!(visual_style(&header), None);
+            assert!(
+                set_straight_or_arc_color(
+                    &mut header,
+                    RgbColor {
+                        red: 14,
+                        green: 150,
+                        blue: 210
+                    }
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

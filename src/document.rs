@@ -134,6 +134,7 @@ pub enum Kind {
     PointOnLine(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    PointOnPolygon(usize, usize, f64),
     GraphHorizontalUnit(usize, f64),
     GraphVerticalUnit(usize, f64),
     GraphAxis(usize, usize, u32),
@@ -160,6 +161,8 @@ pub enum Kind {
     PathLiteralPoint(usize, f64),
     PathValuePoint(usize, usize),
     PlottedPoint(usize, usize, PlotPointsMode, [f64; 2]),
+    NumericCoordinatePoint(usize, usize, usize),
+    ParameterLocus(Vec<usize>, f64, f64, u32),
     SegmentLength(usize),
     PolygonPerimeter(usize),
     CircleCircumference(usize),
@@ -181,6 +184,12 @@ pub enum Kind {
         segments: Vec<usize>,
         depth: IterationDepth,
     },
+    MappedPointIteration {
+        seeds: Vec<usize>,
+        branches: Vec<Vec<usize>>,
+        carried: Vec<usize>,
+        depth: IterationDepth,
+    },
     IterationValues(usize, usize),
     PointRatio(usize, usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
@@ -196,8 +205,12 @@ pub enum Kind {
     MarkedDistanceTranslatedCircle(usize, usize, f64),
     MarkedDistanceTranslatedPolygon(usize, usize, f64),
     MixedRectangularTranslatedPoint(usize, usize, f64, bool),
+    MixedRectangularTranslatedSegment(usize, usize, f64, bool),
+    MixedRectangularTranslatedCircle(usize, usize, f64, bool),
     MixedRectangularTranslatedPolygon(usize, usize, f64, bool),
     RectangularMarkedTranslatedPoint(usize, usize, usize),
+    RectangularMarkedTranslatedSegment(usize, usize, usize),
+    RectangularMarkedTranslatedCircle(usize, usize, usize),
     RectangularMarkedTranslatedPolygon(usize, usize, usize),
     VectorTranslatedPoint(usize, usize, usize),
     VectorTranslatedSegment(usize, usize, usize),
@@ -291,6 +304,7 @@ pub struct Object {
     pub function_anchor: Option<(i16, i16)>,
     pub function_name: Option<String>,
     pub measurement_precision: Option<u16>,
+    pub measurement_anchor: Option<(i16, i16)>,
 }
 #[derive(Clone, Debug)]
 pub struct Clipboard {
@@ -313,6 +327,7 @@ struct ClipboardObject {
     function_anchor: Option<(i16, i16)>,
     function_name: Option<String>,
     measurement_precision: Option<u16>,
+    measurement_anchor: Option<(i16, i16)>,
 }
 
 impl Clipboard {
@@ -405,6 +420,10 @@ impl Document {
                 .get(source.saturating_sub(1))
                 .and_then(|object| object.visual_style)
                 .or_else(|| default_visual_style(&kind))
+        } else if let Kind::Locus(refs,_) = &kind {
+            refs.first().and_then(|id| id.checked_sub(1)).and_then(|at| self.objects.get(at))
+                .filter(|target| kind::is_point_kind(&target.kind))
+                .map(|_| kind::point_locus_visual_style())
         } else {
             default_visual_style(&kind)
         };
@@ -438,6 +457,7 @@ impl Document {
             function_anchor: None,
             function_name: None,
             measurement_precision,
+            measurement_anchor: None,
         });
         id
     }

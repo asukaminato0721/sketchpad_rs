@@ -12,6 +12,7 @@ mod animation_buttons;
 mod animation_motion;
 mod animation_sources;
 mod carried_iteration;
+mod functions;
 mod iteration;
 mod marked_iteration;
 mod measurements;

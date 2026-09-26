@@ -1,0 +1,10 @@
+open tests/fixtures/fixed_rotation_segment_original.gsp
+translate_segment_vector 5 1 2
+save /tmp/vector_rotated_segment_port.gsp
+move 3 250 190
+save /tmp/vector_rotated_segment_edited_port.gsp
+open tests/fixtures/fixed_rotation_circle_original.gsp
+translate_circle_vector 5 1 2
+save /tmp/vector_rotated_circle_port.gsp
+move 3 250 190
+save /tmp/vector_rotated_circle_edited_port.gsp

@@ -174,6 +174,9 @@ impl Editor {
                 None,
             ),
             Kind::PointOnArc(host, t) if self.doc.point_on_arc(host, t).is_some() => (t, None),
+            Kind::PointOnPolygon(host, edge, t) => {
+                (self.doc.polygon_boundary_parameter(host, edge, t)?, None)
+            }
             _ => return None,
         };
         phase.is_finite().then_some(AnimationTrack {
@@ -473,7 +476,10 @@ impl Editor {
             if track.parameter_domain.is_some() && step == 0. {
                 return true;
             }
-            let circular = matches!(kind, Kind::PointOnCircle(_, _, _));
+            let circular = matches!(
+                kind,
+                Kind::PointOnCircle(_, _, _) | Kind::PointOnPolygon(_, _, _)
+            );
             match track.button_settings.map(|settings| settings.direction) {
                 Some(AnimationDirection::Forward) => {
                     track.phase = (track.phase + step).rem_euclid(1.);
@@ -551,6 +557,9 @@ impl Editor {
                     }
                 }),
                 Kind::PointOnArc(host, _) => self.doc.point_on_arc(host, track.phase),
+                Kind::PointOnPolygon(host, _, _) => {
+                    self.doc.point_at_polygon_parameter(host, track.phase)
+                }
                 _ => None,
             };
             let moved = destination.is_some_and(|point| self.doc.move_point(track.id, point));

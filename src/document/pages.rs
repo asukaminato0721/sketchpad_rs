@@ -113,19 +113,9 @@ impl Document {
             ids[object.id] = parsed.objects.len() + index + 1;
         }
         for (index, object) in source_objects.iter().enumerate() {
-            let mut expected = object.kind.remap_checked(&ids)?;
-            if let Kind::ParameterCalculation(_, group) = &mut expected {
-                // Serialized calculation parents use IDs within their page.
-                let local = group
-                    .sources()
-                    .into_iter()
-                    .map(|id| {
-                        id.checked_sub(parsed.objects.len() as u32)
-                            .ok_or("Invalid copied calculation source")
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                *group = group.remap_sources(&local)?;
-            }
+            // A copied page retains serialized page-local numeric source IDs.
+            // Only the model's document-wide references move to the new page.
+            let expected = object.kind.remap(&ids);
             let copied = &result.objects[parsed.objects.len() + index];
             if copied.page != new_page
                 || copied.kind != expected
@@ -410,7 +400,8 @@ impl Document {
             }
         }
         for (index, (page, object)) in expected.into_iter().enumerate() {
-            let mut kind = object.kind.remap_checked(&ids)?;
+            // Reordering intact page blocks preserves their embedded local IDs.
+            let mut kind = object.kind.remap(&ids);
             if let Kind::LinkPageButton { target_page, .. } = &mut kind {
                 if *target_page < new_page.len() {
                     *target_page = new_page[*target_page];

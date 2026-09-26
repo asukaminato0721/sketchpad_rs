@@ -1,4 +1,4 @@
-//! Conservative record templates and evaluation for Measure > Value of Point
+//! Native record layouts and evaluation for Measure > Value of Point
 //! and Cartesian line/circle equations in Sketchpad 5.
 
 use std::ops::Range;
@@ -87,7 +87,7 @@ impl CartesianFrame {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EquationValue {
-    /// Constraint parameter for a point on a segment or normalized turn on a circle.
+    /// Signed straight-path projection or normalized circular, arc, or perimeter progress.
     PointValue(f64),
     Line {
         slope: f64,
@@ -211,13 +211,15 @@ fn records(b: &[u8], start: usize) -> Result<Vec<Record>, String> {
 
 pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
     let rs = records(group, 0)?;
-    if rs.len() != 5
+    let labeled = rs.len() == 6 && rs.get(3).is_some_and(|r| r.kind == 0x07d5);
+    let style_index = if labeled { 4 } else { 3 };
+    if (!labeled && rs.len() != 5)
         || rs[0].kind != 0x07d0
         || rs[0].payload.len() != 28
         || rs[1].kind != 0x07d2
-        || rs[3].kind != 0x07d8
-        || rs[4].kind != 0x07d7
-        || rs[4].end != group.len()
+        || rs[style_index].kind != 0x07d8
+        || rs[style_index + 1].kind != 0x07d7
+        || rs[style_index + 1].end != group.len()
     {
         return Err("Unsupported Value/Equation group layout".into());
     }
@@ -234,9 +236,9 @@ pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
             if rs[2].kind != 0x0903
                 || aux.len() != 32
                 || aux[..12] != [0xfc, 0x08, 0, 0, 0x16, 0, 0, 0, 4, 0, 0, 0]
-                || !matches!(aux[12..14], [0x0a, 0] | [0x4a, 0])
                 || aux[18..22] != [0x3c, 0x30, 0x3e, 0]
-                || u32_at(aux, 24) != 6
+                || u16::from_le_bytes(aux[24..26].try_into().unwrap()) != 6
+                || !matches!(u16::from_le_bytes(aux[26..28].try_into().unwrap()), 0 | 1 | 3)
                 || u16::from_le_bytes(aux[28..30].try_into().unwrap()) > 5
             {
                 return Err("Unsupported Value of Point format".into());
@@ -253,8 +255,11 @@ pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
             }
         }
     }
-    let style = &group[rs[3].payload.clone()];
-    if style.len() != 2 || !matches!(style, [1 | 2 | 3, 0]) {
+    if labeled {
+        crate::text_records::LabelAux::parse(&group[rs[3].payload.clone()])?;
+    }
+    let style = &group[rs[style_index].payload.clone()];
+    if style.len() != 2 {
         return Err("Unsupported measurement style".into());
     }
     Ok(ValueEquationGroup {
@@ -428,6 +433,25 @@ mod tests {
                 x: 199.,
                 y: 87.20472440944882,
             },
+        }
+    }
+    #[test]
+    fn corpus_point_value_groups_accept_names_and_caption_positions() {
+        for (group, refs) in [
+            (include_bytes!("../tests/fixtures/point_value_labeled_ray_group.bin").as_slice(), [17, 16]),
+            (include_bytes!("../tests/fixtures/point_value_labeled_projection_group.bin").as_slice(), [9, 17]),
+        ] {
+            let value = decode_group(group).unwrap();
+            assert_eq!(value.kind, ValueEquationKind::PointValue);
+            assert_eq!(value.references, refs);
+            let rs = records(group, 0).unwrap();
+            let mut moved = group.to_vec();
+            moved[rs[2].payload.start + 12..rs[2].payload.start + 16]
+                .copy_from_slice(&[0x38, 0xff, 0x39, 0x30]);
+            assert_eq!(decode_group(&moved).unwrap(), value);
+            let mut broken = group.to_vec();
+            broken[rs[3].payload.start + 22..rs[3].payload.start + 24].copy_from_slice(&u16::MAX.to_le_bytes());
+            assert!(decode_group(&broken).is_err());
         }
     }
     #[test]

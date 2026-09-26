@@ -205,3 +205,33 @@ fn clear_and_cut_work_on_multi_page_sketch() {
         include_bytes!("../../../tests/fixtures/two_page_cut_pasted_segment_port.gsp")
     );
 }
+
+#[test]
+fn imported_measurement_caption_position_and_font_reach_picking_and_svg() {
+    let native = include_bytes!("../../../tests/fixtures/measurement_copy_native.gsp");
+    let mut editor = Editor::new(Document::from_bytes(native, None).unwrap());
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::pos2(40., 60.), egui::vec2(480., 360.)),
+        scale: 1.,
+        center: Point { x: 200., y: 180. },
+    };
+    let caption = editor
+        .overlay_rows()
+        .into_iter()
+        .find(|(id, _)| *id == 4)
+        .unwrap()
+        .1;
+    let bounds = editor.overlay_row_rect(&viewport, 0, 4, &caption);
+    assert_eq!(bounds.min, egui::pos2(52., 72.));
+    assert_eq!(bounds.height(), 21.);
+    assert_eq!(editor.hit(&viewport, bounds.center()), Some(4));
+    editor.doc.drag_measurement_caption(4, (100, 110)).unwrap();
+    let svg = sketchpad_rs::render::svg_page(&editor.doc, &viewport).unwrap();
+    let caption_line = svg
+        .lines()
+        .find(|line| line.contains(&format!(">{caption}</text>")))
+        .unwrap();
+    assert!(caption_line.contains("x=\"142\""));
+    assert!(caption_line.contains("font-size=\"18\""));
+    editor.doc.verify_roundtrip().unwrap();
+}

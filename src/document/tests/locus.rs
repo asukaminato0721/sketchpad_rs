@@ -677,3 +677,85 @@ fn rectangular_translated_polygon_locus_import_generation_and_parent_edit() {
     assert!((changed[0][0].y - (220. + dy)).abs() < 1e-9);
     assert!((changed[125][0].x - (300. + dx)).abs() < 1e-9);
 }
+
+// At the midpoint the moving line has coincident endpoints. Its intersection
+// is undefined for exactly one sample; the other samples remain valid.
+fn locus_with_undefined_middle() -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let left = doc.add(Kind::Free(Point { x: 100., y: 200. }));
+    let right = doc.add(Kind::Free(Point { x: 300., y: 200. }));
+    let path = doc.add(Kind::Segment(left, right));
+    let driver = doc.add(Kind::PointOnSegment(path, 0.25));
+    let fixed = doc.add(Kind::Free(Point { x: 200., y: 200. }));
+    let moving_line = doc.add(Kind::Line(driver, fixed));
+    let bottom = doc.add(Kind::Free(Point { x: 250., y: 100. }));
+    let top = doc.add(Kind::Free(Point { x: 250., y: 300. }));
+    let vertical = doc.add(Kind::Line(bottom, top));
+    let intersection = doc.add(Kind::Intersection(moving_line, vertical));
+    (doc, driver, intersection)
+}
+
+#[test]
+fn locus_preserves_valid_samples_without_joining_across_undefined_points() {
+    let native_bytes =
+        include_bytes!("../../../tests/fixtures/locus_undefined_sample_verified.gsp");
+    let native = Document::from_bytes(native_bytes, None).unwrap();
+    assert!(!native.partial_view);
+    assert_eq!(native.encode().unwrap(), native_bytes);
+    assert_eq!(native.locus_segments(11, 8).unwrap().len(), 6);
+    let (mut doc, driver, target) = locus_with_undefined_middle();
+    let locus = doc.construct_locus(driver, target).unwrap();
+    assert_eq!(doc.locus_segments(locus, 8).unwrap().len(), 6);
+    assert_eq!(doc.locus_segments(locus, 2).unwrap().len(), 0);
+    let bytes = doc.encode().unwrap();
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(
+        reopened.locus_segments(locus, 8),
+        doc.locus_segments(locus, 8)
+    );
+    // No sample has a defined intersection when the fixed line is parallel.
+    assert!(doc.move_point(7, Point { x: 100., y: 300. }));
+    assert!(doc.move_point(8, Point { x: 300., y: 300. }));
+    assert_eq!(doc.locus_segments(locus, 8), Some(Vec::new()));
+    assert!(doc.encode().is_ok());
+}
+
+#[test]
+fn locus_object_families_skip_undefined_members() {
+    for family in 0..4 {
+        let (mut doc, driver, intersection) = locus_with_undefined_middle();
+        let target = doc.add(match family {
+            0 => Kind::Segment(intersection, 7),
+            1 => Kind::Circle(intersection, 7),
+            2 => Kind::ThreePointArc(intersection, 7, 5),
+            _ => Kind::Polygon(vec![intersection, 7, 5]),
+        });
+        let locus = doc.construct_locus(driver, target).unwrap();
+        let expected = match family {
+            0 => 8,
+            1 | 2 => 8 * 64,
+            _ => 8 * 3,
+        };
+        assert_eq!(
+            doc.locus_strokes(locus, 8).unwrap().len(),
+            expected,
+            "family {family}"
+        );
+        if family == 3 {
+            assert_eq!(doc.locus_polygons(locus, 8).unwrap().len(), 8);
+            // Six adjacent valid pairs, each contributing three swept faces.
+            // The two pairs bordering the missing sample must add no faces.
+            assert_eq!(
+                doc.locus_polygon_surfaces(locus, 8).unwrap().len(),
+                8 + 6 * 3
+            );
+        }
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.locus_strokes(locus, 8),
+            doc.locus_strokes(locus, 8)
+        );
+    }
+}

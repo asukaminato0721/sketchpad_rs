@@ -1,0 +1,14 @@
+open tests/fixtures/function_base_frame.gsp
+plot_function sqrt(abs(x))+ln(x^2+1)+log(x^2+1)
+check
+save /tmp/sketchpad_function_extensions_generated.gsp
+open tests/fixtures/function_base_frame.gsp
+plot_function x^x
+differentiate 7
+plot_existing_function 9
+check
+save /tmp/sketchpad_function_variable_derivative_generated.gsp
+open /tmp/sketchpad_function_variable_derivative_generated.gsp
+edit_function 7 ln(sqrt(x))
+check
+save /tmp/sketchpad_function_extended_derivative_edited_generated.gsp

@@ -19,7 +19,7 @@ impl Editor {
                 });
                 ui.label("f(x) =");
                 ui.text_edit_singleline(&mut self.function_draft);
-                ui.label("Supported: arithmetic in x, sin(x), cos(x), tan(x)");
+                ui.label("Supported: arithmetic in x, sin, cos, tan, abs, sqrt, ln, log");
                 ui.horizontal(|ui| {
                     apply = ui
                         .button(if edit_id.is_some() {

@@ -1,0 +1,5 @@
+open tests/fixtures/wine_segment_length.gsp
+format_text 4 bold
+format_text 4 larger
+font_text 4 Arial
+save /tmp/sketchpad_measurement_caption_generated.gsp

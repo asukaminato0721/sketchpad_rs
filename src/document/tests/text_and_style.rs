@@ -625,3 +625,224 @@ fn wine_dragged_text_preserves_opaque_padding_until_edited() {
         matches!(&reopened.objects[0].kind, Kind::PlainText { text, .. } if text == "Hello again")
     );
 }
+
+#[test]
+fn multi_page_literal_text_creation_edit_move_and_clipboard() {
+    let native = include_bytes!("../../../tests/fixtures/text_object_original_multiline.gsp");
+    let mut document = Document::from_bytes(native, None).unwrap();
+    let text_id = document
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, Kind::PlainText { .. }))
+        .unwrap()
+        .id;
+    document.add_blank_page().unwrap();
+    document.active_page = 0;
+    document
+        .edit_text(text_id, "Changed source caption\nwith another line")
+        .unwrap();
+    document
+        .move_text(text_id, Point { x: 45., y: 70. })
+        .unwrap();
+    document.selected.insert(text_id);
+    document
+        .toggle_selected_text_style(TextStyleCommand::Bold)
+        .unwrap();
+    document
+        .format_text_range(text_id, 0, 7, TextStyleCommand::Italic)
+        .unwrap();
+    let clipboard = document.copy_selected().unwrap();
+    document.active_page = 1;
+    let pasted = document.paste(&clipboard).unwrap();
+    document
+        .add_text("Second page\r\nUnicode 日本語", Point { x: 100., y: 150. })
+        .unwrap();
+    // Add on the earlier page after additions on page 2 to exercise page order.
+    document.active_page = 0;
+    document
+        .add_text("First page addition", Point { x: 30., y: 250. })
+        .unwrap();
+    document.verify_roundtrip().unwrap();
+    let encoded = document.encode().unwrap();
+    let reopened = Document::from_bytes(&encoded, None).unwrap();
+    let texts = reopened
+        .objects
+        .iter()
+        .filter_map(|object| match &object.kind {
+            Kind::PlainText { text, rect } => Some((object.id, object.page, text.as_str(), *rect)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(texts.len(), 4);
+    assert_eq!(texts[0].1, 0);
+    assert_eq!(texts[0].2, "Changed source caption\nwith another line");
+    assert_eq!(texts[0].3.left, 45);
+    assert_eq!(texts[1].2, "First page addition");
+    assert_eq!(texts[2].1, 1);
+    assert_eq!(texts[2].2, texts[0].2);
+    assert_eq!(texts[2].3.left, 65);
+    assert!(reopened.text_font_state(texts[0].0).unwrap().bold);
+    assert!(reopened.text_font_state(texts[2].0).unwrap().bold);
+    assert_eq!(
+        reopened.text_rich_runs(texts[2].0),
+        document.text_rich_runs(pasted[0])
+    );
+    assert_eq!(texts[3].2, "Second page\nUnicode 日本語");
+    assert_eq!(reopened.encode().unwrap(), encoded);
+}
+
+#[test]
+fn multi_page_literal_text_source_edits_preserve_other_pages_and_clear() {
+    let mut document = Document::new();
+    document
+        .add_text("Original", Point { x: 35., y: 50. })
+        .unwrap();
+    document.add_blank_page().unwrap();
+    let second = document
+        .add_text("Second page", Point { x: 200., y: 150. })
+        .unwrap();
+    document.selected.insert(second);
+    document.set_selected_text_family("DejaVu Sans").unwrap();
+    document
+        .format_text_range_family(second, 0, 6, "DejaVu Serif")
+        .unwrap();
+    let bytes = document.encode().unwrap();
+    let mut document = Document::from_bytes(&bytes, None).unwrap();
+    let original_second = document.objects[1].clone();
+    document.active_page = 0;
+    let before_edit = document.encode().unwrap();
+    document
+        .edit_text(1, "A much longer source caption on the first page")
+        .unwrap();
+    document.verify_roundtrip().unwrap();
+    let encoded = document.encode().unwrap();
+    let reopened = Document::from_bytes(&encoded, None).unwrap();
+    assert_eq!(reopened.objects[1].kind, original_second.kind);
+    assert_eq!(reopened.text_font_state(2), document.text_font_state(2));
+    assert_eq!(reopened.text_rich_runs(2), document.text_rich_runs(2));
+    document.undo();
+    assert_eq!(document.encode().unwrap(), before_edit);
+    document.redo();
+    assert_eq!(document.encode().unwrap(), encoded);
+    document.selected.clear();
+    document.selected.insert(1);
+    document.clear_selected().unwrap();
+    document.verify_roundtrip().unwrap();
+    let cleared = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert_eq!(cleared.objects.len(), 1);
+    assert_eq!(cleared.objects[0].page, 1);
+    assert_eq!(cleared.objects[0].kind, original_second.kind);
+}
+
+#[test]
+fn multi_page_literal_text_native_saved_fixture_remains_editable() {
+    let native = include_bytes!("../../../tests/fixtures/two_page_text_port_saved_by_wine.gsp");
+    let mut document = Document::from_bytes(native, None).unwrap();
+    assert_eq!(document.page_count, 2);
+    assert_eq!(document.objects.len(), 4);
+    assert_eq!(document.encode().unwrap(), native);
+    document.active_page = 1;
+    assert!(document.edit_text(1, "Wrong page").is_err());
+    let before_runs = document.text_rich_runs(3).unwrap();
+    let before_font = document.text_font_state(3).unwrap();
+    document
+        .edit_text(3, "Source caption expanded\nSecond line added")
+        .unwrap();
+    document.move_text(3, Point { x: 120., y: 80. }).unwrap();
+    document.verify_roundtrip().unwrap();
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.text_rich_runs(3).unwrap()[0], before_runs[0]);
+    assert_eq!(reopened.text_font_state(3).unwrap(), before_font);
+    assert_eq!(reopened.objects[0].kind, document.objects[0].kind);
+    assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+}
+
+#[test]
+fn native_measurement_caption_position_font_and_clipboard_are_preserved() {
+    let native = include_bytes!("../../../tests/fixtures/measurement_copy_native.gsp");
+    let mut doc = Document::from_bytes(native, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.encode().unwrap(), native);
+    assert_eq!(doc.objects[3].measurement_anchor, Some((10, 5)));
+    assert_eq!(doc.objects[7].measurement_anchor, Some((30, 25)));
+    assert_eq!(doc.text_font_state(4).unwrap().size_code, 18);
+    let font = doc.text_font_state(4).unwrap();
+    doc.move_measurement_caption(4, (-5, 120)).unwrap();
+    doc.verify_roundtrip().unwrap();
+    let saved = doc.encode().unwrap();
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert_eq!(reopened.objects[3].measurement_anchor, Some((-5, 120)));
+    assert_eq!(reopened.text_font_state(4), Some(font));
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), native);
+    doc.selected.insert(4);
+    let clipboard = doc.copy_selected().unwrap();
+    let pasted = doc.paste(&clipboard).unwrap();
+    let copied = *pasted
+        .iter()
+        .find(|&&id| matches!(doc.objects[id - 1].kind, Kind::SegmentLength(_)))
+        .unwrap();
+    assert_eq!(doc.objects[copied - 1].measurement_anchor, Some((30, 25)));
+    doc.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn measurement_caption_font_edit_preserves_geometry_and_saved_position() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/measurement_copy_native.gsp"),
+        None,
+    )
+    .unwrap();
+    let geometry = doc.position(2);
+    let value = doc.numeric_value(4);
+    doc.selected.insert(4);
+    assert_eq!(
+        doc.toggle_selected_text_style(TextStyleCommand::Bold)
+            .unwrap(),
+        1
+    );
+    doc.set_selected_text_family("Arial").unwrap();
+    doc.verify_roundtrip().unwrap();
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    let font = reopened.text_font_state(4).unwrap();
+    assert!(font.bold);
+    assert_eq!(font.family, "Arial");
+    assert_eq!(reopened.objects[3].measurement_anchor, Some((10, 5)));
+    assert_eq!(reopened.position(2), geometry);
+    assert_eq!(reopened.numeric_value(4), value);
+}
+
+#[test]
+fn native_measurement_caption_reads_its_actual_indexed_font() {
+    let native = include_bytes!("../../../tests/fixtures/measurement_font_native_verified.gsp");
+    let doc = Document::from_bytes(native, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.encode().unwrap(), native);
+    let font = doc.text_font_state(4).unwrap();
+    assert_eq!(font.size_code, 24);
+    assert!(font.bold);
+}
+
+#[test]
+fn formatted_measurement_caption_replay_matches_native_verified_file() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/wine_segment_length.gsp"),
+        None,
+    )
+    .unwrap();
+    doc.selected.insert(4);
+    doc.toggle_selected_text_style(TextStyleCommand::Bold)
+        .unwrap();
+    doc.toggle_selected_text_style(TextStyleCommand::IncreaseSize)
+        .unwrap();
+    doc.set_selected_text_family("Arial").unwrap();
+    let expected =
+        include_bytes!("../../../tests/fixtures/measurement_caption_formatted_verified.gsp");
+    assert_eq!(doc.encode().unwrap(), expected);
+    let reopened = Document::from_bytes(expected, None).unwrap();
+    assert!(!reopened.partial_view);
+    let font = reopened.text_font_state(4).unwrap();
+    assert_eq!(font.family, "Arial");
+    assert_eq!(font.size_code, 24);
+    assert!(font.bold);
+}

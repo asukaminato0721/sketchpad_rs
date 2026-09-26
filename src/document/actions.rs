@@ -382,7 +382,7 @@ impl Document {
     pub fn animation_button_default_settings(&self, target: usize) -> Option<AnimationSettings> {
         let object = self.objects.get(target.checked_sub(1)?)?;
         let direction = match object.kind {
-            Kind::Free(_) | Kind::PointOnCircle(_, _, _) => {
+            Kind::Free(_) | Kind::PointOnCircle(_, _, _) | Kind::PointOnPolygon(_, _, _) => {
                 crate::action_records::AnimationDirection::Forward
             }
             Kind::Parameter(_)
@@ -519,6 +519,7 @@ impl Document {
                         | Kind::PointOnLine(_, _)
                         | Kind::PointOnCircle(_, _, _)
                         | Kind::PointOnArc(_, _)
+                        | Kind::PointOnPolygon(_, _, _)
                 )
             {
                 return Err(

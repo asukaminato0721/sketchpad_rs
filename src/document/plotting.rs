@@ -169,17 +169,18 @@ impl Document {
         let path = path
             .or_else(|| self.active_x_axis(self.active_page))
             .ok_or("No coordinate axis or selected path")?;
-        let parameter = self
+        let numeric_source = self
             .objects
             .get(source.checked_sub(1).ok_or("Invalid value")?)
             .ok_or("Invalid value")?;
-        if parameter.page != self.active_page || parameter.deleted {
-            return Err("Select a supported parameter".into());
+        if numeric_source.page != self.active_page || numeric_source.deleted {
+            return Err("Select a scalar numeric value".into());
         }
-        let Kind::Parameter(ref group) = parameter.kind else {
-            return Err("Select a supported parameter".into());
-        };
-        self.plotted_path_position(path, group.value())?;
+        if numeric_source.kind.numeric_unit() != Some(crate::table_records::NumericUnit::Scalar) {
+            return Err("Select a scalar numeric value".into());
+        }
+        let value = self.numeric_value(source).ok_or("Numeric value is undefined")?;
+        self.plotted_path_position(path, value)?;
         let group = plot_axis_records::encode_group([source as u32, path as u32])?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();

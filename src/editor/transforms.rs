@@ -51,26 +51,6 @@ impl Editor {
             self.status = "Select one point, segment, or circle to translate".into();
             return;
         }
-        if (source_is_segment
-            && !matches!(
-                self.translation_mode,
-                TranslationMode::FixedPolar
-                    | TranslationMode::FixedRectangular
-                    | TranslationMode::MarkedVector
-                    | TranslationMode::MarkedDistance
-            ))
-            || (source_is_circle
-                && !matches!(
-                    self.translation_mode,
-                    TranslationMode::FixedPolar
-                        | TranslationMode::FixedRectangular
-                        | TranslationMode::MarkedVector
-                        | TranslationMode::MarkedDistance
-                ))
-        {
-            self.status = "This translation mode currently supports points only".into();
-            return;
-        }
         let kind = match self.translation_mode {
             TranslationMode::FixedPolar => {
                 if !self.translation_angle.is_finite() || !self.translation_distance.is_finite() {
@@ -189,7 +169,11 @@ impl Editor {
                     self.status = "Marked distances are unavailable".into();
                     return;
                 }
-                if source_is_polygon {
+                if source_is_segment {
+                    Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
+                } else if source_is_circle {
+                    Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical)
+                } else if source_is_polygon {
                     Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical)
                 } else {
                     Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
@@ -224,7 +208,21 @@ impl Editor {
                     self.status = "Mixed rectangular translation values are unavailable".into();
                     return;
                 }
-                if source_is_polygon {
+                if source_is_segment {
+                    Kind::MixedRectangularTranslatedSegment(
+                        source,
+                        distance,
+                        fixed_cm,
+                        fixed_horizontal,
+                    )
+                } else if source_is_circle {
+                    Kind::MixedRectangularTranslatedCircle(
+                        source,
+                        distance,
+                        fixed_cm,
+                        fixed_horizontal,
+                    )
+                } else if source_is_polygon {
                     Kind::MixedRectangularTranslatedPolygon(
                         source,
                         distance,

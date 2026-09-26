@@ -1,10 +1,10 @@
 use super::calculations::parse_numeric_calculation;
 use super::iteration::{
-    supported_branch_polygon_mapping, supported_point_iteration_mapping,
+    supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
     supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
+    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
     is_locus_straight_kind, is_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
     straight_kind_mode,
 };
@@ -116,6 +116,7 @@ impl Document {
             let mut refs = Vec::new();
             let mut measurement_format = false;
             let mut measurement_precision = None;
+            let mut measurement_anchor = None;
             let mut measurement_style = false;
             let mut graph_records: Vec<(u32, Vec<u8>)> = Vec::new();
             let mut function_expression: Option<Vec<u8>> = None;
@@ -123,7 +124,7 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
-            let labeled_shape = matches!(h[6..8], [2, 0] | [3, 0] | [4, 0])
+            let labeled_shape = matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                 && matches!(
                     code,
                     1 | 2
@@ -147,7 +148,10 @@ impl Document {
                         | 32
                         | 33
                         | 34
+                        | 69
+                        | 95
                 );
+            let numeric_label = matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 48 | 49 | 50 | 51 | 65 | 66 | 86 | 87 | 94);
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
             let mut text_style = false;
@@ -164,15 +168,15 @@ impl Document {
                 if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
                     function_range = Some(d.to_vec());
                 }
-                if code == 35 && r.kind == 0x0902 {
+                if matches!(code, 35 | 97) && r.kind == 0x0902 {
                     locus_range = Some(d.to_vec());
                 }
                 if matches!(code, 76 | 89) && r.kind == 0x090a {
                     iteration_definition = Some(d.to_vec());
                 }
                 match r.kind {
-                    0x07d5 if matches!(code, 0 | 15) || labeled_shape => match LabelAux::parse(d) {
-                        Ok(value) if matches!(code, 0 | 15) => label = Some(value),
+                    0x07d5 if matches!(code, 0 | 15) || labeled_shape || numeric_label => match LabelAux::parse(d) {
+                        Ok(value) if matches!(code, 0 | 15) || numeric_label || h[6..8] == [1, 0] => label = Some(value),
                         Ok(_) => {}
                         Err(_) => safe = false,
                     },
@@ -229,12 +233,13 @@ impl Document {
                         };
                         measurement_format = d.len() == sample.len()
                             && u16::from_le_bytes(d[28..30].try_into().unwrap()) <= 5
+                            && matches!(u16::from_le_bytes(d[26..28].try_into().unwrap()), 0 | 1 | 3)
                             && d.iter()
                                 .zip(sample)
                                 .enumerate()
                                 .all(|(i, (actual, expected))| {
                                     // Label x/y and presentation bytes vary after edits.
-                                    matches!(i, 12..=15 | 22 | 23 | 28..=31) || actual == expected
+                                    matches!(i, 12..=15 | 22 | 23 | 26..=31) || actual == expected
                                 });
                         if measurement_format {
                             measurement_precision =
@@ -247,38 +252,13 @@ impl Document {
                             measurement_precision = Some(precision);
                         }
                     }
-                    0x07d8
-                        if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) =>
-                    {
-                        let sample: &[u8] = match code {
-                            36 => &include_bytes!("../../assets/length_measurement_group.bin")
-                                [100..102],
-                            37 => &include_bytes!("../../assets/distance_measurement_group.bin")
-                                [104..106],
-                            38 => &include_bytes!(
-                                "../../assets/point_line_distance_measurement_group.bin"
-                            )[104..106],
-                            39 => &include_bytes!("../../assets/perimeter_measurement_group.bin")
-                                [100..102],
-                            40 => {
-                                &include_bytes!("../../assets/circumference_measurement_group.bin")
-                                    [100..102]
-                            }
-                            41 => &include_bytes!("../../assets/angle_measurement_group.bin")
-                                [108..110],
-                            42 => {
-                                &include_bytes!("../../assets/area_measurement_group.bin")[100..102]
-                            }
-                            43 => &include_bytes!("../../assets/arc_angle_measurement_group.bin")
-                                [100..102],
-                            44 => &include_bytes!("../../assets/arc_length_measurement_group.bin")
-                                [100..102],
-                            47 => &include_bytes!("../../assets/ratio_measurement_group.bin")
-                                [108..110],
-                            _ => &include_bytes!("../../assets/radius_measurement_group.bin")
-                                [100..102],
-                        };
-                        measurement_style = d == sample;
+                    0x07d8 if numeric_label => {
+                        measurement_style = d.len() == 2
+                            && (usize::from(u16::from_le_bytes([d[0], d[1]])) < text_style_count
+                                || u16::from_le_bytes([d[0], d[1]]) == if matches!(code, 49 | 50 | 51 | 65 | 66 | 86 | 87) { 2 } else { 1 });
+                        if !measurement_style {
+                            safe = false;
+                        }
                     }
                     0x7d3
                         if matches!(
@@ -313,11 +293,17 @@ impl Document {
                     }
                     _ => {}
                 }
+                if numeric_label && r.kind == 0x0903 && d.len() == 32 {
+                    measurement_anchor = Some((
+                        i16::from_le_bytes(d[12..14].try_into().unwrap()),
+                        i16::from_le_bytes(d[14..16].try_into().unwrap()),
+                    ));
+                }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !(code == 15 && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !(labeled_shape && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !((labeled_shape || numeric_label) && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
@@ -333,7 +319,7 @@ impl Document {
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
-                    && !(code == 35 && r.kind == 0x0902)
+                    && !(matches!(code, 35 | 97) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                 {
                     safe = false;
@@ -419,6 +405,31 @@ impl Document {
                 .map(|(kind, payload)| (*kind, payload.as_slice()))
                 .collect::<Vec<_>>();
             let graph_kind = graph::decode_graph_object(code, &refs, &graph_borrowed);
+            let mapped_iteration = (|| {
+                if !matches!(code, 76 | 89) || h[6..10] != [14, 0, 64, 0] { return None; }
+                let data = iteration_definition.as_ref()?;
+                if data.len() != 24 || data[..6] != [0; 6] || data[20..24] != [0; 4] { return None; }
+                let count = usize::from(u16::from_le_bytes(data[6..8].try_into().ok()?));
+                let branches_count = u32_at(data, 8) as usize;
+                if !(2..=16).contains(&count) || !(1..=8).contains(&branches_count) { return None; }
+                let start = usize::from(code == 89);
+                if refs.len() <= start + count * (branches_count + 1) { return None; }
+                let seeds = refs[start..start + count].to_vec();
+                let branch_end = start + count * (branches_count + 1);
+                let branches = refs[start + count..branch_end].chunks_exact(count).map(<[usize]>::to_vec).collect::<Vec<_>>();
+                let carried = refs[branch_end..].to_vec();
+                if !supported_mapped_point_iteration(&objects, &seeds, &branches, &carried) { return None; }
+                let depth = if code == 89 {
+                    let id = refs[0];
+                    if !objects.get(id.checked_sub(1)?).is_some_and(|o| o.kind.is_iteration_depth_value()) { return None; }
+                    IterationDepth::Value(id)
+                } else {
+                    let value = u32_at(data, 16);
+                    if !(1..=128).contains(&value) { return None; }
+                    IterationDepth::Fixed(value)
+                };
+                Some(Kind::MappedPointIteration { seeds, branches, carried, depth })
+            })();
             let kind = if refs
                 .iter()
                 .any(|&reference| reference == 0 || reference > objects.len())
@@ -525,6 +536,7 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (76 | 89, None, _) if mapped_iteration.is_some() => mapped_iteration.unwrap(),
                     (89, None, [parameter, seed, first, second, carried_second, carried_first, polygon, segments @ ..])
                         if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
                             && objects.get(parameter.saturating_sub(1)).is_some_and(|o| o.kind.is_iteration_depth_value())
@@ -643,12 +655,26 @@ impl Document {
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
                                 Kind::BranchingPolygonIteration { ref segments, polygon, .. } => polygon == *image || segments.contains(image),
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
+                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| matches!(source.kind, Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))),
                                 Kind::SegmentIteration(_, mapped, segment, _) | Kind::CircleIteration(_,mapped,segment,_) => mapped == *image || segment == *image,
                                 Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
                                 Kind::PointParameterIteration(_,_,mapped,_,label,_) => mapped==*image || label==*image,
                                 _ => false,
                             }) => {
                         Kind::IterationBinding(*image, *iteration)
+                    }
+                    (97, None, _)
+                        if h[6..10] == [6, 0, 42, 0]
+                            && refs.first().zip(refs.get(1)).and_then(|(&target, &driver)| expected_parameter_locus_refs(&objects, driver, target)).as_ref() == Some(&refs)
+                            && locus_range.as_ref().is_some_and(|data| data.len() == 40
+                                && f64_at(data, 0).is_finite() && f64_at(data, 8).is_finite()
+                                && f64_at(data, 0) < f64_at(data, 8)
+                                && (2..=4096).contains(&u32_at(data, 16))
+                                && u32_at(data, 20) == 0x00030004
+                                && f64_at(data, 24).is_finite()
+                                && data[32..40] == [1, 0, 0, 0, 0, 0, 0, 0]) => {
+                        let data = locus_range.as_ref().unwrap();
+                        Kind::ParameterLocus(refs.clone(), f64_at(data, 0), f64_at(data, 8), u32_at(data, 16))
                     }
                     (35, None, _)
                         if refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
@@ -687,9 +713,15 @@ impl Document {
                     }
                     (95, _, [source, path])
                         if axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
-                            && objects.get(source - 1).is_some_and(|o| matches!(o.kind, Kind::Parameter(_)))
-                            && objects.get(path - 1).is_some_and(|o| is_plot_path_kind(&o.kind)) => {
+                            && objects.get(source - 1).is_some_and(|o| o.page == page && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
+                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_plot_path_kind(&o.kind)) => {
                         Kind::PathValuePoint(*source, *path)
+                    }
+                    (69, None, [x, y, frame])
+                        if h[6..10] == [1, 0, 56, 0]
+                            && [x, y].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.numeric_unit().is_some()))
+                            && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        Kind::NumericCoordinatePoint(*x, *y, *frame)
                     }
                     (67 | 68, _, [source, frame])
                         if plotted_point.as_ref().is_some_and(|plot| {
@@ -701,7 +733,8 @@ impl Document {
                         Kind::PlottedPoint(*source, *frame, plot.mode, plot.stored)
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && objects.get(first - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnSegment(host, _) | Kind::PointOnRay(host, _) | Kind::PointOnLine(host, _) | Kind::PointOnArc(host, _) | Kind::PointOnCircle(host, _, _) if host == *second)) => {
+                        && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
+                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || matches!(objects[first-1].kind, Kind::PointOnPolygon(host, _, _) if host == *second))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -1038,6 +1071,15 @@ impl Document {
                             {
                                 Kind::PointOnArc(*host, f64_at(payload, 4))
                             }
+                            (Some(Kind::Polygon(vertices)), Some((payload, _)))
+                                if payload.len() == 20
+                                    && polygon_subtype(vertices.len()).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
+                                    && f64_at(payload, 4).is_finite()
+                                    && (0.0..=1.0).contains(&f64_at(payload, 4))
+                                    && (u32_at(payload, 12) as usize) < vertices.len()
+                                    && payload[16..20] == [255, 255, 0, 0] => {
+                                Kind::PointOnPolygon(*host, u32_at(payload, 12) as usize, f64_at(payload, 4))
+                            }
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1105,6 +1147,25 @@ impl Document {
                         _ => Kind::Unsupported(code),
                     },
                     (18 | 19, _, [source, distance])
+                        if matches!((objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]),
+                            (Some(Kind::Segment(_, _)), [14, 0]) | (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]))
+                            && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value()) => match &constraint_payload {
+                        Some((payload, _)) if payload.len() == 28
+                            && payload[..4] == [code as u8, 0, 0, 0]
+                            && u32_at(payload, 20) == 1
+                            && payload[24..28] == [0, 0, 0, 0]
+                            && f64_at(payload, 4).is_finite()
+                            && f64_at(payload, 12).is_finite()
+                            && (f64_at(payload, 4) - f64_at(payload, 12) * 37.79527559055118).abs() < 1e-5 => {
+                                if h[8..10] == [14, 0] {
+                                    Kind::MixedRectangularTranslatedSegment(*source, *distance, f64_at(payload, 12), code == 18)
+                                } else {
+                                    Kind::MixedRectangularTranslatedCircle(*source, *distance, f64_at(payload, 12), code == 18)
+                                }
+                            },
+                        _ => Kind::Unsupported(code),
+                    },
+                    (18 | 19, _, [source, distance])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind)) => match &constraint_payload {
                         Some((payload, _))
                             if payload.len() == 28
@@ -1145,7 +1206,7 @@ impl Document {
                             Some((payload, _))
                                 if payload.len() == 36
                                     && payload[..4] == [24, 0, 0, 0]
-                                    && payload[28..36] == [1, 0, 0, 0, 0, 0, 0, 0]
+                                    && payload[28..32] == [1, 0, 0, 0]
                                     && f64_at(payload, 20).is_finite()
                                     && f64_at(payload, 4).is_finite()
                                     && f64_at(payload, 12).is_finite()
@@ -1167,6 +1228,16 @@ impl Document {
                         }
                     }
                     (20, None, [source, horizontal, vertical])
+                        if matches!((objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]),
+                            (Some(Kind::Segment(_, _)), [14, 0]) | (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]))
+                            && [horizontal, vertical].iter().all(|&&id| id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_distance_value())) => {
+                            if h[8..10] == [14, 0] {
+                                Kind::RectangularMarkedTranslatedSegment(*source, *horizontal, *vertical)
+                            } else {
+                                Kind::RectangularMarkedTranslatedCircle(*source, *horizontal, *vertical)
+                            }
+                        },
+                    (20, None, [source, horizontal, vertical])
                         if *source > 0 && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
                             && [horizontal, vertical].iter().all(|&&id| {
                                 id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_distance_value())
@@ -1185,8 +1256,8 @@ impl Document {
                             && [start, end].iter().all(|&&id| is_point_kind(&objects[id - 1].kind)) => {
                         match (&objects[source - 1].kind, &h[8..10]) {
                             (kind, [4, 0]) if is_point_kind(kind) => Kind::VectorTranslatedPoint(*source, *start, *end),
-                            (Kind::Segment(_, _), [14, 0]) => Kind::VectorTranslatedSegment(*source, *start, *end),
-                            (Kind::Circle(_, _) | Kind::CircleBySegment(_, _), [28, 0]) => Kind::VectorTranslatedCircle(*source, *start, *end),
+                            (kind, [14, 0]) if is_segment_kind(kind) => Kind::VectorTranslatedSegment(*source, *start, *end),
+                            (kind, [28, 0]) if kind.is_circle() => Kind::VectorTranslatedCircle(*source, *start, *end),
                             (Kind::Polygon(vertices), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
                                 && h[6..8] == [4, 0] && h[20..24] == [1, 0, 0, 0] => Kind::VectorTranslatedPolygon(*source, *start, *end),
                             _ => Kind::Unsupported(code),
@@ -1377,7 +1448,8 @@ impl Document {
             ) {
                 label = None;
             }
-            if label.is_some() && !is_point_kind(&kind) {
+            if label.is_some() && !is_point_kind(&kind) && kind.numeric_unit().is_none()
+                && !matches!(kind, Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }) {
                 safe = false;
                 label = None;
             }
@@ -1395,7 +1467,7 @@ impl Document {
                 && objects.get(iteration.saturating_sub(1)).is_some_and(|o| {
                     matches!(
                         o.kind,
-                        Kind::BranchingPolygonIteration { .. } | Kind::CircleIteration(..)
+                        Kind::BranchingPolygonIteration { .. } | Kind::MappedPointIteration { .. } | Kind::CircleIteration(..)
                     )
                 })
                 && !objects
@@ -1429,6 +1501,7 @@ impl Document {
                 function_anchor,
                 function_name,
                 measurement_precision,
+                measurement_anchor,
             });
             if matches!(objects.last().map(|o| &o.kind), Some(Kind::Unsupported(_))) {
                 safe = false;

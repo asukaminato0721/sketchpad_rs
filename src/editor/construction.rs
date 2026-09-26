@@ -145,12 +145,12 @@ impl Editor {
     pub(super) fn construct_locus(&mut self) {
         let ids = self.selection_order.clone();
         if ids.len() != 2 {
-            self.status = "Select a moving point and a dependent object".into();
+            self.status = "Select a moving point or parameter and a dependent object".into();
             return;
         }
         let (driver, target) = if matches!(
             self.doc.objects[ids[0] - 1].kind,
-            Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _)
+            Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _) | Kind::Parameter(_)
         ) {
             (ids[0], ids[1])
         } else {
@@ -364,7 +364,8 @@ impl Editor {
             matches!(
                 self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                 Some(
-                    Kind::Segment(_, _)
+                    Kind::Polygon(_)
+                        | Kind::Segment(_, _)
                         | Kind::Ray(_, _)
                         | Kind::Line(_, _)
                         | Kind::Circle(_, _)
@@ -378,7 +379,7 @@ impl Editor {
             )
         });
         let Some(host) = host else {
-            self.status = "Select a segment, ray, line, circle, or arc".into();
+            self.status = "Select a segment, ray, line, circle, arc, or polygon".into();
             return;
         };
         if self.doc.objects[host - 1].page != self.doc.active_page {
@@ -405,6 +406,11 @@ impl Editor {
                     Some(Point {
                         x: center.x + radius,
                         y: center.y,
+                    })
+                } else if let Some(vertices) = self.doc.polygon_points(host) {
+                    Some(Point {
+                        x: (vertices[0].x + vertices[1].x) / 2.,
+                        y: (vertices[0].y + vertices[1].y) / 2.,
                     })
                 } else {
                     self.doc.point_on_arc(host, 0.5)

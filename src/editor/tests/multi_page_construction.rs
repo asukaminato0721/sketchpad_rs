@@ -226,3 +226,38 @@ fn polygon_interior_works_on_multi_page_sketch() {
         include_bytes!("../../../tests/fixtures/two_page_polygon_port.gsp")
     );
 }
+
+#[test]
+fn text_tool_creates_editable_caption_on_supported_multi_page_sketch() {
+    let mut editor = Editor::new(
+        Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/two_page_text_port_saved_by_wine.gsp"),
+            None,
+        )
+        .unwrap(),
+    );
+    assert!(editor.doc.partial_view);
+    editor.doc.active_page = 1;
+    editor.tool = Tool::Text;
+    editor.text_draft = "New caption on page 2".into();
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600., 400.)),
+        scale: 1.,
+        center: Point { x: 250., y: 150. },
+    };
+    editor.click(
+        &viewport,
+        viewport.screen(Point { x: 110., y: 240. }),
+        false,
+    );
+    assert_eq!(editor.doc.objects.len(), 5);
+    assert_eq!(editor.doc.objects[4].page, 1);
+    assert!(matches!(&editor.doc.objects[4].kind,
+        Kind::PlainText { text, .. } if text == "New caption on page 2"));
+    assert_eq!(
+        editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+        vec![5]
+    );
+    editor.doc.edit_text(5, "Edited caption on page 2").unwrap();
+    editor.doc.verify_roundtrip().unwrap();
+}

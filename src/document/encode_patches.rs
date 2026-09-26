@@ -111,17 +111,26 @@ impl Document {
             if record.kind == 0x07d0 {
                 current = Some(objects.next().ok_or("Object group count mismatch")?);
             } else if record.kind == 0x0903 {
-                if let Some(object) = current
-                    && let Some(precision) = object.measurement_precision
-                {
-                    if !object.kind.has_measurement_precision()
-                        || precision > 5
-                        || record.data.len() != 32
-                    {
-                        return Err("Invalid measurement precision record".into());
+                if let Some(object) = current {
+                    if let Some(anchor) = object.measurement_anchor {
+                        if record.data.len() != 32 {
+                            return Err("Invalid measurement caption record".into());
+                        }
+                        bytes[record.data.start + 12..record.data.start + 14]
+                            .copy_from_slice(&anchor.0.to_le_bytes());
+                        bytes[record.data.start + 14..record.data.start + 16]
+                            .copy_from_slice(&anchor.1.to_le_bytes());
                     }
-                    bytes[record.data.start + 28..record.data.start + 30]
-                        .copy_from_slice(&precision.to_le_bytes());
+                    if let Some(precision) = object.measurement_precision {
+                        if !object.kind.has_measurement_precision()
+                            || precision > 5
+                            || record.data.len() != 32
+                        {
+                            return Err("Invalid measurement precision record".into());
+                        }
+                        bytes[record.data.start + 28..record.data.start + 30]
+                            .copy_from_slice(&precision.to_le_bytes());
+                    }
                 }
             } else if record.kind == 0x07d7 {
                 current = None;
@@ -183,8 +192,13 @@ impl Document {
         if overrides.iter().any(|(_, object, _)| {
             !matches!(object.kind, Kind::PlainText { .. })
                 && !(is_point_kind(&object.kind) && object.label.is_some())
+                && object.kind.numeric_unit().is_none()
+                && !matches!(
+                    object.kind,
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                )
         }) {
-            return Err("Only free text and labeled points can have font styles".into());
+            return Err("Object has no supported caption font style".into());
         }
         let rs = records(&bytes)?;
         let last_family = rs
@@ -198,8 +212,8 @@ impl Document {
             .collect::<Vec<_>>();
         style_records.last().ok_or("Missing font style table")?;
         let mut known = (0..style_records.len())
-            .map(|index| text_style_records::decode_font_state_at(&bytes, index))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|index| text_style_records::decode_font_state_at(&bytes, index).ok())
+            .collect::<Vec<_>>();
         let mut families = text_style_records::font_families(&bytes)?;
         let mut appended_families = Vec::new();
         let mut appended = Vec::new();
@@ -229,25 +243,31 @@ impl Document {
                     families.push(style.family.clone());
                     index
                 };
-            let index = if let Some(index) = known.iter().position(|known| known == style) {
-                index
-            } else {
-                let family_template = known
-                    .iter()
-                    .take(style_records.len())
-                    .position(|known| known.family == style.family)
-                    .unwrap_or(0);
-                let index = known.len();
-                if index > u16::MAX as usize {
-                    return Err("Too many text styles".into());
-                }
-                let template = &bytes[style_records[family_template].data.clone()];
-                let mut payload = text_style_records::encode_style_payload(template, style)?;
-                payload[..2].copy_from_slice(&(family_index as u16).to_le_bytes());
-                put_record(&mut appended, 0x04b3, &payload);
-                known.push(style.clone());
-                index
-            };
+            let index =
+                if let Some(index) = known.iter().position(|known| known.as_ref() == Some(style)) {
+                    index
+                } else {
+                    let family_template = known
+                        .iter()
+                        .take(style_records.len())
+                        .position(|known| {
+                            known
+                                .as_ref()
+                                .is_some_and(|known| known.family == style.family)
+                        })
+                        .or_else(|| known.iter().position(Option::is_some))
+                        .ok_or("No supported font style template")?;
+                    let index = known.len();
+                    if index > u16::MAX as usize {
+                        return Err("Too many text styles".into());
+                    }
+                    let template = &bytes[style_records[family_template].data.clone()];
+                    let mut payload = text_style_records::encode_style_payload(template, style)?;
+                    payload[..2].copy_from_slice(&(family_index as u16).to_le_bytes());
+                    put_record(&mut appended, 0x04b3, &payload);
+                    known.push(Some(style.clone()));
+                    index
+                };
             targets.push((ordinal, index as u16));
         }
         if !appended_families.is_empty() {
@@ -278,7 +298,7 @@ impl Document {
                 .collect::<Vec<_>>();
             if !group
                 .iter()
-                .any(|record| matches!(record.kind, 0x08fc | 0x07d5))
+                .any(|record| matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907))
             {
                 return Err("Font style target has no text".into());
             }
@@ -325,7 +345,9 @@ impl Document {
                         self.objects.get(parent - 1).is_some_and(|p| {
                             matches!(
                                 p.kind,
-                                Kind::BranchingPolygonIteration { .. } | Kind::CircleIteration(..)
+                                Kind::BranchingPolygonIteration { .. }
+                                    | Kind::MappedPointIteration { .. }
+                                    | Kind::CircleIteration(..)
                             )
                         }) && self
                             .objects
@@ -379,6 +401,28 @@ impl Document {
                 continue;
             }
             let group = &rs[start_index..=index];
+            if let Kind::ParameterLocus(_, min, max, samples) = object.kind {
+                let range = group
+                    .iter()
+                    .find(|record| record.kind == 0x0902)
+                    .ok_or("Missing saved parameter locus range")?;
+                let original = &bytes[range.data.clone()];
+                if original.len() != 40
+                    || u32::from_le_bytes(original[20..24].try_into().unwrap()) != 0x0003_0004
+                {
+                    return Err("Unsupported saved parameter locus descriptor".into());
+                }
+                let mut payload = original.to_vec();
+                payload[..8].copy_from_slice(&min.to_le_bytes());
+                payload[8..16].copy_from_slice(&max.to_le_bytes());
+                payload[16..20].copy_from_slice(&samples.to_le_bytes());
+                if payload != original {
+                    let mut replacement = Vec::new();
+                    put_record(&mut replacement, 0x0902, &payload);
+                    edits.push((range.start, range.data.end, replacement));
+                }
+                continue;
+            }
             if let Some((min, max, samples, polar)) = match object.kind {
                 Kind::FunctionPlot(_, _, min, max, samples) => Some((min, max, samples, None)),
                 Kind::ParametricPlot(_, _, _, min, max, samples, mode) => {
@@ -501,11 +545,27 @@ impl Document {
                         edits.push((old.start, old.data.end + old.data.len() % 2, replacement));
                     }
                 } else {
-                    let insertion = group[0].data.end + group[0].data.len() % 2;
+                    let insertion = if matches!(
+                        object.kind,
+                        Kind::NumericCoordinatePoint(..) | Kind::PathValuePoint(..)
+                    ) {
+                        group
+                            .iter()
+                            .find(|record| record.kind == 0x07d8)
+                            .map_or(record.start, |font| font.start)
+                    } else {
+                        group[0].data.end + group[0].data.len() % 2
+                    };
                     edits.push((
                         insertion,
                         insertion,
-                        crate::text_records::encode_point_label_records(label),
+                        if group.iter().any(|record| record.kind == 0x07d8) {
+                            let mut label_record = Vec::new();
+                            put_record(&mut label_record, 0x07d5, label.payload());
+                            label_record
+                        } else {
+                            crate::text_records::encode_point_label_records(label)
+                        },
                     ));
                 }
             }

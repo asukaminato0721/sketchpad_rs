@@ -1,0 +1,10 @@
+new
+point 100 100
+point 280 100
+point 280 220
+point 100 220
+polygon 1 2 3 4
+point_on 5 290 150
+point_value 6
+move 6 150 230
+save /tmp/sketchpad_polygon_boundary_generated.gsp

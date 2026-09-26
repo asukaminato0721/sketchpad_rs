@@ -129,6 +129,10 @@ impl Document {
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
+                    Kind::PointOnPolygon(_, edge, t) if out.get(i..i + 2) == Some(&[15, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                        out[i + 12..i + 16].copy_from_slice(&(edge as u32).to_le_bytes());
+                    }
                     Kind::PointOnCircle(_, x, y) if out.get(i..i + 4) == Some(&[15, 0, 28, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&x.to_le_bytes());
                         out[i + 12..i + 20].copy_from_slice(&y.to_le_bytes());
@@ -347,7 +351,7 @@ impl Document {
                 let mut group = LinkUrlButtonGroup::parse(&out[start..end])?;
                 group.set_url(url)?;
                 group.set_label(label)?;
-                group.set_screen_anchor(*anchor);
+                group.set_screen_anchor(*anchor)?;
                 group.set_hidden(!o.visible);
                 let encoded = group.encode();
                 if encoded.len() != end - start {
@@ -490,6 +494,25 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::MappedPointIteration { ref seeds, ref branches, ref carried, depth } = o.kind {
+                let mut header = *include_bytes!("../../assets/mapped_point_iteration_header.bin");
+                header[..2].copy_from_slice(&(if matches!(depth, IterationDepth::Fixed(_)) { 76u16 } else { 89u16 }).to_le_bytes());
+                if !o.visible { header[2] |= 1; }
+                put_record(&mut added, 0x07d0, &header);
+                let mut ids = Vec::new();
+                if let IterationDepth::Value(id) = depth { ids.push(id); }
+                ids.extend(seeds); ids.extend(branches.iter().flatten()); ids.extend(carried);
+                let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
+                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &refs);
+                let mut definition = *include_bytes!("../../assets/mapped_point_iteration_definition.bin");
+                definition[6..8].copy_from_slice(&(seeds.len() as u16).to_le_bytes());
+                definition[8..12].copy_from_slice(&(branches.len() as u32).to_le_bytes());
+                definition[16..20].copy_from_slice(&self.numeric_iteration_depth(depth).unwrap_or(0).to_le_bytes());
+                put_record(&mut added, 0x090a, &definition);
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::BranchingPolygonIteration {
                 seed,
                 first,
@@ -687,7 +710,7 @@ impl Document {
             if let Kind::IterationBinding(image, iteration) = o.kind {
                 let segment = matches!(
                     self.objects.get(image - 1).map(|object| &object.kind),
-                    Some(Kind::Segment(_, _))
+                    Some(Kind::Segment(_, _) | Kind::VectorTranslatedSegment(_, _, _))
                 );
                 let circle = matches!(
                     self.objects.get(image - 1).map(|o| &o.kind),
@@ -707,12 +730,13 @@ impl Document {
                 );
                 let branch_polygon = matches!(
                     self.objects.get(iteration - 1).map(|o| &o.kind),
-                    Some(Kind::BranchingPolygonIteration { .. })
+                    Some(Kind::BranchingPolygonIteration { .. } | Kind::MappedPointIteration { .. })
                 );
                 let segment_value_depth = matches!(
                     self.objects.get(iteration - 1).map(|o| &o.kind),
                     Some(
-                        Kind::SegmentIteration(_, _, _, IterationDepth::Value(_))
+                        Kind::MappedPointIteration { depth: IterationDepth::Value(_), .. }
+                            | Kind::SegmentIteration(_, _, _, IterationDepth::Value(_))
                             | Kind::CircleIteration(_, _, _, IterationDepth::Value(_))
                             | Kind::PointIteration(_, _, IterationDepth::Value(_))
                     )
@@ -981,6 +1005,25 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind {
+                // Native PlotXY has only its point header and three references.
+                let mut point_header = [
+                    69, 0, 0, 0, 0, 0, 1, 0, 56, 0, 33, 2, 255, 0, 0, 0,
+                    255, 255, 81, 92, 193, 189, 240, 255, 0, 0, 0, 0,
+                ];
+                if !o.visible { point_header[2] |= 1; }
+                put_record(&mut added, 0x07d0, &point_header);
+                let mut refs = 3_u32.to_le_bytes().to_vec();
+                for id in [x, y, frame] {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
+                put_record(&mut added, 0x07d2, &refs);
+                if let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
                 let mut group =
                     plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
@@ -995,6 +1038,10 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
+                if let Some(label) = &o.label {
+                    let labels = crate::text_records::encode_point_label_records(label);
+                    group.splice(56..56, labels);
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -1004,6 +1051,22 @@ impl Document {
                     group[10] |= 1;
                 }
                 added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
+                let mut h = [97, 0, 0, 0, 0, 0, 6, 0, 42, 0, 34, 1, 128, 0, 0, 0,
+                    255, 255, 81, 92, 193, 189, 240, 255, 0, 0, 0, 0];
+                if !o.visible { h[2] |= 1; }
+                put_record(&mut added, 0x07d0, &h);
+                let mut references = (refs.len() as u32).to_le_bytes().to_vec();
+                for &id in refs { references.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &references);
+                let mut range = min.to_le_bytes().to_vec();
+                range.extend_from_slice(&max.to_le_bytes());
+                range.extend_from_slice(&samples.to_le_bytes());
+                range.extend_from_slice(&[4, 0, 3, 0, 0, 0, 0, 0, 36, 98, 92, 1, 1, 0, 0, 0, 0, 0, 0, 0]);
+                put_record(&mut added, 0x0902, &range);
+                put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
             if let Kind::Locus(ref refs, samples) = o.kind {
@@ -1177,20 +1240,15 @@ impl Document {
                         Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
                     )
                 {
-                    let Some(Kind::PointOnArc(host, parameter)) = self
-                        .objects
-                        .get(first.saturating_sub(1))
-                        .map(|object| &object.kind)
+                    let Some(crate::value_equation_records::EquationValue::PointValue(parameter)) =
+                        self.value_equation_value(o.id)
                     else {
-                        return Err("Value of Point requires a point on its arc".into());
+                        return Err("Value of Point requires a defined arc parameter".into());
                     };
-                    if *host != second {
-                        return Err("Value of Point arc references differ".into());
-                    }
                     value_equation_records::encode_arc_point_value_group(
                         references,
                         matches!(self.objects[second - 1].kind, Kind::ThreePointArc(_, _, _)),
-                        *parameter,
+                        parameter,
                     )?
                 } else {
                     value_equation_records::encode_group(kind, references)?
@@ -1329,7 +1387,8 @@ impl Document {
                 | Kind::PointOnRay(host, _)
                 | Kind::PointOnLine(host, _)
                 | Kind::PointOnCircle(host, _, _)
-                | Kind::PointOnArc(host, _) => (15, vec![host]),
+                | Kind::PointOnArc(host, _)
+                | Kind::PointOnPolygon(host, _, _) => (15, vec![host]),
                 Kind::PolarTranslatedPoint(origin, _, _, _) => (21, vec![origin]),
                 Kind::PolarTranslatedSegment(source, _, _, _) => (21, vec![source]),
                 Kind::PolarTranslatedCircle(source, _, _, _) => (21, vec![source]),
@@ -1346,15 +1405,21 @@ impl Document {
                 | Kind::MarkedDistanceTranslatedPolygon(source, distance, _) => {
                     (24, vec![source, distance])
                 }
-                Kind::MixedRectangularTranslatedPoint(source, distance, _, fixed_horizontal) => (
-                    if fixed_horizontal { 18 } else { 19 },
-                    vec![source, distance],
-                ),
+                Kind::MixedRectangularTranslatedPoint(source, distance, _, fixed_horizontal)
+                | Kind::MixedRectangularTranslatedSegment(source, distance, _, fixed_horizontal)
+                | Kind::MixedRectangularTranslatedCircle(source, distance, _, fixed_horizontal) => {
+                    (
+                        if fixed_horizontal { 18 } else { 19 },
+                        vec![source, distance],
+                    )
+                }
                 Kind::MixedRectangularTranslatedPolygon(source, distance, _, fixed_horizontal) => (
                     if fixed_horizontal { 18 } else { 19 },
                     vec![source, distance],
                 ),
-                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical) => {
+                Kind::RectangularMarkedTranslatedPoint(source, horizontal, vertical)
+                | Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical)
+                | Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) => {
                     (20, vec![source, horizontal, vertical])
                 }
                 Kind::RectangularMarkedTranslatedPolygon(source, horizontal, vertical) => {
@@ -1452,6 +1517,8 @@ impl Document {
                 o.kind,
                 Kind::PolarTranslatedSegment(_, _, _, _)
                     | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
+                    | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
+                    | Kind::RectangularMarkedTranslatedSegment(_, _, _)
                     | Kind::VectorTranslatedSegment(_, _, _)
                     | Kind::MarkedDistanceTranslatedSegment(_, _, _)
                     | Kind::AngleRotatedSegment(_, _, _, _, _)
@@ -1483,6 +1550,8 @@ impl Document {
                 o.kind,
                 Kind::PolarTranslatedCircle(_, _, _, _)
                     | Kind::FixedRectangularTranslatedCircle(_, _, _, _, _)
+                    | Kind::MixedRectangularTranslatedCircle(_, _, _, _)
+                    | Kind::RectangularMarkedTranslatedCircle(_, _, _)
                     | Kind::VectorTranslatedCircle(_, _, _)
                     | Kind::MarkedDistanceTranslatedCircle(_, _, _)
                     | Kind::AngleRotatedCircle(_, _, _, _, _)
@@ -1612,6 +1681,23 @@ impl Document {
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
+                    Kind::PointOnPolygon(host, edge, t) => {
+                        let Some(Kind::Polygon(vertices)) = self
+                            .objects
+                            .get(host.saturating_sub(1))
+                            .map(|object| &object.kind)
+                        else {
+                            return Err("Missing polygon boundary host".into());
+                        };
+                        let subtype =
+                            polygon_subtype(vertices.len()).ok_or("Too many polygon vertices")?;
+                        let mut payload = 15u16.to_le_bytes().to_vec();
+                        payload.extend_from_slice(&subtype.to_le_bytes());
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        payload.extend_from_slice(&(edge as u32).to_le_bytes());
+                        payload.extend_from_slice(&[255, 255, 0, 0]);
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
                     Kind::PointOnCircle(_, x, y) => {
                         let mut payload = vec![15, 0, 28, 0];
                         payload.extend_from_slice(&x.to_le_bytes());
@@ -1688,6 +1774,8 @@ impl Document {
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, fixed_horizontal)
+                    | Kind::MixedRectangularTranslatedSegment(_, _, fixed_cm, fixed_horizontal)
+                    | Kind::MixedRectangularTranslatedCircle(_, _, fixed_cm, fixed_horizontal)
                     | Kind::MixedRectangularTranslatedPolygon(_, _, fixed_cm, fixed_horizontal) => {
                         let mut payload = *include_bytes!(
                             "../../assets/mixed_rectangular_translation_payload.bin"
@@ -1736,7 +1824,9 @@ impl Document {
                         | Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
+                        | Kind::ParameterLocus(_, _, _, _)
                         | Kind::PlottedPoint(_, _, _, _)
+                        | Kind::NumericCoordinatePoint(_, _, _)
                         | Kind::CoordinateMeasurement { .. }
                         | Kind::ReflectedPolygon(_, _)
                         | Kind::VectorTranslatedPolygon(_, _, _)

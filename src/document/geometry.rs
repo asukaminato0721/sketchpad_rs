@@ -319,11 +319,14 @@ impl Document {
                 }
                 Kind::PathLiteralPoint(path, t) => on_path(d, *path, *t, seen),
                 Kind::PathValuePoint(source, path) => {
-                    let Kind::Parameter(ref value) = d.objects.get(source.checked_sub(1)?)?.kind
-                    else {
-                        return None;
-                    };
-                    on_path(d, *path, value.value(), seen)
+                    on_path(d, *path, d.numeric_value(*source)?, seen)
+                }
+                Kind::NumericCoordinatePoint(x, y, frame) => {
+                    let frame = d.graph_frame(*frame)?;
+                    let x = d.numeric_value(*x)?;
+                    let y = d.numeric_value(*y)?;
+                    let point = frame.world(x, y)?;
+                    Some(Point { x: point.x, y: point.y })
                 }
                 Kind::PlottedPoint(_, frame, mode, stored) => {
                     let frame = d.graph_frame(*frame)?;
@@ -356,6 +359,7 @@ impl Document {
                     })
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
+                Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
                 Kind::PolarTranslatedPoint(origin, angle, units_to_raw, distance) => {
                     let source = go(d, *origin, seen)?;
                     let radians = angle.to_radians();
@@ -729,6 +733,46 @@ impl Document {
                         mode,
                     ))
                 }
+                Kind::RectangularMarkedTranslatedSegment(source, horizontal, vertical) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let dx = d.distance_value_pixels(horizontal)?;
+                    let dy = -d.distance_value_pixels(vertical)?;
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
+                Kind::MixedRectangularTranslatedSegment(source, distance, fixed, horizontal) => {
+                    let (a, b, mode) = go(d, source, seen)?;
+                    let dx = if horizontal {
+                        fixed * 37.79527559055118
+                    } else {
+                        d.distance_value_pixels(distance)?
+                    };
+                    let dy = if horizontal {
+                        -d.distance_value_pixels(distance)?
+                    } else {
+                        -fixed * 37.79527559055118
+                    };
+                    Some((
+                        Point {
+                            x: a.x + dx,
+                            y: a.y + dy,
+                        },
+                        Point {
+                            x: b.x + dx,
+                            y: b.y + dy,
+                        },
+                        mode,
+                    ))
+                }
                 Kind::VectorTranslatedSegment(source, start, end) => {
                     let (a, b, mode) = go(d, source, seen)?;
                     let start = d.position(start)?;
@@ -969,6 +1013,38 @@ impl Document {
             };
             return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
         }
+        if let Kind::RectangularMarkedTranslatedCircle(source, horizontal, vertical) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let dx = self.distance_value_pixels(horizontal)?;
+            let dy = -self.distance_value_pixels(vertical)?;
+            let moved = Point {
+                x: center.x + dx,
+                y: center.y + dy,
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
+        if let Kind::MixedRectangularTranslatedCircle(source, distance, fixed, horizontal) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            let (center, radius) = self.circle_points(source)?;
+            let dx = if horizontal {
+                fixed * 37.79527559055118
+            } else {
+                self.distance_value_pixels(distance)?
+            };
+            let dy = if horizontal {
+                -self.distance_value_pixels(distance)?
+            } else {
+                -fixed * 37.79527559055118
+            };
+            let moved = Point {
+                x: center.x + dx,
+                y: center.y + dy,
+            };
+            return (moved.x.is_finite() && moved.y.is_finite()).then_some((moved, radius));
+        }
         if let Kind::VectorTranslatedCircle(source, start, end) =
             self.objects.get(id.checked_sub(1)?)?.kind
         {
@@ -1140,7 +1216,7 @@ impl Document {
                 },
         }
     }
-    fn arc_parameter(&self, id: usize, p: Point) -> Option<f64> {
+    pub(super) fn arc_parameter(&self, id: usize, p: Point) -> Option<f64> {
         let (center, _, start, sweep, clockwise_y) = self.arc_geometry(id)?;
         if sweep.abs() < 1e-9 {
             return None;
@@ -1254,6 +1330,13 @@ impl Document {
                 }
                 Kind::PointOnCircle(host, dx / length, -dy / length)
             }
+            Some(Kind::PointOnPolygon(host, _, _)) => {
+                let host = *host;
+                let Some((edge, t)) = self.polygon_boundary_projection(host, p) else {
+                    return false;
+                };
+                Kind::PointOnPolygon(host, edge, t)
+            }
             Some(Kind::PointOnArc(host, _)) => {
                 let host = *host;
                 let Some(t) = self.arc_parameter(host, p) else {
@@ -1267,6 +1350,84 @@ impl Document {
         self.last_moved_object = Some(id);
         self.dirty = true;
         true
+    }
+    pub fn point_on_polygon(&self, host: usize, edge: usize, t: f64) -> Option<Point> {
+        let vertices = self.polygon_points(host)?;
+        if !t.is_finite() || !(0.0..=1.0).contains(&t) || edge >= vertices.len() {
+            return None;
+        }
+        let a = vertices[edge];
+        let b = vertices[(edge + 1) % vertices.len()];
+        Some(Point {
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t,
+        })
+    }
+    pub fn polygon_boundary_projection(&self, host: usize, p: Point) -> Option<(usize, f64)> {
+        if !p.x.is_finite() || !p.y.is_finite() {
+            return None;
+        }
+        let vertices = self.polygon_points(host)?;
+        let mut closest: Option<(f64, usize, f64)> = None;
+        for edge in 0..vertices.len() {
+            let a = vertices[edge];
+            let b = vertices[(edge + 1) % vertices.len()];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let length_sq = dx * dx + dy * dy;
+            if length_sq <= 1e-18 {
+                continue;
+            }
+            let t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq).clamp(0., 1.);
+            let distance = (p.x - a.x - t * dx).powi(2) + (p.y - a.y - t * dy).powi(2);
+            if closest.is_none_or(|(best, _, _)| distance < best) {
+                closest = Some((distance, edge, t));
+            }
+        }
+        closest.map(|(_, edge, t)| (edge, t))
+    }
+    /// Fraction of the polygon perimeter traversed from its first vertex.
+    pub fn polygon_boundary_parameter(&self, host: usize, edge: usize, t: f64) -> Option<f64> {
+        let vertices = self.polygon_points(host)?;
+        if edge >= vertices.len() || !t.is_finite() {
+            return None;
+        }
+        let lengths = vertices
+            .iter()
+            .zip(vertices.iter().cycle().skip(1))
+            .take(vertices.len())
+            .map(|(a, b)| (b.x - a.x).hypot(b.y - a.y))
+            .collect::<Vec<_>>();
+        let perimeter: f64 = lengths.iter().sum();
+        (perimeter > 1e-9)
+            .then(|| (lengths[..edge].iter().sum::<f64>() + lengths[edge] * t) / perimeter)
+    }
+    pub fn point_at_polygon_parameter(&self, host: usize, parameter: f64) -> Option<Point> {
+        if !parameter.is_finite() {
+            return None;
+        }
+        let vertices = self.polygon_points(host)?;
+        let lengths = vertices
+            .iter()
+            .zip(vertices.iter().cycle().skip(1))
+            .take(vertices.len())
+            .map(|(a, b)| (b.x - a.x).hypot(b.y - a.y))
+            .collect::<Vec<_>>();
+        let perimeter: f64 = lengths.iter().sum();
+        if perimeter <= 1e-9 {
+            return None;
+        }
+        let mut remaining = parameter.rem_euclid(1.) * perimeter;
+        for (edge, length) in lengths.iter().copied().enumerate() {
+            if length <= 1e-9 {
+                continue;
+            }
+            if remaining <= length {
+                return self.point_on_polygon(host, edge, remaining / length);
+            }
+            remaining -= length;
+        }
+        vertices.first().copied()
     }
     pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
         match self.objects.get(host.checked_sub(1)?)?.kind {
@@ -1292,6 +1453,9 @@ impl Document {
                 let length = dx.hypot(dy);
                 (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
+            Kind::Polygon(_) => self
+                .polygon_boundary_projection(host, p)
+                .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),
             Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),

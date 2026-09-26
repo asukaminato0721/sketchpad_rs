@@ -160,3 +160,21 @@ header bytes 18–19 set to `00 40` and stage 2. Native creation clears the
 last eight bytes of the translation constraint. The generated file opened,
 displayed, and resaved byte-identically in Sketchpad 5; a moved path endpoint
 also updates the locus in the port.
+
+## Undefined target samples
+
+`tests/locus_undefined_samples_replay.txt` builds a segment-constrained driver
+and an intersection of its line through a fixed point with a vertical line.
+At the driver's midpoint its line endpoints coincide, making the intersection
+undefined. The 11-object result in
+`tests/fixtures/locus_undefined_sample_verified.gsp` opened and saved
+byte-identically in Sketchpad 5 through Wine on 2026-09-26. Its file retains
+the standard native code-35 locus representation; no new record fields are
+needed.
+
+The Rust sampler now keeps missing sample slots. Point loci join only adjacent
+defined samples, and object families omit undefined members. Polygon sweeps
+join only adjacent defined polygons. Regressions cover point curves, segment,
+circle, arc, and polygon families, empty loci, and save/reopen. The cross-open
+proves acceptance of the generated construction; exact native gap rendering
+and discontinuities between finite samples still need separate verification.
