@@ -135,6 +135,23 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
 
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
+    if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
+        let value = doc
+            .length_pair_calculation_value(id)
+            .map_or_else(|| "undefined".into(), |value| format!("{value:.2}"));
+        let unit = match group.length_power() {
+            1 => " cm",
+            2 => " cm²",
+            _ => "",
+        };
+        return Some((
+            group.anchor(),
+            vec![format!(
+                "{} = {value}{unit}",
+                doc.length_measurement_name(id)?
+            )],
+        ));
+    }
     if let Kind::MeasuredCalculation(source, group) = &object.kind {
         let value = doc.measured_calculation_cm(id)?;
         let name = doc
@@ -151,9 +168,10 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
     }
     if let Kind::ParameterCalculation(_, group) = &object.kind {
         let value = doc.parameter_calculation_value(id)?;
+        let value = group.value_text(value);
         let expression = doc.parameter_calculation_expression(id)?;
         let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
-        return Some((group.anchor(), vec![format!("{expression} = {value:.2}")]));
+        return Some((group.anchor(), vec![format!("{expression} = {value}")]));
     }
     if let Kind::ValueTable(source, group) = &object.kind
         && let Some((name, mut values)) = group.named_label_values()
@@ -192,10 +210,69 @@ pub fn number_screen_rect(vp: &Viewport, kind: &Kind) -> Option<Rect> {
     Some(number_rect(vp, anchor, &lines))
 }
 
+fn numeric_label_rect(vp: &Viewport, point: Point, text: &str) -> Rect {
+    Rect::from_center_size(
+        vp.screen(point),
+        egui::vec2(text.chars().count() as f32 * 10. + 8., 22.),
+    )
+}
+
+pub fn point_parameter_iteration_label_hit(
+    vp: &Viewport,
+    doc: &Document,
+    id: usize,
+    at: Pos2,
+) -> bool {
+    doc.point_parameter_iteration_labels(id)
+        .is_some_and(|labels| {
+            labels
+                .into_iter()
+                .any(|(point, text)| numeric_label_rect(vp, point, &text).contains(at))
+        })
+}
+
 pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -> Option<Rect> {
+    if let Some((point, text)) = doc.point_numeric_label(id) {
+        return Some(numeric_label_rect(vp, point, &text));
+    }
     let (anchor, lines) = number_lines_for_object(doc, id)?;
     Some(number_rect(vp, anchor, &lines))
 }
+pub fn repeated_polygon_opacity(opacity: u16, paths: f64) -> f32 {
+    (1. - (1. - f64::from(opacity) / 65535.).powf(paths)) as f32
+}
+
+pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    if let Some(polygons) = doc.polygon_iteration_images(id) {
+        return polygons.into_iter().any(|(points, _)| {
+            let points = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
+            let mut inside = false;
+            for i in 0..points.len() {
+                let (a, b) = (points[i], points[(i + 1) % points.len()]);
+                if (a.y > at.y) != (b.y > at.y)
+                    && at.x < (b.x - a.x) * (at.y - a.y) / (b.y - a.y) + a.x
+                {
+                    inside = !inside;
+                }
+            }
+            inside
+        });
+    }
+    doc.branch_segment_iteration_images(id)
+        .is_some_and(|segments| {
+            segments.into_iter().any(|(a, b)| {
+                let (a, b) = (vp.screen(a), vp.screen(b));
+                let delta = b - a;
+                let t = if delta.length_sq() > 0. {
+                    ((at - a).dot(delta) / delta.length_sq()).clamp(0., 1.)
+                } else {
+                    0.
+                };
+                at.distance(a + delta * t) < 7.
+            })
+        })
+}
+
 pub fn picture_screen_quad(vp: &Viewport, png: &[u8], transform: [f64; 6]) -> Option<[Pos2; 4]> {
     if png.len() < 24 {
         return None;
@@ -891,14 +968,57 @@ pub fn svg_page_with_button_offset(
                 .join(" ");
             writeln!(
                 svg,
-                "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"0.35\" stroke=\"none\"/>",
+                "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
                 vertices,
                 match o.visual_style {
-                    Some(VisualStyle::Polygon { color }) => css_color(color),
+                    Some(VisualStyle::Polygon { color, .. }) => css_color(color),
                     _ => "#f6ad60".into(),
+                },
+                match o.visual_style {
+                    Some(VisualStyle::Polygon { opacity, .. }) => f64::from(opacity) / 65535.,
+                    _ => 0.5,
                 }
             )
             .unwrap();
+        }
+        if let Some(polygons) = doc.polygon_iteration_images(o.id) {
+            let (color, opacity) = match o.visual_style {
+                Some(VisualStyle::Polygon { color, opacity }) => (css_color(color), opacity),
+                _ => ("#f6ad60".into(), 32767),
+            };
+            for (points, paths) in polygons {
+                let vertices = points
+                    .into_iter()
+                    .map(|p| {
+                        let at = vp.screen(p);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    svg,
+                    "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                    vertices,
+                    color,
+                    repeated_polygon_opacity(opacity, paths)
+                )
+                .unwrap();
+            }
+        }
+        if let Some(segments) = doc.branch_segment_iteration_images(o.id) {
+            for (a, b) in segments {
+                let (a, b) = (vp.screen(a), vp.screen(b));
+                writeln!(
+                    svg,
+                    "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+                    svg_stroke(o.visual_style),
+                    a.x,
+                    a.y,
+                    b.x,
+                    b.y
+                )
+                .unwrap();
+            }
         }
         if let Some(segments) = doc.segment_iteration_images(o.id) {
             for (start, end) in segments {
@@ -1063,6 +1183,16 @@ pub fn svg_page_with_button_offset(
                 .unwrap();
                 }
             }
+        }
+        if let Some(labels) = doc.point_parameter_iteration_labels(object.id) {
+            for (point, text) in labels {
+                let at = vp.screen(point);
+                writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>",at.x,at.y,xml_text(&text)).unwrap();
+            }
+        }
+        if let Some((point, text)) = doc.point_numeric_label(object.id) {
+            let at = vp.screen(point);
+            writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>",at.x,at.y,xml_text(&text)).unwrap();
         }
         if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
@@ -1674,7 +1804,9 @@ impl GeometryRenderer {
             if !doc.is_displayed(o.id) {
                 continue;
             }
-            let col = if doc.selected.contains(&o.id) {
+            let is_selected = doc.selected.contains(&o.id)
+                || matches!(o.kind,Kind::IterationBinding(_,parent) if doc.selected.contains(&parent));
+            let col = if is_selected {
                 selected
             } else {
                 match o.visual_style {
@@ -1692,6 +1824,44 @@ impl GeometryRenderer {
             if let Some((a, b, mode)) = doc.line_points(o.id) {
                 if let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect) {
                     mesh.styled_path(&[a, b], false, stroke, col);
+                }
+            }
+            if let Some(polygons) = doc.polygon_iteration_images(o.id) {
+                let (color, opacity) = match o.visual_style {
+                    Some(VisualStyle::Polygon { color, opacity }) => (color, opacity),
+                    _ => (
+                        RgbColor {
+                            red: 255,
+                            green: 128,
+                            blue: 0,
+                        },
+                        32767,
+                    ),
+                };
+                for (points, paths) in polygons {
+                    let screen = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
+                    mesh.polygon(
+                        &screen,
+                        if is_selected {
+                            [
+                                selected[0],
+                                selected[1],
+                                selected[2],
+                                repeated_polygon_opacity(opacity, paths),
+                            ]
+                        } else {
+                            rgba(color, repeated_polygon_opacity(opacity, paths))
+                        },
+                    );
+                }
+            }
+            if let Some(segments) = doc.branch_segment_iteration_images(o.id) {
+                for (a, b) in segments {
+                    if let Some((a, b)) =
+                        clipped_line(vp.screen(a), vp.screen(b), LineMode::Segment, vp.rect)
+                    {
+                        mesh.styled_path(&[a, b], false, stroke, col);
+                    }
                 }
             }
             if let Some(segments) = doc.segment_iteration_images(o.id) {
@@ -1807,8 +1977,10 @@ impl GeometryRenderer {
                             .map(|point| vp.screen(point))
                             .collect::<Vec<_>>();
                         let fill = match o.visual_style {
-                            Some(VisualStyle::Polygon { color }) => rgba(color, 0.35),
-                            _ => [0.96, 0.58, 0.22, 0.35],
+                            Some(VisualStyle::Polygon { color, opacity }) => {
+                                rgba(color, f32::from(opacity) / 65535.)
+                            }
+                            _ => [0.96, 0.58, 0.22, 0.5],
                         };
                         mesh.polygon(&screen, fill);
                     }
@@ -1893,6 +2065,27 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn branching_polygon_svg_uses_path_multiplicity_and_carried_bindings() {
+        let doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/branch_polygon_iteration_native_edited_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 180. },
+        };
+        let svg = svg_page(&doc, &vp).unwrap();
+        assert_eq!(svg.matches("<polygon ").count(), 6);
+        assert_eq!(svg.matches("<line").count(), 18);
+        assert_eq!(svg.matches("<circle").count(), 3);
+        let opacity = repeated_polygon_opacity(32767, 2.);
+        assert!((opacity - 0.75).abs() < 0.0001);
+        assert!(svg.contains(&format!("fill-opacity=\"{opacity}\"")));
+    }
+
     #[test]
     fn styled_free_text_uses_each_objects_saved_font_in_svg() {
         let vp = Viewport {
@@ -2234,7 +2427,10 @@ mod tests {
         let svg = svg_page(&doc, &vp).unwrap();
         assert!(svg.contains("stroke=\"#008000\" stroke-width=\"4\" stroke-dasharray=\"9 6\""));
         assert!(svg.contains("stroke=\"#0000ff\" stroke-width=\"1.5\" stroke-dasharray=\"2 5\""));
-        assert!(svg.contains("fill=\"#800080\" fill-opacity=\"0.35\" stroke=\"none\""));
+        assert!(svg.contains(&format!(
+            "fill=\"#800080\" fill-opacity=\"{}\" stroke=\"none\"",
+            f64::from(32767) / 65535.
+        )));
         assert!(svg.contains("r=\"6\" fill=\"#0000ff\""));
     }
     #[test]

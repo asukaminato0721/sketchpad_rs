@@ -2,7 +2,9 @@ use sketchpad_rs::action_records::{
     AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement,
 };
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_rs::document::{Clipboard, Document, Kind, LineMode, Point, TextStyleCommand};
+use sketchpad_rs::document::{
+    Clipboard, Document, IterationDepth, Kind, LineMode, Point, TextStyleCommand,
+};
 use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::graph::{GraphPoint, GridForm};
 use sketchpad_rs::plot_points_records::PlotPointsMode;
@@ -873,8 +875,11 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && sketchpad_rs::render::number_screen_rect_for_object(v, &self.doc, object.id)
+                && (sketchpad_rs::render::number_screen_rect_for_object(v, &self.doc, object.id)
                     .is_some_and(|rect| rect.contains(p))
+                    || sketchpad_rs::render::point_parameter_iteration_label_hit(
+                        v, &self.doc, object.id, p,
+                    ))
         }) {
             return Some(object.id);
         }
@@ -898,6 +903,12 @@ impl Editor {
                     | Kind::LinkUrlButton { label, anchor, .. }
                     | Kind::LinkPageButton { label, anchor, .. }
                     if self.action_button_rect(v, *anchor, label).contains(p))
+        }) {
+            return Some(object.id);
+        }
+        if let Some(object) = self.doc.objects.iter().rev().find(|object| {
+            self.doc.is_displayed(object.id)
+                && sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
         }) {
             return Some(object.id);
         }
@@ -1909,9 +1920,9 @@ impl Editor {
         }
     }
     fn iterate_selected(&mut self, depth: u32) {
-        if !(2..=4).contains(&self.selection_order.len()) {
+        if !(2..=8).contains(&self.selection_order.len()) {
             self.status =
-                "Select a free point, its translated image, and optionally a segment or ray with an integer depth parameter".into();
+                "Select a free point and transformed image; optionally add their segment, ray with a depth parameter, or parameter mapping with a numeric label".into();
             return;
         }
         let seed = self
@@ -1924,13 +1935,87 @@ impl Editor {
                 self.doc.objects[*id - 1].kind,
                 Kind::PolarTranslatedPoint(_, _, _, _)
                     | Kind::FixedRectangularTranslatedPoint(_, _, _, _, _)
+                    | Kind::RotatedPoint(_, _, _)
             )
         });
         let (Some(seed), Some(image)) = (seed, image) else {
-            self.status = "Select a free point and its directly translated image".into();
+            self.status = "Select a free point and its directly translated or rotated image".into();
             return;
         };
-        let result = if self.selection_order.len() == 4 {
+        let selected_polygon = self
+            .selection_order
+            .iter()
+            .copied()
+            .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Polygon(_)));
+        let result = if let Some(polygon) = selected_polygon {
+            let images = self.selection_order.iter().copied().filter(|id| matches!(self.doc.objects[*id-1].kind,Kind::PolarTranslatedPoint(source,_,_,_) | Kind::FixedRectangularTranslatedPoint(source,_,_,_,_) if source==seed)).collect::<Vec<_>>();
+            let segments = self
+                .selection_order
+                .iter()
+                .copied()
+                .filter(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Segment(_, _)))
+                .collect::<Vec<_>>();
+            let depth_parameter = self
+                .selection_order
+                .iter()
+                .copied()
+                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
+            let depth =
+                depth_parameter.map_or(IterationDepth::Fixed(depth), IterationDepth::Parameter);
+            if images.len() == 2 {
+                self.doc.add_branching_polygon_iteration(
+                    seed, images[0], images[1], polygon, &segments, depth,
+                )
+            } else {
+                Err("Select two directly translated images for the branching triangle".into())
+            }
+        } else if self.selection_order.len() >= 5 {
+            let calculation = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::ParameterCalculation(_, _)
+                )
+            });
+            let parameter = calculation.and_then(|id| match self.doc.objects[id - 1].kind {
+                Kind::ParameterCalculation(source, _) if self.selection_order.contains(&source) => {
+                    Some(source)
+                }
+                _ => None,
+            });
+            let label = self.selection_order.iter().copied().find(|id| {
+                matches!(
+                    self.doc.objects[*id - 1].kind,
+                    Kind::PointNumericLabel(_, _)
+                )
+            });
+            match (parameter, calculation, label) {
+                (Some(parameter), Some(calculation), Some(label)) => {
+                    if self.selection_order.len() == 6 {
+                        let depth_parameter = self.selection_order.iter().copied().find(|id| {
+                            *id != parameter
+                                && matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_))
+                        });
+                        match depth_parameter {
+                            Some(id) => self.doc.add_point_parameter_iteration_with_parameter_depth(seed, parameter, image, calculation, label, id),
+                            None => Err("Select a distinct integer depth parameter along with the numeric mapping".into()),
+                        }
+                    } else {
+                        self.doc.add_point_parameter_iteration(
+                            seed,
+                            parameter,
+                            image,
+                            calculation,
+                            label,
+                            depth,
+                        )
+                    }
+                }
+                _ => Err(
+                    "Select the point mapping, parameter mapping, and attached numeric label"
+                        .into(),
+                ),
+            }
+        } else if self.selection_order.len() == 4 {
             let ray = self
                 .selection_order
                 .iter()
@@ -1963,10 +2048,23 @@ impl Editor {
         match result {
             Ok(id) => {
                 self.select_only(id);
-                let actual_depth = self
-                    .doc
-                    .point_iteration_images(id)
-                    .map_or(depth as usize, |points| points.len());
+                let actual_depth = self.doc.point_iteration_images(id).map_or_else(
+                    || match self.doc.objects[id - 1].kind {
+                        Kind::BranchingPolygonIteration {
+                            depth: IterationDepth::Fixed(n),
+                            ..
+                        } => n as usize,
+                        Kind::BranchingPolygonIteration {
+                            depth: IterationDepth::Parameter(p),
+                            ..
+                        } => self
+                            .doc
+                            .unitless_numeric_value(p)
+                            .unwrap_or(f64::from(depth)) as usize,
+                        _ => depth as usize,
+                    },
+                    |points| points.len(),
+                );
                 self.status = format!("Created iteration {id} to depth {actual_depth}");
             }
             Err(error) => self.status = error,
@@ -2843,7 +2941,7 @@ impl Editor {
                 Some(
                     VisualStyle::Point { color, .. }
                     | VisualStyle::Stroke { color, .. }
-                    | VisualStyle::Polygon { color },
+                    | VisualStyle::Polygon { color, .. },
                 ) => color,
                 _ => RgbColor {
                     red: 23,
@@ -4161,6 +4259,15 @@ impl Editor {
                     }
                 });
                 ui.menu_button("Number", |ui| {
+                    if ui.button("Attach Selected Value to Point").clicked() {
+                        let point=self.doc.selected.iter().copied().find(|id|self.doc.position(*id).is_some());
+                        let value=self.doc.selected.iter().copied().find(|id|self.doc.unitless_numeric_value(*id).is_some());
+                        let result=if self.doc.selected.len()==2 {
+                            point.zip(value).ok_or_else(||"Select one point and one numeric value".to_string()).and_then(|(point,value)|self.doc.add_point_numeric_label(point,value))
+                        } else { Err("Select one point and one numeric value".into()) };
+                        match result { Ok(id)=>{self.select_only(id);self.status=format!("Created attached numeric label {id}");},Err(error)=>self.status=error }
+                        ui.close();
+                    }
                     if ui.button("New Parameter (1.00)").clicked() {
                         let anchor = if self.doc.objects.len() == 1 {
                             (10, 38)
@@ -4197,11 +4304,13 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Calculate…").clicked() {
-                        self.calculation_draft = if self.doc.selected.len() == 1 {
+                        self.calculation_draft = if self.doc.selected.len() == 2 {
+                            "a + b".into()
+                        } else if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
                                 Some(Kind::Parameter(group)) => format!("{}^2", group.name()),
                                 Some(Kind::ParameterCalculation(_, _)) => "v + 1".into(),
-                                Some(Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _)) => "× 2".into(),
+                                Some(kind) if kind.is_distance_value() => "× 2".into(),
                                 _ => "2 + 3".into(),
                             }
                         } else { "2 + 3".into() };
@@ -5113,6 +5222,7 @@ impl Editor {
                                     | Kind::Parameter(_)
                                     | Kind::Calculation(_)
                                     | Kind::MeasuredCalculation(_, _)
+                                    | Kind::LengthPairCalculation(_, _, _)
                                     | Kind::ParameterCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _)
@@ -5132,6 +5242,7 @@ impl Editor {
                                     Kind::Parameter(_)
                                     | Kind::Calculation(_)
                                     | Kind::MeasuredCalculation(_, _)
+                                    | Kind::LengthPairCalculation(_, _, _)
                                     | Kind::ParameterCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _) => {
@@ -5179,6 +5290,7 @@ impl Editor {
                             Kind::Parameter(_)
                                 | Kind::Calculation(_)
                                 | Kind::MeasuredCalculation(_, _)
+                                | Kind::LengthPairCalculation(_, _, _)
                                 | Kind::ParameterCalculation(_, _)
                                 | Kind::ValueTable(_, _)
                                 | Kind::ValueTablePair(_, _, _)
@@ -5377,6 +5489,34 @@ impl Editor {
                                 }
                             }
                         }
+                    }
+                    if let Some(labels) = self.doc.point_parameter_iteration_labels(object.id) {
+                        for (point, text) in labels {
+                            ui.painter().text(
+                                vp.screen(point),
+                                egui::Align2::CENTER_CENTER,
+                                text,
+                                egui::FontId::proportional(16.),
+                                if self.doc.selected.contains(&object.id) {
+                                    egui::Color32::MAGENTA
+                                } else {
+                                    egui::Color32::BLACK
+                                },
+                            );
+                        }
+                    }
+                    if let Some((point, text)) = self.doc.point_numeric_label(object.id) {
+                        ui.painter().text(
+                            vp.screen(point),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            egui::FontId::proportional(16.),
+                            if self.doc.selected.contains(&object.id) {
+                                egui::Color32::MAGENTA
+                            } else {
+                                egui::Color32::BLACK
+                            },
+                        );
                     }
                     if let Some((_, lines)) =
                         sketchpad_rs::render::number_lines_for_object(&self.doc, object.id)
@@ -6090,12 +6230,14 @@ impl Editor {
                 ui.heading("Calculate");
                 ui.text_edit_singleline(&mut self.calculation_draft);
                 ui.label(
-                    if self.doc.selected.len() == 1
+                    if self.doc.selected.len() == 2 {
+                        "Two selected lengths: a + b, a - b, a * b, or a / b, in selection order"
+                    } else if self.doc.selected.len() == 1
                         && self.doc.selected.iter().next().is_some_and(|&id| {
                             self.doc
                                 .objects
                                 .get(id - 1)
-                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _)))
+                                .is_some_and(|object| object.kind.is_distance_value())
                         })
                     {
                         "Selected length × factor (0–99) or ÷ divisor (1–99); also supports two integers"
@@ -6127,6 +6269,7 @@ impl Editor {
                                     Kind::Parameter(_)
                                         | Kind::Calculation(_)
                                         | Kind::MeasuredCalculation(_, _)
+                                        | Kind::LengthPairCalculation(_, _, _)
                                         | Kind::ParameterCalculation(_, _)
                                 ))
                     })
@@ -6134,18 +6277,10 @@ impl Editor {
                 let y = (5usize + row * 33).min(i16::MAX as usize) as i16;
                 let selected_length = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
-                        self.doc.objects.get(id - 1).is_some_and(|object| {
-                            matches!(
-                                object.kind,
-                                Kind::SegmentLength(_)
-                                    | Kind::PointDistance(_, _)
-                                    | Kind::PolygonPerimeter(_)
-                                    | Kind::CircleCircumference(_)
-                                    | Kind::CircleRadius(_)
-                                    | Kind::ArcLength(_)
-                                    | Kind::MeasuredCalculation(_, _)
-                            )
-                        })
+                        self.doc
+                            .objects
+                            .get(id - 1)
+                            .is_some_and(|object| object.kind.is_distance_value())
                     })
                 } else {
                     None
@@ -6167,8 +6302,44 @@ impl Editor {
                     .strip_prefix(['*', '×', '·'])
                     .map(|value| (value, false))
                     .or_else(|| draft.strip_prefix(['/', '÷']).map(|value| (value, true)));
-                let result = if let Some((source, (factor, divide))) = selected_length.zip(measured)
-                {
+                let pair_ids = self
+                    .selection_order
+                    .iter()
+                    .copied()
+                    .filter(|id| self.doc.selected.contains(id))
+                    .collect::<Vec<_>>();
+                let result = if self.doc.selected.len() == 2 && pair_ids.len() == 2 {
+                    let compact = draft
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .collect::<String>();
+                    match compact.as_str() {
+                        "a+b" => self.doc.add_length_pair_calculation(
+                            pair_ids[0],
+                            pair_ids[1],
+                            false,
+                            (10, y),
+                        ),
+                        "a-b" | "a−b" => self.doc.add_length_pair_calculation(
+                            pair_ids[0],
+                            pair_ids[1],
+                            true,
+                            (10, y),
+                        ),
+                        "a*b" | "a×b" | "a·b" => {
+                            self.doc
+                                .add_length_pair_operation(pair_ids[0], pair_ids[1], 2, (10, y))
+                        }
+                        "a/b" | "a÷b" => {
+                            self.doc
+                                .add_length_pair_operation(pair_ids[0], pair_ids[1], 3, (10, y))
+                        }
+                        _ => Err(
+                            "Enter a + b, a - b, a * b, or a / b for the two selected lengths"
+                                .into(),
+                        ),
+                    }
+                } else if let Some((source, (factor, divide))) = selected_length.zip(measured) {
                     factor
                         .trim()
                         .parse::<u8>()
@@ -6200,8 +6371,8 @@ impl Editor {
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
-                ui.heading("Iterate Points");
-                ui.label("Select a free point and translated image. Add their segment, or add their ray and an integer depth parameter.");
+                ui.heading("Iterate");
+                ui.label("Select a free point and translated or rotated image. Add their segment, ray with a depth parameter, or parameter, calculation, and attached numeric label. Select another integer parameter to control numeric iteration depth. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter.");
                 ui.horizontal(|ui| {
                     ui.label("Depth");
                     ui.text_edit_singleline(&mut self.iteration_depth_draft);
@@ -7007,6 +7178,238 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_triangle_and_two_mappings_create_branch_iteration() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 80., y: 220. }));
+        let first = doc.add(Kind::PolarTranslatedPoint(seed, 90., 37.79527559055118, 1.));
+        let second = doc.add(Kind::FixedRectangularTranslatedPoint(
+            seed,
+            37.79527559055118,
+            1.,
+            37.79527559055118,
+            1.,
+        ));
+        let polygon = doc.add(Kind::Polygon(vec![seed, first, second]));
+        let edges = [
+            doc.add(Kind::Segment(seed, first)),
+            doc.add(Kind::Segment(first, second)),
+            doc.add(Kind::Segment(second, seed)),
+        ];
+        let n = doc.add_named_parameter("n", 3., (10, 5)).unwrap();
+        let mut editor = Editor::new(doc);
+        editor.selection_order = vec![
+            edges[2], second, n, polygon, seed, edges[0], first, edges[1],
+        ];
+        editor
+            .doc
+            .selected
+            .extend(editor.selection_order.iter().copied());
+        editor.iterate_selected(2);
+        assert!(matches!(
+            editor.doc.objects[8].kind,
+            Kind::BranchingPolygonIteration {
+                depth: IterationDepth::Parameter(8),
+                ..
+            }
+        ));
+        assert_eq!(editor.doc.branch_iteration_offsets(9).unwrap().len(), 9);
+        assert!(editor.status.contains("depth 3"));
+        let points = editor.doc.polygon_iteration_images(10).unwrap()[0]
+            .0
+            .clone();
+        let center = Point {
+            x: points.iter().map(|p| p.x).sum::<f64>() / 3.,
+            y: points.iter().map(|p| p.y).sum::<f64>() / 3.,
+        };
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(500., 400.)),
+            scale: 2.,
+            center: Point { x: 200., y: 180. },
+        };
+        assert_eq!(editor.hit(&vp, vp.screen(center)), Some(10));
+        editor.doc.set_parameter_value(n, 2.).unwrap();
+        assert_eq!(editor.doc.branch_iteration_offsets(9).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn attached_numeric_label_hit_target_follows_world_coordinates() {
+        let document = Document::from_bytes(
+            include_bytes!("../tests/fixtures/point_numeric_label_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let editor = Editor::new(document);
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(500., 400.)),
+            scale: 2.,
+            center: Point { x: 250., y: 180. },
+        };
+        let point = vp.screen(editor.doc.position(3).unwrap());
+        assert_eq!(editor.hit(&vp, point + egui::vec2(17., 0.)), Some(4));
+    }
+
+    #[test]
+    fn selected_point_parameter_mapping_creates_numeric_iteration() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 330., y: 180. }));
+        let center = document.add(Kind::Free(Point { x: 250., y: 180. }));
+        let image = document.add(Kind::RotatedPoint(seed, center, 60.));
+        let parameter = document.add_named_parameter("a", 0., (10, 5)).unwrap();
+        let calculation = document
+            .add_parameter_calculation(parameter, "a+1", (10, 35))
+            .unwrap();
+        let label = document
+            .add_point_numeric_label(image, calculation)
+            .unwrap();
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![label, calculation, image, parameter, seed];
+        editor
+            .doc
+            .selected
+            .extend([seed, image, parameter, calculation, label]);
+        editor.iterate_selected(3);
+        assert_eq!(
+            editor.doc.objects[6].kind,
+            Kind::PointParameterIteration(
+                seed,
+                parameter,
+                image,
+                calculation,
+                label,
+                sketchpad_rs::document::IterationDepth::Fixed(3)
+            )
+        );
+        assert_eq!(
+            editor
+                .doc
+                .point_parameter_iteration_labels(7)
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![7]
+        );
+    }
+
+    #[test]
+    fn numeric_iteration_selection_uses_calculation_source_and_distinct_depth() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 100., y: 180. }));
+        let image = document.add(Kind::PolarTranslatedPoint(
+            seed,
+            0.,
+            37.79527559055118,
+            0.79375,
+        ));
+        let parameter = document.add_named_parameter("a", 0., (10, 5)).unwrap();
+        let calculation = document
+            .add_parameter_calculation(parameter, "a+1", (10, 35))
+            .unwrap();
+        let label = document
+            .add_point_numeric_label(image, calculation)
+            .unwrap();
+        let depth_parameter = document.add_named_parameter("n", 5., (10, 65)).unwrap();
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![depth_parameter, label, image, parameter, seed, calculation];
+        editor
+            .doc
+            .selected
+            .extend(editor.selection_order.iter().copied());
+        editor.iterate_selected(3);
+        assert_eq!(
+            editor.doc.objects[6].kind,
+            Kind::PointParameterIteration(
+                seed,
+                parameter,
+                image,
+                calculation,
+                label,
+                sketchpad_rs::document::IterationDepth::Parameter(depth_parameter)
+            )
+        );
+        assert_eq!(
+            editor
+                .doc
+                .point_parameter_iteration_labels(7)
+                .unwrap()
+                .len(),
+            5
+        );
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::pos2(20., 30.), egui::vec2(500., 400.)),
+            scale: 2.,
+            center: Point { x: 250., y: 180. },
+        };
+        let last = editor.doc.point_parameter_iteration_labels(7).unwrap()[4].0;
+        assert_eq!(
+            editor.hit(&vp, vp.screen(last) + egui::vec2(17., 0.)),
+            Some(7)
+        );
+        editor.doc.set_parameter_value(depth_parameter, 2.).unwrap();
+        assert_ne!(
+            editor.hit(&vp, vp.screen(last) + egui::vec2(17., 0.)),
+            Some(7)
+        );
+        assert_eq!(
+            editor
+                .doc
+                .point_parameter_iteration_labels(7)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![7]
+        );
+    }
+
+    #[test]
+    fn selected_rotation_creates_point_iteration() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 350., y: 180. }));
+        let center = document.add(Kind::Free(Point { x: 250., y: 180. }));
+        let image = document.add(Kind::RotatedPoint(seed, center, 60.));
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![image, seed];
+        editor.doc.selected.extend([seed, image]);
+        editor.iterate_selected(4);
+        assert_eq!(
+            editor.doc.objects[3].kind,
+            Kind::PointIteration(seed, image, 4)
+        );
+        assert_eq!(editor.doc.point_iteration_images(4).unwrap().len(), 4);
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn selected_rotation_and_segment_create_carried_iteration() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 350., y: 180. }));
+        let center = document.add(Kind::Free(Point { x: 250., y: 180. }));
+        let image = document.add(Kind::RotatedPoint(seed, center, 60.));
+        let segment = document.add(Kind::Segment(seed, image));
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![segment, image, seed];
+        editor.doc.selected.extend([seed, image, segment]);
+        editor.iterate_selected(4);
+        assert_eq!(
+            editor.doc.objects[4].kind,
+            Kind::SegmentIteration(seed, image, segment, 4)
+        );
+        assert_eq!(editor.doc.segment_iteration_images(5).unwrap().len(), 4);
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![5]
+        );
+    }
 
     #[test]
     fn selected_translation_and_segment_create_carried_iteration() {

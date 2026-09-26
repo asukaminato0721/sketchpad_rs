@@ -286,6 +286,7 @@ pub enum VisualStyle {
     },
     Polygon {
         color: RgbColor,
+        opacity: u16,
     },
 }
 
@@ -302,7 +303,14 @@ pub fn visual_style(payload: &[u8]) -> Option<VisualStyle> {
     if let (Some(line), Some(color)) = (line, color) {
         return Some(VisualStyle::Stroke { line, color });
     }
-    polygon_color(payload).map(|color| VisualStyle::Polygon { color })
+    polygon_color(payload).map(|color| VisualStyle::Polygon {
+        color,
+        opacity: if payload.len() >= 18 {
+            u16::from_le_bytes([payload[16], payload[17]])
+        } else {
+            32767
+        },
+    })
 }
 
 pub fn set_visual_style(payload: &mut [u8], style: VisualStyle) -> Result<(), String> {
@@ -323,11 +331,49 @@ pub fn set_visual_style(payload: &mut [u8], style: VisualStyle) -> Result<(), St
             set_straight_or_arc_line_style(payload, line)?;
             set_straight_or_arc_color(payload, color)
         }
-        VisualStyle::Polygon { color } if polygon_color(payload).is_some() => {
-            set_polygon_color(payload, color)
+        VisualStyle::Polygon { color, opacity } if polygon_color(payload).is_some() => {
+            set_polygon_color(payload, color)?;
+            if payload.len() >= 18 {
+                payload[16..18].copy_from_slice(&opacity.to_le_bytes());
+            }
+            Ok(())
         }
         _ => Err("Style does not match object header".into()),
     }
+}
+
+/// Binding headers keep their own appearance while carrying a polygon or segment.
+pub fn iteration_binding_visual_style(payload: &[u8], polygon: bool) -> Option<VisualStyle> {
+    if payload.len() != 28 || payload[..2] != 77u16.to_le_bytes() {
+        return None;
+    }
+    let mut header = payload.to_vec();
+    header[..2].copy_from_slice(&(if polygon { 8u16 } else { 2u16 }).to_le_bytes());
+    if !polygon {
+        header[8..10].copy_from_slice(&14u16.to_le_bytes());
+    }
+    visual_style(&header)
+}
+
+pub fn set_iteration_binding_visual_style(
+    payload: &mut [u8],
+    style: VisualStyle,
+) -> Result<(), String> {
+    if payload.len() != 28 || payload[..2] != 77u16.to_le_bytes() {
+        return Err("Expected an iteration binding header".into());
+    }
+    let mut header = payload.to_vec();
+    match style {
+        VisualStyle::Polygon { .. } => header[..2].copy_from_slice(&8u16.to_le_bytes()),
+        VisualStyle::Stroke { .. } => {
+            header[..2].copy_from_slice(&2u16.to_le_bytes());
+            header[8..10].copy_from_slice(&14u16.to_le_bytes());
+        }
+        _ => return Err("Expected a carried polygon or segment style".into()),
+    }
+    set_visual_style(&mut header, style)?;
+    payload[10..18].copy_from_slice(&header[10..18]);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -683,6 +729,7 @@ mod tests {
             set_visual_style(
                 &mut point,
                 VisualStyle::Polygon {
+                    opacity: 32767,
                     color: RgbColor {
                         red: 1,
                         green: 2,

@@ -299,6 +299,31 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_calculation_expression(parts[2], (x, y))?;
                     println!("line {}: calculate_at -> object {id}", index + 1);
                 }
+                "attach_numeric_label" => {
+                    let (point, value) = two_ids(rest)?;
+                    let id = document.add_point_numeric_label(point, value)?;
+                    println!("line {}: attach_numeric_label -> object {id}", index + 1);
+                }
+                "calculate_lengths" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [first, operator, second, y] = parts.as_slice() else {
+                        return Err("expected calculate_lengths FIRST +|-|*|/ SECOND Y".into());
+                    };
+                    let operator = match *operator {
+                        "+" => 0,
+                        "-" => 1,
+                        "*" => 2,
+                        "/" => 3,
+                        _ => return Err("Use +, -, *, or / for two lengths".into()),
+                    };
+                    let id = document.add_length_pair_operation(
+                        first.parse().map_err(|_| "Invalid first source")?,
+                        second.parse().map_err(|_| "Invalid second source")?,
+                        operator,
+                        (10, y.parse().map_err(|_| "Invalid row")?),
+                    )?;
+                    println!("line {}: calculate_lengths -> object {id}", index + 1);
+                }
                 "calculate_length" | "divide_length" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let (source, factor, y) = match parts.as_slice() {
@@ -1384,6 +1409,69 @@ fn replay(path: &str) -> Result<(), String> {
                     let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
                     let id = document.add_segment_iteration(seed, image, segment, depth)?;
                     println!("line {}: iterate_segment -> object {id}", index + 1);
+                }
+                "iterate_polygon_branch" | "iterate_polygon_branch_live" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() < 5 {
+                        return Err("expected SEED FIRST_IMAGE SECOND_IMAGE POLYGON DEPTH_OR_PARAMETER [SEGMENT_IDS...]".into());
+                    }
+                    let ids = parts
+                        .iter()
+                        .map(|p| {
+                            p.parse::<usize>()
+                                .map_err(|_| "invalid branch iteration ID or depth")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let depth = if command == "iterate_polygon_branch_live" {
+                        sketchpad_rs::document::IterationDepth::Parameter(ids[4])
+                    } else {
+                        sketchpad_rs::document::IterationDepth::Fixed(
+                            u32::try_from(ids[4]).map_err(|_| "invalid depth")?,
+                        )
+                    };
+                    let id = document.add_branching_polygon_iteration(
+                        ids[0],
+                        ids[1],
+                        ids[2],
+                        ids[3],
+                        &ids[5..],
+                        depth,
+                    )?;
+                    println!("line {}: {command} -> object {id}", index + 1);
+                }
+                "iterate_numeric" | "iterate_numeric_live" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [seed, parameter, image, calculation, label, depth] = parts.as_slice()
+                    else {
+                        return Err(
+                            "expected iterate_numeric SEED PARAMETER IMAGE CALCULATION LABEL DEPTH"
+                                .into(),
+                        );
+                    };
+                    let parse = |text: &str| {
+                        text.parse::<usize>()
+                            .map_err(|_| "Invalid iteration parent ID")
+                    };
+                    let id = if command == "iterate_numeric_live" {
+                        document.add_point_parameter_iteration_with_parameter_depth(
+                            parse(seed)?,
+                            parse(parameter)?,
+                            parse(image)?,
+                            parse(calculation)?,
+                            parse(label)?,
+                            parse(depth)?,
+                        )?
+                    } else {
+                        document.add_point_parameter_iteration(
+                            parse(seed)?,
+                            parse(parameter)?,
+                            parse(image)?,
+                            parse(calculation)?,
+                            parse(label)?,
+                            depth.parse().map_err(|_| "Invalid iteration depth")?,
+                        )?
+                    };
+                    println!("line {}: {command} -> object {id}", index + 1);
                 }
                 "iterate_ray" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();

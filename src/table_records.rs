@@ -23,6 +23,17 @@ const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
 const PARAMETER_CALCULATION_NATIVE: &[u8] =
     include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
 
+/// Numeric display rounding observed in Sketchpad: halfway values round away from zero.
+pub fn format_numeric_value(value: f64, precision: usize) -> String {
+    let factor = 10_f64.powi(i32::try_from(precision).unwrap_or(i32::MAX));
+    let displayed = if factor.is_finite() && value.abs() <= f64::MAX / factor {
+        (value * factor).round() / factor
+    } else {
+        value
+    };
+    format!("{displayed:.precision$}")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableGroup {
     bytes: Vec<u8>,
@@ -480,6 +491,133 @@ pub struct MeasuredCalculationGroup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LengthPairCalculationGroup {
+    bytes: Vec<u8>,
+}
+
+impl LengthPairCalculationGroup {
+    pub fn new(
+        first: u32,
+        second: u32,
+        subtract: bool,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        Self::with_operator(first, second, u8::from(subtract), anchor)
+    }
+    pub fn with_operator(
+        first: u32,
+        second: u32,
+        operator: u8,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        if operator > 3 {
+            return Err("Use +, -, *, or /".into());
+        }
+        let mut bytes = include_bytes!("../assets/length_sum_pair_group.bin").to_vec();
+        bytes[48..52].copy_from_slice(&first.to_le_bytes());
+        bytes[52..56].copy_from_slice(&second.to_le_bytes());
+        bytes[76..78].copy_from_slice(&anchor.0.to_le_bytes());
+        bytes[78..80].copy_from_slice(&anchor.1.to_le_bytes());
+        bytes[158..160].copy_from_slice(&(0x1000u16 + u16::from(operator)).to_le_bytes());
+        Self::parse(&bytes)
+    }
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let template = include_bytes!("../assets/length_sum_pair_group.bin");
+        let rs = records(bytes, 0)?;
+        if bytes.len() != template.len()
+            || rs.iter().map(|r| r.kind).collect::<Vec<_>>()
+                != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
+            || rs.iter().map(|r| r.end - r.payload).collect::<Vec<_>>() != [28, 12, 98, 2, 0]
+            || bytes[48..52] == [0; 4]
+            || bytes[52..56] == [0; 4]
+            || !matches!(
+                u16::from_le_bytes(bytes[158..160].try_into().unwrap()),
+                0x1000..=0x1003
+            )
+        {
+            return Err("Unsupported two-length calculation".into());
+        }
+        for (i, (&a, &b)) in bytes.iter().zip(template).enumerate() {
+            let mutable = i == 10
+                || (26..28).contains(&i)
+                || (48..56).contains(&i)
+                || (76..156).contains(&i)
+                || (158..160).contains(&i);
+            if !mutable && a != b {
+                return Err("Unsupported two-length calculation style".into());
+            }
+        }
+        // Length and token counts must agree even when the native cache varies.
+        if u32::from_le_bytes(bytes[100..104].try_into().unwrap()) != 66
+            || u16::from_le_bytes(bytes[108..110].try_into().unwrap()) != 3
+        {
+            return Err("Invalid two-length expression size".into());
+        }
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
+    }
+    pub fn subtracts(&self) -> bool {
+        self.bytes[158] == 1
+    }
+    pub fn operator(&self) -> u8 {
+        self.bytes[158]
+    }
+    pub fn operator_text(&self) -> &'static str {
+        match self.operator() {
+            0 => "+",
+            1 => "−",
+            2 => "·",
+            _ => "÷",
+        }
+    }
+    pub fn length_power(&self) -> u8 {
+        match self.operator() {
+            0 | 1 => 1,
+            2 => 2,
+            _ => 0,
+        }
+    }
+    pub fn value(&self, a: f64, b: f64) -> Option<f64> {
+        let value = match self.operator() {
+            0 => a + b,
+            1 => a - b,
+            2 => a * b,
+            3 if b != 0. => a / b,
+            _ => return None,
+        };
+        value.is_finite().then_some(value)
+    }
+    pub fn sources(&self) -> [u32; 2] {
+        [
+            u32::from_le_bytes(self.bytes[48..52].try_into().unwrap()),
+            u32::from_le_bytes(self.bytes[52..56].try_into().unwrap()),
+        ]
+    }
+    pub fn remap_sources(&self, first: u32, second: u32) -> Result<Self, String> {
+        let mut bytes = self.bytes.clone();
+        bytes[48..52].copy_from_slice(&first.to_le_bytes());
+        bytes[52..56].copy_from_slice(&second.to_le_bytes());
+        Self::parse(&bytes)
+    }
+    pub fn anchor(&self) -> (i16, i16) {
+        (
+            i16::from_le_bytes(self.bytes[76..78].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[78..80].try_into().unwrap()),
+        )
+    }
+    pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        self.bytes[76..78].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[78..80].copy_from_slice(&anchor.1.to_le_bytes());
+        Self::parse(&self.bytes)?;
+        Ok(())
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterCalculationGroup {
     bytes: Vec<u8>,
 }
@@ -487,7 +625,7 @@ pub struct ParameterCalculationGroup {
 #[derive(Clone, Debug)]
 enum ParameterExpr {
     Source,
-    Literal(u32),
+    Literal(f64, String),
     Binary(u16, Box<ParameterExpr>, Box<ParameterExpr>),
 }
 
@@ -495,7 +633,7 @@ impl ParameterExpr {
     fn eval(&self, source: f64) -> Option<f64> {
         let value = match self {
             Self::Source => source,
-            Self::Literal(value) => f64::from(*value),
+            Self::Literal(value, _) => *value,
             Self::Binary(operator, left, right) => {
                 let left = left.eval(source)?;
                 let right = right.eval(source)?;
@@ -515,7 +653,7 @@ impl ParameterExpr {
     fn display(&self, source_name: &str) -> String {
         match self {
             Self::Source => source_name.into(),
-            Self::Literal(value) => value.to_string(),
+            Self::Literal(_, text) => text.clone(),
             Self::Binary(operator, left, right) => format!(
                 "({} {} {})",
                 left.display(source_name),
@@ -585,18 +723,36 @@ impl<'a> ParameterExprParser<'a> {
         if word <= 9 {
             let mut value = 0u32;
             let mut digits = 0;
+            let mut text = String::new();
             while let Some(&digit @ 0..=9) = self.words.get(self.at) {
                 value = value
                     .checked_mul(10)
                     .and_then(|value| value.checked_add(u32::from(digit)))
                     .ok_or("Calculation literal is too large")?;
                 digits += 1;
+                text.push(char::from(b'0' + digit as u8));
                 self.at += 1;
             }
             if digits > 1 && word == 0 {
                 return Err("Leading zero in calculation".into());
             }
-            return Ok(ParameterExpr::Literal(value));
+            let mut value = f64::from(value);
+            if self.words.get(self.at) == Some(&10) {
+                self.at += 1;
+                text.push('.');
+                let fraction_start = self.at;
+                let mut place = 0.1;
+                while let Some(&digit @ 0..=9) = self.words.get(self.at) {
+                    value += f64::from(digit) * place;
+                    place /= 10.;
+                    text.push(char::from(b'0' + digit as u8));
+                    self.at += 1;
+                }
+                if self.at == fraction_start {
+                    return Err("Decimal point needs fractional digits".into());
+                }
+            }
+            return Ok(ParameterExpr::Literal(value, text));
         }
         Err("Unsupported parameter calculation token".into())
     }
@@ -633,6 +789,7 @@ impl ParameterCalculationGroup {
                     '^' => 0x1004,
                     '(' => 11,
                     ')' => 12,
+                    '.' => 10,
                     _ => return Err("Unsupported calculation character".into()),
                 });
                 input = &input[ch.len_utf8()..];
@@ -693,7 +850,10 @@ impl ParameterCalculationGroup {
                 return Err("Unsupported parameter calculation style".into());
             }
         }
-        if bytes[rs[3].start..] != template[template_records[3].start..] {
+        if bytes[rs[3].start..rs[3].payload]
+            != template[template_records[3].start..template_records[3].payload]
+            || bytes[rs[4].start..] != template[template_records[4].start..]
+        {
             return Err("Unsupported parameter calculation font".into());
         }
         let group = Self {
@@ -729,6 +889,12 @@ impl ParameterCalculationGroup {
     }
     pub fn source_id(&self) -> u32 {
         u32::from_le_bytes(self.bytes[48..52].try_into().unwrap())
+    }
+    pub fn precision(&self) -> usize {
+        u16::from_le_bytes(self.bytes[88..90].try_into().unwrap()) as usize
+    }
+    pub fn value_text(&self, value: f64) -> String {
+        format_numeric_value(value, self.precision())
     }
     pub fn anchor(&self) -> (i16, i16) {
         (

@@ -16,8 +16,8 @@ use crate::style_records::{
     self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
 };
 use crate::table_records::{
-    CalculationGroup, MeasuredCalculationGroup, ParameterCalculationGroup, ParameterGroup,
-    TableGroup,
+    CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup,
+    ParameterCalculationGroup, ParameterGroup, TableGroup,
 };
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
@@ -42,6 +42,9 @@ impl Point {
 }
 
 impl Kind {
+    pub fn is_distance_value(&self) -> bool {
+        is_distance_value_kind(self)
+    }
     pub fn is_polygon(&self) -> bool {
         matches!(
             self,
@@ -157,6 +160,9 @@ impl Kind {
         if let Kind::MeasuredCalculation(source, _) = self {
             return vec![*source];
         }
+        if let Kind::LengthPairCalculation(first, second, _) = self {
+            return vec![*first, *second];
+        }
         if let Kind::ParameterCalculation(source, _) = self {
             return vec![*source];
         }
@@ -165,6 +171,31 @@ impl Kind {
         }
         if let Kind::RayIteration(seed, image, ray, parameter) = self {
             return vec![*parameter, *seed, *image, *ray];
+        }
+        if let Kind::BranchingPolygonIteration {
+            seed,
+            first,
+            second,
+            polygon,
+            segments,
+            depth,
+        } = self
+        {
+            let mut parents = vec![*seed, *first, *second, *polygon];
+            parents.extend(segments);
+            if let IterationDepth::Parameter(id) = depth {
+                parents.push(*id);
+            }
+            return parents;
+        }
+        if let Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) =
+            self
+        {
+            let mut parents = vec![*seed, *parameter, *image, *calculation, *label];
+            if let IterationDepth::Parameter(id) = depth {
+                parents.push(*id);
+            }
+            return parents;
         }
         match *self {
             Kind::Free(_)
@@ -203,6 +234,8 @@ impl Kind {
                 vec![origin]
             }
             Kind::Midpoint(a, b)
+            | Kind::PointNumericLabel(a, b)
+            | Kind::IterationValues(a, b)
             | Kind::PointIteration(a, b, _)
             | Kind::IterationBinding(a, b)
             | Kind::Segment(a, b)
@@ -276,7 +309,7 @@ impl Kind {
             | Kind::RatioScaledPolygon(source, center, origin, base, target) => {
                 vec![source, center, origin, base, target]
             }
-            Kind::Polygon(_) => unreachable!(),
+            Kind::Polygon(_) | Kind::BranchingPolygonIteration { .. } => unreachable!(),
             Kind::SegmentIteration(_, _, _, _) => unreachable!(),
             Kind::RayIteration(_, _, _, _) => unreachable!(),
             Kind::HideShowButton { .. }
@@ -291,11 +324,34 @@ impl Kind {
             Kind::ValueTablePair(_, _, _) => unreachable!(),
             Kind::Locus(_, _)
             | Kind::MeasuredCalculation(_, _)
+            | Kind::LengthPairCalculation(_, _, _)
+            | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::BranchingPolygonIteration {
+            seed,
+            first,
+            second,
+            polygon,
+            segments,
+            depth,
+        } = self
+        {
+            return Kind::BranchingPolygonIteration {
+                seed: m(*seed),
+                first: m(*first),
+                second: m(*second),
+                polygon: m(*polygon),
+                segments: segments.iter().map(|id| m(*id)).collect(),
+                depth: match depth {
+                    IterationDepth::Fixed(value) => IterationDepth::Fixed(*value),
+                    IterationDepth::Parameter(id) => IterationDepth::Parameter(m(*id)),
+                },
+            };
+        }
         if let Kind::HideShowButton {
             targets,
             action,
@@ -435,6 +491,9 @@ impl Kind {
             Kind::MeasuredCalculation(source, ref group) => {
                 Kind::MeasuredCalculation(m(source), group.clone())
             }
+            Kind::LengthPairCalculation(first, second, ref group) => {
+                Kind::LengthPairCalculation(m(first), m(second), group.clone())
+            }
             Kind::ParameterCalculation(source, ref group) => {
                 Kind::ParameterCalculation(m(source), group.clone())
             }
@@ -452,6 +511,23 @@ impl Kind {
             }
             Kind::PointIteration(seed, image, depth) => {
                 Kind::PointIteration(m(seed), m(image), depth)
+            }
+            Kind::PointNumericLabel(point, value) => Kind::PointNumericLabel(m(point), m(value)),
+            Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) => {
+                Kind::PointParameterIteration(
+                    m(seed),
+                    m(parameter),
+                    m(image),
+                    m(calculation),
+                    m(label),
+                    match depth {
+                        IterationDepth::Fixed(value) => IterationDepth::Fixed(value),
+                        IterationDepth::Parameter(id) => IterationDepth::Parameter(m(id)),
+                    },
+                )
+            }
+            Kind::IterationValues(iteration, calculation) => {
+                Kind::IterationValues(m(iteration), m(calculation))
             }
             Kind::SegmentIteration(seed, image, segment, depth) => {
                 Kind::SegmentIteration(m(seed), m(image), m(segment), depth)
@@ -654,7 +730,7 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
-            Kind::Polygon(_) => unreachable!(),
+            Kind::Polygon(_) | Kind::BranchingPolygonIteration { .. } => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
             | Kind::MovementButton { .. }
@@ -678,6 +754,12 @@ impl Kind {
                     .remap_source(u32::try_from(*source).map_err(|_| "Invalid measurement ID")?)?;
             }
             (
+                Kind::LengthPairCalculation(first, second, group),
+                Kind::LengthPairCalculation(_, _, original),
+            ) => {
+                *group = original.remap_sources(*first as u32, *second as u32)?;
+            }
+            (
                 Kind::ParameterCalculation(source, group),
                 Kind::ParameterCalculation(_, original),
             ) => {
@@ -688,6 +770,12 @@ impl Kind {
         }
         Ok(remapped)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IterationDepth {
+    Fixed(u32),
+    Parameter(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -747,6 +835,7 @@ pub enum Kind {
     Parameter(ParameterGroup),
     Calculation(CalculationGroup),
     MeasuredCalculation(usize, MeasuredCalculationGroup),
+    LengthPairCalculation(usize, usize, LengthPairCalculationGroup),
     ParameterCalculation(usize, ParameterCalculationGroup),
     ValueTable(usize, TableGroup),
     ValueTablePair(usize, usize, TableGroup),
@@ -791,6 +880,17 @@ pub enum Kind {
     ArcLength(usize),
     AngleMeasurement(usize, usize, usize),
     PointDistance(usize, usize),
+    PointNumericLabel(usize, usize),
+    PointParameterIteration(usize, usize, usize, usize, usize, IterationDepth),
+    BranchingPolygonIteration {
+        seed: usize,
+        first: usize,
+        second: usize,
+        polygon: usize,
+        segments: Vec<usize>,
+        depth: IterationDepth,
+    },
+    IterationValues(usize, usize),
     PointRatio(usize, usize, usize),
     PolarTranslatedPoint(usize, f64, f64, f64),
     PolarTranslatedSegment(usize, f64, f64, f64),
@@ -1289,6 +1389,9 @@ fn expected_locus_refs(objects: &[Object], driver: usize, target: usize) -> Opti
 }
 
 fn is_distance_value_kind(kind: &Kind) -> bool {
+    if let Kind::LengthPairCalculation(_, _, group) = kind {
+        return group.length_power() == 1;
+    }
     matches!(
         kind,
         Kind::SegmentLength(_)
@@ -1463,6 +1566,7 @@ fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::AngleRotatedPolygon(_, _, _, _, _)
         | Kind::ScaledPolygon(_, _, _)
         | Kind::RatioScaledPolygon(_, _, _, _, _) => Some(VisualStyle::Polygon {
+            opacity: 32767,
             color: RgbColor {
                 red: 255,
                 green: 128,
@@ -1509,6 +1613,68 @@ fn rotate_point_about(source: Point, center: Point, theta: f64) -> Option<Point>
         y: center.y - dx * theta.sin() + dy * theta.cos(),
     };
     (rotated.x.is_finite() && rotated.y.is_finite()).then_some(rotated)
+}
+
+fn supported_point_iteration_mapping(objects: &[Object], seed: usize, image: usize) -> bool {
+    objects.get(image.saturating_sub(1)).is_some_and(|o| {
+        !o.deleted
+            && match o.kind {
+                Kind::PolarTranslatedPoint(source, _, _, _)
+                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) => source == seed,
+                Kind::RotatedPoint(source, center, angle) => {
+                    source == seed
+                        && center != seed
+                        && angle.is_finite()
+                        && objects
+                            .get(center.saturating_sub(1))
+                            .is_some_and(|c| !c.deleted && matches!(c.kind, Kind::Free(_)))
+                }
+                _ => false,
+            }
+    })
+}
+
+fn supported_point_parameter_iteration(
+    objects: &[Object],
+    seed: usize,
+    parameter: usize,
+    image: usize,
+    calculation: usize,
+    label: usize,
+) -> bool {
+    let get = |id: usize| {
+        id.checked_sub(1)
+            .and_then(|at| objects.get(at))
+            .filter(|o| !o.deleted)
+    };
+    get(seed).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
+        && get(parameter).is_some_and(|o|matches!(o.kind,Kind::Parameter(_)))
+        && supported_point_iteration_mapping(objects,seed,image)
+        && get(calculation).is_some_and(|o|matches!(o.kind,Kind::ParameterCalculation(source,_) if source==parameter))
+        && get(label).is_some_and(|o|matches!(o.kind,Kind::PointNumericLabel(host,value) if host==image && value==calculation))
+}
+
+fn supported_branch_polygon_mapping(
+    objects: &[Object],
+    seed: usize,
+    first: usize,
+    second: usize,
+    polygon: usize,
+    segments: &[usize],
+) -> bool {
+    let get = |id: usize| {
+        id.checked_sub(1)
+            .and_then(|at| objects.get(at))
+            .filter(|o| !o.deleted)
+    };
+    let translated = |id| {
+        get(id).is_some_and(|o| matches!(o.kind, Kind::PolarTranslatedPoint(source, _, _, _) | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed))
+    };
+    get(seed).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
+        && first != second && translated(first) && translated(second)
+        && get(polygon).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if vertices.len() == 3 && vertices.iter().copied().collect::<BTreeSet<_>>() == BTreeSet::from([seed, first, second])))
+        && segments.len() <= 3 && segments.iter().copied().collect::<BTreeSet<_>>().len() == segments.len()
+        && segments.iter().all(|id| get(*id).is_some_and(|o| matches!(o.kind, Kind::Segment(a,b) if a != b && [seed,first,second].contains(&a) && [seed,first,second].contains(&b))))
 }
 
 fn intersect_straight(
@@ -1976,6 +2142,8 @@ impl Document {
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
+                    && !(code == 90 && matches!(r.kind, 0x08fc | 0x07d8))
+                    && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(code == 35 && r.kind == 0x0902)
@@ -2174,6 +2342,48 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (89, None, [parameter, seed, first, second, carried_second, carried_first, polygon, segments @ ..])
+                        if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
+                            && objects.get(parameter.saturating_sub(1)).is_some_and(|o| matches!(o.kind,Kind::Parameter(_)))
+                            && supported_branch_polygon_mapping(&objects,*seed,*first,*second,*polygon,segments)
+                            && iteration_definition.as_ref().is_some_and(|d| d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==2 && d[20..24]==[0;4]) => {
+                            Kind::BranchingPolygonIteration { seed:*seed, first:*first, second:*second, polygon:*polygon, segments:segments.to_vec(), depth:IterationDepth::Parameter(*parameter) }
+                        }
+                    (76, None, [seed, first, second, carried_second, carried_first, polygon, segments @ ..])
+                        if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
+                            && supported_branch_polygon_mapping(&objects,*seed,*first,*second,*polygon,segments)
+                            && iteration_definition.as_ref().is_some_and(|d| d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==2 && (1..=128).contains(&u32_at(d,16)) && d[20..24]==[0;4]) => {
+                            Kind::BranchingPolygonIteration { seed:*seed, first:*first, second:*second, polygon:*polygon, segments:segments.to_vec(), depth:IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16)) }
+                        }
+                    (76,None,[seed,parameter,image,calculation,carried_value,carried_point,label])
+                        if h[6..10] == [14,0,64,0] && calculation==carried_value && image==carried_point
+                            && supported_point_parameter_iteration(&objects,*seed,*parameter,*image,*calculation,*label)
+                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,2,0] && u32_at(d,8)==1 && (1..=128).contains(&u32_at(d,16)) && d[20..24]==[0;4]) => {
+                            Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16)))
+                        }
+                    (89,None,[depth_parameter,seed,parameter,image,calculation,carried_value,carried_point,label])
+                        if h[6..10] == [14,0,64,0] && calculation==carried_value && image==carried_point
+                            && *depth_parameter != *parameter
+                            && objects.get(depth_parameter.saturating_sub(1)).is_some_and(|o| !o.deleted && matches!(o.kind,Kind::Parameter(_)))
+                            && supported_point_parameter_iteration(&objects,*seed,*parameter,*image,*calculation,*label)
+                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,2,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => {
+                            Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Parameter(*depth_parameter))
+                        }
+                    (92,None,[iteration,calculation]) if *iteration>0 && objects.get(iteration-1).is_some_and(|o|matches!(o.kind,Kind::PointParameterIteration(_,_,_,value,_,_) if value==*calculation))
+                        && {
+                            let group=&b[group_start..rs[i].data.end];
+                            let template=include_bytes!("../assets/point_parameter_iteration_values_group.bin");
+                            group.len()==template.len() && group.iter().zip(template).enumerate().all(|(at,(a,b))|at==10 || (48..56).contains(&at) || (100..102).contains(&at) || a==b)
+                        } => Kind::IterationValues(*iteration,*calculation),
+                    (90,None,[host,value]) if *host>0 && *value>0
+                        && objects.get(host-1).is_some_and(|o|is_point_kind(&o.kind))
+                        && objects.get(value-1).is_some_and(|o|matches!(o.kind,Kind::Parameter(_) | Kind::ParameterCalculation(_,_) | Kind::Calculation(_)))
+                        && {
+                            let group=&b[group_start..rs[i].data.end];
+                            let template=include_bytes!("../assets/point_numeric_label_group.bin");
+                            group.len()==template.len() && group.iter().zip(template).enumerate().all(|(at,(a,b))|
+                                at==10 || (26..28).contains(&at) || (48..56).contains(&at) || (76..80).contains(&at) || (108..110).contains(&at) || a==b)
+                        } => Kind::PointNumericLabel(*host,*value),
                     (89, None, [parameter, seed, image, carried, ray])
                         if *parameter > 0 && *seed > 0 && *image > 0 && *ray > 0
                             && h[6..10] == [14, 0, 64, 0]
@@ -2204,9 +2414,7 @@ impl Document {
                                     && definition[20..24] == [0; 4]
                             })
                             && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
-                            && objects.get(image - 1).is_some_and(|o| matches!(o.kind,
-                                Kind::PolarTranslatedPoint(source, _, _, _)
-                                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == *seed))
+                            && supported_point_iteration_mapping(&objects,*seed,*image)
                             && objects.get(segment - 1).is_some_and(|o| matches!(o.kind, Kind::Segment(a, b) if a == *seed && b == *image)) => {
                         Kind::SegmentIteration(*seed, *image, *segment, u32_at(iteration_definition.as_ref().unwrap(), 16))
                     }
@@ -2221,17 +2429,17 @@ impl Document {
                                     && definition[20..24] == [0; 4]
                             })
                             && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
-                            && objects.get(image - 1).is_some_and(|o| matches!(o.kind,
-                                Kind::PolarTranslatedPoint(source, _, _, _)
-                                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == *seed)) => {
+                            && supported_point_iteration_mapping(&objects,*seed,*image) => {
                         Kind::PointIteration(*seed, *image, u32_at(iteration_definition.as_ref().unwrap(), 16))
                     }
                     (77, None, [image, iteration])
                         if h[6..10] == [15, 0, 65, 0]
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
+                                Kind::BranchingPolygonIteration { ref segments, polygon, .. } => polygon == *image || segments.contains(image),
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
                                 Kind::SegmentIteration(_, mapped, segment, _) => mapped == *image || segment == *image,
                                 Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
+                                Kind::PointParameterIteration(_,_,mapped,_,label,_) => mapped==*image || label==*image,
                                 _ => false,
                             }) => {
                         Kind::IterationBinding(*image, *iteration)
@@ -2329,8 +2537,16 @@ impl Document {
                             }
                         }
                     }
+                    (48, None, [first, second]) if *first > 0 && *second > 0
+                        && objects.get(first - 1).is_some_and(|o| is_distance_value_kind(&o.kind))
+                        && objects.get(second - 1).is_some_and(|o| is_distance_value_kind(&o.kind)) => {
+                        match LengthPairCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
+                            Ok(group) if group.sources() == [(*first-page_base) as u32, (*second-page_base) as u32] => Kind::LengthPairCalculation(*first, *second, group),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
                     (48, None, [source]) if *source > 0
-                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _))) => {
+                        && objects.get(source - 1).is_some_and(|object| is_distance_value_kind(&object.kind)) => {
                         match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
                             _ => Kind::Unsupported(code),
@@ -2939,6 +3155,20 @@ impl Document {
             } else {
                 None
             };
+            let visual_style = if let Kind::IterationBinding(source, iteration) = &kind
+                && objects
+                    .get(iteration.saturating_sub(1))
+                    .is_some_and(|o| matches!(o.kind, Kind::BranchingPolygonIteration { .. }))
+            {
+                style_records::iteration_binding_visual_style(
+                    h,
+                    objects
+                        .get(source.saturating_sub(1))
+                        .is_some_and(|o| matches!(o.kind, Kind::Polygon(_))),
+                )
+            } else {
+                style_records::visual_style(h)
+            };
             objects.push(Object {
                 id: objects.len() + 1,
                 page,
@@ -2951,7 +3181,7 @@ impl Document {
                 constraint_offset: constraint_payload.map(|(_, offset)| offset),
                 header_offset: Some(header_offset),
                 label,
-                visual_style: style_records::visual_style(h),
+                visual_style,
                 text_style_override: None,
                 rich_text_override: None,
                 function_anchor,
@@ -3596,22 +3826,319 @@ impl Document {
                 .objects
                 .get(seed.saturating_sub(1))
                 .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
-            || !self.objects.get(image.saturating_sub(1)).is_some_and(|o| {
-                !o.deleted
-                    && matches!(o.kind,
-                Kind::PolarTranslatedPoint(source, _, _, _)
-                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed)
-            })
+            || !supported_point_iteration_mapping(&self.objects, seed, image)
             || seed >= image
         {
             return Err(
-                "Select a free point and its directly translated image; depth must be 1–128".into(),
+                "Select a free point and its directly translated or rotated image; depth must be 1–128".into(),
             );
         }
         self.checkpoint();
         let iteration = self.append_object(Kind::PointIteration(seed, image, depth));
         self.append_object(Kind::IterationBinding(image, iteration));
         Ok(iteration)
+    }
+    pub fn add_branching_polygon_iteration(
+        &mut self,
+        seed: usize,
+        first: usize,
+        second: usize,
+        polygon: usize,
+        segments: &[usize],
+        depth: IterationDepth,
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || !self.safe_structure
+            || self.page_count != 1
+            || self.numeric_iteration_depth(depth).is_none()
+            || !supported_branch_polygon_mapping(
+                &self.objects,
+                seed,
+                first,
+                second,
+                polygon,
+                segments,
+            )
+        {
+            return Err("Select a free seed, two translated images, their triangular interior, and optionally its sides and an integer depth parameter; depth must be 1–128".into());
+        }
+        self.checkpoint();
+        let iteration = self.append_object(Kind::BranchingPolygonIteration {
+            seed,
+            first,
+            second,
+            polygon,
+            segments: segments.to_vec(),
+            depth,
+        });
+        for source in std::iter::once(polygon).chain(segments.iter().copied()) {
+            let style = self.objects[source - 1].visual_style;
+            let id = self.append_object(Kind::IterationBinding(source, iteration));
+            self.objects[id - 1].visual_style = style;
+        }
+        Ok(iteration)
+    }
+    /// Translation offsets, with the number of branch paths having each pair of step counts.
+    pub fn branch_iteration_offsets(&self, id: usize) -> Option<Vec<(Point, f64)>> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::BranchingPolygonIteration {
+            seed,
+            first,
+            second,
+            depth,
+            ..
+        } = o.kind
+        else {
+            return None;
+        };
+        if o.deleted {
+            return None;
+        }
+        let depth = self.numeric_iteration_depth(depth)?;
+        let seed = self.position(seed)?;
+        let a = self.position(first)?;
+        let b = self.position(second)?;
+        let (a, b) = (
+            Point {
+                x: a.x - seed.x,
+                y: a.y - seed.y,
+            },
+            Point {
+                x: b.x - seed.x,
+                y: b.y - seed.y,
+            },
+        );
+        let mut result = Vec::new();
+        for level in 1..=depth {
+            let mut paths = 1.;
+            for second_steps in 0..=level {
+                let first_steps = level - second_steps;
+                result.push((
+                    Point {
+                        x: a.x * f64::from(first_steps) + b.x * f64::from(second_steps),
+                        y: a.y * f64::from(first_steps) + b.y * f64::from(second_steps),
+                    },
+                    paths,
+                ));
+                paths *= f64::from(level - second_steps) / f64::from(second_steps + 1);
+            }
+        }
+        Some(result)
+    }
+    pub fn polygon_iteration_images(&self, id: usize) -> Option<Vec<(Vec<Point>, f64)>> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = o.kind else {
+            return None;
+        };
+        if o.deleted
+            || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::BranchingPolygonIteration { polygon,.. } if polygon==source)
+        {
+            return None;
+        }
+        let points = self.polygon_points(source)?;
+        Some(
+            self.branch_iteration_offsets(iteration)?
+                .into_iter()
+                .map(|(delta, paths)| {
+                    (
+                        points
+                            .iter()
+                            .map(|p| Point {
+                                x: p.x + delta.x,
+                                y: p.y + delta.y,
+                            })
+                            .collect(),
+                        paths,
+                    )
+                })
+                .collect(),
+        )
+    }
+    pub fn branch_segment_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = o.kind else {
+            return None;
+        };
+        if o.deleted
+            || !matches!(&self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::BranchingPolygonIteration { segments,.. } if segments.contains(&source))
+        {
+            return None;
+        }
+        let (a, b, _) = self.line_points(source)?;
+        Some(
+            self.branch_iteration_offsets(iteration)?
+                .into_iter()
+                .map(|(delta, _)| {
+                    (
+                        Point {
+                            x: a.x + delta.x,
+                            y: a.y + delta.y,
+                        },
+                        Point {
+                            x: b.x + delta.x,
+                            y: b.y + delta.y,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+    pub fn add_point_parameter_iteration(
+        &mut self,
+        seed: usize,
+        parameter: usize,
+        image: usize,
+        calculation: usize,
+        label: usize,
+        depth: u32,
+    ) -> Result<usize, String> {
+        self.add_point_parameter_iteration_with_depth(
+            seed,
+            parameter,
+            image,
+            calculation,
+            label,
+            IterationDepth::Fixed(depth),
+        )
+    }
+    pub fn add_point_parameter_iteration_with_parameter_depth(
+        &mut self,
+        seed: usize,
+        parameter: usize,
+        image: usize,
+        calculation: usize,
+        label: usize,
+        depth_parameter: usize,
+    ) -> Result<usize, String> {
+        self.add_point_parameter_iteration_with_depth(
+            seed,
+            parameter,
+            image,
+            calculation,
+            label,
+            IterationDepth::Parameter(depth_parameter),
+        )
+    }
+    fn add_point_parameter_iteration_with_depth(
+        &mut self,
+        seed: usize,
+        parameter: usize,
+        image: usize,
+        calculation: usize,
+        label: usize,
+        depth: IterationDepth,
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || !self.safe_structure
+            || self.page_count != 1
+            || self.numeric_iteration_depth(depth).is_none()
+            || matches!(depth, IterationDepth::Parameter(id) if id == parameter)
+            || !supported_point_parameter_iteration(
+                &self.objects,
+                seed,
+                parameter,
+                image,
+                calculation,
+                label,
+            )
+        {
+            return Err("Select a free point, parameter, transformed image, direct parameter calculation, and its attached numeric label; depth must be 1–128 or a distinct integer parameter in that range".into());
+        }
+        self.checkpoint();
+        let iteration = self.append_object(Kind::PointParameterIteration(
+            seed,
+            parameter,
+            image,
+            calculation,
+            label,
+            depth,
+        ));
+        self.append_object(Kind::IterationBinding(image, iteration));
+        self.append_object(Kind::IterationBinding(label, iteration));
+        let values = self.append_object(Kind::IterationValues(iteration, calculation));
+        self.objects[values - 1].visible = false;
+        Ok(iteration)
+    }
+    fn numeric_iteration_depth(&self, depth: IterationDepth) -> Option<u32> {
+        match depth {
+            IterationDepth::Fixed(value) => (1..=128).contains(&value).then_some(value),
+            IterationDepth::Parameter(id) => self.iteration_depth_parameter(id),
+        }
+    }
+    pub fn point_parameter_iteration_labels(&self, id: usize) -> Option<Vec<(Point, String)>> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::PointParameterIteration(_, parameter, _, calculation, _, _) = o.kind else {
+            return None;
+        };
+        if o.deleted {
+            return None;
+        }
+        let Kind::Parameter(group) = &self.objects.get(parameter.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let Kind::ParameterCalculation(_, formula) =
+            &self.objects.get(calculation.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let mut value = formula.value(group.value())?;
+        self.point_iteration_images(id)?
+            .into_iter()
+            .map(|point| {
+                value = formula.value(value)?;
+                Some((point, formula.value_text(value)))
+            })
+            .collect()
+    }
+    pub fn add_point_numeric_label(&mut self, point: usize, value: usize) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot add a numeric label in this sketch safely".into());
+        }
+        if !self
+            .objects
+            .get(point.checked_sub(1).ok_or("Invalid point ID")?)
+            .is_some_and(|o| !o.deleted && is_point_kind(&o.kind))
+            || self.unitless_numeric_value(value).is_none()
+        {
+            return Err("Select a point and a supported numeric value".into());
+        }
+        self.checkpoint();
+        Ok(self.append_object(Kind::PointNumericLabel(point, value)))
+    }
+    pub fn unitless_numeric_value(&self, id: usize) -> Option<f64> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        if o.deleted {
+            return None;
+        }
+        match &o.kind {
+            Kind::Parameter(group) => Some(group.value()),
+            Kind::ParameterCalculation(_, _) => self.parameter_calculation_value(id),
+            Kind::Calculation(group) => Some(group.value()),
+            _ => None,
+        }
+    }
+    pub fn point_numeric_label(&self, id: usize) -> Option<(Point, String)> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::PointNumericLabel(point, source) = o.kind else {
+            return None;
+        };
+        if o.deleted {
+            return None;
+        }
+        let position = self.position(point)?;
+        let Some(value) = self.unitless_numeric_value(source) else {
+            return Some((position, "undefined".into()));
+        };
+        let precision = match &self.objects.get(source.checked_sub(1)?)?.kind {
+            Kind::Parameter(group) => group.precision(),
+            Kind::ParameterCalculation(_, group) => group.precision(),
+            Kind::Calculation(_) => 2,
+            _ => return None,
+        };
+        Some((
+            position,
+            crate::table_records::format_numeric_value(value, precision),
+        ))
     }
     pub fn add_segment_iteration(
         &mut self,
@@ -3628,12 +4155,7 @@ impl Document {
                 .objects
                 .get(seed.saturating_sub(1))
                 .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
-            || !self.objects.get(image.saturating_sub(1)).is_some_and(|o| {
-                !o.deleted
-                    && matches!(o.kind,
-                Kind::PolarTranslatedPoint(source, _, _, _)
-                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed)
-            })
+            || !supported_point_iteration_mapping(&self.objects, seed, image)
             || !self
                 .objects
                 .get(segment.saturating_sub(1))
@@ -3642,7 +4164,7 @@ impl Document {
                 })
             || !(seed < image && image < segment)
         {
-            return Err("Select a free point, its directly translated image, and their segment; depth must be 1–128".into());
+            return Err("Select a free point, its directly translated or rotated image, and their segment; depth must be 1–128".into());
         }
         self.checkpoint();
         let iteration = self.append_object(Kind::SegmentIteration(seed, image, segment, depth));
@@ -4397,6 +4919,75 @@ impl Document {
     ) -> Result<usize, String> {
         self.add_measured_length_scaled(source, factor, anchor, false)
     }
+    pub fn add_length_pair_calculation(
+        &mut self,
+        first: usize,
+        second: usize,
+        subtract: bool,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        self.add_length_pair_operation(first, second, u8::from(subtract), anchor)
+    }
+    pub fn add_length_pair_operation(
+        &mut self,
+        first: usize,
+        second: usize,
+        operator: u8,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot add a calculation in this sketch safely".into());
+        }
+        for id in [first, second] {
+            if !self
+                .objects
+                .get(id.checked_sub(1).ok_or("Invalid source ID")?)
+                .is_some_and(|o| {
+                    !o.deleted && o.page == self.active_page && is_distance_value_kind(&o.kind)
+                })
+            {
+                return Err("Select two length measurements or length calculations".into());
+            }
+        }
+        let group = LengthPairCalculationGroup::with_operator(
+            first as u32,
+            second as u32,
+            operator,
+            anchor,
+        )?;
+        if self
+            .distance_value_pixels(first)
+            .zip(self.distance_value_pixels(second))
+            .and_then(|(a, b)| group.value(a, b))
+            .is_none()
+        {
+            return Err("Calculation is undefined for these lengths".into());
+        }
+        self.checkpoint();
+        Ok(self.append_object(Kind::LengthPairCalculation(first, second, group)))
+    }
+    pub fn length_pair_calculation_cm(&self, id: usize) -> Option<f64> {
+        let Kind::LengthPairCalculation(_, _, group) = &self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        if group.length_power() != 1 {
+            return None;
+        }
+        self.length_pair_calculation_value(id)
+    }
+    pub fn length_pair_calculation_value(&self, id: usize) -> Option<f64> {
+        let o = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::LengthPairCalculation(first, second, group) = &o.kind else {
+            return None;
+        };
+        if o.deleted || *first >= id || *second >= id {
+            return None;
+        }
+        let a = self.distance_value_pixels(*first)? / 37.79527559055118;
+        let b = self.distance_value_pixels(*second)? / 37.79527559055118;
+        group.value(a, b)
+    }
     pub fn add_measured_length_division(
         &mut self,
         source: usize,
@@ -4418,19 +5009,7 @@ impl Document {
             || !self
                 .objects
                 .get(source.checked_sub(1).ok_or("Invalid measurement ID")?)
-                .is_some_and(|object| {
-                    !object.deleted
-                        && matches!(
-                            object.kind,
-                            Kind::SegmentLength(_)
-                                | Kind::PointDistance(_, _)
-                                | Kind::PolygonPerimeter(_)
-                                | Kind::CircleCircumference(_)
-                                | Kind::CircleRadius(_)
-                                | Kind::ArcLength(_)
-                                | Kind::MeasuredCalculation(_, _)
-                        )
-                })
+                .is_some_and(|object| !object.deleted && is_distance_value_kind(&object.kind))
         {
             return Err("Select a supported length or distance measurement".into());
         }
@@ -4459,6 +5038,7 @@ impl Document {
             Kind::CircleRadius(_) => self.circle_radius_cm(*source)?,
             Kind::ArcLength(_) => self.arc_length_cm(*source)?,
             Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(*source)?,
+            Kind::LengthPairCalculation(_, _, _) => self.length_pair_calculation_cm(*source)?,
             _ => return None,
         };
         Some(if group.divides() {
@@ -4506,6 +5086,19 @@ impl Document {
         Some(group.expression(&name))
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
+        if let Kind::LengthPairCalculation(first, second, group) =
+            &self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            if *first >= id || *second >= id {
+                return None;
+            }
+            return Some(format!(
+                "({} {} {})",
+                self.length_measurement_name(*first)?,
+                group.operator_text(),
+                self.length_measurement_name(*second)?
+            ));
+        }
         if let Kind::MeasuredCalculation(source, group) =
             &self.objects.get(id.checked_sub(1)?)?.kind
         {
@@ -4611,6 +5204,7 @@ impl Document {
             Kind::Parameter(group) => group.set_anchor(anchor)?,
             Kind::Calculation(group) => group.set_anchor(anchor)?,
             Kind::MeasuredCalculation(_, group) => group.set_anchor(anchor)?,
+            Kind::LengthPairCalculation(_, _, group) => group.set_anchor(anchor)?,
             Kind::ParameterCalculation(_, group) => group.set_anchor(anchor)?,
             Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
                 group.set_anchor(anchor)
@@ -5545,6 +6139,9 @@ impl Document {
         let (seed, image, depth) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::PointIteration(seed, image, depth)
             | Kind::SegmentIteration(seed, image, _, depth) => (seed, image, depth),
+            Kind::PointParameterIteration(seed, _, image, _, _, depth) => {
+                (seed, image, self.numeric_iteration_depth(depth)?)
+            }
             Kind::RayIteration(seed, image, _, parameter) => {
                 (seed, image, self.iteration_depth_parameter(parameter)?)
             }
@@ -5552,6 +6149,17 @@ impl Document {
         };
         let start = self.position(seed)?;
         let first = self.position(image)?;
+        if let Kind::RotatedPoint(source, center, angle) =
+            self.objects.get(image.checked_sub(1)?)?.kind
+        {
+            if source != seed || !supported_point_iteration_mapping(&self.objects, seed, image) {
+                return None;
+            }
+            let center = self.position(center)?;
+            return (2..=depth + 1)
+                .map(|step| rotate_point_about(start, center, angle.to_radians() * f64::from(step)))
+                .collect();
+        }
         let dx = first.x - start.x;
         let dy = first.y - start.y;
         Some(
@@ -5621,6 +6229,23 @@ impl Document {
         }
         let start = self.position(seed)?;
         let first = self.position(image)?;
+        if let Kind::RotatedPoint(source, center, angle) =
+            self.objects.get(image.checked_sub(1)?)?.kind
+        {
+            if source != seed || !supported_point_iteration_mapping(&self.objects, seed, image) {
+                return None;
+            }
+            let center = self.position(center)?;
+            return (1..=depth)
+                .map(|step| {
+                    let theta = angle.to_radians() * f64::from(step);
+                    Some((
+                        rotate_point_about(start, center, theta)?,
+                        rotate_point_about(first, center, theta)?,
+                    ))
+                })
+                .collect();
+        }
         let delta = Point {
             x: first.x - start.x,
             y: first.y - start.y,
@@ -6221,6 +6846,15 @@ impl Document {
                 return Err(format!("Object {id} cannot be copied safely"));
             }
             pending.extend(self.dependencies_of(id).ok_or("Invalid selection")?);
+            if matches!(
+                object.kind,
+                Kind::PointParameterIteration(..) | Kind::BranchingPolygonIteration { .. }
+            ) {
+                pending.extend(self.objects.iter().filter(|child| {
+                    !child.deleted && child.page == self.active_page
+                        && matches!(child.kind, Kind::IterationBinding(_, parent) | Kind::IterationValues(parent, _) if parent == id)
+                }).map(|child| child.id));
+            }
         }
         let mut hide_on_paste = BTreeSet::new();
         let rename_on_paste = self.objects.iter().find_map(|object| {
@@ -6376,6 +7010,9 @@ impl Document {
                 Kind::Parameter(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
                 Kind::Calculation(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
                 Kind::MeasuredCalculation(_, group) => {
+                    group.set_anchor(shifted_anchor(group.anchor())?)?
+                }
+                Kind::LengthPairCalculation(_, _, group) => {
                     group.set_anchor(shifted_anchor(group.anchor())?)?
                 }
                 Kind::ParameterCalculation(_, group) => {
@@ -6619,7 +7256,7 @@ impl Document {
             Some(match style {
                 VisualStyle::Point { shape, .. } => VisualStyle::Point { shape, color },
                 VisualStyle::Stroke { line, .. } => VisualStyle::Stroke { line, color },
-                VisualStyle::Polygon { .. } => VisualStyle::Polygon { color },
+                VisualStyle::Polygon { opacity, .. } => VisualStyle::Polygon { color, opacity },
             })
         })
     }
@@ -7517,6 +8154,7 @@ impl Document {
         let cm = match kind {
             Kind::SegmentLength(_) => self.segment_length_cm(id)?,
             Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(id)?,
+            Kind::LengthPairCalculation(_, _, _) => self.length_pair_calculation_cm(id)?,
             Kind::PointDistance(_, _) => self.point_distance_cm(id)?,
             Kind::PolygonPerimeter(_) => self.perimeter_cm(id)?,
             Kind::CircleCircumference(_) => self.circle_circumference_cm(id)?,
@@ -8967,6 +9605,49 @@ impl Document {
                 }
             }
             match &o.kind {
+                Kind::BranchingPolygonIteration { seed,first,second,polygon,segments,depth } => {
+                    let valid_depth = match depth { IterationDepth::Fixed(value) => (1..=128).contains(value), IterationDepth::Parameter(id) => *id>0 && *id<o.id && self.objects.get(id-1).is_some_and(|p| !p.deleted && matches!(p.kind,Kind::Parameter(_))) };
+                    if !valid_depth || o.kind.dependencies().iter().any(|id| *id==0 || *id>=o.id)
+                        || !supported_branch_polygon_mapping(&self.objects,*seed,*first,*second,*polygon,segments) {return Err("Invalid branching polygon iteration".into());}
+                }
+                Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) => {
+                    let valid_depth = match *depth {
+                        IterationDepth::Fixed(value) => (1..=128).contains(&value),
+                        IterationDepth::Parameter(id) => id > 0 && id < o.id && id != *parameter && self.objects.get(id - 1).is_some_and(|parent| !parent.deleted && matches!(parent.kind, Kind::Parameter(_))),
+                    };
+                    if !valid_depth
+                        || [*seed, *parameter, *image, *calculation, *label].iter().any(|id| *id == 0 || *id >= o.id)
+                        || !supported_point_parameter_iteration(&self.objects, *seed, *parameter, *image, *calculation, *label)
+                    {
+                        return Err("Invalid point and parameter iteration mapping".into());
+                    }
+                }
+                Kind::IterationValues(iteration, calculation) => {
+                    if *iteration == 0 || *iteration >= o.id || *calculation == 0 || *calculation >= o.id
+                        || !self.objects.get(iteration - 1).is_some_and(|parent| !parent.deleted && matches!(parent.kind, Kind::PointParameterIteration(_, _, _, value, _, _) if value == *calculation))
+                    {
+                        return Err("Invalid iteration value series parents".into());
+                    }
+                }
+                Kind::PointNumericLabel(point, value) => {
+                    if [*point, *value].iter().any(|&id| {
+                        id == 0
+                            || id >= o.id
+                            || !self
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|parent| !parent.deleted)
+                    }) || !is_point_kind(&self.objects[*point - 1].kind)
+                        || !matches!(
+                            self.objects[*value - 1].kind,
+                            Kind::Parameter(_)
+                                | Kind::ParameterCalculation(_, _)
+                                | Kind::Calculation(_)
+                        )
+                    {
+                        return Err("Invalid attached numeric label parents".into());
+                    }
+                }
                 Kind::Parameter(group) => {
                     ParameterGroup::parse(group.as_bytes())?;
                 }
@@ -8981,20 +9662,26 @@ impl Document {
                             .objects
                             .get(source.saturating_sub(1))
                             .is_some_and(|object| {
-                                !object.deleted
-                                    && matches!(
-                                        object.kind,
-                                        Kind::SegmentLength(_)
-                                            | Kind::PointDistance(_, _)
-                                            | Kind::PolygonPerimeter(_)
-                                            | Kind::CircleCircumference(_)
-                                            | Kind::CircleRadius(_)
-                                            | Kind::ArcLength(_)
-                                            | Kind::MeasuredCalculation(_, _)
-                                    )
+                                !object.deleted && is_distance_value_kind(&object.kind)
                             })
                     {
                         return Err("Unsupported measured calculation source".into());
+                    }
+                }
+                Kind::LengthPairCalculation(first, second, group) => {
+                    LengthPairCalculationGroup::parse(group.as_bytes())?;
+                    if group.sources() != [*first as u32, *second as u32]
+                        || [*first, *second].iter().any(|&id| {
+                            id >= o.id
+                                || !self
+                                    .objects
+                                    .get(id.saturating_sub(1))
+                                    .is_some_and(|parent| {
+                                        !parent.deleted && is_distance_value_kind(&parent.kind)
+                                    })
+                        })
+                    {
+                        return Err("Invalid two-length calculation sources".into());
                     }
                 }
                 Kind::ParameterCalculation(source, group) => {
@@ -11999,6 +12686,119 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::BranchingPolygonIteration {
+                seed,
+                first,
+                second,
+                polygon,
+                ref segments,
+                depth,
+            } = o.kind
+            {
+                let template = include_bytes!("../assets/branch_polygon_iteration_group.bin");
+                let mut header = template[8..36].to_vec();
+                header[..2].copy_from_slice(
+                    &(if matches!(depth, IterationDepth::Fixed(_)) {
+                        76u16
+                    } else {
+                        89u16
+                    })
+                    .to_le_bytes(),
+                );
+                if !o.visible {
+                    header[2] |= 1;
+                }
+                put_record(&mut added, 0x07d0, &header);
+                let mut ids = vec![];
+                if let IterationDepth::Parameter(id) = depth {
+                    ids.push(id);
+                }
+                ids.extend([seed, first, second, second, first, polygon]);
+                ids.extend(segments);
+                let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
+                for id in ids {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
+                put_record(&mut added, 0x07d2, &refs);
+                let mut definition = template[96..120].to_vec();
+                definition[16..20].copy_from_slice(
+                    &self
+                        .numeric_iteration_depth(depth)
+                        .unwrap_or(0)
+                        .to_le_bytes(),
+                );
+                put_record(&mut added, 0x090a, &definition);
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
+            if let Kind::PointParameterIteration(
+                seed,
+                parameter,
+                image,
+                calculation,
+                label,
+                depth,
+            ) = o.kind
+            {
+                let (mut group, shift) = match depth {
+                    IterationDepth::Fixed(_) => (
+                        include_bytes!("../assets/point_parameter_iteration_group.bin").to_vec(),
+                        0,
+                    ),
+                    IterationDepth::Parameter(id) => {
+                        let mut group = include_bytes!(
+                            "../assets/point_parameter_iteration_parameter_depth_group.bin"
+                        )
+                        .to_vec();
+                        group[48..52].copy_from_slice(&(id as u32).to_le_bytes());
+                        (group, 4)
+                    }
+                };
+                for (offset, id) in [
+                    (48, seed),
+                    (52, parameter),
+                    (56, image),
+                    (60, calculation),
+                    (64, calculation),
+                    (68, image),
+                    (72, label),
+                ] {
+                    group[offset + shift..offset + shift + 4]
+                        .copy_from_slice(&(id as u32).to_le_bytes());
+                }
+                let cached_depth = self.numeric_iteration_depth(depth).unwrap_or(0);
+                group[100 + shift..104 + shift].copy_from_slice(&cached_depth.to_le_bytes());
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::IterationValues(iteration, calculation) = o.kind {
+                let mut group =
+                    *include_bytes!("../assets/point_parameter_iteration_values_group.bin");
+                group[48..52].copy_from_slice(&(iteration as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(calculation as u32).to_le_bytes());
+                group[100..102].copy_from_slice(&0u16.to_le_bytes());
+                if o.visible {
+                    group[10] &= !1;
+                } else {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::PointNumericLabel(point, value) = o.kind {
+                let mut group = *include_bytes!("../assets/point_numeric_label_group.bin");
+                group[48..52].copy_from_slice(&(point as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(value as u32).to_le_bytes());
+                group[108..110].copy_from_slice(&0u16.to_le_bytes());
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::RayIteration(seed, image, ray, parameter) = o.kind {
                 let mut group = *include_bytes!("../assets/ray_iteration_group.bin");
                 group[48..52].copy_from_slice(&(parameter as u32).to_le_bytes());
@@ -12056,7 +12856,30 @@ impl Document {
                     self.objects.get(iteration - 1).map(|object| &object.kind),
                     Some(Kind::RayIteration(_, _, _, _))
                 );
-                let mut group = if ray {
+                let numeric_iteration = matches!(
+                    self.objects.get(iteration - 1).map(|o| &o.kind),
+                    Some(Kind::PointParameterIteration(_, _, _, _, _, _))
+                );
+                let branch_polygon = matches!(
+                    self.objects.get(iteration - 1).map(|o| &o.kind),
+                    Some(Kind::BranchingPolygonIteration { .. })
+                );
+                let mut group = if branch_polygon {
+                    if segment {
+                        *include_bytes!("../assets/branch_polygon_iteration_segment_binding.bin")
+                    } else {
+                        *include_bytes!("../assets/branch_polygon_iteration_polygon_binding.bin")
+                    }
+                } else if numeric_iteration
+                    && matches!(
+                        self.objects.get(image - 1).map(|o| &o.kind),
+                        Some(Kind::PointNumericLabel(_, _))
+                    )
+                {
+                    *include_bytes!("../assets/point_parameter_iteration_label_binding.bin")
+                } else if numeric_iteration {
+                    *include_bytes!("../assets/point_parameter_iteration_point_binding.bin")
+                } else if ray {
                     *include_bytes!("../assets/ray_iteration_binding_group.bin")
                 } else if ray_iteration {
                     *include_bytes!("../assets/ray_iteration_point_binding_group.bin")
@@ -12105,6 +12928,17 @@ impl Document {
             }
             if let Kind::Calculation(group) = &o.kind {
                 let mut bytes = group.as_bytes().to_vec();
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
+            if let Kind::LengthPairCalculation(first, second, group) = &o.kind {
+                let mut bytes = group
+                    .remap_sources(*first as u32, *second as u32)?
+                    .as_bytes()
+                    .to_vec();
                 if !o.visible {
                     bytes[10] |= 1;
                 }
@@ -13255,7 +14089,16 @@ impl Document {
                 .ok_or("Object group count mismatch")?;
             ordinal += 1;
             if let Some(style) = object.visual_style {
-                style_records::set_visual_style(&mut bytes[record.data.clone()], style)
+                let result = if matches!(object.kind,Kind::IterationBinding(_,parent) if self.objects.get(parent-1).is_some_and(|p| matches!(p.kind,Kind::BranchingPolygonIteration { .. })))
+                {
+                    style_records::set_iteration_binding_visual_style(
+                        &mut bytes[record.data.clone()],
+                        style,
+                    )
+                } else {
+                    style_records::set_visual_style(&mut bytes[record.data.clone()], style)
+                };
+                result
                     .map_err(|error| format!("Invalid style in object {}: {error}", object.id))?;
             }
         }
@@ -13346,6 +14189,12 @@ impl Document {
                 Kind::MeasuredCalculation(source, value) => {
                     Some(value.remap_source(ids[*source] as u32)?.as_bytes().to_vec())
                 }
+                Kind::LengthPairCalculation(first, second, value) => Some(
+                    value
+                        .remap_sources(ids[*first] as u32, ids[*second] as u32)?
+                        .as_bytes()
+                        .to_vec(),
+                ),
                 Kind::ParameterCalculation(source, value) => {
                     Some(value.remap_source(ids[*source] as u32)?.as_bytes().to_vec())
                 }
@@ -17927,6 +18776,131 @@ mod tests {
     }
 
     #[test]
+    fn two_length_product_and_ratio_keep_units_and_update() {
+        let bytes =
+            include_bytes!("../tests/fixtures/calculation_two_lengths_product_ratio_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        let unit: f64 = 37.79527559055118;
+        assert!(
+            (doc.length_pair_calculation_value(11).unwrap() - 20000. / unit.powi(2)).abs() < 1e-10
+        );
+        assert_eq!(doc.length_pair_calculation_value(12), Some(0.5));
+        assert!(doc.distance_value_pixels(11).is_none());
+        assert!(doc.distance_value_pixels(12).is_none());
+        let product = crate::render::number_lines_for_object(&doc, 11)
+            .unwrap()
+            .1
+            .join(" ");
+        let ratio = crate::render::number_lines_for_object(&doc, 12)
+            .unwrap()
+            .1
+            .join(" ");
+        assert!(product.ends_with("cm²"));
+        assert!(!ratio.contains("cm"));
+        assert!(
+            doc.add_measured_length_calculation(11, 2, (10, 232))
+                .is_err()
+        );
+        assert!(
+            doc.add_length_pair_calculation(11, 4, false, (10, 232))
+                .is_err()
+        );
+        doc.move_point(2, Point { x: 300., y: 180. });
+        assert_eq!(doc.length_pair_calculation_value(12), Some(0.75));
+        doc.selected.insert(12);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let cloned = *pasted.last().unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.length_pair_calculation_value(cloned), Some(0.75));
+        doc.move_point(6, doc.position(5).unwrap());
+        assert_eq!(doc.length_pair_calculation_value(12), None);
+        assert!(
+            crate::render::number_lines_for_object(&doc, 12).unwrap().1[0].contains("undefined")
+        );
+        assert!(doc.add_length_pair_operation(4, 8, 3, (10, 232)).is_err());
+        assert!(
+            !Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn two_length_calculations_update_copy_and_delete() {
+        let native =
+            include_bytes!("../tests/fixtures/calculation_two_lengths_sum_native_verified.gsp");
+        let native = Document::from_bytes(native, None).unwrap();
+        assert!(!native.partial_view);
+        assert!(
+            (native.length_pair_calculation_cm(9).unwrap() - 300. / 37.79527559055118).abs()
+                < 1e-10
+        );
+        let bytes = include_bytes!("../tests/fixtures/calculation_two_lengths_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!(
+            matches!(&doc.objects[8].kind, Kind::LengthPairCalculation(4,8,group) if !group.subtracts())
+        );
+        assert!(
+            matches!(&doc.objects[9].kind, Kind::LengthPairCalculation(4,8,group) if group.subtracts())
+        );
+        assert!(
+            (doc.length_pair_calculation_cm(10).unwrap() + 100. / 37.79527559055118).abs() < 1e-10
+        );
+        assert!(crate::render::number_lines_for_object(&doc, 10).is_some());
+        doc.move_point(2, Point { x: 300., y: 180. });
+        assert!(
+            (doc.length_pair_calculation_cm(9).unwrap() - 350. / 37.79527559055118).abs() < 1e-10
+        );
+        assert!(
+            (doc.length_pair_calculation_cm(10).unwrap() + 50. / 37.79527559055118).abs() < 1e-10
+        );
+        doc.selected.insert(10);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let clone_id = *pasted.last().unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!(
+            matches!(&reopened.objects[clone_id-1].kind,Kind::LengthPairCalculation(a,b,group) if *a!=4 && *b!=8 && group.sources()==[*a as u32,*b as u32])
+        );
+        assert!(
+            (reopened.length_pair_calculation_cm(clone_id).unwrap() + 50. / 37.79527559055118)
+                .abs()
+                < 1e-10
+        );
+        let scaled = doc
+            .add_measured_length_calculation(9, 2, (10, 200))
+            .unwrap();
+        assert!(
+            (doc.measured_calculation_cm(scaled).unwrap() - 700. / 37.79527559055118).abs() < 1e-10
+        );
+        assert!(
+            !Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(4);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![4, 9, 10]);
+        assert!(
+            !Document::from_bytes(&cleared.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+        assert!(
+            cleared
+                .add_length_pair_calculation(1, 8, false, (10, 200))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn chained_measured_calculations_update_and_remap() {
         let bytes =
             include_bytes!("../tests/fixtures/calculation_length_chained_division_port.gsp");
@@ -17962,6 +18936,46 @@ mod tests {
             Kind::MeasuredCalculation(source, group) if *source != 6 && group.source_id() as usize == *source));
         assert!(
             (cloned.measured_calculation_cm(clone_id).unwrap() - moved_base * 2.).abs() < 1e-10
+        );
+    }
+
+    #[test]
+    fn decimal_parameter_calculations_update_and_reject_bad_literals() {
+        let native =
+            include_bytes!("../tests/fixtures/parameter_decimal_calculation_native_verified.gsp");
+        let native_doc = Document::from_bytes(native, None).unwrap();
+        assert!(!native_doc.partial_view);
+        assert_eq!(native_doc.encode().unwrap(), native);
+        assert_eq!(native_doc.parameter_calculation_value(2), Some(5.));
+        let bytes = include_bytes!("../tests/fixtures/parameter_decimal_calculation_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!((doc.parameter_calculation_value(2).unwrap() - 5.125).abs() < 1e-12);
+        assert!(crate::render::number_lines_for_object(&doc, 2).unwrap().1[0].ends_with("5.13"));
+        assert!((doc.parameter_calculation_value(3).unwrap() - 10.25).abs() < 1e-12);
+        assert!(
+            doc.parameter_calculation_expression(2)
+                .unwrap()
+                .contains("0.125")
+        );
+        doc.set_parameter_value(1, 3.).unwrap();
+        assert!((doc.parameter_calculation_value(3).unwrap() - 15.25).abs() < 1e-12);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!((reopened.parameter_calculation_value(3).unwrap() - 15.25).abs() < 1e-12);
+        for expression in ["speed+1.", "speed+1.2.3", "speed+00.5", "speed/0.0"] {
+            assert!(
+                doc.add_parameter_calculation(1, expression, (10, 120))
+                    .is_err(),
+                "{expression}"
+            );
+        }
+        let fractional = doc
+            .add_parameter_calculation(1, "speed^0.5", (10, 120))
+            .unwrap();
+        assert!(
+            (doc.parameter_calculation_value(fractional).unwrap() - 3_f64.sqrt()).abs() < 1e-12
         );
     }
 
@@ -24471,6 +25485,473 @@ mod tests {
         assert!((changed[125][0].x - (300. + dx)).abs() < 1e-9);
     }
     #[test]
+    fn point_numeric_label_updates_and_remaps_both_parents() {
+        let bytes = include_bytes!("../tests/fixtures/point_numeric_label_native_verified.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(doc.objects[3].kind, Kind::PointNumericLabel(3, 2));
+        assert_eq!(
+            doc.point_numeric_label(4),
+            Some((Point { x: 280., y: 180. }, "3.00".into()))
+        );
+        doc.set_parameter_value(1, 4.).unwrap();
+        doc.move_point(3, Point { x: 340., y: 210. });
+        assert_eq!(
+            doc.point_numeric_label(4),
+            Some((Point { x: 340., y: 210. }, "5.00".into()))
+        );
+        doc.selected.insert(4);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let cloned = *pasted.last().unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_numeric_label(cloned),
+            Some((Point { x: 360., y: 230. }, "5.00".into()))
+        );
+        assert!(
+            matches!(reopened.objects[cloned-1].kind,Kind::PointNumericLabel(point,value) if point!=3 && value!=2)
+        );
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(1);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![1, 2, 4]);
+        let reopened = Document::from_bytes(&cleared.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 1);
+        assert!(reopened.position(1).is_some());
+        assert!(doc.add_point_numeric_label(2, 3).is_err());
+    }
+
+    #[test]
+    fn branching_polygon_native_paths_edits_copy_and_depth_parent_deletion() {
+        let bytes = include_bytes!("../tests/fixtures/branch_polygon_iteration_native.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!(
+            matches!(&doc.objects[8].kind,Kind::BranchingPolygonIteration { seed:1,first:4,second:2,polygon:5,segments,depth:IterationDepth::Parameter(3) } if segments==&[6,7,8])
+        );
+        let offsets = doc.branch_iteration_offsets(9).unwrap();
+        assert_eq!(offsets.len(), 14);
+        assert_eq!(offsets.iter().map(|(_, paths)| paths).sum::<f64>(), 30.);
+        assert_eq!(doc.polygon_iteration_images(10).unwrap().len(), 14);
+        assert!(doc.point_iteration_images(9).is_none());
+        assert!(matches!(
+            doc.objects[9].visual_style,
+            Some(VisualStyle::Polygon { opacity: 32767, .. })
+        ));
+        doc.set_parameter_value(3, 2.).unwrap();
+        doc.move_point(1, Point { x: 80., y: 200. });
+        let offsets = doc.branch_iteration_offsets(9).unwrap();
+        assert_eq!(offsets.len(), 5);
+        assert_eq!(offsets.iter().map(|(_, paths)| paths).sum::<f64>(), 6.);
+        assert_eq!(offsets[3].1, 2.);
+        let polygons = doc.polygon_iteration_images(10).unwrap();
+        let base = doc.polygon_points(5).unwrap();
+        for (i, (points, _)) in polygons.iter().enumerate() {
+            for (point, source) in points.iter().zip(&base) {
+                assert!((point.x - source.x - offsets[i].0.x).abs() < 1e-10);
+                assert!((point.y - source.y - offsets[i].0.y).abs() < 1e-10);
+            }
+            let sides = doc.branch_segment_iteration_images(11).unwrap();
+            assert!(points[0].distance(sides[i].0) < 1e-10);
+            assert!(points[1].distance(sides[i].1) < 1e-10);
+        }
+        doc.selected.insert(10);
+        let clipboard = doc.copy_selected().unwrap();
+        assert_eq!(clipboard.len(), 13);
+        let pasted = doc.paste(&clipboard).unwrap();
+        let copied = pasted
+            .into_iter()
+            .find(|id| {
+                matches!(
+                    doc.objects[*id - 1].kind,
+                    Kind::BranchingPolygonIteration { .. }
+                )
+            })
+            .unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.branch_iteration_offsets(copied),
+            doc.branch_iteration_offsets(9)
+        );
+        assert_eq!(
+            reopened
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind,Kind::IterationBinding(_,parent) if parent==copied))
+                .count(),
+            4
+        );
+        assert!(
+            matches!(reopened.objects[copied-1].kind,Kind::BranchingPolygonIteration { seed,first,second,polygon,depth:IterationDepth::Parameter(n),.. } if seed!=1 && first!=4 && second!=2 && polygon!=5 && n!=3)
+        );
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(3);
+        assert_eq!(
+            cleared.clear_selected().unwrap(),
+            vec![3, 9, 10, 11, 12, 13]
+        );
+        let reopened = Document::from_bytes(&cleared.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 7);
+    }
+
+    #[test]
+    fn branching_polygon_fixed_depth_and_mapping_validation() {
+        let bytes = include_bytes!("../tests/fixtures/branch_polygon_iteration_fixed_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!(matches!(
+            doc.objects[7].kind,
+            Kind::BranchingPolygonIteration {
+                depth: IterationDepth::Fixed(2),
+                ..
+            }
+        ));
+        assert_eq!(doc.branch_iteration_offsets(8).unwrap().len(), 5);
+        assert!(
+            doc.add_branching_polygon_iteration(1, 2, 2, 4, &[], IterationDepth::Fixed(2))
+                .is_err()
+        );
+        assert!(
+            doc.add_branching_polygon_iteration(1, 2, 3, 4, &[5, 5], IterationDepth::Fixed(2))
+                .is_err()
+        );
+        assert!(
+            doc.add_branching_polygon_iteration(1, 2, 3, 4, &[], IterationDepth::Fixed(0))
+                .is_err()
+        );
+        let id = doc
+            .add_branching_polygon_iteration(1, 2, 3, 4, &[], IterationDepth::Fixed(128))
+            .unwrap();
+        assert_eq!(doc.branch_iteration_offsets(id).unwrap().len(), 8384);
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind,Kind::IterationBinding(_,parent) if parent==id))
+                .count(),
+            1
+        );
+        doc.selected.clear();
+        doc.selected.insert(1);
+        doc.clear_selected().unwrap();
+        assert!(
+            Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn numeric_iteration_formats_precision_without_rounding_its_state() {
+        let native_bytes = include_bytes!(
+            "../tests/fixtures/point_parameter_iteration_integer_precision_native_verified.gsp"
+        );
+        let native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.point_numeric_label(5).unwrap().1, "1");
+        assert_eq!(
+            native
+                .point_parameter_iteration_labels(7)
+                .unwrap()
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>(),
+            ["1", "2", "2", "3"]
+        );
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 100., y: 180. }));
+        let image = doc.add(Kind::PolarTranslatedPoint(seed, 0., 37.79527559055118, 1.));
+        let parameter = doc.add_named_parameter("a", 0., (10, 5)).unwrap();
+        let formula =
+            ParameterCalculationGroup::from_expression(parameter as u32, "a", "a+0.5", (10, 35))
+                .unwrap();
+        let mut bytes = formula.as_bytes().to_vec();
+        bytes[88..90].copy_from_slice(&0u16.to_le_bytes());
+        let formula = ParameterCalculationGroup::parse(&bytes).unwrap();
+        let calculation = doc.add(Kind::ParameterCalculation(parameter, formula));
+        let label = doc.add_point_numeric_label(image, calculation).unwrap();
+        let iteration = doc
+            .add_point_parameter_iteration(seed, parameter, image, calculation, label, 3)
+            .unwrap();
+        assert_eq!(doc.parameter_calculation_value(calculation), Some(0.5));
+        assert_eq!(doc.point_numeric_label(label).unwrap().1, "1");
+        assert_eq!(
+            doc.point_parameter_iteration_labels(iteration)
+                .unwrap()
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>(),
+            ["1", "2", "2"]
+        );
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_parameter_iteration_labels(iteration),
+            doc.point_parameter_iteration_labels(iteration)
+        );
+    }
+
+    #[test]
+    fn numeric_iteration_parameter_depth_native_edit_copy_and_deletion() {
+        let bytes = include_bytes!(
+            "../tests/fixtures/point_parameter_iteration_depth_parameter_native.gsp"
+        );
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(
+            doc.objects[6].kind,
+            Kind::PointParameterIteration(1, 3, 5, 4, 6, IterationDepth::Parameter(2))
+        );
+        assert_eq!(doc.point_numeric_label(6).unwrap().1, "1");
+        assert!(crate::render::number_lines_for_object(&doc, 4).unwrap().1[0].ends_with(" = 1"));
+        assert_eq!(doc.point_parameter_iteration_labels(7).unwrap().len(), 5);
+        let values = |doc: &Document, id| {
+            doc.point_parameter_iteration_labels(id)
+                .unwrap()
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(values(&doc, 7), ["2", "3", "4", "5", "6"]);
+        doc.set_parameter_value(2, 3.).unwrap();
+        doc.set_parameter_value(3, 2.).unwrap();
+        doc.move_point(1, Point { x: 100., y: 180. });
+        assert_eq!(values(&doc, 7), ["4", "5", "6"]);
+        for (i, (point, _)) in doc
+            .point_parameter_iteration_labels(7)
+            .unwrap()
+            .into_iter()
+            .enumerate()
+        {
+            assert!((point.x - (100. + (i + 2) as f64 * 37.79527559055118)).abs() < 1e-8);
+            assert_eq!(point.y, 180.);
+        }
+        doc.selected.insert(7);
+        let clipboard = doc.copy_selected().unwrap();
+        assert_eq!(clipboard.len(), 10);
+        let pasted = doc.paste(&clipboard).unwrap();
+        let copied = pasted
+            .into_iter()
+            .find(|id| matches!(doc.objects[*id - 1].kind, Kind::PointParameterIteration(..)))
+            .unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(values(&reopened, copied), ["4", "5", "6"]);
+        assert!(
+            matches!(reopened.objects[copied - 1].kind, Kind::PointParameterIteration(seed, parameter, image, calculation, label, IterationDepth::Parameter(n)) if seed != 1 && parameter != 3 && image != 5 && calculation != 4 && label != 6 && n != 2)
+        );
+        assert_eq!(
+            reopened
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind, Kind::IterationBinding(_, parent) if parent == copied))
+                .count(),
+            2
+        );
+        assert!(reopened.objects.iter().any(|o| !o.visible
+            && matches!(o.kind, Kind::IterationValues(parent, _) if parent == copied)));
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(2);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![2, 7, 8, 9, 10]);
+        let reopened = Document::from_bytes(&cleared.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 5);
+        assert_eq!(reopened.point_numeric_label(5).unwrap().1, "1");
+        assert!(
+            doc.add_point_parameter_iteration_with_parameter_depth(1, 3, 5, 4, 6, 3)
+                .is_err()
+        );
+        assert!(doc.set_parameter_value(2, 2.5).is_err());
+        doc.set_parameter_value(2, 0.).unwrap();
+        assert!(
+            doc.add_point_parameter_iteration_with_parameter_depth(1, 3, 5, 4, 6, 2)
+                .is_err()
+        );
+        assert!(doc.point_parameter_iteration_labels(7).is_none());
+        assert!(Document::from_bytes(&doc.encode().unwrap(), None).is_ok());
+    }
+
+    #[test]
+    fn point_parameter_iteration_import_edits_copy_and_deletion() {
+        let native_bytes = include_bytes!("../tests/fixtures/point_parameter_iteration_native.gsp");
+        let mut native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(
+            native.objects[6].kind,
+            Kind::PointParameterIteration(4, 2, 5, 3, 6, IterationDepth::Fixed(3))
+        );
+        assert_eq!(native.objects[9].kind, Kind::IterationValues(7, 3));
+        assert!(!native.objects[9].visible);
+        let values = |doc: &Document, id| {
+            doc.point_parameter_iteration_labels(id)
+                .unwrap()
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(values(&native, 7), ["2", "3", "4"]);
+        native.set_parameter_value(2, 2.).unwrap();
+        native.move_point(1, Point { x: 250., y: 180. });
+        native.move_point(4, Point { x: 330., y: 180. });
+        assert_eq!(values(&native, 7), ["4", "5", "6"]);
+        for (i, (point, _)) in native
+            .point_parameter_iteration_labels(7)
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let expected = rotate_point_about(
+                native.position(4).unwrap(),
+                native.position(1).unwrap(),
+                (30. * (i + 2) as f64).to_radians(),
+            )
+            .unwrap();
+            assert!(point.distance(expected) < 1e-10);
+        }
+        native.selected.insert(7);
+        let clipboard = native.copy_selected().unwrap();
+        let pasted = native.paste(&clipboard).unwrap();
+        let copied = pasted
+            .into_iter()
+            .find(|id| {
+                matches!(
+                    native.objects[*id - 1].kind,
+                    Kind::PointParameterIteration(..)
+                )
+            })
+            .unwrap();
+        let reopened = Document::from_bytes(&native.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(values(&reopened, copied), ["4", "5", "6"]);
+        assert_eq!(
+            reopened
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind, Kind::IterationBinding(_, parent) if parent == copied))
+                .count(),
+            2
+        );
+        assert!(reopened.objects.iter().any(|o| !o.visible
+            && matches!(o.kind, Kind::IterationValues(parent, _) if parent == copied)));
+        assert!(
+            matches!(reopened.objects[copied - 1].kind, Kind::PointParameterIteration(seed, parameter, image, calculation, label, IterationDepth::Fixed(3)) if seed != 4 && parameter != 2 && image != 5 && calculation != 3 && label != 6)
+        );
+        let mut cleared = Document::from_bytes(native_bytes, None).unwrap();
+        cleared.selected.insert(2);
+        assert_eq!(
+            cleared.clear_selected().unwrap(),
+            vec![2, 3, 6, 7, 8, 9, 10]
+        );
+        let reopened = Document::from_bytes(&cleared.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.objects.len(), 3);
+    }
+
+    #[test]
+    fn point_parameter_iteration_creation_roundtrip_and_invalid_mapping() {
+        let bytes = include_bytes!("../tests/fixtures/point_parameter_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!(doc.add_point_parameter_iteration(1, 4, 3, 5, 6, 0).is_err());
+        assert!(doc.add_point_parameter_iteration(2, 4, 3, 5, 6, 3).is_err());
+        let wrong_label = doc.add_point_numeric_label(1, 5).unwrap();
+        assert!(
+            doc.add_point_parameter_iteration(1, 4, 3, 5, wrong_label, 3)
+                .is_err()
+        );
+        let id = doc.add_point_parameter_iteration(1, 4, 3, 5, 6, 2).unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_parameter_iteration_labels(id).unwrap().len(),
+            2
+        );
+        doc.objects[id - 1].kind =
+            Kind::PointParameterIteration(1, 4, 3, 5, 6, IterationDepth::Fixed(129));
+        assert!(doc.can_save().is_err());
+        let edited = Document::from_bytes(
+            include_bytes!("../tests/fixtures/point_parameter_iteration_edited_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!edited.partial_view);
+        assert_eq!(
+            edited
+                .point_parameter_iteration_labels(7)
+                .unwrap()
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>(),
+            ["4.00", "5.00", "6.00"]
+        );
+    }
+
+    #[test]
+    fn rotated_point_iteration_updates_center_and_copies_dependencies() {
+        let bytes = include_bytes!("../tests/fixtures/rotated_point_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(doc.objects[3].kind, Kind::PointIteration(1, 3, 4));
+        let images = doc.point_iteration_images(4).unwrap();
+        assert_eq!(images.len(), 4);
+        let seed = doc.position(1).unwrap();
+        let center = doc.position(2).unwrap();
+        for (i, p) in images.iter().enumerate() {
+            let expected =
+                rotate_point_about(seed, center, (60. * (i + 2) as f64).to_radians()).unwrap();
+            assert!(p.distance(expected) < 1e-10);
+            assert!((p.distance(center) - 100.).abs() < 1e-10);
+        }
+        doc.move_point(2, Point { x: 270., y: 200. });
+        doc.move_point(1, Point { x: 380., y: 190. });
+        let center = doc.position(2).unwrap();
+        let seed = doc.position(1).unwrap();
+        let radius = seed.distance(center);
+        for p in doc.point_iteration_images(4).unwrap() {
+            assert!((p.distance(center) - radius).abs() < 1e-10);
+        }
+        doc.selected.insert(4);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let copied = pasted
+            .iter()
+            .copied()
+            .find(|id| matches!(doc.objects[*id - 1].kind, Kind::PointIteration(_, _, _)))
+            .unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.point_iteration_images(copied).unwrap().len(), 4);
+        assert!(
+            matches!(reopened.objects[copied-1].kind,Kind::PointIteration(seed,image,4) if seed!=1 && image!=3)
+        );
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(2);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![2, 3, 4, 5]);
+        assert_eq!(
+            Document::from_bytes(&cleared.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn translated_point_iteration_import_generation_and_parent_edit() {
         let native_bytes =
             include_bytes!("../tests/fixtures/point_translation_iteration_native.gsp");
@@ -24505,6 +25986,61 @@ mod tests {
             2
         );
     }
+    #[test]
+    fn rotated_segment_iteration_preserves_edges_and_remaps_center() {
+        let bytes = include_bytes!("../tests/fixtures/rotated_segment_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert_eq!(doc.objects[4].kind, Kind::SegmentIteration(1, 3, 4, 4));
+        let segments = doc.segment_iteration_images(5).unwrap();
+        let points = doc.point_iteration_images(5).unwrap();
+        assert_eq!(segments.len(), 4);
+        for (i, (a, b)) in segments.iter().enumerate() {
+            assert!((a.distance(*b) - 100.).abs() < 1e-10);
+            assert!(b.distance(points[i]) < 1e-10);
+            if i > 0 {
+                assert!(a.distance(segments[i - 1].1) < 1e-10);
+            }
+        }
+        doc.move_point(2, Point { x: 270., y: 200. });
+        doc.move_point(1, Point { x: 380., y: 190. });
+        let seed = doc.position(1).unwrap();
+        let center = doc.position(2).unwrap();
+        let radius = seed.distance(center);
+        for (a, b) in doc.segment_iteration_images(5).unwrap() {
+            assert!((a.distance(center) - radius).abs() < 1e-10);
+            assert!((b.distance(center) - radius).abs() < 1e-10);
+            assert!((a.distance(b) - radius).abs() < 1e-10);
+        }
+        doc.selected.insert(5);
+        let clipboard = doc.copy_selected().unwrap();
+        let pasted = doc.paste(&clipboard).unwrap();
+        let copied = pasted
+            .iter()
+            .copied()
+            .find(|id| {
+                matches!(
+                    doc.objects[*id - 1].kind,
+                    Kind::SegmentIteration(_, _, _, _)
+                )
+            })
+            .unwrap();
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.segment_iteration_images(copied).unwrap().len(), 4);
+        let mut cleared = Document::from_bytes(bytes, None).unwrap();
+        cleared.selected.insert(2);
+        assert_eq!(cleared.clear_selected().unwrap(), vec![2, 3, 4, 5, 6, 7]);
+        assert_eq!(
+            Document::from_bytes(&cleared.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            1
+        );
+    }
+
     #[test]
     fn carried_segment_iteration_import_generation_and_parent_edit() {
         let native_bytes =

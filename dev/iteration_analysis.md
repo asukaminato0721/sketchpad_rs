@@ -1,10 +1,10 @@
-# Point translation iteration
+# Iteration
 
 Sketchpad 5 produced `tests/fixtures/point_translation_iteration_native.gsp` from a free point and its direct polar translation. `tests/fixtures/point_translation_iteration_port.gsp` and `point_translation_iteration_depth5_port.gsp` were written by this port. Both generated files opened and saved byte-identically in Sketchpad 5. The depth-5 native view shows five additional image points beyond the first translated point.
 
 The bounded case uses two object groups after the seed and first image. Code 76 has `07d0 07d2 090a 07d7`: the `07d2` references are `[seed, first_image, first_image]`, and the fixed depth is the 32-bit word at offset 16 of the 24-byte `090a` payload. Code 77 has `07d0 07d2 07d7` and references `[first_image, iteration_group]`. The group templates in `assets/point_iteration_group.bin` and `assets/point_iteration_binding_group.bin` came from the native fixture. The port changes only references, depth, and visibility.
 
-The reader accepts this structure when the seed is a free point and the first image is its direct polar or fixed rectangular translation. It evaluates repeated images from the live seed and translation displacement, so moving the seed updates the visible sequence. The desktop Transform menu accepts the two selected points and a depth from 1 to 128. Other mappings, multiple seeds, other carried shapes, branch iterations, and numeric iteration still need separate record and geometry work.
+The reader accepts this structure when the seed is a free point and the first image is its direct polar or fixed rectangular translation. It evaluates repeated images from the live seed and translation displacement, so moving the seed updates the visible sequence. The desktop Transform menu accepts the two selected points and a depth from 1 to 128. Additional mappings, carried shapes, and branch iterations still need separate record and geometry work.
 
 ## Carried segment
 
@@ -15,3 +15,54 @@ The native `point_translation_carried_segment_native.gsp` includes a segment bet
 The sibling `gsp-rs` fixture `point_translation_carried_ray_parameter_native.gsp` adds a ray from the seed through its directly translated image and an integer parameter `n = 4`. Code 89 has references `[parameter, seed, image, image, ray]` and a 24-byte `090a` definition. Code 77 binds both the image point and ray to the iteration. The native groups are preserved in `assets/ray_iteration_group.bin`, `assets/ray_iteration_point_binding_group.bin`, and `assets/ray_iteration_binding_group.bin`.
 
 The reader recognizes this exact dependency structure. The port draws the additional translated points and carried rays from the current seed, image, and integer parameter. Selecting those four objects in the desktop app creates the same form. The generated depth-4 and edited depth-5 files opened and saved byte-identically in Sketchpad 5. Editing the native fixture's parameter from 4 to 5 in the port also reopened and saved byte-identically there. Other carried shapes remain pending.
+
+## Rotated point mapping
+
+The code-76 point-only iteration also works when its image is a fixed-angle rotation of the seed about an independent free center. The importer and desktop Iterate command accept this mapping. The evaluator uses each repeated angle about the current center rather than extrapolating the first displacement. The repeated points therefore stay on the seed's current orbit when either the seed or center moves.
+
+`tests/replay_rotated_point_iteration.txt` creates a 60° image, adds a depth-4 point iteration, and moves the center. Both generated files opened and saved byte-identically in native Sketchpad 5. The visible repeated points formed the expected orbit before and after the move. Tests cover the rotation geometry, copied center references, and deletion of the center with its dependent image, iteration, and binding. Other carried rotated shapes and marked-angle mappings remain pending.
+
+The rotation mapping also supports carrying the connecting segment. Code 76 and its two code-77 bindings use the same reference layout as a translated carried segment. The port rotates both endpoints for each repeated edge; the segment chain meets the iterated points and retains its edge lengths. `tests/replay_rotated_segment_iteration.txt` generates a 60° depth-4 chain and moves the center. Native Sketchpad displayed the expected rotated chain in both files and saved them byte-identically. Tests cover seed and center edits, shared endpoints, edge lengths, copy/paste remapping, and deletion dependencies.
+
+## Attached numeric label prerequisite
+
+The sibling mixed point/parameter iteration includes native code 90, which attaches a calculated value to a point. Its `07d2` references are `[point, numeric source]`; `08fc` holds a fixed numeric-text macro and cached layout, followed by a font reference. The native record was extracted to `assets/point_numeric_label_group.bin`. A probe linked that group to an independent point and `a+1`; native Sketchpad displayed 3.00 centered on the point and saved it byte-identically.
+
+The port imports this exact macro, creates it from Number > Attach Selected Value to Point, renders it in desktop and SVG, and remaps both references during copy/paste and deletion. Label position uses the point's transformed screen location, so zooming and panning preserve attachment. `tests/replay_point_numeric_label.txt` edits `a` from 2 to 4 and moves the point; native Sketchpad displayed 5.00 at its new position and saved the moved file byte-identically. Tests cover both live dependencies, copy/paste, deletion of a numeric source, and hit testing with a scaled viewport.
+
+
+## Combined point and parameter iteration
+
+`tests/fixtures/point_parameter_iteration_native.gsp` comes from the sibling `gsp-rs` simple-iteration fixture with a free point, fixed-angle rotated image, parameter `a`, calculation `a+1`, and a numeric label attached to the image. All ten objects now import without partial view, and the original bytes are preserved. The calculation parser preserves the native font reference.
+
+The code-76 references are `[seed, parameter, image, calculation, calculation, image, label]`. Its `090a` definition declares two seeds and stores fixed depth at payload offset 16. Two code-77 records bind the image and label. Hidden code 92 records the value series with references `[iteration, calculation]`, a fixed `090d` payload, and a font record. Native templates are in `assets/point_parameter_iteration_*.bin`.
+
+Selecting those five objects creates a depth-1–128 iteration. Each step applies the direct parameter formula to the previous value and the supported point translation or rotation to the previous point. Desktop and SVG labels remain centered on each image. `tests/replay_point_parameter_iteration.txt` creates depth 3, then changes `a` from 0 to 2 and moves the rotation center. Both generated files opened and saved byte-identically in Sketchpad 5; visible values and positions matched the expected sequence. Copy/paste includes both code-77 bindings and the hidden code-92 series; the pasted 20-object sketch also opened and saved byte-identically in Sketchpad 5. Regression tests cover the native import, live parameter and center edits, copy/paste remapping, source deletion, desktop selection, and invalid mappings. Multiple point mappings, marked-angle mappings, and branches remain pending.
+
+
+## Parameter-controlled numeric depth
+
+`tests/fixtures/point_parameter_iteration_depth_parameter_native.gsp` is the sibling numeric depth-5 example. It adds a distinct integer parameter `n` and uses code 89 instead of 76. Its references are `[n, seed, parameter, image, calculation, calculation, image, label]`, with the same two-seed `090a` definition and code-77/code-92 children. The native group is preserved in `assets/point_parameter_iteration_parameter_depth_group.bin`.
+
+Fixed and parameter-controlled numeric depths share `IterationDepth` and the same point/value evaluator. The depth parameter participates in dependency remapping and deletion. Selecting the five numeric-mapping objects plus a separate integer parameter creates this form, regardless of selection order. Changing the depth immediately changes the repeated points, labels, and label hit targets; selected numeric labels highlight with their iteration. Integer depth from 1 to 128 is supported for creation and evaluation. Unsupported depth values produce no additional images while preserving the saved mapping.
+
+`tests/replay_point_parameter_iteration_parameter_depth.txt` creates depth 4, changes `n` to 6 and `a` to 2, moves the seed, and separately edits the native depth-5 example to depth 3. Tests cover the native roundtrip, translated geometry, value sequence, live depth edits, two-parameter selection, label hit testing under zoom/pan, complete clipboard records, depth-parent remapping, and depth-parent deletion.
+
+The generated depth-4 sketch, its depth-6/value-2/seed-moved edit, and the native fixture edited to depth 3 all opened and saved byte-identically in Sketchpad 5. Native views showed the matching numeric sequences. Editing the source fixture preserves its cached depth word; Sketchpad uses the live depth parameter. The SVG export of the depth-6 edit contains the first image label 3.00 and repeated labels 4.00 through 9.00.
+
+The native numeric fixtures use zero decimal places for the calculation, whereas generated calculations use two. The calculation caption, attached label, and iterated labels now respect the saved precision. Formatting rounds the displayed value without changing the value fed into the next iteration; a regression case adds 0.5 repeatedly with zero decimal places and checks that display rounding does not accumulate into the iteration state.
+
+`point_parameter_iteration_integer_precision_native_verified.gsp` verifies the fractional case in Sketchpad 5: the zero-decimal `a+0.5` caption shows 1, while the first and iterated labels show 1, 1, 2, 2, 3. The file saved byte-identically, and the port's SVG gives the same labels. This confirms that only display formatting rounds; the underlying iteration still advances by 0.5.
+
+
+## Two translation branches carrying a triangle
+
+The sibling `原象点初象携带多边形双映射深度4迭代.gsp` is preserved as `branch_polygon_iteration_native.gsp`. Its code-89 references are `[depth_parameter, seed, first_image, second_image, second_image, first_image, polygon, sides...]`. The `090a` definition has one seed, two mappings, and the cached depth at payload offset 16. Four code-77 bindings carry the interior and its three sides. The port imports all 13 objects, preserving the native bytes. Fixed depth uses code 76 and omits the leading depth parameter; a generated fixed-depth file is also supported.
+
+The two images must be direct polar or rectangular translations of the free seed, and the triangular interior uses those three vertices. Selected sides are optional. Each branch substitutes the same seed with one of its two images. Translation paths commute, so a level-k image reached by j second mappings has offset `(k-j)*first_delta + j*second_delta` and multiplicity `choose(k,j)`. Levels 1 through n are the added images; the original interior is drawn separately. At depth 2 native Sketchpad shows six distinct triangles including the original, with the middle upper triangle darker because two paths reach it. At depth 4 the port stores 14 added offsets representing 30 paths.
+
+The renderer combines repeated fills as `1-(1-alpha)^multiplicity`. The saved polygon opacity is read from header bytes 16–17 and travels with its color through copy/paste and color edits. Binding headers retain their own polygon fill or side stroke style. Desktop and SVG render the carried bindings, with no extra copied point markers. Their visible geometry supplies hit targets; selecting the iteration highlights its carried children.
+
+`tests/replay_branch_polygon_iteration.txt` creates a parameter-controlled depth-3 triangle, changes n to 2 and moves the seed, edits the original native fixture to depth 2, and generates a fixed-depth-2 version. The generated depth-3, edited depth-2, and fixed-depth-2 files opened in Sketchpad 5 with the expected lattice and darker middle overlap and saved byte-identically. The edited native fixture is byte-identical to the depth-2 file opened and saved during the native record investigation. Tests cover path counts and multiplicities, transformed vertices and sides, complete clipboard records and remapping, depth-parent deletion, fixed depth, invalid mappings, the depth-128 storage bound, desktop selection/hit testing, and SVG primitive counts and overlap opacity.
+
+Other carried polygons, more than two mappings, non-translation branches, and multiple point seeds remain pending.
