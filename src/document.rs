@@ -16,7 +16,8 @@ use crate::style_records::{
     self, LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
 };
 use crate::table_records::{
-    CalculationGroup, MeasuredCalculationGroup, ParameterGroup, TableGroup,
+    CalculationGroup, MeasuredCalculationGroup, ParameterCalculationGroup, ParameterGroup,
+    TableGroup,
 };
 use crate::text_object::{self, TextRect};
 use crate::text_records::LabelAux;
@@ -156,8 +157,14 @@ impl Kind {
         if let Kind::MeasuredCalculation(source, _) = self {
             return vec![*source];
         }
+        if let Kind::ParameterCalculation(source, _) = self {
+            return vec![*source];
+        }
         if let Kind::SegmentIteration(seed, image, segment, _) = self {
             return vec![*seed, *image, *segment];
+        }
+        if let Kind::RayIteration(seed, image, ray, parameter) = self {
+            return vec![*parameter, *seed, *image, *ray];
         }
         match *self {
             Kind::Free(_)
@@ -271,6 +278,7 @@ impl Kind {
             }
             Kind::Polygon(_) => unreachable!(),
             Kind::SegmentIteration(_, _, _, _) => unreachable!(),
+            Kind::RayIteration(_, _, _, _) => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
             | Kind::MovementButton { .. }
@@ -281,7 +289,9 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::ValueTablePair(_, _, _) => unreachable!(),
-            Kind::Locus(_, _) | Kind::MeasuredCalculation(_, _) => unreachable!(),
+            Kind::Locus(_, _)
+            | Kind::MeasuredCalculation(_, _)
+            | Kind::ParameterCalculation(_, _) => unreachable!(),
         }
     }
     fn remap(&self, ids: &[usize]) -> Self {
@@ -425,6 +435,9 @@ impl Kind {
             Kind::MeasuredCalculation(source, ref group) => {
                 Kind::MeasuredCalculation(m(source), group.clone())
             }
+            Kind::ParameterCalculation(source, ref group) => {
+                Kind::ParameterCalculation(m(source), group.clone())
+            }
             Kind::ValueTable(source, ref group) => Kind::ValueTable(m(source), group.clone()),
             Kind::ValueTablePair(first, second, ref group) => {
                 Kind::ValueTablePair(m(first), m(second), group.clone())
@@ -442,6 +455,9 @@ impl Kind {
             }
             Kind::SegmentIteration(seed, image, segment, depth) => {
                 Kind::SegmentIteration(m(seed), m(image), m(segment), depth)
+            }
+            Kind::RayIteration(seed, image, ray, parameter) => {
+                Kind::RayIteration(m(seed), m(image), m(ray), m(parameter))
             }
             Kind::IterationBinding(image, iteration) => {
                 Kind::IterationBinding(m(image), m(iteration))
@@ -661,6 +677,13 @@ impl Kind {
                 *group = original
                     .remap_source(u32::try_from(*source).map_err(|_| "Invalid measurement ID")?)?;
             }
+            (
+                Kind::ParameterCalculation(source, group),
+                Kind::ParameterCalculation(_, original),
+            ) => {
+                *group = original
+                    .remap_source(u32::try_from(*source).map_err(|_| "Invalid parameter ID")?)?;
+            }
             _ => {}
         }
         Ok(remapped)
@@ -724,6 +747,7 @@ pub enum Kind {
     Parameter(ParameterGroup),
     Calculation(CalculationGroup),
     MeasuredCalculation(usize, MeasuredCalculationGroup),
+    ParameterCalculation(usize, ParameterCalculationGroup),
     ValueTable(usize, TableGroup),
     ValueTablePair(usize, usize, TableGroup),
     PointOnSegment(usize, f64),
@@ -815,6 +839,7 @@ pub enum Kind {
     /// A single point seed mapped to its first image, repeated at a fixed depth.
     PointIteration(usize, usize, u32),
     SegmentIteration(usize, usize, usize, u32),
+    RayIteration(usize, usize, usize, usize),
     IterationBinding(usize, usize),
     Segment(usize, usize),
     Line(usize, usize),
@@ -1818,7 +1843,7 @@ impl Document {
                 if code == 35 && r.kind == 0x0902 {
                     locus_range = Some(d.to_vec());
                 }
-                if code == 76 && r.kind == 0x090a {
+                if matches!(code, 76 | 89) && r.kind == 0x090a {
                     iteration_definition = Some(d.to_vec());
                 }
                 match r.kind {
@@ -1954,7 +1979,7 @@ impl Document {
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(code == 35 && r.kind == 0x0902)
-                    && !(code == 76 && r.kind == 0x090a)
+                    && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                 {
                     safe = false;
                 }
@@ -2149,6 +2174,25 @@ impl Document {
                 }
             } else {
                 match (code, point, refs.as_slice()) {
+                    (89, None, [parameter, seed, image, carried, ray])
+                        if *parameter > 0 && *seed > 0 && *image > 0 && *ray > 0
+                            && h[6..10] == [14, 0, 64, 0]
+                            && image == carried
+                            && iteration_definition.as_ref().is_some_and(|definition| {
+                                definition.len() == 24
+                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
+                                    && u32_at(definition, 8) == 1
+                                    && (1..=128).contains(&u32_at(definition, 16))
+                                    && definition[20..24] == [0; 4]
+                            })
+                            && objects.get(parameter - 1).is_some_and(|o| matches!(&o.kind, Kind::Parameter(group) if group.value().fract() == 0. && (1. ..=128.).contains(&group.value())))
+                            && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
+                            && objects.get(image - 1).is_some_and(|o| matches!(o.kind,
+                                Kind::PolarTranslatedPoint(source, _, _, _)
+                                | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == *seed))
+                            && objects.get(ray - 1).is_some_and(|o| matches!(o.kind, Kind::Ray(a, b) if a == *seed && b == *image)) => {
+                        Kind::RayIteration(*seed, *image, *ray, *parameter)
+                    }
                     (76, None, [seed, image, carried, segment])
                         if h[6..10] == [14, 0, 64, 0]
                             && image == carried
@@ -2187,6 +2231,7 @@ impl Document {
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
                                 Kind::SegmentIteration(_, mapped, segment, _) => mapped == *image || segment == *image,
+                                Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
                                 _ => false,
                             }) => {
                         Kind::IterationBinding(*image, *iteration)
@@ -2288,6 +2333,13 @@ impl Document {
                         && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_))) => {
                         match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
+                    (48, None, [source]) if *source > 0
+                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_))) => {
+                        match ParameterCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
+                            Ok(group) if group.source_id() as usize == source - page_base => Kind::ParameterCalculation(*source, group),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -3598,6 +3650,40 @@ impl Document {
         self.append_object(Kind::IterationBinding(segment, iteration));
         Ok(iteration)
     }
+    pub fn add_ray_iteration(
+        &mut self,
+        seed: usize,
+        image: usize,
+        ray: usize,
+        parameter: usize,
+    ) -> Result<usize, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot add an iteration to this sketch safely".into());
+        }
+        if self.iteration_depth_parameter(parameter).is_none()
+            || !self
+                .objects
+                .get(seed.saturating_sub(1))
+                .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
+            || !self.objects.get(image.saturating_sub(1)).is_some_and(|o| {
+                !o.deleted
+                    && matches!(o.kind,
+                    Kind::PolarTranslatedPoint(source, _, _, _)
+                    | Kind::FixedRectangularTranslatedPoint(source, _, _, _, _) if source == seed)
+            })
+            || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o| {
+                !o.deleted && matches!(o.kind, Kind::Ray(a,b) if a == seed && b == image)
+            })
+            || !(seed < image && image < ray && parameter < self.objects.len() + 1)
+        {
+            return Err("Select a free point, its directly translated image, their ray, and an integer depth parameter from 1 to 128".into());
+        }
+        self.checkpoint();
+        let iteration = self.append_object(Kind::RayIteration(seed, image, ray, parameter));
+        self.append_object(Kind::IterationBinding(image, iteration));
+        self.append_object(Kind::IterationBinding(ray, iteration));
+        Ok(iteration)
+    }
     pub fn construct_locus(&mut self, driver: usize, target: usize) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot construct a locus in this sketch safely".into());
@@ -4264,6 +4350,39 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::Calculation(group)))
     }
+    pub fn add_parameter_calculation(
+        &mut self,
+        source: usize,
+        expression: &str,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot add a parameter calculation in this sketch safely".into());
+        }
+        let Some(object) = self
+            .objects
+            .get(source.checked_sub(1).ok_or("Invalid parameter ID")?)
+        else {
+            return Err("Invalid parameter ID".into());
+        };
+        let Kind::Parameter(parameter) = &object.kind else {
+            return Err("Select a supported parameter".into());
+        };
+        if object.deleted || object.page != self.active_page {
+            return Err("Select a parameter on the active page".into());
+        }
+        let group = ParameterCalculationGroup::from_expression(
+            u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
+            parameter.name(),
+            expression,
+            anchor,
+        )?;
+        if group.value(parameter.value()).is_none() {
+            return Err("Calculation is undefined for the current parameter value".into());
+        }
+        self.checkpoint();
+        Ok(self.append_object(Kind::ParameterCalculation(source, group)))
+    }
     pub fn add_measured_length_calculation(
         &mut self,
         source: usize,
@@ -4339,6 +4458,23 @@ impl Document {
         } else {
             measurement * f64::from(group.factor())
         })
+    }
+    pub fn parameter_calculation_value(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::ParameterCalculation(source, group) = &object.kind else {
+            return None;
+        };
+        if object.deleted {
+            return None;
+        }
+        let source = self.objects.get(source.checked_sub(1)?)?;
+        let Kind::Parameter(parameter) = &source.kind else {
+            return None;
+        };
+        if source.deleted {
+            return None;
+        }
+        group.value(parameter.value())
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
         let (first, second) = match self.objects.get(id.checked_sub(1)?)?.kind {
@@ -4433,6 +4569,7 @@ impl Document {
             Kind::Parameter(group) => group.set_anchor(anchor)?,
             Kind::Calculation(group) => group.set_anchor(anchor)?,
             Kind::MeasuredCalculation(_, group) => group.set_anchor(anchor)?,
+            Kind::ParameterCalculation(_, group) => group.set_anchor(anchor)?,
             Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
                 group.set_anchor(anchor)
             }
@@ -5366,6 +5503,9 @@ impl Document {
         let (seed, image, depth) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::PointIteration(seed, image, depth)
             | Kind::SegmentIteration(seed, image, _, depth) => (seed, image, depth),
+            Kind::RayIteration(seed, image, _, parameter) => {
+                (seed, image, self.iteration_depth_parameter(parameter)?)
+            }
             _ => return None,
         };
         let start = self.position(seed)?;
@@ -5377,6 +5517,52 @@ impl Document {
                 .map(|step| Point {
                     x: start.x + dx * f64::from(step),
                     y: start.y + dy * f64::from(step),
+                })
+                .collect(),
+        )
+    }
+    fn iteration_depth_parameter(&self, id: usize) -> Option<u32> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let Kind::Parameter(group) = &object.kind else {
+            return None;
+        };
+        let value = group.value();
+        (value.fract() == 0. && (1. ..=128.).contains(&value)).then_some(value as u32)
+    }
+    pub fn ray_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        let Kind::RayIteration(seed, image, ray, parameter) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        if !matches!(self.objects.get(ray.checked_sub(1)?)?.kind, Kind::Ray(a,b) if a == seed && b == image)
+        {
+            return None;
+        }
+        let depth = self.iteration_depth_parameter(parameter)?;
+        let start = self.position(seed)?;
+        let first = self.position(image)?;
+        let delta = Point {
+            x: first.x - start.x,
+            y: first.y - start.y,
+        };
+        Some(
+            (1..=depth)
+                .map(|step| {
+                    let offset = f64::from(step);
+                    (
+                        Point {
+                            x: start.x + delta.x * offset,
+                            y: start.y + delta.y * offset,
+                        },
+                        Point {
+                            x: first.x + delta.x * offset,
+                            y: first.y + delta.y * offset,
+                        },
+                    )
                 })
                 .collect(),
         )
@@ -6148,6 +6334,9 @@ impl Document {
                 Kind::Parameter(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
                 Kind::Calculation(group) => group.set_anchor(shifted_anchor(group.anchor())?)?,
                 Kind::MeasuredCalculation(_, group) => {
+                    group.set_anchor(shifted_anchor(group.anchor())?)?
+                }
+                Kind::ParameterCalculation(_, group) => {
                     group.set_anchor(shifted_anchor(group.anchor())?)?
                 }
                 Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
@@ -8761,6 +8950,17 @@ impl Document {
                             })
                     {
                         return Err("Unsupported measured calculation source".into());
+                    }
+                }
+                Kind::ParameterCalculation(source, group) => {
+                    ParameterCalculationGroup::parse(group.as_bytes())?;
+                    if group.source_id() as usize != *source
+                        || !self
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
+                    {
+                        return Err("Unsupported parameter calculation source".into());
                     }
                 }
                 Kind::ValueTable(source, group) => {
@@ -11747,6 +11947,25 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::RayIteration(seed, image, ray, parameter) = o.kind {
+                let mut group = *include_bytes!("../assets/ray_iteration_group.bin");
+                group[48..52].copy_from_slice(&(parameter as u32).to_le_bytes());
+                group[52..56].copy_from_slice(&(seed as u32).to_le_bytes());
+                group[56..60].copy_from_slice(&(image as u32).to_le_bytes());
+                group[60..64].copy_from_slice(&(image as u32).to_le_bytes());
+                group[64..68].copy_from_slice(&(ray as u32).to_le_bytes());
+                group[92..96].copy_from_slice(
+                    &self
+                        .iteration_depth_parameter(parameter)
+                        .ok_or("Invalid iteration depth parameter")?
+                        .to_le_bytes(),
+                );
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::SegmentIteration(seed, image, segment, depth) = o.kind {
                 let mut group = *include_bytes!("../assets/segment_iteration_group.bin");
                 group[48..52].copy_from_slice(&(seed as u32).to_le_bytes());
@@ -11777,7 +11996,19 @@ impl Document {
                     self.objects.get(image - 1).map(|object| &object.kind),
                     Some(Kind::Segment(_, _))
                 );
-                let mut group = if segment {
+                let ray = matches!(
+                    self.objects.get(image - 1).map(|object| &object.kind),
+                    Some(Kind::Ray(_, _))
+                );
+                let ray_iteration = matches!(
+                    self.objects.get(iteration - 1).map(|object| &object.kind),
+                    Some(Kind::RayIteration(_, _, _, _))
+                );
+                let mut group = if ray {
+                    *include_bytes!("../assets/ray_iteration_binding_group.bin")
+                } else if ray_iteration {
+                    *include_bytes!("../assets/ray_iteration_point_binding_group.bin")
+                } else if segment {
                     *include_bytes!("../assets/segment_iteration_binding_group.bin")
                 } else {
                     *include_bytes!("../assets/point_iteration_binding_group.bin")
@@ -11831,6 +12062,17 @@ impl Document {
             if let Kind::MeasuredCalculation(source, group) = &o.kind {
                 let mut bytes = group
                     .remap_source(u32::try_from(*source).map_err(|_| "Invalid measurement ID")?)?
+                    .as_bytes()
+                    .to_vec();
+                if !o.visible {
+                    bytes[10] |= 1;
+                }
+                added.extend_from_slice(&bytes);
+                continue;
+            }
+            if let Kind::ParameterCalculation(source, group) = &o.kind {
+                let mut bytes = group
+                    .remap_source(u32::try_from(*source).map_err(|_| "Invalid parameter ID")?)?
                     .as_bytes()
                     .to_vec();
                 if !o.visible {
@@ -13050,6 +13292,9 @@ impl Document {
                 Kind::Parameter(value) => Some(value.as_bytes().to_vec()),
                 Kind::Calculation(value) => Some(value.as_bytes().to_vec()),
                 Kind::MeasuredCalculation(source, value) => {
+                    Some(value.remap_source(ids[*source] as u32)?.as_bytes().to_vec())
+                }
+                Kind::ParameterCalculation(source, value) => {
                     Some(value.remap_source(ids[*source] as u32)?.as_bytes().to_vec())
                 }
                 Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
@@ -17627,6 +17872,84 @@ mod tests {
         );
         assert!(crate::table_records::MeasuredCalculationGroup::divide(4, 99, (10, 34)).is_ok());
         assert!(crate::table_records::MeasuredCalculationGroup::divide(4, 0, (10, 34)).is_err());
+    }
+
+    #[test]
+    fn parameter_calculation_chain_imports_and_updates() {
+        let native = include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
+        let mut document = Document::from_bytes(native, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), native);
+        for (id, expected) in (2..=6).zip([1., 1., 2., 2., 1.]) {
+            assert_eq!(document.parameter_calculation_value(id), Some(expected));
+            assert!(crate::render::number_lines_for_object(&document, id).is_some());
+        }
+        document.set_parameter_value(1, 2.).unwrap();
+        for (id, expected) in (2..=6).zip([2., 4., 5., 5., 2.5]) {
+            assert_eq!(document.parameter_calculation_value(id), Some(expected));
+        }
+        let saved = document.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.parameter_calculation_value(6), Some(2.5));
+    }
+
+    #[test]
+    fn generated_parameter_calculations_recalculate_and_remap() {
+        let complex = include_bytes!("../tests/fixtures/parameter_calculation_generated_port.gsp");
+        let mut document = Document::from_bytes(complex, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), complex);
+        assert_eq!(document.parameter_calculation_value(2), Some(3.5));
+        document.set_parameter_value(1, 3.).unwrap();
+        assert_eq!(document.parameter_calculation_value(2), Some(6.));
+
+        let even = include_bytes!("../tests/fixtures/parameter_calculation_even_tokens_port.gsp");
+        let mut document = Document::from_bytes(even, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), even);
+        assert_eq!(document.parameter_calculation_value(2), Some(24.));
+        assert_eq!(document.parameter_calculation_value(3), Some(8.));
+        document.set_parameter_value(1, 3.).unwrap();
+        assert_eq!(document.parameter_calculation_value(2), Some(36.));
+        assert_eq!(document.parameter_calculation_value(3), Some(9.));
+        document.selected.insert(3);
+        let clipboard = document.copy_selected().unwrap();
+        let pasted = document.paste(&clipboard).unwrap();
+        let clone_id = *pasted.last().unwrap();
+        let cloned = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(!cloned.partial_view);
+        assert!(matches!(&cloned.objects[clone_id - 1].kind,
+            Kind::ParameterCalculation(source, group) if *source != 1 && group.source_id() as usize == *source));
+        assert_eq!(cloned.parameter_calculation_value(clone_id), Some(9.));
+
+        let named = include_bytes!("../tests/fixtures/named_parameter_calculation_port.gsp");
+        let mut document = Document::from_bytes(named, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), named);
+        assert_eq!(document.parameter_calculation_value(2), Some(7.25));
+        document.set_parameter_value(1, 3.).unwrap();
+        assert_eq!(document.parameter_calculation_value(2), Some(10.));
+        assert!(
+            document
+                .add_parameter_calculation(1, "speed/0", (10, 100))
+                .is_err()
+        );
+        assert!(
+            document
+                .add_parameter_calculation(1, "speed+", (10, 100))
+                .is_err()
+        );
+        assert!(
+            document
+                .add_parameter_calculation(1, "10+2", (10, 100))
+                .is_err()
+        );
+        assert!(
+            document
+                .add_parameter_calculation(1, "speed+999999999999999", (10, 100))
+                .is_err()
+        );
     }
 
     #[test]
@@ -24091,6 +24414,51 @@ mod tests {
                 .objects
                 .len(),
             3
+        );
+    }
+
+    #[test]
+    fn carried_ray_iteration_import_generation_and_live_parameter() {
+        let native_bytes =
+            include_bytes!("../tests/fixtures/point_translation_carried_ray_parameter_native.gsp");
+        let mut native = Document::from_bytes(native_bytes, None).unwrap();
+        assert!(!native.partial_view);
+        assert_eq!(native.encode().unwrap(), native_bytes);
+        assert_eq!(native.objects[4].kind, Kind::RayIteration(1, 2, 3, 4));
+        assert_eq!(native.objects[5].kind, Kind::IterationBinding(2, 5));
+        assert_eq!(native.objects[6].kind, Kind::IterationBinding(3, 5));
+        assert_eq!(native.point_iteration_images(5).unwrap().len(), 4);
+        assert_eq!(native.ray_iteration_images(5).unwrap().len(), 4);
+        native.set_parameter_value(4, 5.).unwrap();
+        let edited = Document::from_bytes(&native.encode().unwrap(), None).unwrap();
+        assert!(!edited.partial_view);
+        assert_eq!(edited.point_iteration_images(5).unwrap().len(), 5);
+        assert_eq!(edited.ray_iteration_images(5).unwrap().len(), 5);
+        assert!(native.set_parameter_value(4, 5.5).is_err());
+
+        let port_bytes =
+            include_bytes!("../tests/fixtures/point_translation_carried_ray_depth5_port.gsp");
+        let mut port = Document::from_bytes(port_bytes, None).unwrap();
+        assert!(!port.partial_view);
+        assert_eq!(port.encode().unwrap(), port_bytes);
+        assert_eq!(port.point_iteration_images(5).unwrap().len(), 5);
+        assert_eq!(port.ray_iteration_images(5).unwrap().len(), 5);
+        assert!(port.move_point(1, Point { x: 120., y: 140. }));
+        let mut moved = Document::from_bytes(&port.encode().unwrap(), None).unwrap();
+        let rays = moved.ray_iteration_images(5).unwrap();
+        let seed = moved.position(1).unwrap();
+        let first = moved.position(2).unwrap();
+        assert!((rays[0].0.x - first.x).abs() < 1e-8);
+        assert!((rays[4].0.y - (seed.y + 5. * (first.y - seed.y))).abs() < 1e-8);
+        assert!(moved.add_ray_iteration(1, 2, 3, 1).is_err());
+        moved.selected.insert(5);
+        assert_eq!(moved.clear_selected().unwrap(), vec![5, 6, 7]);
+        assert_eq!(
+            Document::from_bytes(&moved.encode().unwrap(), None)
+                .unwrap()
+                .objects
+                .len(),
+            4
         );
     }
 }

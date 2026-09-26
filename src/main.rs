@@ -1909,9 +1909,9 @@ impl Editor {
         }
     }
     fn iterate_selected(&mut self, depth: u32) {
-        if !(2..=3).contains(&self.selection_order.len()) {
+        if !(2..=4).contains(&self.selection_order.len()) {
             self.status =
-                "Select a free point, its translated image, and optionally their segment".into();
+                "Select a free point, its translated image, and optionally a segment or ray with an integer depth parameter".into();
             return;
         }
         let seed = self
@@ -1930,7 +1930,24 @@ impl Editor {
             self.status = "Select a free point and its directly translated image".into();
             return;
         };
-        let result = if self.selection_order.len() == 3 {
+        let result = if self.selection_order.len() == 4 {
+            let ray = self
+                .selection_order
+                .iter()
+                .copied()
+                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Ray(_, _)));
+            let parameter = self
+                .selection_order
+                .iter()
+                .copied()
+                .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Parameter(_)));
+            match (ray, parameter) {
+                (Some(ray), Some(parameter)) => {
+                    self.doc.add_ray_iteration(seed, image, ray, parameter)
+                }
+                _ => Err("Select the connecting ray and an integer depth parameter".into()),
+            }
+        } else if self.selection_order.len() == 3 {
             let segment = self
                 .selection_order
                 .iter()
@@ -1946,7 +1963,11 @@ impl Editor {
         match result {
             Ok(id) => {
                 self.select_only(id);
-                self.status = format!("Created iteration {id} to depth {depth}");
+                let actual_depth = self
+                    .doc
+                    .point_iteration_images(id)
+                    .map_or(depth as usize, |points| points.len());
+                self.status = format!("Created iteration {id} to depth {actual_depth}");
             }
             Err(error) => self.status = error,
         }
@@ -4176,9 +4197,12 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Calculate…").clicked() {
-                        self.calculation_draft = if self.doc.selected.len() == 1
-                            && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)))) {
-                            "× 2".into()
+                        self.calculation_draft = if self.doc.selected.len() == 1 {
+                            match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
+                                Some(Kind::Parameter(group)) => format!("{}^2", group.name()),
+                                Some(Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)) => "× 2".into(),
+                                _ => "2 + 3".into(),
+                            }
                         } else { "2 + 3".into() };
                         self.calculation_dialog = true;
                         ui.close();
@@ -5088,6 +5112,7 @@ impl Editor {
                                     | Kind::Parameter(_)
                                     | Kind::Calculation(_)
                                     | Kind::MeasuredCalculation(_, _)
+                                    | Kind::ParameterCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _)
                                     | Kind::PointOnSegment(_, _)
@@ -5106,6 +5131,7 @@ impl Editor {
                                     Kind::Parameter(_)
                                     | Kind::Calculation(_)
                                     | Kind::MeasuredCalculation(_, _)
+                                    | Kind::ParameterCalculation(_, _)
                                     | Kind::ValueTable(_, _)
                                     | Kind::ValueTablePair(_, _, _) => {
                                         let anchor = sketchpad_rs::render::number_lines_for_object(
@@ -5152,6 +5178,7 @@ impl Editor {
                             Kind::Parameter(_)
                                 | Kind::Calculation(_)
                                 | Kind::MeasuredCalculation(_, _)
+                                | Kind::ParameterCalculation(_, _)
                                 | Kind::ValueTable(_, _)
                                 | Kind::ValueTablePair(_, _, _)
                         ) {
@@ -6071,6 +6098,8 @@ impl Editor {
                         })
                     {
                         "Selected length × factor (0–99) or ÷ divisor (1–99); also supports two integers"
+                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))) {
+                        "Use the selected parameter in an expression, for example t[1]^2 + 1"
                     } else {
                         "Enter two integers from 0 to 99 with +, -, *, or /"
                     },
@@ -6097,6 +6126,7 @@ impl Editor {
                                     Kind::Parameter(_)
                                         | Kind::Calculation(_)
                                         | Kind::MeasuredCalculation(_, _)
+                                        | Kind::ParameterCalculation(_, _)
                                 ))
                     })
                     .count();
@@ -6114,6 +6144,16 @@ impl Editor {
                                     | Kind::ArcLength(_)
                             )
                         })
+                    })
+                } else {
+                    None
+                };
+                let selected_parameter = if self.doc.selected.len() == 1 {
+                    self.doc.selected.iter().next().copied().filter(|&id| {
+                        self.doc
+                            .objects
+                            .get(id - 1)
+                            .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
                     })
                 } else {
                     None
@@ -6138,6 +6178,8 @@ impl Editor {
                                     .add_measured_length_calculation(source, factor, (10, y))
                             }
                         })
+                } else if let Some(source) = selected_parameter {
+                    self.doc.add_parameter_calculation(source, draft, (10, y))
                 } else {
                     self.doc.add_calculation_expression(draft, (10, y))
                 };
@@ -6155,7 +6197,7 @@ impl Editor {
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
                 ui.heading("Iterate Points");
-                ui.label("Select a free point, its translated image, and optionally their segment");
+                ui.label("Select a free point and translated image. Add their segment, or add their ray and an integer depth parameter.");
                 ui.horizontal(|ui| {
                     ui.label("Depth");
                     ui.text_edit_singleline(&mut self.iteration_depth_draft);
@@ -6985,6 +7027,40 @@ mod tests {
         assert_eq!(
             editor.doc.selected.iter().copied().collect::<Vec<_>>(),
             vec![4]
+        );
+        assert!(
+            !Document::from_bytes(&editor.doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+    }
+
+    #[test]
+    fn selected_translation_ray_and_parameter_create_live_iteration() {
+        let mut document = Document::new();
+        let seed = document.add(Kind::Free(Point { x: 150., y: 180. }));
+        let image = document.add(Kind::FixedRectangularTranslatedPoint(
+            seed,
+            37.79527559055118,
+            1.,
+            37.79527559055118,
+            1.,
+        ));
+        let ray = document.add(Kind::Ray(seed, image));
+        let parameter = document.add_named_parameter("n", 4., (10, 5)).unwrap();
+        let mut editor = Editor::new(document);
+        editor.selection_order = vec![parameter, ray, image, seed];
+        editor.doc.selected.extend([seed, image, ray, parameter]);
+        editor.iterate_selected(3);
+        assert_eq!(
+            editor.doc.objects[4].kind,
+            Kind::RayIteration(seed, image, ray, parameter)
+        );
+        assert_eq!(editor.doc.point_iteration_images(5).unwrap().len(), 4);
+        assert_eq!(editor.doc.ray_iteration_images(5).unwrap().len(), 4);
+        assert_eq!(
+            editor.doc.selected.iter().copied().collect::<Vec<_>>(),
+            vec![5]
         );
         assert!(
             !Document::from_bytes(&editor.doc.encode().unwrap(), None)

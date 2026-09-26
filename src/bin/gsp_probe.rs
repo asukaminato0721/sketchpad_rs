@@ -315,6 +315,29 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     println!("line {}: {command} -> object {id}", index + 1);
                 }
+                "calculate_parameter" => {
+                    let Some((source, expression)) = rest.split_once(char::is_whitespace) else {
+                        return Err("expected calculate_parameter SOURCE EXPRESSION".into());
+                    };
+                    let source = source.parse().map_err(|_| "invalid parameter ID")?;
+                    let row = document
+                        .objects
+                        .iter()
+                        .filter(|object| {
+                            !object.deleted
+                                && matches!(
+                                    object.kind,
+                                    Kind::Parameter(_)
+                                        | Kind::Calculation(_)
+                                        | Kind::MeasuredCalculation(_, _)
+                                        | Kind::ParameterCalculation(_, _)
+                                )
+                        })
+                        .count();
+                    let anchor = (10, (5usize + row * 33).min(i16::MAX as usize) as i16);
+                    let id = document.add_parameter_calculation(source, expression, anchor)?;
+                    println!("line {}: calculate_parameter -> object {id}", index + 1);
+                }
                 "tabulate" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let source: usize = parts
@@ -1351,6 +1374,20 @@ fn replay(path: &str) -> Result<(), String> {
                     let depth = parts[3].parse().map_err(|_| "invalid iteration depth")?;
                     let id = document.add_segment_iteration(seed, image, segment, depth)?;
                     println!("line {}: iterate_segment -> object {id}", index + 1);
+                }
+                "iterate_ray" => {
+                    let parts: Vec<_> = rest.split_whitespace().collect();
+                    let [seed, image, ray, parameter] = parts.as_slice() else {
+                        return Err("expected seed ID, first-image ID, ray ID, and integer depth parameter ID".into());
+                    };
+                    let seed = seed.parse().map_err(|_| "invalid seed ID")?;
+                    let image = image.parse().map_err(|_| "invalid first-image ID")?;
+                    let ray = ray.parse().map_err(|_| "invalid ray ID")?;
+                    let parameter = parameter
+                        .parse()
+                        .map_err(|_| "invalid depth parameter ID")?;
+                    let id = document.add_ray_iteration(seed, image, ray, parameter)?;
+                    println!("line {}: iterate_ray -> object {id}", index + 1);
                 }
                 "translate_vector" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();

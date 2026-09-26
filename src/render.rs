@@ -149,6 +149,21 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             )],
         ));
     }
+    if let Kind::ParameterCalculation(source, group) = &object.kind {
+        let value = doc.parameter_calculation_value(id)?;
+        let Kind::Parameter(parameter) = &doc.objects.get(source.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let name = match parameter.name() {
+            "t[1]" => "t₁",
+            "t[2]" => "t₂",
+            name => name,
+        };
+        return Some((
+            group.anchor(),
+            vec![format!("{} = {value:.2}", group.expression(name))],
+        ));
+    }
     if let Kind::ValueTable(source, group) = &object.kind
         && let Some((name, mut values)) = group.named_label_values()
     {
@@ -899,6 +914,15 @@ pub fn svg_page_with_button_offset(
                 let start = vp.screen(start);
                 let end = vp.screen(end);
                 writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#176bd6\" stroke-width=\"2\"/>", start.x, start.y, end.x, end.y).unwrap();
+            }
+        }
+        if let Some(rays) = doc.ray_iteration_images(o.id) {
+            for (start, through) in rays {
+                if let Some((a, b)) =
+                    clipped_line(vp.screen(start), vp.screen(through), LineMode::Ray, r)
+                {
+                    writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#176bd6\" stroke-width=\"2\"/>", a.x, a.y, b.x, b.y).unwrap();
+                }
             }
         }
     }
@@ -1683,6 +1707,15 @@ impl GeometryRenderer {
                 for (start, end) in segments {
                     if let Some((a, b)) =
                         clipped_line(vp.screen(start), vp.screen(end), LineMode::Segment, vp.rect)
+                    {
+                        mesh.styled_path(&[a, b], false, stroke, col);
+                    }
+                }
+            }
+            if let Some(rays) = doc.ray_iteration_images(o.id) {
+                for (start, through) in rays {
+                    if let Some((a, b)) =
+                        clipped_line(vp.screen(start), vp.screen(through), LineMode::Ray, vp.rect)
                     {
                         mesh.styled_path(&[a, b], false, stroke, col);
                     }

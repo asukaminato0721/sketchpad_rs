@@ -20,6 +20,8 @@ const CALCULATION: &[u8] = include_bytes!("../tests/fixtures/table_calculate_2_p
 const MEASURED_CALCULATION: &[u8] = include_bytes!("../assets/measurement_times_two_group.bin");
 const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
     include_bytes!("../assets/measurement_times_twelve_group.bin");
+const PARAMETER_CALCULATION_NATIVE: &[u8] =
+    include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableGroup {
@@ -236,7 +238,10 @@ impl ParameterGroup {
         value_from_words(&words)?;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
-        if !(precision == 1 && step == 0.1 || precision == 2 && step == 0.01) {
+        if !(precision == 0 && step == 1.
+            || precision == 1 && step == 0.1
+            || precision == 2 && step == 0.01)
+        {
             return Err("Unsupported parameter precision".into());
         }
         let templates = [
@@ -259,6 +264,7 @@ impl ParameterGroup {
                             || (28..32).contains(&i)
                             || (36..40).contains(&i)
                             || (44..46).contains(&i)
+                            || (48..50).contains(&i)
                             || (52..60).contains(&i)
                             || animated_cache && (80..88).contains(&i);
                         mutable || actual_payload[i] == expected_payload[i]
@@ -298,7 +304,8 @@ impl ParameterGroup {
                     actual_record.len() == expected_record.len()
                         && actual_record.iter().zip(expected_record).enumerate().all(
                             |(i, (a, e))| {
-                                record_index == 0 && i == 10
+                                record_index == 0 && (i == 10 || (26..28).contains(&i))
+                                    || record_index == 3 && i >= 8
                                     || record_index == 4 && i >= 8
                                     || a == e
                             },
@@ -358,6 +365,9 @@ impl ParameterGroup {
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
+        if self.precision() == 0 && (value - value.round()).abs() > 1e-7 {
+            return Err("Integer parameter requires a whole number".into());
+        }
         let words = decimal_words(value)?;
         let promote_precision =
             self.precision() == 1 && (value * 10. - (value * 10.).round()).abs() > 1e-7;
@@ -467,6 +477,279 @@ pub struct CalculationGroup {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MeasuredCalculationGroup {
     bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParameterCalculationGroup {
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+enum ParameterExpr {
+    Source,
+    Literal(u32),
+    Binary(u16, Box<ParameterExpr>, Box<ParameterExpr>),
+}
+
+impl ParameterExpr {
+    fn eval(&self, source: f64) -> Option<f64> {
+        let value = match self {
+            Self::Source => source,
+            Self::Literal(value) => f64::from(*value),
+            Self::Binary(operator, left, right) => {
+                let left = left.eval(source)?;
+                let right = right.eval(source)?;
+                match operator {
+                    0x1000 => left + right,
+                    0x1001 => left - right,
+                    0x1002 => left * right,
+                    0x1003 if right != 0. => left / right,
+                    0x1004 => left.powf(right),
+                    _ => return None,
+                }
+            }
+        };
+        value.is_finite().then_some(value)
+    }
+
+    fn display(&self, source_name: &str) -> String {
+        match self {
+            Self::Source => source_name.into(),
+            Self::Literal(value) => value.to_string(),
+            Self::Binary(operator, left, right) => format!(
+                "({} {} {})",
+                left.display(source_name),
+                match operator {
+                    0x1000 => "+",
+                    0x1001 => "−",
+                    0x1002 => "·",
+                    0x1003 => "÷",
+                    0x1004 => "^",
+                    _ => "?",
+                },
+                right.display(source_name)
+            ),
+        }
+    }
+}
+
+struct ParameterExprParser<'a> {
+    words: &'a [u16],
+    at: usize,
+}
+
+impl<'a> ParameterExprParser<'a> {
+    fn expression(&mut self) -> Result<ParameterExpr, String> {
+        self.binary(0)
+    }
+    fn binary(&mut self, min_precedence: u8) -> Result<ParameterExpr, String> {
+        let mut left = self.atom()?;
+        while let Some(&operator @ (0x1000..=0x1004)) = self.words.get(self.at) {
+            let precedence = match operator {
+                0x1000 | 0x1001 => 1,
+                0x1002 | 0x1003 => 2,
+                _ => 3,
+            };
+            if precedence < min_precedence {
+                break;
+            }
+            self.at += 1;
+            let next = if operator == 0x1004 {
+                precedence
+            } else {
+                precedence + 1
+            };
+            let right = self.binary(next)?;
+            left = ParameterExpr::Binary(operator, Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+    fn atom(&mut self) -> Result<ParameterExpr, String> {
+        let word = *self
+            .words
+            .get(self.at)
+            .ok_or("Missing calculation operand")?;
+        if word == 11 {
+            self.at += 1;
+            let result = self.expression()?;
+            if self.words.get(self.at) != Some(&12) {
+                return Err("Unclosed calculation parenthesis".into());
+            }
+            self.at += 1;
+            return Ok(result);
+        }
+        if word == 0x6000 {
+            self.at += 1;
+            return Ok(ParameterExpr::Source);
+        }
+        if word <= 9 {
+            let mut value = 0u32;
+            let mut digits = 0;
+            while let Some(&digit @ 0..=9) = self.words.get(self.at) {
+                value = value
+                    .checked_mul(10)
+                    .and_then(|value| value.checked_add(u32::from(digit)))
+                    .ok_or("Calculation literal is too large")?;
+                digits += 1;
+                self.at += 1;
+            }
+            if digits > 1 && word == 0 {
+                return Err("Leading zero in calculation".into());
+            }
+            return Ok(ParameterExpr::Literal(value));
+        }
+        Err("Unsupported parameter calculation token".into())
+    }
+}
+
+impl ParameterCalculationGroup {
+    pub fn from_expression(
+        source: u32,
+        source_name: &str,
+        expression: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        if source == 0 || source_name.is_empty() {
+            return Err("Select a parameter".into());
+        }
+        let mut words = Vec::new();
+        let mut input = expression;
+        while !input.is_empty() {
+            let ch = input.chars().next().unwrap();
+            if ch.is_whitespace() {
+                input = &input[ch.len_utf8()..];
+            } else if input.starts_with(source_name) {
+                words.push(0x6000u16);
+                input = &input[source_name.len()..];
+            } else if ch.is_ascii_digit() {
+                words.push((ch as u8 - b'0') as u16);
+                input = &input[1..];
+            } else {
+                words.push(match ch {
+                    '+' => 0x1000,
+                    '-' | '−' => 0x1001,
+                    '*' | '×' | '·' => 0x1002,
+                    '/' | '÷' => 0x1003,
+                    '^' => 0x1004,
+                    '(' => 11,
+                    ')' => 12,
+                    _ => return Err("Unsupported calculation character".into()),
+                });
+                input = &input[ch.len_utf8()..];
+            }
+        }
+        if !(1..=32).contains(&words.len()) {
+            return Err("Calculation must use 1–32 tokens".into());
+        }
+        let base = object_group(PARAMETER_CALCULATION_NATIVE, 2);
+        let rs = records(&base, 0)?;
+        let mut payload = base[rs[2].payload..rs[2].end].to_vec();
+        payload.truncate(92);
+        payload[36..40].copy_from_slice(&(60 + 2 * words.len() as u32).to_le_bytes());
+        payload[44..46].copy_from_slice(&(words.len() as u16).to_le_bytes());
+        for word in words {
+            payload.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut bytes = base[..rs[2].start].to_vec();
+        put_record(&mut bytes, 0x0907, &payload);
+        bytes.extend_from_slice(&base[rs[2].end..]);
+        bytes[48..52].copy_from_slice(&source.to_le_bytes());
+        bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
+        bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        Self::parse(&bytes)
+    }
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let rs = records(bytes, 0)?;
+        if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
+        {
+            return Err("Unsupported parameter calculation records".into());
+        }
+        let template = object_group(PARAMETER_CALCULATION_NATIVE, 2);
+        let template_records = records(&template, 0)?;
+        let expression_len = rs[2].end - rs[2].payload;
+        let token_count = expression_len.saturating_sub(92) / 2;
+        if rs[0].end - rs[0].payload != 28
+            || rs[1].end - rs[1].payload != 8
+            || !(1..=32).contains(&token_count)
+            || expression_len != 92 + 2 * token_count
+            || bytes.len() != 170 + 2 * token_count
+            || rs[3].end - rs[3].payload != 2
+            || rs[4].end != rs[4].payload
+            || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
+            || u32::from_le_bytes(bytes[48..52].try_into().unwrap()) == 0
+            || u32::from_le_bytes(bytes[96..100].try_into().unwrap()) as usize
+                != expression_len - 32
+            || u16::from_le_bytes(bytes[104..106].try_into().unwrap()) as usize != token_count
+        {
+            return Err("Unsupported parameter calculation header".into());
+        }
+        for (index, (&actual, &expected)) in bytes[..152].iter().zip(&template[..152]).enumerate() {
+            let variable = index == 10
+                || (26..28).contains(&index)
+                || (48..52).contains(&index)
+                || (52..56).contains(&index)
+                || (72..152).contains(&index);
+            if !variable && actual != expected {
+                return Err("Unsupported parameter calculation style".into());
+            }
+        }
+        if bytes[rs[3].start..] != template[template_records[3].start..] {
+            return Err("Unsupported parameter calculation font".into());
+        }
+        let group = Self {
+            bytes: bytes.to_vec(),
+        };
+        group.expression_tree()?;
+        Ok(group)
+    }
+    fn expression_tree(&self) -> Result<ParameterExpr, String> {
+        let rs = records(&self.bytes, 0)?;
+        let words = self.bytes[rs[2].payload + 92..rs[2].end]
+            .chunks_exact(2)
+            .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        if !words.contains(&0x6000) {
+            return Err("Calculation has no source".into());
+        }
+        let mut parser = ParameterExprParser {
+            words: &words,
+            at: 0,
+        };
+        let expression = parser.expression()?;
+        if parser.at != words.len() {
+            return Err("Unexpected calculation token".into());
+        }
+        Ok(expression)
+    }
+    pub fn value(&self, source: f64) -> Option<f64> {
+        self.expression_tree().ok()?.eval(source)
+    }
+    pub fn expression(&self, source_name: &str) -> String {
+        self.expression_tree().unwrap().display(source_name)
+    }
+    pub fn source_id(&self) -> u32 {
+        u32::from_le_bytes(self.bytes[48..52].try_into().unwrap())
+    }
+    pub fn anchor(&self) -> (i16, i16) {
+        (
+            i16::from_le_bytes(self.bytes[72..74].try_into().unwrap()),
+            i16::from_le_bytes(self.bytes[74..76].try_into().unwrap()),
+        )
+    }
+    pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
+        self.bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
+        self.bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
+        Self::parse(&self.bytes)?;
+        Ok(())
+    }
+    pub fn remap_source(&self, source: u32) -> Result<Self, String> {
+        let mut result = self.clone();
+        result.bytes[48..52].copy_from_slice(&source.to_le_bytes());
+        Self::parse(&result.bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 fn measured_factor(bytes: &[u8], digit_count: usize) -> u8 {
@@ -1572,6 +1855,19 @@ pub fn append_default_parameter_table(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parameter_calculation_chain_imports_and_evaluates() {
+        let native = include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
+        let expected = [2., 4., 5., 5., 2.5];
+        for (ordinal, value) in (2..=6).zip(expected) {
+            let group =
+                super::ParameterCalculationGroup::parse(&super::object_group(native, ordinal))
+                    .unwrap();
+            assert_eq!(group.source_id(), 1);
+            assert_eq!(group.value(2.), Some(value));
+            assert!(group.expression("t₁").contains("t₁"));
+        }
+    }
     #[test]
     fn measured_two_digit_native_group_imports() {
         let native = include_bytes!("../tests/fixtures/calculation_length_times_twelve_native.gsp");
