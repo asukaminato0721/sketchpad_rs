@@ -1,4 +1,4 @@
-use super::kind::{plot_path_accepts, value_plot_path_accepts};
+use super::kind::{plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
 use super::{Document, Kind, Point};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{plot_axis_records, plot_points_records, style_records};
@@ -214,7 +214,17 @@ impl Document {
         let path = path
             .or_else(|| self.active_x_axis(self.active_page))
             .ok_or("No coordinate axis or selected path")?;
-        self.plotted_path_position(path, value)?;
+        if self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.kind.is_polygon()) {
+            let host = &self.objects[path - 1];
+            if host.deleted || host.page != self.active_page
+                || !literal_plot_path_accepts(&host.kind, value)
+                || self.point_at_polygon_parameter(path, value).is_none()
+            {
+                return Err("Select a defined polygon on this page".into());
+            }
+        } else {
+            self.plotted_path_position(path, value)?;
+        }
         let group = plot_axis_records::encode_literal_group(path as u32, value)?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();

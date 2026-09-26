@@ -45,14 +45,14 @@ An undefined source or perimeter gives no point. The scalar unit and same-page
 reference checks remain enforced. The API validates the active page, same-page
 host, finite value, and defined perimeter before adding its ordinary typed
 PathValuePoint. New predicates `is_value_plot_path_kind` and
-`value_plot_path_accepts` apply specifically to code 95; code 123 literal-path
-points keep their original supported hosts and domain checks.
+`value_plot_path_accepts` apply specifically to code 95. Code 123 polygon-path semantics were subsequently
+verified independently; see `literal_polygon_path_analysis.md`.
 
 `native_calculated_polygon_path_uses_live_wrapped_perimeter_values` exercises the
 actual imported native group, out-of-range wrapping, save/reopen, label retention,
 a deformed live host, scalar calculation sources, authored API construction,
 clipboard dependency remapping with the standard 20-pixel offset, and dependent
-deletion. It also confirms literal polygon-path creation remains unavailable.
+deletion. Literal polygon-path creation is separately covered by the code 123 regression.
 `original_ningde_calculated_point_retains_polygon_and_scalar_dependencies` retains
 the complete named native source and verifies its original code 95 parents.
 

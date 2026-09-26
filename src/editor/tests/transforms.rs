@@ -142,3 +142,195 @@ fn segment_reflection_and_dilation_commands() {
         Kind::ReflectedSegment(segment, mirror)
     );
 }
+
+#[test]
+fn fixed_transform_commands_accept_transformed_segments_and_circles() {
+    for name in ["segment", "circle"] {
+        let bytes = if name == "segment" {
+            include_bytes!("../../../tests/fixtures/vector_rotated_segment_native.gsp").as_slice()
+        } else {
+            include_bytes!("../../../tests/fixtures/vector_rotated_circle_native.gsp").as_slice()
+        };
+        let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+        editor.marked_center = Some(1);
+        editor.rotation_use_marked = false;
+        editor.rotation_angle = 45.;
+        editor.select_only(6);
+        editor.rotate_selected();
+        assert_eq!(editor.doc.objects.len(), 7);
+        assert_eq!(
+            editor.doc.objects[6].kind,
+            if name == "segment" {
+                Kind::RotatedSegment(6, 1, 45.)
+            } else {
+                Kind::RotatedCircle(6, 1, 45.)
+            }
+        );
+        editor.dilation_use_marked = false;
+        editor.dilation_factor = 1.25;
+        editor.dilate_selected();
+        assert_eq!(editor.doc.objects.len(), 8);
+        assert_eq!(
+            editor.doc.objects[7].kind,
+            if name == "segment" {
+                Kind::ScaledSegment(7, 1, 1.25)
+            } else {
+                Kind::ScaledCircle(7, 1, 1.25)
+            }
+        );
+        let mirror = editor.doc.add(Kind::Segment(1, 3));
+        editor.marked_mirror = Some(mirror);
+        editor.reflect_selected();
+        assert_eq!(editor.doc.objects.len(), 10);
+        assert_eq!(
+            editor.doc.objects[9].kind,
+            if name == "segment" {
+                Kind::ReflectedSegment(8, mirror)
+            } else {
+                Kind::ReflectedCircle(8, mirror)
+            }
+        );
+        editor.doc.verify_roundtrip().unwrap();
+    }
+    for ray in [false, true] {
+        let mut editor = Editor::new(Document::new());
+        let a = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let b = editor.doc.add(Kind::Free(Point { x: 150., y: 120. }));
+        let source = editor.doc.add(if ray {
+            Kind::Ray(a, b)
+        } else {
+            Kind::Line(a, b)
+        });
+        editor.marked_center = Some(a);
+        editor.rotation_use_marked = false;
+        editor.select_only(source);
+        editor.dilation_factor = 0.;
+        editor.dilate_selected();
+        editor.marked_mirror = Some(source);
+        editor.reflect_selected();
+        assert_eq!(editor.doc.objects.len(), 3);
+    }
+}
+
+#[test]
+fn fixed_rotated_ray_and_line_commands_pick_the_correct_extents() {
+    for (name, bytes) in [
+        (
+            "ray",
+            include_bytes!("../../../tests/fixtures/fixed_rotation_ray_original.gsp").as_slice(),
+        ),
+        (
+            "line",
+            include_bytes!("../../../tests/fixtures/fixed_rotation_line_original.gsp").as_slice(),
+        ),
+    ] {
+        let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 170., y: 20. })),
+            Some(5)
+        );
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 170., y: 250. })),
+            if name == "ray" { None } else { Some(5) }
+        );
+        editor.marked_center = Some(1);
+        editor.rotation_use_marked = false;
+        editor.rotation_angle = 45.;
+        editor.select_only(4);
+        editor.rotate_selected();
+        assert_eq!(
+            editor.doc.objects[5].kind,
+            if name == "ray" {
+                Kind::RotatedRay(4, 1, 45.)
+            } else {
+                Kind::RotatedLine(4, 1, 45.)
+            }
+        );
+        let mut image_only = editor.doc.clone();
+        for object in &mut image_only.objects {
+            object.visible = object.id == 5;
+        }
+        let svg = sketchpad_rs::render::svg_page(&image_only, &vp).unwrap();
+        let y1 = if name == "ray" { 160 } else { 400 };
+        assert!(svg.contains(&format!("<line x1=\"220\" y1=\"{y1}\" x2=\"220\" y2=\"0\"")));
+        editor.doc.verify_roundtrip().unwrap();
+        let count = editor.doc.objects.len();
+        editor.dilation_use_marked = false;
+        editor.select_only(6);
+        editor.dilate_selected();
+        editor.marked_mirror = Some(4);
+        editor.reflect_selected();
+        assert_eq!(editor.doc.objects.len(), count);
+        editor.select_only(4);
+        editor.rotation_use_marked = true;
+        editor.marked_angle = Some(MarkedAngle::Points([1, 2, 3]));
+        editor.rotate_selected();
+        assert_eq!(editor.doc.objects.len(), count);
+    }
+}
+
+#[test]
+fn fixed_scaled_ray_and_line_commands_preserve_direction_and_zero_rejection() {
+    for ray in [true, false] {
+        let bytes = if ray {
+            include_bytes!("../../../tests/fixtures/fixed_dilation_ray_original.gsp").as_slice()
+        } else {
+            include_bytes!("../../../tests/fixtures/fixed_dilation_line_original.gsp").as_slice()
+        };
+        let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
+        let vp = Viewport {
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 450., y: 230. })),
+            Some(5)
+        );
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 180., y: 230. })),
+            if ray { None } else { Some(5) }
+        );
+        editor.marked_center = Some(1);
+        editor.dilation_use_marked = false;
+        editor.dilation_factor = -2.;
+        editor.select_only(4);
+        editor.dilate_selected();
+        assert_eq!(
+            editor.doc.objects[5].kind,
+            if ray {
+                Kind::ScaledRay(4, 1, -2.)
+            } else {
+                Kind::ScaledLine(4, 1, -2.)
+            }
+        );
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 20., y: 70. })),
+            Some(6)
+        );
+        assert_eq!(
+            editor.hit(&vp, vp.screen(Point { x: 100., y: 70. })),
+            if ray { None } else { Some(6) }
+        );
+        editor.doc.verify_roundtrip().unwrap();
+        let before = editor.doc.encode().unwrap();
+        editor.select_only(4);
+        editor.dilation_factor = 0.;
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.dilation_factor = 2.;
+        editor.select_only(6);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.select_only(4);
+        editor.dilation_use_marked = true;
+        editor.marked_ratio = Some([1, 2, 3]);
+        editor.dilate_selected();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}

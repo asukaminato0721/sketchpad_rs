@@ -26,12 +26,54 @@ impl Document {
                 (new != old).then_some((object.id, new))
             })
             .collect();
-        if !changes.is_empty() {
-            self.checkpoint();
-            for (id, style) in &changes {
-                self.objects[*id - 1].visual_style = Some(*style);
-            }
+        if changes.is_empty() {
+            return Ok(0);
         }
+        let rs = super::records(&self.original)?;
+        let upgrade = changes.iter().any(|(id, style)| {
+            let Some(offset) = self.objects[*id - 1].header_offset else {
+                return false;
+            };
+            let Some(record) = rs.iter().find(|record| record.data.start == offset) else {
+                return false;
+            };
+            if record.kind != 0x07d0 || record.data.len() != 16 {
+                return false;
+            }
+            let mut header = self.original[record.data.clone()].to_vec();
+            crate::style_records::set_visual_style(&mut header, *style).is_err()
+        });
+        let mut candidate = self.clone();
+        let mut ids: Vec<_> = (0..=self.objects.len()).collect();
+        if upgrade {
+            if !candidate.needs_legacy_upgrade()? {
+                return Err("This short object header cannot store the selected style".into());
+            }
+            // Upgrading also compacts any previously deleted groups. Keep selected
+            // objects and pending style changes attached to their surviving IDs.
+            for (index, object) in self.objects.iter().filter(|o| !o.deleted).enumerate() {
+                ids[object.id] = index + 1;
+            }
+            candidate.checkpoint_structure();
+            candidate.upgrade_legacy_document()?;
+            candidate.selected = self
+                .selected
+                .iter()
+                .filter_map(|id| {
+                    self.objects
+                        .get(id.checked_sub(1)?)
+                        .filter(|o| !o.deleted)
+                        .map(|_| ids[*id])
+                })
+                .collect();
+        } else {
+            candidate.checkpoint();
+        }
+        for (id, style) in &changes {
+            candidate.objects[ids[*id] - 1].visual_style = Some(*style);
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
         Ok(changes.len())
     }
     pub fn set_selected_point_style(&mut self, shape: PointStyle) -> Result<usize, String> {

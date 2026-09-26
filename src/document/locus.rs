@@ -8,8 +8,11 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot construct a locus in this sketch safely".into());
         }
-        if matches!(self.objects.get(driver.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Parameter(_))) {
-            return self.construct_parameter_locus(driver, target, 0., 1., 500);
+        if let Some(Kind::Parameter(group)) = self.objects.get(driver.saturating_sub(1)).map(|o| &o.kind) {
+            let (min, max) = if group.unit() == crate::table_records::NumericUnit::Degrees {
+                group.animation_domain()
+            } else { (0., 1.) };
+            return self.construct_parameter_locus(driver, target, min, max, 500);
         }
         let refs = expected_locus_refs(&self.objects, driver, target)
             .ok_or("Select a constrained point and a dependent object")?;
@@ -31,7 +34,9 @@ impl Document {
         { return Err("Invalid parameter locus range or sketch".into()); }
         let refs = expected_parameter_locus_refs(&self.objects, driver, target)
             .ok_or("Select a parameter and a dependent point")?;
-        Ok(self.add(Kind::ParameterLocus(refs, min, max, samples)))
+        let Kind::Parameter(group) = &self.objects[driver - 1].kind else { unreachable!() };
+        let scale = group.native_unit_scale();
+        Ok(self.add(Kind::ParameterLocus(refs, min * scale, max * scale, samples)))
     }
 
     fn parameter_locus_strokes(&self, refs: &[usize], min: f64, max: f64, samples: u32, subdivisions: usize) -> Option<Vec<(Point, Point, LineMode)>> {
@@ -44,7 +49,7 @@ impl Document {
         let mut points = Vec::with_capacity(count);
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
-            let value = min + (max - min) * fraction;
+            let value = (min + (max - min) * fraction) / parameter.native_unit_scale();
             if !parameter.set_evaluation_value(value) { points.push(None); continue; }
             sample.objects[driver - 1].kind = Kind::Parameter(parameter.clone());
             points.push(sample.position(target));

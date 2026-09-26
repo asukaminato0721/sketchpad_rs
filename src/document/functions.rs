@@ -208,6 +208,23 @@ impl Document {
             750,
         )))
     }
+    /// Plot ranges use public numeric values. Angle parameter curves expose
+    /// degrees here while retaining native radians in their stored descriptor.
+    pub fn plot_range(&self, plot: usize) -> Option<(f64, f64, u32)> {
+        let object = self.objects.get(plot.checked_sub(1)?)?;
+        if object.deleted { return None; }
+        match &object.kind {
+            Kind::FunctionPlot(_, _, min, max, samples)
+            | Kind::ParametricPlot(_, _, _, min, max, samples, _) => Some((*min, *max, *samples)),
+            Kind::ParameterLocus(refs, min, max, samples) => {
+                let driver = *refs.get(1)?;
+                let Kind::Parameter(group) = &self.objects.get(driver.checked_sub(1)?)?.kind else { return None; };
+                let scale = group.native_unit_scale();
+                Some((*min / scale, *max / scale, *samples))
+            }
+            _ => None,
+        }
+    }
     pub fn set_plot_range(
         &mut self,
         plot: usize,
@@ -228,6 +245,11 @@ impl Document {
         if object.id != plot || object.page != self.active_page || object.deleted {
             return Err("Select one plot".into());
         }
+        // Avoid a radians/degrees round trip rewriting an untouched native
+        // endpoint when the user confirms the existing range.
+        if self.plot_range(plot) == Some((min, max, samples)) {
+            return Ok(());
+        }
         let updated = match object.kind {
             Kind::FunctionPlot(definition, frame, _, _, _) => {
                 Kind::FunctionPlot(definition, frame, min, max, samples)
@@ -235,7 +257,13 @@ impl Document {
             Kind::ParametricPlot(x, y, frame, _, _, _, mode) => {
                 Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
             }
-            Kind::ParameterLocus(ref refs, _, _, _) => Kind::ParameterLocus(refs.clone(), min, max, samples),
+            Kind::ParameterLocus(ref refs, _, _, _) => {
+                let Kind::Parameter(group) = &self.objects[refs[1] - 1].kind else {
+                    return Err("Parameter locus has no parameter driver".into());
+                };
+                let scale = group.native_unit_scale();
+                Kind::ParameterLocus(refs.clone(), min * scale, max * scale, samples)
+            }
             _ => return Err("Select one function, parametric plot, or parameter locus".into()),
         };
         if object.kind == updated {

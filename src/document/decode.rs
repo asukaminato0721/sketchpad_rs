@@ -5,7 +5,7 @@ use super::iteration::{
 };
 use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
-    is_locus_straight_kind, is_plot_path_kind, is_value_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
+    is_locus_straight_kind, is_literal_plot_path_kind, is_value_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
     polygon_vertex_count, straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
@@ -673,7 +673,11 @@ impl Document {
                                 && (2..=4096).contains(&u32_at(data, 16))
                                 && u32_at(data, 20) == 0x00030004
                                 && f64_at(data, 24).is_finite()
-                                && data[32..40] == [1, 0, 0, 0, 0, 0, 0, 0]) => {
+                                && refs.get(1).and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|driver| match &driver.kind {
+                                    Kind::Parameter(group) => group.locus_unit_tag() == Some(u32_at(data, 32)),
+                                    _ => false,
+                                })
+                                && u32_at(data, 36) == 0) => {
                         let data = locus_range.as_ref().unwrap();
                         Kind::ParameterLocus(refs.clone(), f64_at(data, 0), f64_at(data, 8), u32_at(data, 16))
                     }
@@ -709,7 +713,7 @@ impl Document {
                     (123, _, [path])
                         if literal_axis_value
                             .is_some_and(|(local_path, _)| local_path as usize + page_base == *path)
-                            && objects.get(path - 1).is_some_and(|o| is_plot_path_kind(&o.kind)) => {
+                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_literal_plot_path_kind(&o.kind)) => {
                         Kind::PathLiteralPoint(*path, literal_axis_value.unwrap().1)
                     }
                     (95, _, [source, path])
@@ -1072,12 +1076,13 @@ impl Document {
                             {
                                 Kind::PointOnArc(*host, f64_at(payload, 4))
                             }
-                            (Some(Kind::Polygon(vertices)), Some((payload, _)))
-                                if payload.len() == 20
-                                    && polygon_subtype(vertices.len()).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
+                            (Some(kind), Some((payload, _)))
+                                if kind.is_polygon() && objects.get(host - 1).is_some_and(|object| !object.deleted && object.page == page)
+                                    && payload.len() == 20
+                                    && polygon_vertex_count(&objects, *host).and_then(polygon_subtype).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
-                                    && (u32_at(payload, 12) as usize) < vertices.len()
+                                    && polygon_vertex_count(&objects, *host).is_some_and(|count| (u32_at(payload, 12) as usize) < count)
                                     && payload[16..20] == [255, 255, 0, 0] => {
                                 Kind::PointOnPolygon(*host, u32_at(payload, 12) as usize, f64_at(payload, 4))
                             }
@@ -1328,9 +1333,9 @@ impl Document {
                         Kind::ReflectedCircle(*source, *mirror)
                     }
                     (34, _, [source, mirror])
-                        if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(o.kind, Kind::Segment(_, _)))
+                        if objects.get(source.saturating_sub(1)).is_some_and(|o| is_segment_kind(&o.kind))
                             && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
-                            && h[8..10] == [14, 0] => Kind::ReflectedSegment(*source, *mirror),
+                            && h[6..8] == [2, 0] && h[8..10] == [14, 0] => Kind::ReflectedSegment(*source, *mirror),
                     (34, _, [source, mirror])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
                             && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
@@ -1344,7 +1349,9 @@ impl Document {
                                 match objects.get(source - 1).map(|o| &o.kind) {
                                     Some(kind) if is_point_kind(kind) => Kind::ScaledPoint(*source, *center, factor),
                                     Some(kind) if kind.is_circle() => Kind::ScaledCircle(*source, *center, factor),
-                                    Some(Kind::Segment(_, _)) if h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
+                                    Some(kind) if is_segment_kind(kind) && h[6..8] == [2, 0] && h[8..10] == [14, 0] => Kind::ScaledSegment(*source, *center, factor),
+                                    Some(Kind::Ray(..)) if h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [13, 0] => Kind::ScaledRay(*source, *center, factor),
+                                    Some(Kind::Line(..)) if h.len() == 28 && h[6..8] == [2, 0] && h[8..10] == [12, 0] => Kind::ScaledLine(*source, *center, factor),
                                     Some(Kind::Polygon(vertices)) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
                                         && h.len() == 28 && h[6..8] == [4, 0] => Kind::ScaledPolygon(*source, *center, factor),
                                     _ => Kind::Unsupported(code),
@@ -1363,8 +1370,10 @@ impl Document {
                                 && (f64_at(payload, 12) - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 => {
                                 match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                                     (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, f64_at(payload, 20)),
-                                    (Some(Kind::Segment(_, _)), [14, 0]) => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
-                                    (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]) => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
+                                    (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
+                                    (Some(Kind::Ray(..)), [13, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedRay(*source, *center, f64_at(payload, 20)),
+                                    (Some(Kind::Line(..)), [12, 0]) if h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedLine(*source, *center, f64_at(payload, 20)),
+                                    (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
                                     (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
                                         && h.len() == 28 && h[6..8] == [4, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),
                                     _ => Kind::Unsupported(code),

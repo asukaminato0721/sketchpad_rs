@@ -74,6 +74,8 @@ unique states in one generation or 100,000 generated states across all levels.
 The final-level display mode still computes and bounds the complete substitution
 chain. The optional visible-binding list follows the depth in the replay command;
 the sidebar can switch a supported mapped iteration between all and final levels.
+See [native image-level evidence](mapped_iteration_image_levels_analysis.md) for
+the controlled flag probes and preserved definition fields.
 
 The edited replay changes n from 2 to 4 and B from (140,180) to (150,170).
 Native displays the shallow chain through (350,210), confirming both dependency

@@ -312,7 +312,7 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
-            Some(Kind::Segment(_, _))
+            Some(kind) if kind.is_segment()
         ) {
             Kind::ReflectedSegment(source, mirror)
         } else if matches!(
@@ -611,9 +611,19 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
-            Some(Kind::Segment(_, _))
+            Some(kind) if kind.is_segment()
         ) {
             Kind::ScaledSegment(source, center, self.dilation_factor)
+        } else if matches!(
+            self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
+            Some(Kind::Ray(..))
+        ) {
+            Kind::ScaledRay(source, center, self.dilation_factor)
+        } else if matches!(
+            self.doc.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
+            Some(Kind::Line(..))
+        ) {
+            Kind::ScaledLine(source, center, self.dilation_factor)
         } else if matches!(
             self.doc
                 .objects
@@ -667,20 +677,26 @@ impl Editor {
             .get(source.saturating_sub(1))
             .map(|o| &o.kind);
         let source_point = self.doc.position(source).is_some();
-        let source_segment = matches!(source_kind, Some(Kind::Segment(_, _)))
+        let source_segment = source_kind.is_some_and(|kind| matches!(kind, Kind::Segment(_, _))
+            || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                && kind.is_segment()))
             && self.doc.line_points(source).is_some();
-        let source_circle = matches!(
-            source_kind,
-            Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
-        ) && self.doc.circle_points(source).is_some();
+        let source_circle = source_kind.is_some_and(|kind| matches!(kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+            || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                && kind.is_circle()))
+            && self.doc.circle_points(source).is_some();
+        let source_ray = !self.rotation_use_marked && matches!(source_kind, Some(Kind::Ray(..)))
+            && self.doc.line_points(source).is_some();
+        let source_line = !self.rotation_use_marked && matches!(source_kind, Some(Kind::Line(..)))
+            && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
             || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
                 && kind.is_polygon()))
             && self.doc.polygon_points(source).is_some();
-        if !(source_point || source_segment || source_circle || source_polygon)
+        if !(source_point || source_segment || source_circle || source_polygon || source_ray || source_line)
             || self.doc.position(center).is_none()
         {
-            self.status = "Select a point, segment, or circle and a center point".into();
+            self.status = "Select a point, segment, ray, line, circle, or interior and a center point".into();
             return;
         }
         if self.rotation_use_marked
@@ -728,6 +744,10 @@ impl Editor {
                 Kind::RotatedPoint(source, center, self.rotation_angle)
             } else if source_segment {
                 Kind::RotatedSegment(source, center, self.rotation_angle)
+            } else if source_ray {
+                Kind::RotatedRay(source, center, self.rotation_angle)
+            } else if source_line {
+                Kind::RotatedLine(source, center, self.rotation_angle)
             } else if source_polygon {
                 Kind::RotatedPolygon(source, center, self.rotation_angle)
             } else {

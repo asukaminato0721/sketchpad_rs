@@ -72,6 +72,7 @@ pub(crate) fn run() {
     );
     let geometry = GeometryRenderer::new(&device, config.format);
     let mut next_animation_frame = Instant::now();
+    let mut next_ui_frame = None;
     window.request_redraw();
     event_loop
         .run(move |event, elwt| match event {
@@ -104,6 +105,13 @@ pub(crate) fn run() {
                         editor.sync_document_fonts(&ctx);
                         let mut viewport = None;
                         let mut output = ctx.run_ui(input, |ui| viewport = Some(editor.ui(ui)));
+                        next_ui_frame =
+                            output
+                                .viewport_output
+                                .get(&ctx.viewport_id())
+                                .and_then(|viewport| {
+                                    Instant::now().checked_add(viewport.repaint_delay)
+                                });
                         if editor.exit_requested {
                             elwt.exit();
                             return;
@@ -187,20 +195,27 @@ pub(crate) fn run() {
                 }
             }
             Event::AboutToWait => {
+                let now = Instant::now();
+                if next_ui_frame.is_some_and(|deadline| now >= deadline) {
+                    window.request_redraw();
+                    next_ui_frame = None;
+                }
+                let mut next_frame = next_ui_frame;
                 if (!editor.animations.is_empty() && !editor.animation_paused)
                     || !editor.movements.is_empty()
                     || !editor.presentations.is_empty()
                 {
-                    let now = Instant::now();
                     if now >= next_animation_frame {
                         window.request_redraw();
                         next_animation_frame = now + Duration::from_millis(16);
                     }
-                    elwt.set_control_flow(ControlFlow::WaitUntil(next_animation_frame));
+                    next_frame = Some(next_frame.map_or(next_animation_frame, |deadline| {
+                        deadline.min(next_animation_frame)
+                    }));
                 } else {
-                    next_animation_frame = Instant::now();
-                    elwt.set_control_flow(ControlFlow::Wait);
+                    next_animation_frame = now;
                 }
+                elwt.set_control_flow(next_frame.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
             }
             _ => {}
         })

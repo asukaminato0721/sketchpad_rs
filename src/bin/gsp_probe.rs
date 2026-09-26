@@ -2036,6 +2036,10 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Segment(_, _))
                     ) {
                         Kind::ScaledSegment(source, center, factor)
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Ray(..))) {
+                        Kind::ScaledRay(source, center, factor)
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Line(..))) {
+                        Kind::ScaledLine(source, center, factor)
                     } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
                     } else if matches!(
@@ -2100,7 +2104,7 @@ fn replay(path: &str) -> Result<(), String> {
                 "rotate" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 3 {
-                        return Err("expected source point ID, center point ID, and angle".into());
+                        return Err("expected source object ID, center point ID, and angle".into());
                     }
                     let source: usize = parts[0].parse().map_err(|_| "invalid source ID")?;
                     let center = parts[1].parse().map_err(|_| "invalid center ID")?;
@@ -2111,6 +2115,8 @@ fn replay(path: &str) -> Result<(), String> {
                         .map(|o| &o.kind)
                     {
                         Some(Kind::Segment(_, _)) => Kind::RotatedSegment(source, center, angle),
+                        Some(Kind::Ray(..)) => Kind::RotatedRay(source, center, angle),
+                        Some(Kind::Line(..)) => Kind::RotatedLine(source, center, angle),
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::RotatedCircle(source, center, angle)
                         }

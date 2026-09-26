@@ -249,7 +249,12 @@ impl Document {
             return Err("Pasting objects in this document cannot be saved safely".into());
         }
         let mut candidate = self.clone();
-        candidate.checkpoint();
+        if candidate.needs_legacy_upgrade()? {
+            candidate.checkpoint_structure();
+            candidate.upgrade_legacy_document()?;
+        } else {
+            candidate.checkpoint();
+        }
         candidate.selected.clear();
         let max_source = clipboard.objects.last().ok_or("Clipboard is empty")?.old_id;
         let mut ids = vec![0; max_source + 1];

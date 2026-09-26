@@ -1,5 +1,5 @@
 use super::calculations::calculation_source_ids;
-use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count, straight_kind_mode};
+use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding, straight_kind_mode};
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
 use super::{Document, IterationDepth, Kind, LineMode};
 use crate::action_records::{
@@ -1068,6 +1068,12 @@ impl Document {
                 range.extend_from_slice(&max.to_le_bytes());
                 range.extend_from_slice(&samples.to_le_bytes());
                 range.extend_from_slice(&[4, 0, 3, 0, 0, 0, 0, 0, 36, 98, 92, 1, 1, 0, 0, 0, 0, 0, 0, 0]);
+                let driver = *refs.get(1).ok_or("Parameter locus has no driver")?;
+                let Kind::Parameter(parameter) = &self.objects[driver - 1].kind else {
+                    return Err("Parameter locus has no parameter driver".into());
+                };
+                let tag = parameter.locus_unit_tag().ok_or("Unsupported parameter locus units")?;
+                range[32..36].copy_from_slice(&tag.to_le_bytes());
                 put_record(&mut added, 0x0902, &range);
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
@@ -1441,6 +1447,8 @@ impl Document {
                 Kind::ScaledPoint(source, center, _)
                 | Kind::ScaledCircle(source, center, _)
                 | Kind::ScaledSegment(source, center, _)
+                | Kind::ScaledRay(source, center, _)
+                | Kind::ScaledLine(source, center, _)
                 | Kind::ScaledPolygon(source, center, _) => (30, vec![source, center]),
                 Kind::CalculatedRatioScaledPoint(source, center, ratio)
                 | Kind::CalculatedRatioScaledSegment(source, center, ratio)
@@ -1456,6 +1464,8 @@ impl Document {
                 }
                 Kind::RotatedPoint(source, center, _)
                 | Kind::RotatedSegment(source, center, _)
+                | Kind::RotatedRay(source, center, _)
+                | Kind::RotatedLine(source, center, _)
                 | Kind::RotatedCircle(source, center, _)
                 | Kind::RotatedPolygon(source, center, _) => (27, vec![source, center]),
                 Kind::AngleRotatedPoint(source, center, first, vertex, last)
@@ -1506,6 +1516,11 @@ impl Document {
                         .ok_or("Polygon has too many vertices")?
                         .to_le_bytes(),
                 );
+            }
+            if matches!(o.kind, Kind::RotatedRay(..) | Kind::RotatedLine(..) | Kind::ScaledRay(..) | Kind::ScaledLine(..)) {
+                h = header(if matches!(o.kind, Kind::RotatedRay(..) | Kind::ScaledRay(..)) { 64 } else { 63 });
+                h[0] = code as u8;
+                h[18..20].copy_from_slice(&[0x51, 0x5c]);
             }
             if matches!(
                 o.kind,
@@ -1615,7 +1630,7 @@ impl Document {
                 | Kind::ScaledPolygon(source, _, _)
                 | Kind::RatioScaledPolygon(source, _, _, _, _) = o.kind
                 {
-                    let vertex_count = polygon_vertex_count(&self.objects, source)
+                    let vertex_count = polygon_vertex_count_for_encoding(&self.objects, source)
                         .ok_or("Interior transform requires a supported polygon source")?;
                     h[8..10].copy_from_slice(
                         &polygon_subtype(vertex_count)
@@ -1650,7 +1665,7 @@ impl Document {
                     .ok_or("Missing polygon drawing order")?.to_le_bytes());
             }
             put_record(&mut added, 0x7d0, &h);
-            if let Some(label) = &o.label {
+            if !matches!(o.kind, Kind::PointOnPolygon(..)) && let Some(label) = &o.label {
                 added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
             }
             if let Kind::Free(p) = o.kind {
@@ -1687,21 +1702,19 @@ impl Document {
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::PointOnPolygon(host, edge, t) => {
-                        let Some(Kind::Polygon(vertices)) = self
-                            .objects
-                            .get(host.saturating_sub(1))
-                            .map(|object| &object.kind)
-                        else {
-                            return Err("Missing polygon boundary host".into());
-                        };
+                        let count = polygon_vertex_count_for_encoding(&self.objects, host)
+                            .ok_or("Missing polygon boundary host")?;
                         let subtype =
-                            polygon_subtype(vertices.len()).ok_or("Too many polygon vertices")?;
+                            polygon_subtype(count).ok_or("Too many polygon vertices")?;
                         let mut payload = 15u16.to_le_bytes().to_vec();
                         payload.extend_from_slice(&subtype.to_le_bytes());
                         payload.extend_from_slice(&t.to_le_bytes());
                         payload.extend_from_slice(&(edge as u32).to_le_bytes());
                         payload.extend_from_slice(&[255, 255, 0, 0]);
                         put_record(&mut added, 0x7d3, &payload);
+                        if let Some(label) = &o.label {
+                            added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                        }
                     }
                     Kind::PointOnCircle(_, x, y) => {
                         let mut payload = vec![15, 0, 28, 0];
@@ -1794,6 +1807,8 @@ impl Document {
                     Kind::ScaledPoint(_, _, factor)
                     | Kind::ScaledCircle(_, _, factor)
                     | Kind::ScaledSegment(_, _, factor)
+                    | Kind::ScaledRay(_, _, factor)
+                    | Kind::ScaledLine(_, _, factor)
                     | Kind::ScaledPolygon(_, _, factor) => {
                         let mut payload = vec![30, 0, 0, 0];
                         payload.extend_from_slice(&factor.to_le_bytes());
@@ -1801,6 +1816,8 @@ impl Document {
                     }
                     Kind::RotatedPoint(_, _, angle)
                     | Kind::RotatedSegment(_, _, angle)
+                    | Kind::RotatedRay(_, _, angle)
+                    | Kind::RotatedLine(_, _, angle)
                     | Kind::RotatedCircle(_, _, angle)
                     | Kind::RotatedPolygon(_, _, angle) => {
                         let mut payload = *include_bytes!("../../assets/rotation_payload.bin");

@@ -2055,6 +2055,80 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_polygon_fill_color_edit_and_modern_clipboard_keep_native_opacity() {
+        let original = include_bytes!("../tests/fixtures/legacy_polygon_rank_original.gsp");
+        let blue = include_bytes!("../tests/fixtures/legacy_polygon_blue_native_verified.gsp");
+        let mut doc = Document::from_bytes(original, None).unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(500., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 150. },
+        };
+        let alpha = f64::from(49151) / 65535.;
+        assert!(
+            svg_page(&doc, &vp)
+                .unwrap()
+                .contains(&format!("fill=\"#ff0000\" fill-opacity=\"{alpha}\""))
+        );
+        doc.selected.insert(5);
+        let color = RgbColor {
+            red: 0,
+            green: 128,
+            blue: 255,
+        };
+        assert_eq!(doc.set_selected_color(color).unwrap(), 1);
+        assert_eq!(doc.encode().unwrap(), blue);
+        assert_eq!(doc.objects[4].interior_order, None);
+        let header = doc.objects[4].header_offset.unwrap();
+        assert_eq!(
+            crate::document::records(blue)
+                .unwrap()
+                .into_iter()
+                .find(|r| r.data.start == header)
+                .unwrap()
+                .data
+                .len(),
+            16
+        );
+        assert!(
+            svg_page(&doc, &vp)
+                .unwrap()
+                .contains(&format!("fill=\"#0080ff\" fill-opacity=\"{alpha}\""))
+        );
+        doc.undo();
+        assert_eq!(doc.encode().unwrap(), original);
+        doc.redo();
+        assert_eq!(doc.encode().unwrap(), blue);
+        let clip = doc.copy_selected().unwrap();
+        let mut modern = Document::new();
+        let pasted = modern.paste(&clip).unwrap();
+        let polygon = pasted
+            .into_iter()
+            .find(|id| modern.objects[id - 1].kind.is_polygon())
+            .unwrap();
+        assert_eq!(
+            modern.objects[polygon - 1].visual_style,
+            Some(VisualStyle::Polygon {
+                color,
+                opacity: 49151
+            })
+        );
+        assert_eq!(modern.objects[polygon - 1].interior_order, Some(0));
+        modern.verify_roundtrip().unwrap();
+        let saved = modern.encode().unwrap();
+        if std::env::var_os("SKETCHPAD_WRITE_LEGACY_STYLE_FIXTURE").is_some() {
+            std::fs::write("/tmp/legacy_polygon_modern_copy_writer.gsp", &saved).unwrap();
+        }
+        assert_eq!(saved, include_bytes!("../tests/fixtures/legacy_polygon_modern_copy_native_verified.gsp"));
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert!(
+            svg_page(&reopened, &vp)
+                .unwrap()
+                .contains(&format!("fill=\"#0080ff\" fill-opacity=\"{alpha}\""))
+        );
+    }
+
+    #[test]
     fn polygon_fills_follow_signed_native_rank_and_keep_other_draw_slots() {
         let mut doc = Document::new();
         for p in [Point { x: 100., y: 100. }, Point { x: 300., y: 100. }, Point { x: 200., y: 300. }] {

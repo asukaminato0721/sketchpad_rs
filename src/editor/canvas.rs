@@ -150,13 +150,13 @@ impl Editor {
                                 .unwrap_or("x")
                                 .into();
                         }
-                        Kind::FunctionPlot(_, _, min, max, samples)
-                        | Kind::ParametricPlot(_, _, _, min, max, samples, _)
-                        | Kind::ParameterLocus(_, min, max, samples) => {
-                            self.plot_range_dialog = Some(id);
-                            self.plot_min_draft = min.to_string();
-                            self.plot_max_draft = max.to_string();
-                            self.plot_samples_draft = samples.to_string();
+                        Kind::FunctionPlot(..) | Kind::ParametricPlot(..) | Kind::ParameterLocus(..) => {
+                            if let Some((min, max, samples)) = self.doc.plot_range(id) {
+                                self.plot_range_dialog = Some(id);
+                                self.plot_min_draft = min.to_string();
+                                self.plot_max_draft = max.to_string();
+                                self.plot_samples_draft = samples.to_string();
+                            }
                         }
                         _ => {}
                     }

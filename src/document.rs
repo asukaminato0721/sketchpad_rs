@@ -15,6 +15,7 @@ mod history;
 mod images;
 mod iteration;
 mod kind;
+mod legacy;
 mod locus;
 mod measurements;
 mod pages;
@@ -162,6 +163,8 @@ pub enum Kind {
     PathValuePoint(usize, usize),
     PlottedPoint(usize, usize, PlotPointsMode, [f64; 2]),
     NumericCoordinatePoint(usize, usize, usize),
+    // Parameter ranges retain native units (radians for angles). Public range
+    // access and editing use the driver's displayed numeric units.
     ParameterLocus(Vec<usize>, f64, f64, u32),
     SegmentLength(usize),
     PolygonPerimeter(usize),
@@ -232,6 +235,8 @@ pub enum Kind {
     ScaledPoint(usize, usize, f64),
     ScaledCircle(usize, usize, f64),
     ScaledSegment(usize, usize, f64),
+    ScaledRay(usize, usize, f64),
+    ScaledLine(usize, usize, f64),
     ScaledPolygon(usize, usize, f64),
     RotatedPoint(usize, usize, f64),
     CalculatedRatioScaledPoint(usize, usize, usize),
@@ -243,6 +248,8 @@ pub enum Kind {
     CalculatedAngleRotatedCircle(usize, usize, usize),
     CalculatedAngleRotatedPolygon(usize, usize, usize),
     RotatedSegment(usize, usize, f64),
+    RotatedRay(usize, usize, f64),
+    RotatedLine(usize, usize, f64),
     RotatedCircle(usize, usize, f64),
     RotatedPolygon(usize, usize, f64),
     Midpoint(usize, usize),

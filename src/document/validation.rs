@@ -4,7 +4,7 @@ use super::iteration::{
     supported_point_parameter_iteration,
 };
 use super::kind::{
-    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, plot_path_accepts, value_plot_path_accepts, polygon_vertex_count, straight_kind_mode,
+    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_segment_kind, is_straight_kind, literal_plot_path_accepts, value_plot_path_accepts, polygon_vertex_count, straight_kind_mode,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -364,7 +364,8 @@ impl Document {
                 || matches!(o.kind, Kind::MarkedDistanceTranslatedSegment(_, _, angle) | Kind::MarkedDistanceTranslatedCircle(_, _, angle) | Kind::MarkedDistanceTranslatedPolygon(_, _, angle) if !angle.is_finite())
                 || matches!(o.kind, Kind::MixedRectangularTranslatedPoint(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedSegment(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedCircle(_, _, fixed_cm, _) | Kind::MixedRectangularTranslatedPolygon(_, _, fixed_cm, _) if !fixed_cm.is_finite())
                 || matches!(o.kind, Kind::ScaledPoint(_, _, factor) | Kind::ScaledCircle(_, _, factor) | Kind::ScaledSegment(_, _, factor) | Kind::ScaledPolygon(_, _, factor) if !factor.is_finite() || factor == 0.)
-                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedCircle(_, _, angle) | Kind::RotatedPolygon(_, _, angle) if !angle.is_finite())
+                || matches!(o.kind, Kind::ScaledRay(_, _, factor) | Kind::ScaledLine(_, _, factor) if !factor.is_finite())
+                || matches!(o.kind, Kind::RotatedPoint(_, _, angle) | Kind::RotatedSegment(_, _, angle) | Kind::RotatedRay(_, _, angle) | Kind::RotatedLine(_, _, angle) | Kind::RotatedCircle(_, _, angle) | Kind::RotatedPolygon(_, _, angle) if !angle.is_finite())
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -641,7 +642,7 @@ impl Document {
                 if !self
                     .objects
                     .get(path.saturating_sub(1))
-                    .is_some_and(|host| plot_path_accepts(&host.kind, value))
+                    .is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && literal_plot_path_accepts(&host.kind, value))
                     || self.position(o.id).is_none()
                 {
                     return Err(format!("Invalid literal path point {}", o.id));
@@ -793,7 +794,8 @@ impl Document {
                 return Err(format!("Invalid points in angle measurement {}", o.id));
             }
             if let Kind::PointOnPolygon(host, edge, _) = o.kind {
-                if !matches!(self.objects.get(host.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Polygon(vertices)) if edge < vertices.len()) {
+                if !self.objects.get(host.saturating_sub(1)).is_some_and(|object| !object.deleted && object.page == o.page && host < o.id)
+                    || !polygon_vertex_count(&self.objects, host).is_some_and(|count| edge < count) {
                     return Err(format!("Invalid polygon boundary constraint {}", o.id));
                 }
             }
@@ -1026,7 +1028,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::ReflectedSegment(source, mirror)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|o| is_segment_kind(&o.kind))
                     || self.line_points(mirror).is_none() || self.line_points(o.id).is_none())
             {
                 return Err(format!("Invalid segment or mirror in reflection {}", o.id));
@@ -1096,7 +1098,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::RotatedSegment(source, center, _)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Segment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| is_segment_kind(&object.kind))
                     || self.line_points(o.id).is_none()
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none()))
             {
@@ -1104,11 +1106,39 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::RotatedCircle(source, center, _)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|object| &object.kind), Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|object| object.kind.is_circle())
                     || self.circle_points(o.id).is_none()
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none()))
             {
                 return Err(format!("Invalid circle or center in rotation {}", o.id));
+            }
+            if i >= self.source_count
+                && let Kind::ScaledRay(source, center, factor) | Kind::ScaledLine(source, center, factor) = o.kind
+            {
+                let expected = if matches!(o.kind, Kind::ScaledRay(..)) { LineMode::Ray } else { LineMode::Line };
+                let source_matches = self.objects.get(source.saturating_sub(1)).is_some_and(|object|
+                    !object.deleted && matches!((&o.kind, &object.kind),
+                        (Kind::ScaledRay(..), Kind::Ray(..)) | (Kind::ScaledLine(..), Kind::Line(..))));
+                if !source_matches
+                    || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
+                    || (factor != 0. && self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected))
+                {
+                    return Err(format!("Invalid ray or line source/center in dilation {}", o.id));
+                }
+            }
+            if i >= self.source_count
+                && let Kind::RotatedRay(source, center, _) | Kind::RotatedLine(source, center, _) = o.kind
+            {
+                let expected = if matches!(o.kind, Kind::RotatedRay(..)) { LineMode::Ray } else { LineMode::Line };
+                let source_matches = self.objects.get(source.saturating_sub(1)).is_some_and(|object|
+                    !object.deleted && matches!((&o.kind, &object.kind),
+                        (Kind::RotatedRay(..), Kind::Ray(..)) | (Kind::RotatedLine(..), Kind::Line(..))));
+                if !source_matches
+                    || self.objects.get(center.saturating_sub(1)).is_none_or(|object| object.deleted || !is_point_kind(&object.kind) || self.position(center).is_none())
+                    || self.line_points(o.id).is_none_or(|(_, _, mode)| mode != expected)
+                {
+                    return Err(format!("Invalid ray or line source/center in rotation {}", o.id));
+                }
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::AngleRotatedPoint(source, center, first, vertex, last)
@@ -1162,7 +1192,7 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind, Kind::ScaledSegment(source, center, _)
-                    if !matches!(self.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(Kind::Segment(_, _)))
+                    if !self.objects.get(source.saturating_sub(1)).is_some_and(|o| is_segment_kind(&o.kind))
                     || self.objects.get(center.saturating_sub(1)).is_none_or(|o| o.deleted || !is_point_kind(&o.kind) || self.position(center).is_none())
                     || self.line_points(o.id).is_none())
             {

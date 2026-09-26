@@ -15,10 +15,12 @@ flock 9
 
 xvfb-run -a bash -c '
   set -euo pipefail
+  # Only the outer probe owns the queue lock; Wine services must not inherit it.
+  exec 9>&-
   export WINEPREFIX=/tmp/sketchpad_rs_wine
   wine "$1" "$2" > "${4}_runtime.log" 2>&1 &
   wine_pid=$!
-  trap '\''kill "$wine_pid" 2>/dev/null || true'\'' EXIT
+  trap '\''kill "$wine_pid" 2>/dev/null || true; wineserver -k 2>/dev/null || true; wineserver -w 2>/dev/null || true'\'' EXIT
   sleep 6
   window_id="$(xdotool search --onlyvisible --name "Sketchpad|几何" | tail -1)"
   test -n "$window_id"

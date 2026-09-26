@@ -1,7 +1,8 @@
 //! Point-style field in a Sketchpad 5 object header (`0x07d0`).
 //!
 //! Changing the style of a selected free point in the original application
-//! changes payload byte 11. The same field occurs in 16- and 28-byte headers.
+//! changes payload byte 11 in modern headers. The observed legacy 16-byte
+//! free-point layout has implicit Small size and no editable size field.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -43,13 +44,30 @@ fn is_point_header(payload: &[u8]) -> bool {
     )
 }
 
+fn is_legacy_free_point_header(payload: &[u8]) -> bool {
+    payload.len() == 16
+        && payload[..2] == [0, 0]
+        && payload[6..10] == [1, 0, 4, 0]
+        && payload[10..12] == [1, 0]
+}
+
 pub fn point_style(payload: &[u8]) -> Option<PointStyle> {
+    if is_legacy_free_point_header(payload) {
+        return Some(PointStyle::Small);
+    }
     is_point_header(payload).then(|| PointStyle::from_byte(payload[11]))?
 }
 
 pub fn set_point_style(payload: &mut [u8], style: PointStyle) -> Result<(), String> {
     if !is_point_header(payload) {
         return Err("Expected a point object header".into());
+    }
+    if is_legacy_free_point_header(payload) {
+        return if style == PointStyle::Small {
+            Ok(())
+        } else {
+            Err("Legacy free-point headers do not store point size".into())
+        };
     }
     payload[11] = style as u8;
     Ok(())
@@ -155,6 +173,18 @@ pub fn set_polygon_color(payload: &mut [u8], color: RgbColor) -> Result<(), Stri
     Ok(())
 }
 
+// Native GSP4 class-4 polygons have no opacity field. Sketchpad renders their
+// implicit 75% fill and writes 0xbfff when a native clipboard operation upgrades
+// the short header to the 28-byte layout.
+const LEGACY_POLYGON_OPACITY: u16 = 0xbfff;
+
+fn is_legacy_polygon_header(payload: &[u8]) -> bool {
+    payload.len() == 16
+        && payload[..2] == [8, 0]
+        && payload[6..8] == [4, 0]
+        && u16::from_le_bytes([payload[8], payload[9]]) >= 52
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum LineWidth {
@@ -194,18 +224,60 @@ fn is_segment_header(payload: &[u8]) -> bool {
         )
 }
 
+// Native GSP4 stroke headers use a small pen-style enum, rather than the
+// modern packed width/pattern byte. Restrict this to independently proved
+// primitive families and enum values; keep other short layouts unchanged.
+fn is_legacy_stroke_header(payload: &[u8]) -> bool {
+    payload.len() == 16
+        && payload[11] == 0
+        && payload[10] <= 2
+        && matches!(
+            (u16::from_le_bytes([payload[0], payload[1]]),
+             u16::from_le_bytes([payload[6], payload[7]]),
+             u16::from_le_bytes([payload[8], payload[9]])),
+            (2, 2, 14) | (3, 3, 28) | (64, 2, 13) | (5, 2, 47)
+        )
+}
+
+fn stroke_header_style(payload: &[u8]) -> Option<SegmentLineStyle> {
+    if is_legacy_stroke_header(payload) {
+        return Some(match payload[10] {
+            0 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dashed },
+            1 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
+            2 => SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid },
+            _ => unreachable!(),
+        });
+    }
+    decode_line_style(payload[10])
+}
+
+fn set_stroke_header_style(payload: &mut [u8], style: SegmentLineStyle) -> Result<(), String> {
+    if is_legacy_stroke_header(payload) {
+        let value = match (style.width, style.pattern) {
+            (LineWidth::Thin, LinePattern::Dashed) => 0,
+            (LineWidth::Thin, LinePattern::Solid) => 1,
+            (LineWidth::Medium, LinePattern::Solid) => 2,
+            _ => return Err("That stroke style requires a modern object header".into()),
+        };
+        payload[10] = value;
+    } else {
+        payload[10] = (style.pattern as u8) << 4 | style.width as u8;
+    }
+    Ok(())
+}
+
 pub fn segment_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {
     if !is_segment_header(payload) {
         return None;
     }
-    decode_line_style(payload[10])
+    stroke_header_style(payload)
 }
 
 pub fn circle_line_style(payload: &[u8]) -> Option<CircleLineStyle> {
     if !is_circle_header(payload) {
         return None;
     }
-    decode_line_style(payload[10])
+    stroke_header_style(payload)
 }
 
 fn is_straight_or_arc_header(payload: &[u8]) -> bool {
@@ -214,6 +286,8 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 81)
+        || (payload.len() == 28 && matches!(code, 27 | 30) && payload[6..8] == [2, 0]
+            && matches!(u16::from_le_bytes([payload[8], payload[9]]), 12 | 13))
         || (payload[6..8] == [6, 0]
             && matches!(
                 (code, u16::from_le_bytes([payload[8], payload[9]])),
@@ -222,7 +296,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
 }
 
 pub fn straight_or_arc_line_style(payload: &[u8]) -> Option<SegmentLineStyle> {
-    is_straight_or_arc_header(payload).then(|| decode_line_style(payload[10]))?
+    is_straight_or_arc_header(payload).then(|| stroke_header_style(payload))?
 }
 
 fn decode_line_style(value: u8) -> Option<SegmentLineStyle> {
@@ -246,16 +320,14 @@ pub fn set_segment_line_style(payload: &mut [u8], style: SegmentLineStyle) -> Re
     if !is_segment_header(payload) {
         return Err("Expected a segment object header".into());
     }
-    payload[10] = (style.pattern as u8) << 4 | style.width as u8;
-    Ok(())
+    set_stroke_header_style(payload, style)
 }
 
 pub fn set_circle_line_style(payload: &mut [u8], style: CircleLineStyle) -> Result<(), String> {
     if !is_circle_header(payload) {
         return Err("Expected a circle object header".into());
     }
-    payload[10] = (style.pattern as u8) << 4 | style.width as u8;
-    Ok(())
+    set_stroke_header_style(payload, style)
 }
 
 pub fn set_straight_or_arc_line_style(
@@ -265,8 +337,7 @@ pub fn set_straight_or_arc_line_style(
     if !is_straight_or_arc_header(payload) {
         return Err("Expected a line, ray, arc, or point-curve object header".into());
     }
-    payload[10] = (style.pattern as u8) << 4 | style.width as u8;
-    Ok(())
+    set_stroke_header_style(payload, style)
 }
 
 pub fn straight_or_arc_color(payload: &[u8]) -> Option<RgbColor> {
@@ -318,6 +389,8 @@ pub fn visual_style(payload: &[u8]) -> Option<VisualStyle> {
         color,
         opacity: if payload.len() >= 18 {
             u16::from_le_bytes([payload[16], payload[17]])
+        } else if is_legacy_polygon_header(payload) {
+            LEGACY_POLYGON_OPACITY
         } else {
             32767
         },
@@ -343,6 +416,9 @@ pub fn set_visual_style(payload: &mut [u8], style: VisualStyle) -> Result<(), St
             set_straight_or_arc_color(payload, color)
         }
         VisualStyle::Polygon { color, opacity } if polygon_color(payload).is_some() => {
+            if is_legacy_polygon_header(payload) && opacity != LEGACY_POLYGON_OPACITY {
+                return Err("Legacy polygon headers cannot store a different opacity".into());
+            }
             set_polygon_color(payload, color)?;
             if payload.len() >= 18 {
                 payload[16..18].copy_from_slice(&opacity.to_le_bytes());
@@ -689,6 +765,63 @@ mod tests {
         assert_eq!(circle_color(&edited), circle_color(blue));
         edited[12..15].copy_from_slice(&green[12..15]);
         assert_eq!(edited, green);
+    }
+
+    #[test]
+    fn legacy_polygon_rgb_and_implicit_opacity_match_native_copy_conversion() {
+        let header = |bytes: &[u8]| {
+            crate::document::records(bytes)
+                .unwrap()
+                .into_iter()
+                .filter(|r| r.kind == 0x07d0)
+                .nth(4)
+                .map(|r| bytes[r.data].to_vec())
+                .unwrap()
+        };
+        let original = header(include_bytes!(
+            "../tests/fixtures/legacy_polygon_rank_original.gsp"
+        ));
+        let blue = header(include_bytes!(
+            "../tests/fixtures/legacy_polygon_blue_native_verified.gsp"
+        ));
+        let converted = header(include_bytes!(
+            "../tests/fixtures/legacy_polygon_copy_native_verified.gsp"
+        ));
+        let color = RgbColor {
+            red: 0,
+            green: 128,
+            blue: 255,
+        };
+        let style = VisualStyle::Polygon {
+            color,
+            opacity: 49151,
+        };
+        assert_eq!(original.len(), 16);
+        assert_eq!(
+            visual_style(&original),
+            Some(VisualStyle::Polygon {
+                color: RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0
+                },
+                opacity: 49151
+            })
+        );
+        assert_eq!(visual_style(&blue), Some(style));
+        assert_eq!(converted.len(), 28);
+        assert_eq!(&converted[16..18], &[0xff, 0xbf]);
+        assert_eq!(visual_style(&converted), Some(style));
+        let mut edited = original.clone();
+        set_visual_style(&mut edited, style).unwrap();
+        assert_eq!(edited, blue);
+        for opacity in [0, 32767, 65535] {
+            let mut rejected = original.clone();
+            assert!(
+                set_visual_style(&mut rejected, VisualStyle::Polygon { color, opacity }).is_err()
+            );
+            assert_eq!(rejected, original);
+        }
     }
 
     #[test]
@@ -1139,5 +1272,166 @@ mod tests {
             header[12..15].copy_from_slice(&original[12..15]);
             assert_eq!(header, original);
         }
+    }
+
+    #[test]
+    fn native_legacy_free_points_have_implicit_small_size_independent_of_opaque_byte() {
+        let source = include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_original.gsp");
+        let copied = include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_copied_native.gsp");
+        let old = records_headers(source);
+        let modern = records_headers(copied);
+        assert_eq!(old.len(), 5);
+        assert_eq!(modern.len(), 10);
+        for (index, opaque) in [0x00, 0x20, 0x40, 0x60].into_iter().enumerate() {
+            let header = &old[index];
+            assert_eq!(header.len(), 16);
+            assert_eq!(&header[10..12], &[1, 0]);
+            assert_eq!(header[15], opaque);
+            assert_eq!(point_style(header), Some(PointStyle::Small));
+            for id in [index, index + 5] {
+                assert_eq!(modern[id].len(), 28);
+                assert_eq!(modern[id][11], 1);
+                assert_eq!(point_style(&modern[id]), Some(PointStyle::Small));
+                assert_eq!(modern[id][15], 0);
+                assert_eq!(point_color(header), point_color(&modern[id]));
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_free_point_size_setter_preserves_fields_or_rejects_atomically() {
+        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_original.gsp"));
+        for original in headers.into_iter().take(4) {
+            let mut changed = original.clone();
+            set_point_style(&mut changed, PointStyle::Small).unwrap();
+            assert_eq!(changed, original);
+            for style in [PointStyle::Dot, PointStyle::Medium, PointStyle::Large] {
+                assert!(set_point_style(&mut changed, style).is_err());
+                assert_eq!(changed, original);
+            }
+            set_point_color(&mut changed, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
+            assert_eq!(point_style(&changed), Some(PointStyle::Small));
+            assert_eq!(changed[15], original[15]);
+            changed[12..15].copy_from_slice(&original[12..15]);
+            assert_eq!(changed, original);
+        }
+    }
+
+    #[test]
+    fn modern_short_free_point_headers_keep_the_explicit_style_byte() {
+        let native = first_point_header(include_bytes!("../tests/fixtures/point.gsp"));
+        for style in [PointStyle::Dot, PointStyle::Small, PointStyle::Medium, PointStyle::Large] {
+            let mut short = native[..16].to_vec();
+            assert_eq!(short[10], 0x21);
+            short[11] = style as u8;
+            assert_eq!(point_style(&short), Some(style));
+            let original = short.clone();
+            set_point_style(&mut short, PointStyle::Large).unwrap();
+            assert_eq!(point_style(&short), Some(PointStyle::Large));
+            short[11] = original[11];
+            assert_eq!(short, original);
+        }
+    }
+
+    #[test]
+    fn legacy_stroke_enums_match_native_converted_segment_circle_ray_and_line_styles() {
+        for (source, copied) in [
+            (include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_styles_copied_native.gsp").as_slice()),
+            (include_bytes!("../tests/fixtures/legacy_stroke_dashed_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_dashed_copied_native.gsp").as_slice()),
+            (include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_copied_native.gsp").as_slice()),
+        ] {
+            let old = records_headers(source);
+            let modern = records_headers(copied);
+            assert_eq!(old.len(), 10);
+            assert_eq!(modern.len(), 20);
+            for index in 4..10 {
+                assert_eq!(old[index].len(), 16);
+                let expected = match old[index][10] {
+                    0 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dashed },
+                    1 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
+                    2 => SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid },
+                    value => panic!("Unexpected native pen enum {value}"),
+                };
+                let style = visual_style(&old[index]).unwrap();
+                assert!(matches!(style, VisualStyle::Stroke { line, .. } if line == expected));
+                for copied_index in [index, index + 10] {
+                    assert_eq!(modern[copied_index].len(), 28);
+                    assert_eq!(visual_style(&modern[copied_index]), Some(style));
+                    assert_eq!(&modern[copied_index][12..15], &old[index][12..15]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_stroke_setters_preserve_opaque_fields_and_reject_unrepresented_styles_atomically() {
+        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp"));
+        for original in headers.into_iter().skip(4) {
+            let VisualStyle::Stroke { color, .. } = visual_style(&original).unwrap() else { panic!("Expected stroke"); };
+            for (word, width, pattern) in [
+                (0, LineWidth::Thin, LinePattern::Dashed),
+                (1, LineWidth::Thin, LinePattern::Solid),
+                (2, LineWidth::Medium, LinePattern::Solid),
+            ] {
+                let mut changed = original.clone();
+                let style = VisualStyle::Stroke { color, line: SegmentLineStyle { width, pattern } };
+                set_visual_style(&mut changed, style).unwrap();
+                assert_eq!(changed[10], word);
+                assert_eq!(visual_style(&changed), Some(style));
+                changed[10] = original[10];
+                assert_eq!(changed, original);
+            }
+            for line in [
+                SegmentLineStyle { width: LineWidth::Hairline, pattern: LinePattern::Solid },
+                SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid },
+                SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dotted },
+                SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Dashed },
+            ] {
+                let mut changed = original.clone();
+                assert!(set_visual_style(&mut changed, VisualStyle::Stroke { color, line }).is_err());
+                assert_eq!(changed, original);
+            }
+        }
+    }
+
+    #[test]
+    fn modern_short_stroke_headers_keep_packed_pattern_and_width_semantics() {
+        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_stroke_styles_copied_native.gsp"));
+        for modern in headers.into_iter().skip(4).take(6) {
+            let mut short = modern[..16].to_vec();
+            assert_eq!(short[11], 1);
+            let VisualStyle::Stroke { color, .. } = visual_style(&short).unwrap() else { panic!("Expected stroke"); };
+            for line in [
+                SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dotted },
+                SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Dashed },
+                SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid },
+            ] {
+                let style = VisualStyle::Stroke { color, line };
+                set_visual_style(&mut short, style).unwrap();
+                assert_eq!(short[10], (line.pattern as u8) << 4 | line.width as u8);
+                assert_eq!(visual_style(&short), Some(style));
+                assert_eq!(short[11], 1);
+            }
+        }
+    }
+
+    #[test]
+    fn fitting_legacy_stroke_api_edits_match_native_saved_short_headers() {
+        let source = include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp");
+        let native = include_bytes!("../tests/fixtures/legacy_stroke_styles_edited_native_verified.gsp");
+        let mut document = crate::document::Document::from_bytes(source, None).unwrap();
+        for (id, width) in [(5, LineWidth::Thin), (7, LineWidth::Thin), (10, LineWidth::Medium)] {
+            document.selected = [id].into_iter().collect();
+            assert_eq!(document.set_selected_line_width(width).unwrap(), 1);
+        }
+        for id in [6, 8, 9] {
+            document.selected = [id].into_iter().collect();
+            assert_eq!(document.set_selected_line_pattern(LinePattern::Dashed).unwrap(), 1);
+        }
+        assert_eq!(document.encode().unwrap(), native);
+        let headers = records_headers(native);
+        assert!(headers.iter().all(|header| header.len() == 16));
+        assert_eq!(headers[4..].iter().map(|header| header[10]).collect::<Vec<_>>(), [1, 0, 1, 0, 0, 2]);
+        document.verify_roundtrip().unwrap();
     }
 }

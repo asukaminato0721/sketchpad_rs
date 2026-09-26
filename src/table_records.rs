@@ -237,6 +237,76 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
         .ok_or_else(|| "Invalid parameter value".into())
 }
 
+struct ParameterLiteral {
+    value: f64,
+    suffix: Option<u16>,
+    scientific: bool,
+}
+
+fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLiteral, String> {
+    if unit == NumericUnit::Scalar {
+        return Ok(ParameterLiteral {
+            value: value_from_words(words)?,
+            suffix: None,
+            scientific: false,
+        });
+    }
+    let at = words.iter().position(|word| matches!(word, 0x0100..=0x0102 | 0x0201))
+        .ok_or("Parameter value units disagree with its header")?;
+    let suffix = words[at];
+    if !matches!((unit, suffix), (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)) {
+        return Err("Parameter value units disagree with its header".into());
+    }
+    // Actual native parameter words [13, 0x0100] encode pi radians,
+    // displayed as 180 degrees. Other constant/unit combinations and
+    // expressions have not been established as parameter literals.
+    let mut value = if suffix == 0x0100 && words[..at] == [13] {
+        CALCULATOR_PI
+    } else {
+        value_from_words(&words[..at])?
+    };
+    let scientific = match &words[at + 1..] {
+        [] => false,
+        // The three observed native typed scientific literals put the unit
+        // before multiplication by 10^-5. This is a number representation,
+        // not a general calculation or an inferred cache value.
+        [0x1002, 1, 0, 0x1004, 0x1001, 5] if matches!(suffix, 0x0101 | 0x0201) => true,
+        _ => return Err("Unsupported parameter scientific literal".into()),
+    };
+    if scientific {
+        value = format!("{value}e-5").parse().map_err(|_| "Invalid scientific parameter value")?;
+    }
+    Ok(ParameterLiteral {
+        value,
+        suffix: Some(suffix),
+        scientific,
+    })
+}
+
+fn shift_decimal_words(words: &[u16], places: usize) -> Vec<u16> {
+    let negative = words.first() == Some(&4097);
+    let words = &words[usize::from(negative)..];
+    let decimal = words.iter().position(|word| *word == 10).unwrap_or(words.len());
+    let mut digits = words.iter().copied().filter(|word| *word != 10).collect::<Vec<_>>();
+    let split = decimal + places;
+    digits.resize(digits.len().max(split), 0);
+    let mut whole = digits[..split].to_vec();
+    while whole.len() > 1 && whole[0] == 0 {
+        whole.remove(0);
+    }
+    let mut fraction = digits[split..].to_vec();
+    while fraction.last() == Some(&0) {
+        fraction.pop();
+    }
+    let mut result = if negative { vec![4097] } else { Vec::new() };
+    result.extend(whole);
+    if !fraction.is_empty() {
+        result.push(10);
+        result.extend(fraction);
+    }
+    result
+}
+
 impl ParameterGroup {
     pub fn default_value() -> Self {
         Self {
@@ -324,16 +394,7 @@ impl ParameterGroup {
             Some([81, 0]) => NumericUnit::Degrees,
             _ => return Err("Unsupported parameter units".into()),
         };
-        let value_words = match unit {
-            NumericUnit::Length if words.last() == Some(&0x0201) => &words[..words.len() - 1],
-            // Native angle parameters retain their input suffix separately from
-            // their displayed unit. 0100 stores radians; 0101 and 0102 display
-            // decimal degrees. The animation domain always stores radians.
-            NumericUnit::Degrees if matches!(words.last(), Some(0x0100 | 0x0101 | 0x0102)) => &words[..words.len() - 1],
-            NumericUnit::Scalar => words.as_slice(),
-            _ => return Err("Parameter value units disagree with its header".into()),
-        };
-        value_from_words(value_words)?;
+        parameter_literal(&words, unit)?;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
         let domain = (
@@ -404,36 +465,38 @@ impl ParameterGroup {
             _ => NumericUnit::Scalar,
         }
     }
-    fn native_unit_scale(&self) -> f64 {
+    pub(crate) fn native_unit_scale(&self) -> f64 {
         match self.unit() {
             NumericUnit::Length => 37.79527559055118,
             NumericUnit::Degrees => CALCULATOR_PI / 180.,
             _ => 1.,
         }
     }
-    fn value_suffix(&self) -> Option<u16> {
-        if self.unit() == NumericUnit::Scalar {
-            return None;
+    /// The native parameter-curve descriptor identifies its driver value type.
+    /// Angle ranges are radians; scalar ranges are plain numbers. Length curves
+    /// remain unsupported until their descriptor is established natively.
+    pub(crate) fn locus_unit_tag(&self) -> Option<u32> {
+        match self.unit() {
+            NumericUnit::Scalar => Some(1),
+            NumericUnit::Degrees => Some(0x0001_0000),
+            _ => None,
         }
+    }
+    fn literal(&self) -> ParameterLiteral {
         let rs = records(&self.bytes, 0).unwrap();
-        Some(u16::from_le_bytes(self.bytes[rs[1].end - 2..rs[1].end].try_into().unwrap()))
+        let words = self.bytes[rs[1].payload + 92..rs[1].end].chunks_exact(2)
+            .map(|word| u16::from_le_bytes(word.try_into().unwrap())).collect::<Vec<_>>();
+        parameter_literal(&words, self.unit()).unwrap()
     }
     pub fn value(&self) -> f64 {
         if let Some(value) = self.evaluation_value {
             return f64::from_le_bytes(value);
         }
-        let rs = records(&self.bytes, 0).unwrap();
-        let payload = &self.bytes[rs[1].payload..rs[1].end];
-        let words = payload[92..]
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
-            .collect::<Vec<_>>();
-        let count = words.len() - usize::from(self.unit() != NumericUnit::Scalar);
-        let value = value_from_words(&words[..count]).unwrap();
-        if self.value_suffix() == Some(0x0100) {
-            value / self.native_unit_scale()
+        let literal = self.literal();
+        if literal.suffix == Some(0x0100) {
+            literal.value / self.native_unit_scale()
         } else {
-            value
+            literal.value
         }
     }
 
@@ -450,13 +513,21 @@ impl ParameterGroup {
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
+        if self.evaluation_value.is_none() && value == self.value() {
+            return Ok(());
+        }
+        let literal = self.literal();
         let mut words = decimal_words(value)?;
         let fractional_digits = words
             .iter()
             .position(|word| *word == 10)
             .map_or(0, |at| words.len() - at - 1);
         let precision = self.precision().max(fractional_digits.min(5));
-        if self.value_suffix() == Some(0x0100) {
+        if literal.scientific {
+            // Shift decimal digits rather than dividing floats: 0.000025 must
+            // retain the exact mantissa 2.5, not 2.4999999999999996.
+            words = shift_decimal_words(&words, 5);
+        } else if literal.suffix == Some(0x0100) {
             // Public parameter values and display precision are degrees. Only
             // the preserved literal encoding uses radians.
             words = decimal_words(value * self.native_unit_scale())?;
@@ -480,8 +551,11 @@ impl ParameterGroup {
         }
         match self.unit() {
             NumericUnit::Length => words.push(0x0201),
-            NumericUnit::Degrees => words.push(self.value_suffix().unwrap()),
+            NumericUnit::Degrees => words.push(literal.suffix.unwrap()),
             _ => {}
+        }
+        if literal.scientific {
+            words.extend_from_slice(&[0x1002, 1, 0, 0x1004, 0x1001, 5]);
         }
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
@@ -2309,6 +2383,9 @@ impl TableGroup {
         parameter: &ParameterGroup,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        if parameter.unit() != NumericUnit::Scalar {
+            return Err("This table supports scalar parameters".into());
+        }
         table_value_text(parameter.value())?;
         let value = format!("{:.*}", parameter.precision(), parameter.value());
         let bytes = canonical_named_table(source, parameter.name(), &[value], anchor)?;

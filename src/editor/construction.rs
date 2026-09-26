@@ -361,7 +361,7 @@ impl Editor {
             return;
         }
         let host = self.selection_order.iter().copied().find(|id| {
-            matches!(
+            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon()) || matches!(
                 self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                 Some(
                     Kind::Polygon(_)

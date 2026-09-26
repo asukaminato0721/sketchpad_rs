@@ -12,8 +12,9 @@ The numeric parser now validates the numeric representation, token count,
 precision, positive finite animation step, and finite ordered animation domain
 separately from header color/visibility, LabelAux contents, and font index.
 Imported custom animation steps survive value edits. Scalar parameters retain
-subtype 79. Unit-bearing native parameters (subtypes 80 length and 81 degrees)
-remain a separate prerequisite.
+subtype 79. Native subtype 80 length and subtype 81 angle parameters now
+retain their proven typed value, display, animation, and calculation semantics;
+the native probes and remaining unit-specific limits are documented below.
 
 `../gsp-rs/tests/fixtures/圆的形成.gsp` supplies parameter 5 (t[2]=5, precision 0)
 and named code-48 calculation 6 (reference 5, source token 0x6000, label t[1],
@@ -45,7 +46,8 @@ change that range. Sampling uses an internal floating-point value on a cloned
 parameter, preserving the actual driver precision instead of rewriting or
 rounding the stored decimal record. Undefined samples break the curve; adjacent
 valid samples alone are joined. Construct Locus also accepts a parameter with a
-dependent point; the default range is 0..1 with 500 samples.
+dependent point; scalar defaults remain 0..1 with 500 samples, while angle
+parameters use their saved animation domain in degrees.
 
 Tests prove full cood-trace import without partial-view restrictions, live
 parameter/calculation/Cartesian point updates, parameter trace endpoints and
@@ -138,14 +140,14 @@ units;79 unclosed function arguments;49 invalid reference counts. Function
 argument failures fell from825 to79. The standalone audit output is
 `/tmp/numeric_import_audit_updated.txt`.
 
-The raw sibling corpus contains313 native subtype80 Length parameters and123
-subtype81 degree parameters, alongside3,435 subtype79 scalar parameters.
+The raw sibling corpus contains 313 native subtype 80 Length parameters and
+123 subtype 81 angle parameters, alongside 3,435 subtype 79 scalar parameters.
 `fixtures/未实现的系统功能/parameter.gsp` opens/saves unchanged natively and
-displays t1=1.00°,t2=1.00cm,t3=1.00. Its numeric words are respectively
-[1,0x0101],[1,0x0201],[1]. Degree animation step/domain use native radians
-(step0.08726646259971667=5°,domain0..6.2831853071796); Length step/domain
-use native pixels (step0.3779527559055118=0.01cm,domain0..3779.5275590551178).
-The degree persisted cache is0.78539816339745 despite its displayed1.00° value:
+displays t1=1.00°, t2=1.00cm, t3=1.00. Its numeric words are respectively
+[1,0x0101], [1,0x0201], [1]. Degree animation step/domain use native radians
+(step 0.08726646259971667 = 5°, domain 0..6.2831853071796); Length step/domain
+use native pixels (step 0.3779527559055118 = 0.01cm, domain 0..3779.5275590551178).
+The degree persisted cache is 0.78539816339745 despite its displayed 1.00° value:
 cache fields must remain opaque and cannot supply current parameter values.
 Bounded typed support now separates value words, display units, animation
 conversion, header validation, and unit inference. Actual setters preserve the
@@ -154,18 +156,52 @@ result open/save byte-identically in native Sketchpad (3,476 and 4,526 bytes).
 Native numeric XY points use the displayed centimeter/degree magnitudes:
 t1=0.50° plots y=0.5, rather than the internally stored radian magnitude.
 Typed parameters are rejected from scalar-only path plotting, iteration depth,
-parameter traces, and current scalar table schemas. Their corresponding
+length parameter traces, and current scalar table schemas. Angle parameter
+traces have separate native unit descriptors and are supported below. The corresponding
 regressions cover live calculations, units, precision, domains, and copies.
-Separate native probes establish that suffix0x0100 stores radians while
-displaying degrees: inputwords[1,0x0100] gives57.30°,sin=.84,and
+
+Separate native probes establish that suffix 0x0100 stores radians while
+displaying degrees: input words [1,0x0100] give 57.30°, sin=.84, and
 t1×2=114.59°. The public value therefore converts radians to degrees, and
-setters apply the inverse conversion while preserving suffix0x0100.
-Suffix0x0102 is another decimal-degree input representation, not squared
-degrees: 4.5 displays4.50°,sin=.08,and its numeric XY point hasy4.5.
-Its setter retains0x0102. Both variants retain the actual native radian
-animation step/domain and opaque cached values. These meanings come from
-live native calculation/display probes, rather than from the suffix bits or
-persisted caches.
+setters apply the inverse conversion while preserving suffix 0x0100.
+Editing this parameter through the public API to 3.5 gives native captions
+3.50°, sin=.06, and t1×2=7.00°. Its dependent numeric XY point plots y=3.5.
+The edited file opens/saves byte-identically (3,508 bytes).
+Suffix 0x0102 is another decimal-degree input representation, not squared
+degrees: 4.5 displays 4.50°, sin=.08, sqrt=2.12, and its numeric XY point has
+y=4.5. The setter retains 0x0102; editing to 3.5 opens/saves byte-identically
+(3,480 bytes). Both variants retain the actual native radian animation
+step/domain and opaque cached values. These meanings come from live native
+calculation/display probes, rather than from suffix bits or persisted caches.
+
+The raw corpus also contains 82 code 97 curves driven by subtype 81 angles,
+with mode 0x30004 and range endpoints such as 2π and π/2 stored in radians.
+No subtype 80 Length driver occurs in that corpus sample. Four other curves
+use code 0 subtype 51 from `向忠作品/12T.gsp` object 6: this is a named √3
+expression with a different prefix and uninterpretable animation fields,
+rather than a decimal parameter or a newly inferred unit. It remains unsupported.
+Native angle curve descriptors use type tag 0x00010000 at offset 32, whereas
+scalar curves use tag 1. A source-compatible rotation target and raw range
+0..π/2 produce a visible quarter-circle with the angle tag; the scalar tag
+does not. The retained 17-object native fixture opens/saves byte-identically
+(3,828 bytes). Angle parameter curves now keep their exact native radian
+endpoints in Kind and descriptors, while plot_range, set_plot_range, construction,
+and the range editor expose degrees. Sampling converts the native endpoint
+values to the driver's public degree values without mutating its stored words.
+No-op range confirmation preserves the exact imported bytes; range edits
+preserve the descriptor's mode, cache bytes, angle tag, and zero tail.
+Native tags that disagree with driver units remain unsupported. Length curves
+retain their explicit unsupported guard until their actual native descriptor
+and sampling rules are established. The public API's edited range, new authored
+angle curve, and clipboard copy also open/save byte-identically as a 23-object
+native document (4,512 bytes). Native captures show the 270° edited curve,
+90° authored curve, and shifted copy. The retained fixture is
+`numeric_angle_parameter_locus_edited_copied_native_verified.gsp`.
+
+Some native captures initially show an unpainted MDI child after the file title
+changes. Cycling Ctrl+F6 twice repaints the loaded document; the positive edited
+curve capture is `/tmp/numeric_angle_curve_ctrl_f6_again.png`. An unchanged
+saved file alone was not used to establish curve geometry.
 
 The 3,313 remaining calculation record-layout failures are precisely native
 empty0x232e records immediately after the font and before the terminator
@@ -184,3 +220,84 @@ Headerflag2 therefore suppresses the observed mode1 caption independently
 of the attribute and font. This behavior is represented separately from
 visibility's flag1 bit, preserving the imported flag bytes. Other mode/flag
 combinations are not generalized from this probe.
+
+The five apparent subtype 80/81 values without a trailing unit suffix are not
+five additional plain typed decimals. Three store scientific expressions:
+`学做任意凸四边形的渐开线.gsp` object 15 and the Meishan exam object 60
+store 1cm×10^-5; `物理教学积件.gsp` object 6137 stores
+4.46583259°×10^-5. Their unit token precedes multiplication rather than
+ending the group. Bounded support now accepts precisely the observed typed
+literal followed by ×10^-5, with centimeter 0x0201 or degree 0x0101 units.
+Other exponents, operators, unit/header conflicts, and radian/alternate-degree
+scientific variants remain unsupported rather than guessed.
+
+Native probes precede this parser support. The Length value multiplied by
+100000 gives 1.00cm and a numeric XY point at x=1; the degree value gives 4.47°
+and a numeric XY point at y=4.46583259. Their ordinary two-decimal captions
+round the tiny original values to 0.00cm and 0.00°. Setters preserve the unit,
+multiplication, power, negative exponent, and opaque caches; public values stay
+centimeters/degrees. Decimal digit shifting encodes public 0.000025 as mantissa
+2.5 rather than introducing a float-division artifact. Changed value precision
+and standard animation steps follow the established setter policy, while
+custom steps and domains remain untouched. Unchanged-value edits preserve the
+original literal bytes; values that cannot fit the retained layout fail atomically.
+
+Editing the Length/degree mantissas to 2.5/5.5 gives native five-decimal captions
+0.00003cm/0.00006°, derived values 2.50cm/5.50°, and plotted x=2.5/y=5.5.
+The API-generated 24-object clipboard documents open/save byte-identically
+(4,810 and 4,814 bytes), including the shifted copied coordinate systems and
+copied live calculations. The retained fixtures are
+`numeric_scientific_{length,degree}_parameter_edited_copied_native_verified.gsp`.
+The integration regression also exercises all three original groups, exact
+untouched/edited/copy bytes, public unit guards, cached-field preservation,
+live math/positions, no-op edits, malformed layouts, and atomic oversized edits.
+
+The two zero-word groups (Yanghui triangle object 123 and rolling quadrilateral
+object 788) have garbage or invalid animation metadata and need separate
+structural evidence. They remain unsupported, with original raw fixtures and
+explicit rejection regressions. No value or unit is inferred from their caches.
+
+A complete typed-parameter re-audit after the scientific slice scans all 1,599
+sibling `.gsp` files rather than only successfully imported objects. There are
+313 subtype 80 groups and 123 subtype 81 groups. The current parser imports
+307 Length and 118 Degrees groups, with no parser-to-decoder gaps. The only
+scientific literals are the three already verified above; this corpus contains
+no additional scientific exponent or scientific unit-token variants.
+`dev/typed_parameter_audit.rs` reproduces both the literal-layout counts and
+separate parser/import outcomes against the current library.
+
+The eleven remaining typed groups comprise six without a label record, one
+with an empty 0x232e after its bounding box, one with caption mode 0, one with
+words `[0x000d, 0x0100]`, and the two invalid zero groups. The unlabeled and
+mode/attribute cases are presentation prerequisites rather than new exponent
+semantics. The 0x000d radian literal received a separate native constant-token probe,
+described below. The audit itself did not broaden any production guard or
+reinterpret the invalid zero metadata.
+
+The exact native words `[0x000d, 0x0100]` in `12 函数工具⑵-分段函数.gsp`
+object 125 encode π radians. An isolated 13-object document visibly displays
+180.00°, sin(parameter)=0.00, and parameter×2=360.00°. Its dependent numeric
+XY point lies at x=2.51, y≈0. The native program saves the isolated file
+byte-identically (3,472 bytes); the positive capture is
+`/tmp/numeric_pi_after_setup.png`. Bounded parsing accepts this constant only
+with the radian suffix. It uses the already established native calculator π
+constant, exposes degrees, and leaves the unrelated cached value opaque.
+
+A no-op setter retains the exact π token. Changing the public value to 3.5°
+uses the existing verified decimal-radian encoding, retaining the radian unit,
+animation domain, custom step, and caches. Clipboard copying the original
+sine point preserves its π parameter and live calculation independently of
+the subsequent original edit. A second copy of the edited sine point retains
+3.5°, computes sin≈0.06105, and plots against its copied frame. This 33-object
+API-generated document opens/saves byte-identically (5,996 bytes). Both
+original and copied native literal forms are retained in
+`numeric_pi_radian_parameter_edited_copied_native_verified.gsp`; the raw
+source and first isolated document are retained separately.
+A separate native viewport-scroll probe makes the copied coordinate origins
+and both copied sine points visible below the original horizontal axis. Its
+positive capture is `/tmp/numeric_pi_geometry_after_setup.png`; the unscrolled
+capture `/tmp/numeric_pi_api_after_setup.png` confirms the edited caption and
+math. The viewport probe uses a separate temporary copy, preserving the exact
+unscrolled fixture used for the API byte comparison. After this bounded π
+support, the same corpus audit imports 426/436 typed groups (307 Length,
+119 Degrees), leaving the ten presentation/invalid-zero groups above.

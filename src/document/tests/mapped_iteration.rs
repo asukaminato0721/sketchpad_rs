@@ -843,6 +843,10 @@ fn mapped_iteration_final_level_keeps_all_branches_and_live_depth() {
         vec![(Point { x: 260., y: 240. }, Point { x: 300., y: 260. })]
     );
     live.verify_roundtrip().unwrap();
+    assert_eq!(
+        live.encode().unwrap(),
+        include_bytes!("../../../tests/fixtures/mapped_final_level_live_native_verified.gsp")
+    );
     if std::env::var_os("SKETCHPAD_WRITE_FINAL_ITERATION_FIXTURE").is_some() {
         fs::write("/tmp/mapped_final_level_live.gsp", live.encode().unwrap()).unwrap();
     }

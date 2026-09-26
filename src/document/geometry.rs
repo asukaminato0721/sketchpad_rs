@@ -317,7 +317,13 @@ impl Document {
                         y: origin.y - length,
                     })
                 }
-                Kind::PathLiteralPoint(path, t) => on_path(d, *path, *t, seen),
+                Kind::PathLiteralPoint(path, t) => {
+                    if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
+                        d.point_at_polygon_parameter(*path, *t)
+                    } else {
+                        on_path(d, *path, *t, seen)
+                    }
+                },
                 Kind::PathValuePoint(source, path) => {
                     let value = d.numeric_value(*source)?;
                     if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
@@ -848,7 +854,9 @@ impl Document {
                         mode,
                     ))
                 }
-                Kind::RotatedSegment(source, center, angle) => {
+                Kind::RotatedSegment(source, center, angle)
+                | Kind::RotatedRay(source, center, angle)
+                | Kind::RotatedLine(source, center, angle) => {
                     let (a, b, mode) = go(d, source, seen)?;
                     let center = d.position(center)?;
                     let theta = angle.to_radians();
@@ -858,7 +866,14 @@ impl Document {
                         mode,
                     ))
                 }
-                Kind::ScaledSegment(source, center, factor) => {
+                Kind::ScaledSegment(source, center, factor)
+                | Kind::ScaledRay(source, center, factor)
+                | Kind::ScaledLine(source, center, factor) => {
+                    if factor == 0.
+                        && matches!(object.kind, Kind::ScaledRay(..) | Kind::ScaledLine(..))
+                    {
+                        return None;
+                    }
                     let (a, b, mode) = go(d, source, seen)?;
                     let center = d.position(center)?;
                     let scale = |point: Point| Point {
@@ -1458,7 +1473,7 @@ impl Document {
                 let length = dx.hypot(dy);
                 (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
-            Kind::Polygon(_) => self
+            ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),
             Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => self

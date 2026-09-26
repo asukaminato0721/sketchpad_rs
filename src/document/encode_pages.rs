@@ -1,6 +1,6 @@
 use super::kind::{
     is_arc_kind, is_multi_page_addition_kind, is_multi_page_deletion_kind, is_point_kind,
-    is_segment_kind, is_straight_kind, straight_kind_mode,
+    is_segment_kind, is_straight_kind, straight_kind_mode, polygon_vertex_count_for_encoding,
 };
 use super::records::{header, page_title_slots, polygon_subtype, put_record, records, u32_at};
 use super::{Document, Kind, LineMode, Object};
@@ -563,11 +563,10 @@ impl Document {
                             .objects
                             .get(host.saturating_sub(1))
                             .ok_or("Missing polygon host")?;
-                        let Kind::Polygon(vertices) = &host_object.kind else {
-                            return Err("Invalid polygon boundary host".into());
-                        };
+                        let count = polygon_vertex_count_for_encoding(&self.objects, *host)
+                            .ok_or("Invalid polygon boundary host")?;
                         if host_object.page != page
-                            || *edge >= vertices.len()
+                            || *edge >= count
                             || !t.is_finite()
                             || !(0.0..=1.0).contains(t)
                         {
@@ -583,17 +582,12 @@ impl Document {
                             style_records::set_visual_style(&mut object_header, style)?;
                         }
                         put_record(&mut groups, 0x7d0, &object_header);
-                        if let Some(label) = &object.label {
-                            groups.extend_from_slice(
-                                &crate::text_records::encode_point_label_records(label),
-                            );
-                        }
                         let mut references = 1u32.to_le_bytes().to_vec();
                         references.extend_from_slice(&local_host.to_le_bytes());
                         put_record(&mut groups, 0x7d2, &references);
                         let mut constraint = 15u16.to_le_bytes().to_vec();
                         constraint.extend_from_slice(
-                            &polygon_subtype(vertices.len())
+                            &polygon_subtype(count)
                                 .ok_or("Too many polygon vertices")?
                                 .to_le_bytes(),
                         );
@@ -601,6 +595,11 @@ impl Document {
                         constraint.extend_from_slice(&(*edge as u32).to_le_bytes());
                         constraint.extend_from_slice(&[255, 255, 0, 0]);
                         put_record(&mut groups, 0x7d3, &constraint);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
                         put_record(&mut groups, 0x7d7, &[]);
                     }
                     Kind::PointOnCircle(host, x, y) => {

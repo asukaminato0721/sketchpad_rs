@@ -9,3 +9,8 @@ A native mouse drag from edge 2 onto A to B changes the saved edge to 0 and loca
 The Rust model retains the edge index and local fraction, so moving a defining vertex keeps the same relative edge location. Dragging projects to the nearest noncollapsed edge. Animation traverses normalized perimeter distance and wraps at the first vertex. The point has ordinary point labels/styles and participates in dependency copying, deletion, and point measurements. Native encoding stores the local fraction and edge, while linked point values compute perimeter distance from the current vertices.
 
 `tests/polygon_boundary_replay.txt` creates a fresh rectangular polygon, projects a boundary point, adds its linked value, then drags it onto another edge. Native Sketchpad displayed the point on the lower edge and its perimeter value as 0.72. `dev/wine_roundtrip.sh` succeeded, and a separate `cmp` confirmed byte identity of the 2314-byte result. The saved result is `tests/fixtures/polygon_boundary_generated_verified.gsp`.
+
+Native-supported transformed polygon hosts are independently covered in
+`transformed_polygon_boundary_analysis.md`, including local edge/fraction
+semantics, live source-vertex edits, dragging, actual API creation, copied label
+record ordering, and byte-identical native save/reopen.

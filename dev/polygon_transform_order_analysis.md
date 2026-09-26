@@ -61,5 +61,8 @@ point-moved output also opened and saved byte-identically (1492 bytes), retained
 as `legacy_polygon_rank_edited_native_verified.gsp`. An attempt to assign an
 absent rank fails rather than extending an opaque legacy header. A diagnostic
 that mixed this old header with GSP5 point/header metadata failed native opening;
-it was discarded in favor of the coherent GSP4 fixture. Legacy presentation
-conversion and clipboard style conversion are not established by these probes.
+it was discarded in favor of the coherent GSP4 fixture. The separate
+[legacy fill-style audit](legacy_polygon_styles_analysis.md) establishes its
+implicit 75% opacity, RGB edits that preserve the short header, and copied
+polygon style in a fresh modern document. Native copying within the legacy
+document performs a complete header/metadata upgrade.

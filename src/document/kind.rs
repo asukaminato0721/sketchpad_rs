@@ -75,6 +75,9 @@ impl Kind {
                 | Kind::MeasuredCalculation(_, _)
         )
     }
+    pub fn is_segment(&self) -> bool {
+        is_segment_kind(self)
+    }
     pub fn is_circle(&self) -> bool {
         matches!(
             self,
@@ -382,9 +385,13 @@ impl Kind {
             Kind::ScaledPoint(source, center, _)
             | Kind::ScaledCircle(source, center, _)
             | Kind::ScaledSegment(source, center, _)
+            | Kind::ScaledRay(source, center, _)
+            | Kind::ScaledLine(source, center, _)
             | Kind::ScaledPolygon(source, center, _)
             | Kind::RotatedPoint(source, center, _)
             | Kind::RotatedSegment(source, center, _)
+            | Kind::RotatedRay(source, center, _)
+            | Kind::RotatedLine(source, center, _)
             | Kind::RotatedCircle(source, center, _)
             | Kind::RotatedPolygon(source, center, _) => {
                 vec![source, center]
@@ -905,8 +912,12 @@ impl Kind {
             Kind::ScaledPoint(a, b, factor) => Kind::ScaledPoint(m(a), m(b), factor),
             Kind::ScaledCircle(a, b, factor) => Kind::ScaledCircle(m(a), m(b), factor),
             Kind::ScaledSegment(a, b, factor) => Kind::ScaledSegment(m(a), m(b), factor),
+            Kind::ScaledRay(a, b, factor) => Kind::ScaledRay(m(a), m(b), factor),
+            Kind::ScaledLine(a, b, factor) => Kind::ScaledLine(m(a), m(b), factor),
             Kind::ScaledPolygon(a, b, factor) => Kind::ScaledPolygon(m(a), m(b), factor),
             Kind::RotatedPoint(a, b, angle) => Kind::RotatedPoint(m(a), m(b), angle),
+            Kind::RotatedRay(a, b, angle) => Kind::RotatedRay(m(a), m(b), angle),
+            Kind::RotatedLine(a, b, angle) => Kind::RotatedLine(m(a), m(b), angle),
             Kind::CalculatedRatioScaledPoint(a, b, value) => {
                 Kind::CalculatedRatioScaledPoint(m(a), m(b), m(value))
             }
@@ -1074,6 +1085,10 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::Segment(_, _)
+            | Kind::RotatedRay(_, _, _)
+            | Kind::ScaledRay(_, _, _)
+            | Kind::RotatedLine(_, _, _)
+            | Kind::ScaledLine(_, _, _)
             | Kind::PolarTranslatedSegment(_, _, _, _)
             | Kind::FixedRectangularTranslatedSegment(_, _, _, _, _)
             | Kind::MixedRectangularTranslatedSegment(_, _, _, _)
@@ -1101,7 +1116,10 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
 pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
     if is_segment_kind(kind) {
         Some(LineMode::Segment)
-    } else if matches!(kind, Kind::Ray(_, _) | Kind::Bisector(_, _, _)) {
+    } else if matches!(
+        kind,
+        Kind::Ray(_, _) | Kind::RotatedRay(_, _, _) | Kind::ScaledRay(_, _, _) | Kind::Bisector(_, _, _)
+    ) {
         Some(LineMode::Ray)
     } else if is_straight_kind(kind) {
         Some(LineMode::Line)
@@ -1164,8 +1182,7 @@ pub(super) fn expected_parameter_locus_refs(objects: &[Object], driver: usize, t
     let moving = objects.get(driver.checked_sub(1)?)?;
     let traced = objects.get(target.checked_sub(1)?)?;
     if driver >= target || moving.deleted || traced.deleted || moving.page != traced.page
-        || !matches!(moving.kind, Kind::Parameter(_))
-        || moving.kind.numeric_unit() != Some(NumericUnit::Scalar)
+        || !matches!(&moving.kind, Kind::Parameter(group) if group.locus_unit_tag().is_some())
         || !is_point_kind(&traced.kind)
     { return None; }
     let mut found = BTreeSet::new();
@@ -1327,8 +1344,7 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
         }
 }
 
-/// Code 95 additionally supports polygon boundaries; literal code 123 keeps
-/// its independently checked path families.
+/// Code 95 polygon boundaries use independently verified perimeter semantics.
 pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
     is_plot_path_kind(kind) || kind.is_polygon()
 }
@@ -1337,13 +1353,32 @@ pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
     plot_path_accepts(kind, value) || (kind.is_polygon() && value.is_finite())
 }
 
+/// Native code 123 also accepts a literal fraction of a polygon perimeter.
+pub(super) fn is_literal_plot_path_kind(kind: &Kind) -> bool {
+    is_plot_path_kind(kind) || kind.is_polygon()
+}
+
+pub(super) fn literal_plot_path_accepts(kind: &Kind, value: f64) -> bool {
+    plot_path_accepts(kind, value) || (kind.is_polygon() && value.is_finite())
+}
+
 /// Supported polygon transforms retain their source's vertex count. Require
 /// earlier, same-page sources so malformed chains cannot loop or cross pages.
-pub(super) fn polygon_vertex_count(objects: &[Object], mut id: usize) -> Option<usize> {
+pub(super) fn polygon_vertex_count(objects: &[Object], id: usize) -> Option<usize> {
+    polygon_vertex_count_impl(objects, id, true)
+}
+
+/// Writers emit groups before deletion compaction. Recover
+/// their schema even when the complete dependency chain is being removed.
+pub(super) fn polygon_vertex_count_for_encoding(objects: &[Object], id: usize) -> Option<usize> {
+    polygon_vertex_count_impl(objects, id, false)
+}
+
+fn polygon_vertex_count_impl(objects: &[Object], mut id: usize, require_live: bool) -> Option<usize> {
     let page = objects.get(id.checked_sub(1)?)?.page;
     loop {
         let object = objects.get(id.checked_sub(1)?)?;
-        if object.deleted || object.id != id || object.page != page {
+        if (require_live && object.deleted) || object.id != id || object.page != page {
             return None;
         }
         let source = match &object.kind {
@@ -1443,6 +1478,10 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::ReflectedSegment(_, _)
         | Kind::Line(_, _)
         | Kind::Ray(_, _)
+        | Kind::RotatedRay(_, _, _)
+        | Kind::ScaledRay(_, _, _)
+        | Kind::RotatedLine(_, _, _)
+        | Kind::ScaledLine(_, _, _)
         | Kind::Parallel(_, _)
         | Kind::Perpendicular(_, _)
         | Kind::Bisector(_, _, _) => Some(VisualStyle::Stroke { line, color: navy }),
