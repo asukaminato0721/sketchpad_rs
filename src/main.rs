@@ -6070,7 +6070,7 @@ impl Editor {
                                 .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)))
                         })
                     {
-                        "Selected length measurement × factor (0–9), or two integers with +, −, ×, ÷"
+                        "Selected length × factor (0–99) or ÷ divisor (1–99); also supports two integers"
                     } else {
                         "Enter two integers from 0 to 99 with +, -, *, or /"
                     },
@@ -6119,16 +6119,24 @@ impl Editor {
                     None
                 };
                 let draft = self.calculation_draft.trim();
-                let result = if let Some((source, factor)) =
-                    selected_length.zip(draft.strip_prefix(['*', '×', '·']))
+                let measured = draft
+                    .strip_prefix(['*', '×', '·'])
+                    .map(|value| (value, false))
+                    .or_else(|| draft.strip_prefix(['/', '÷']).map(|value| (value, true)));
+                let result = if let Some((source, (factor, divide))) = selected_length.zip(measured)
                 {
                     factor
                         .trim()
                         .parse::<u8>()
-                        .map_err(|_| "Enter a factor from 0 to 9".to_string())
+                        .map_err(|_| "Enter an integer from 0 to 99".to_string())
                         .and_then(|factor| {
-                            self.doc
-                                .add_measured_length_calculation(source, factor, (10, y))
+                            if divide {
+                                self.doc
+                                    .add_measured_length_division(source, factor, (10, y))
+                            } else {
+                                self.doc
+                                    .add_measured_length_calculation(source, factor, (10, y))
+                            }
                         })
                 } else {
                     self.doc.add_calculation_expression(draft, (10, y))

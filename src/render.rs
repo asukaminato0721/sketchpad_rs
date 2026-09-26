@@ -142,7 +142,11 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             .unwrap_or_else(|| "Length".into());
         return Some((
             group.anchor(),
-            vec![format!("{name} · {} = {value:.2} cm", group.factor())],
+            vec![format!(
+                "{name} {} {} = {value:.2} cm",
+                if group.divides() { "÷" } else { "·" },
+                group.factor()
+            )],
         ));
     }
     if let Kind::ValueTable(source, group) = &object.kind

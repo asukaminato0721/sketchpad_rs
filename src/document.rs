@@ -4270,6 +4270,23 @@ impl Document {
         factor: u8,
         anchor: (i16, i16),
     ) -> Result<usize, String> {
+        self.add_measured_length_scaled(source, factor, anchor, false)
+    }
+    pub fn add_measured_length_division(
+        &mut self,
+        source: usize,
+        divisor: u8,
+        anchor: (i16, i16),
+    ) -> Result<usize, String> {
+        self.add_measured_length_scaled(source, divisor, anchor, true)
+    }
+    fn add_measured_length_scaled(
+        &mut self,
+        source: usize,
+        factor: u8,
+        anchor: (i16, i16),
+        divide: bool,
+    ) -> Result<usize, String> {
         if self.partial_view
             || self.page_count != 1
             || !self.safe_structure
@@ -4291,13 +4308,14 @@ impl Document {
         {
             return Err("Select a supported length or distance measurement".into());
         }
-        let group = MeasuredCalculationGroup::multiply(
-            u32::try_from(source).map_err(|_| "Invalid measurement ID")?,
-            factor,
-            anchor,
-        )?;
+        let source = u32::try_from(source).map_err(|_| "Invalid measurement ID")?;
+        let group = if divide {
+            MeasuredCalculationGroup::divide(source, factor, anchor)?
+        } else {
+            MeasuredCalculationGroup::multiply(source, factor, anchor)?
+        };
         self.checkpoint();
-        Ok(self.append_object(Kind::MeasuredCalculation(source, group)))
+        Ok(self.append_object(Kind::MeasuredCalculation(source as usize, group)))
     }
     pub fn measured_calculation_cm(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
@@ -4316,7 +4334,11 @@ impl Document {
             Kind::ArcLength(_) => self.arc_length_cm(*source)?,
             _ => return None,
         };
-        Some(measurement * f64::from(group.factor()))
+        Some(if group.divides() {
+            measurement / f64::from(group.factor())
+        } else {
+            measurement * f64::from(group.factor())
+        })
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
         let (first, second) = match self.objects.get(id.checked_sub(1)?)?.kind {
@@ -17531,6 +17553,80 @@ mod tests {
         assert!(matches!(&cloned.objects[clone_id - 1].kind,
             Kind::MeasuredCalculation(source, group) if *source != 4 && group.source_id() as usize == *source));
         assert!(cloned.measured_calculation_cm(clone_id).is_some());
+
+        let divided_native =
+            include_bytes!("../tests/fixtures/calculation_length_divide_two_native.gsp");
+        let divided = Document::from_bytes(divided_native, None).unwrap();
+        assert!(!divided.partial_view);
+        assert_eq!(divided.encode().unwrap(), divided_native);
+        assert!(
+            (divided.measured_calculation_cm(5).unwrap()
+                - divided.segment_length_cm(4).unwrap() / 2.)
+                .abs()
+                < 1e-10
+        );
+        let divided_port =
+            include_bytes!("../tests/fixtures/calculation_length_divide_three_port.gsp");
+        let mut divided = Document::from_bytes(divided_port, None).unwrap();
+        assert!(!divided.partial_view);
+        assert_eq!(divided.encode().unwrap(), divided_port);
+        assert!(
+            matches!(&divided.objects[4].kind, Kind::MeasuredCalculation(4, group) if group.divides() && group.factor() == 3)
+        );
+        assert!(divided.move_point(2, Point { x: 400., y: 218. }));
+        assert!(
+            (divided.measured_calculation_cm(5).unwrap()
+                - divided.segment_length_cm(4).unwrap() / 3.)
+                .abs()
+                < 1e-10
+        );
+        assert!(
+            divided
+                .add_measured_length_division(4, 0, (10, 100))
+                .is_err()
+        );
+
+        for (native, port, factor, divides) in [
+            (
+                include_bytes!("../tests/fixtures/calculation_length_times_twelve_native.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/calculation_length_times_twenty_three_port.gsp")
+                    .as_slice(),
+                23u8,
+                false,
+            ),
+            (
+                include_bytes!("../tests/fixtures/calculation_length_divide_twelve_native.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/calculation_length_divide_twelve_port.gsp")
+                    .as_slice(),
+                12u8,
+                true,
+            ),
+        ] {
+            let imported = Document::from_bytes(native, None).unwrap();
+            assert!(!imported.partial_view);
+            assert_eq!(imported.encode().unwrap(), native);
+            let mut generated = Document::from_bytes(port, None).unwrap();
+            assert!(!generated.partial_view);
+            assert_eq!(generated.encode().unwrap(), port);
+            assert!(matches!(&generated.objects[4].kind,
+                Kind::MeasuredCalculation(4, group) if group.factor() == factor && group.divides() == divides));
+            assert!(generated.move_point(2, Point { x: 400., y: 218. }));
+            let expected = generated.segment_length_cm(4).unwrap();
+            let expected = if divides {
+                expected / f64::from(factor)
+            } else {
+                expected * f64::from(factor)
+            };
+            assert!((generated.measured_calculation_cm(5).unwrap() - expected).abs() < 1e-10);
+        }
+        assert!(crate::table_records::MeasuredCalculationGroup::multiply(4, 99, (10, 34)).is_ok());
+        assert!(
+            crate::table_records::MeasuredCalculationGroup::multiply(4, 100, (10, 34)).is_err()
+        );
+        assert!(crate::table_records::MeasuredCalculationGroup::divide(4, 99, (10, 34)).is_ok());
+        assert!(crate::table_records::MeasuredCalculationGroup::divide(4, 0, (10, 34)).is_err());
     }
 
     #[test]

@@ -299,17 +299,21 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_calculation_expression(parts[2], (x, y))?;
                     println!("line {}: calculate_at -> object {id}", index + 1);
                 }
-                "calculate_length" => {
+                "calculate_length" | "divide_length" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let [source, factor] = parts.as_slice() else {
-                        return Err("expected calculate_length MEASUREMENT_ID FACTOR".into());
+                        return Err(format!("expected {command} MEASUREMENT_ID FACTOR"));
                     };
                     let source = source.parse().map_err(|_| "invalid measurement ID")?;
                     let factor = factor
                         .parse()
                         .map_err(|_| "invalid multiplication factor")?;
-                    let id = document.add_measured_length_calculation(source, factor, (10, 34))?;
-                    println!("line {}: calculate_length -> object {id}", index + 1);
+                    let id = if command == "divide_length" {
+                        document.add_measured_length_division(source, factor, (10, 34))?
+                    } else {
+                        document.add_measured_length_calculation(source, factor, (10, 34))?
+                    };
+                    println!("line {}: {command} -> object {id}", index + 1);
                 }
                 "tabulate" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();

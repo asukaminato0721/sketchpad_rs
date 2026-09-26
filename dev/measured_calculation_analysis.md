@@ -14,4 +14,8 @@ Native `calculation_arc_length_times_two_native.gsp` uses the same code-48 forma
 
 `calculation_marked_distance_port.gsp` uses the length calculation as a marked distance for point translation. It opened and saved byte-identically in Sketchpad 5; moving the segment endpoint in the port updates the translated point. The calculation also survives copying and pasting with its measurement and geometry parents, and renumbering after an earlier unrelated object is deleted.
 
-Other source types, operators, longer literals, and expression nesting still need native fixtures before broadening the writer.
+Native `calculation_length_divide_two_native.gsp` differs from multiplication by operator word `0x1003` at group offsets 154–155 and opaque cache bytes. The generated divided-by-three file displayed 1.66 cm and saved byte-identically. Division by zero is rejected.
+
+A two-digit factor adds one u16 digit token: the code-48 group grows from 176 to 178 bytes, the `0907` payload from 98 to 100, and the expression token count from three to four. `assets/measurement_times_twelve_group.bin` is the native template. Native length × 12 and length ÷ 12 files import byte-identically; generated length × 23 and length ÷ 12 files displayed 114.85 cm and 0.42 cm and saved byte-identically in Sketchpad 5.
+
+Other source types, operators, operands above 99, and expression nesting still need native fixtures before broadening the writer.

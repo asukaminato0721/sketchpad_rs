@@ -18,6 +18,8 @@ const FOUR_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../tests/fixtures/table_pair_four_rows_original.gsp");
 const CALCULATION: &[u8] = include_bytes!("../tests/fixtures/table_calculate_2_plus_3.gsp");
 const MEASURED_CALCULATION: &[u8] = include_bytes!("../assets/measurement_times_two_group.bin");
+const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
+    include_bytes!("../assets/measurement_times_twelve_group.bin");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableGroup {
@@ -467,47 +469,92 @@ pub struct MeasuredCalculationGroup {
     bytes: Vec<u8>,
 }
 
+fn measured_factor(bytes: &[u8], digit_count: usize) -> u8 {
+    let first = bytes[156];
+    if digit_count == 2 {
+        first * 10 + bytes[158]
+    } else {
+        first
+    }
+}
+
 impl MeasuredCalculationGroup {
     pub fn multiply(source: u32, factor: u8, anchor: (i16, i16)) -> Result<Self, String> {
-        if source == 0 || factor > 9 {
-            return Err("Select a measurement and a factor from 0 to 9".into());
+        Self::scaled(source, factor, anchor, false)
+    }
+    pub fn divide(source: u32, divisor: u8, anchor: (i16, i16)) -> Result<Self, String> {
+        Self::scaled(source, divisor, anchor, true)
+    }
+    fn scaled(source: u32, factor: u8, anchor: (i16, i16), divide: bool) -> Result<Self, String> {
+        if source == 0 || factor > 99 {
+            return Err("Select a measurement and a factor from 0 to 99".into());
         }
-        let mut bytes = MEASURED_CALCULATION.to_vec();
+        if divide && factor == 0 {
+            return Err("Cannot divide by zero".into());
+        }
+        let mut bytes = if factor < 10 {
+            MEASURED_CALCULATION.to_vec()
+        } else {
+            MEASURED_CALCULATION_TWO_DIGIT.to_vec()
+        };
         bytes[48..52].copy_from_slice(&source.to_le_bytes());
-        bytes[156..158].copy_from_slice(&u16::from(factor).to_le_bytes());
+        if divide {
+            bytes[154..156].copy_from_slice(&0x1003u16.to_le_bytes());
+        }
+        if factor < 10 {
+            bytes[156..158].copy_from_slice(&u16::from(factor).to_le_bytes());
+        } else {
+            bytes[156..158].copy_from_slice(&u16::from(factor / 10).to_le_bytes());
+            bytes[158..160].copy_from_slice(&u16::from(factor % 10).to_le_bytes());
+        }
         bytes[72..74].copy_from_slice(&anchor.0.to_le_bytes());
         bytes[74..76].copy_from_slice(&anchor.1.to_le_bytes());
         Self::parse(&bytes)
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() != MEASURED_CALCULATION.len() {
-            return Err("Unsupported measured calculation length".into());
-        }
+        let template = match bytes.len() {
+            176 => MEASURED_CALCULATION,
+            178 => MEASURED_CALCULATION_TWO_DIGIT,
+            _ => return Err("Unsupported measured calculation length".into()),
+        };
+        let digit_count = (bytes.len() - 174) / 2;
         let records = records(bytes, 0)?;
         if records.iter().map(|record| record.kind).collect::<Vec<_>>()
             != [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7]
             || records[0].end - records[0].payload != 28
             || records[1].end - records[1].payload != 8
-            || records[2].end - records[2].payload != 98
+            || records[2].end - records[2].payload != 96 + 2 * digit_count
             || records[3].end - records[3].payload != 2
             || records[4].end != records[4].payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
             || u32::from_le_bytes(bytes[48..52].try_into().unwrap()) == 0
-            || bytes[152..156] != [0, 0x60, 2, 0x10]
-            || bytes[158..160] != [2, 0]
-            || u16::from_le_bytes(bytes[156..158].try_into().unwrap()) > 9
+            || u32::from_le_bytes(bytes[96..100].try_into().unwrap())
+                != (64 + 2 * digit_count) as u32
+            || u16::from_le_bytes(bytes[104..106].try_into().unwrap()) != (2 + digit_count) as u16
+            || bytes[152..154] != [0, 0x60]
+            || !matches!(
+                u16::from_le_bytes(bytes[154..156].try_into().unwrap()),
+                0x1002 | 0x1003
+            )
+            || bytes[156 + 2 * digit_count..158 + 2 * digit_count] != [2, 0]
+            || (0..digit_count).any(|digit| {
+                u16::from_le_bytes(bytes[156 + digit * 2..158 + digit * 2].try_into().unwrap()) > 9
+            })
+            || (digit_count == 2 && bytes[156] == 0)
+            || (bytes[154] == 3 && measured_factor(bytes, digit_count) == 0)
         {
             return Err("Unsupported measured calculation expression".into());
         }
-        for (index, (&actual, &template)) in bytes.iter().zip(MEASURED_CALCULATION).enumerate() {
+        for (index, (&actual, &expected)) in bytes.iter().zip(template).enumerate() {
             let variable = index == 10
                 || (26..28).contains(&index)
                 || (48..52).contains(&index)
                 || (72..76).contains(&index)
                 || (76..152).contains(&index)
-                || (156..158).contains(&index);
-            if !variable && actual != template {
+                || (154..156).contains(&index)
+                || (156..156 + 2 * digit_count).contains(&index);
+            if !variable && actual != expected {
                 return Err("Unsupported measured calculation style".into());
             }
         }
@@ -520,7 +567,10 @@ impl MeasuredCalculationGroup {
         u32::from_le_bytes(self.bytes[48..52].try_into().unwrap())
     }
     pub fn factor(&self) -> u8 {
-        self.bytes[156]
+        measured_factor(&self.bytes, (self.bytes.len() - 174) / 2)
+    }
+    pub fn divides(&self) -> bool {
+        self.bytes[154] == 3
     }
     pub fn anchor(&self) -> (i16, i16) {
         (
@@ -1522,6 +1572,13 @@ pub fn append_default_parameter_table(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn measured_two_digit_native_group_imports() {
+        let native = include_bytes!("../tests/fixtures/calculation_length_times_twelve_native.gsp");
+        let group = super::object_group(native, 5);
+        let parsed = super::MeasuredCalculationGroup::parse(&group).unwrap();
+        assert_eq!(parsed.factor(), 12);
+    }
     use super::*;
 
     #[test]
