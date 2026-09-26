@@ -1,0 +1,49 @@
+new
+point 160 180
+point 220 180
+circle 1 2
+area 3
+calculate_parameter 4 sqrt(v)
+calculate_parameter 4 v^0.5
+calculate_parameter 4 v^1
+calculate_parameter 7 v^2
+calculate_parameter 8 sqrt(v)
+calculate_parameter 9 sqrt(v)
+number_move 5 10 38
+number_move 6 10 71
+number_move 7 10 104
+number_move 8 10 137
+number_move 9 10 170
+number_move 10 10 203
+save tests/fixtures/dimensional_roots_chain_port.gsp
+move 2 250 180
+save tests/fixtures/dimensional_roots_chain_edited_port.gsp
+new
+point 80 220
+point 120 220
+circle 1 2
+area 3
+calculate_parameter 4 sqrt(v)
+calculate_parameter 4 v^0.5
+translate_marked_distance 1 5 0
+iterate_point_live 1 7 6
+hide 4
+number_move 5 10 5
+number_move 6 10 38
+save tests/fixtures/dimensional_roots_iteration_port.gsp
+move 2 140 220
+save tests/fixtures/dimensional_roots_iteration_edited_port.gsp
+new
+point 160 180
+point 220 180
+circle 1 2
+radius 3
+point 160 120
+angle 2 1 5
+calculate_parameter 4 sqrt(v)
+calculate_parameter 6 sqrt(v)
+calculate_parameter 6 v^2
+number_move 7 10 71
+number_move 8 10 104
+number_move 9 10 137
+save tests/fixtures/dimensional_roots_units_port.gsp

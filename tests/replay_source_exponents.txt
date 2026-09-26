@@ -1,0 +1,47 @@
+open tests/fixtures/source_exponent_quantities_native.gsp
+number_move 6 240 5
+show_all
+hide 4
+hide 5
+hide 8
+number_move 9 10 5
+number_move 10 10 38
+number_move 11 10 71
+number_move 12 10 104
+save tests/fixtures/source_exponents_quantities_port.gsp
+parameter_value 6 0.5
+save tests/fixtures/source_exponents_quantities_edited_port.gsp
+new
+point 40 190
+point 70 190
+circle 1 2
+area 3
+named_parameter n 0.5 240 90
+calculate_parameter 4 sqrt(v)
+calculate_multi 4,5 v1^v2
+translate_marked_distance 1 6 0
+iterate_point_live 1 8 7
+hide 4
+number_move 6 10 5
+number_move 7 10 38
+save tests/fixtures/source_exponents_iteration_port.gsp
+parameter_value 5 2
+save tests/fixtures/source_exponents_iteration_edited_port.gsp
+new
+point 40 190
+point 70 190
+circle 1 2
+area 3
+named_parameter n 0.5 240 90
+calculate_parameter 4 sqrt(v)
+calculate_multi 4,5 v1^v2
+translate_marked_distance 1 6 0
+numeric_precision 7 0
+attach_numeric_label 8 7
+iterate_numeric 1 5 8 7 9 3
+hide 4
+number_move 6 10 5
+number_move 7 10 38
+save tests/fixtures/source_exponents_numeric_iteration_port.gsp
+parameter_value 5 0.7
+save tests/fixtures/source_exponents_numeric_iteration_edited_port.gsp

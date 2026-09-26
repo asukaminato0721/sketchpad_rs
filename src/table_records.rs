@@ -897,7 +897,8 @@ impl ParameterExpr {
                             Scalar
                         })
                     }
-                    0x2008..=0x200c if unit == Scalar => Ok(Scalar),
+                    0x2008..=0x200a => Ok(Scalar),
+                    0x200b..=0x200c => Ok(unit),
                     _ => Err("Function uses incompatible or unsupported units".into()),
                 }
             }
@@ -3020,7 +3021,7 @@ mod tests {
             length.value_with_source_unit(3., NumericUnit::Length),
             Some(3.)
         );
-        for expression in ["sin(v)", "ln(v)"] {
+        for expression in ["sin(v)"] {
             assert!(
                 ParameterCalculationGroup::from_expression_with_source_unit(
                     1,
@@ -3039,6 +3040,76 @@ mod tests {
         }
         let zero = ParameterCalculationGroup::from_expression(1, "n", "sgn(n)", (10, 30)).unwrap();
         assert_eq!(zero.value(-0.), Some(0.));
+    }
+
+    #[test]
+    fn quantity_functions_preserve_rounding_units_and_strip_log_and_sign_units() {
+        use NumericUnit::{Area, Compound, Degrees, Length, Scalar};
+        for unit in [
+            Length,
+            Area,
+            Degrees,
+            Compound {
+                length: 4,
+                degrees: 0,
+            },
+        ] {
+            for (expression, expected_unit) in [
+                ("ln(v)", Scalar),
+                ("log(v)", Scalar),
+                ("sgn(v)", Scalar),
+                ("round(v)", unit),
+                ("trunc(v)", unit),
+            ] {
+                let mut group = ParameterCalculationGroup::from_expression_with_source_unit(
+                    1,
+                    "v",
+                    expression,
+                    (10, 30),
+                    unit,
+                )
+                .unwrap();
+                assert_eq!(group.unit(), expected_unit);
+                for value in [4.5_f64, -4.5, 0.] {
+                    let expected = match expression {
+                        "ln(v)" => (value > 0.).then(|| value.ln()),
+                        "log(v)" => (value > 0.).then(|| value.log10()),
+                        "sgn(v)" => Some(if value == 0. { 0. } else { value.signum() }),
+                        "round(v)" => Some((value + 0.5).floor()),
+                        _ => Some(value.trunc()),
+                    };
+                    assert_eq!(group.value_for_sources(&[value], &[unit]), expected);
+                }
+                group.set_precision(0).unwrap();
+                group.set_anchor((50, 90)).unwrap();
+                let remapped = group.remap_source(7).unwrap();
+                assert_eq!(remapped.unit(), expected_unit);
+                assert_eq!(
+                    ParameterCalculationGroup::parse(remapped.as_bytes())
+                        .unwrap()
+                        .with_source_units(&[unit])
+                        .unwrap()
+                        .unit(),
+                    expected_unit
+                );
+            }
+        }
+        for (expression, expected_unit, expected) in [
+            ("round(sqrt(v))", Length, 3.),
+            ("ln(round(v))", Scalar, 8_f64.ln()),
+            ("round(ln(v))", Scalar, 2.),
+        ] {
+            let group = ParameterCalculationGroup::from_expression_with_source_unit(
+                1,
+                "v",
+                expression,
+                (10, 30),
+                Area,
+            )
+            .unwrap();
+            assert_eq!(group.unit(), expected_unit);
+            assert_eq!(group.value_for_sources(&[7.9173], &[Area]), Some(expected));
+        }
     }
 
     #[test]

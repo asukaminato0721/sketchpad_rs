@@ -1,0 +1,98 @@
+open tests/fixtures/quantity_functions_native.gsp
+show_all
+hide 4
+hide 5
+hide 6
+hide 8
+hide 14
+hide 15
+hide 16
+hide 17
+hide 18
+hide 19
+hide 20
+hide 21
+hide 22
+hide 23
+number_move 9 10 5
+number_move 10 10 38
+number_move 11 10 71
+number_move 12 10 104
+number_move 13 10 137
+save tests/fixtures/quantity_functions_area_port.gsp
+move 2 250 180
+save tests/fixtures/quantity_functions_area_edited_port.gsp
+open tests/fixtures/quantity_functions_native.gsp
+show_all
+hide 4
+hide 5
+hide 6
+hide 8
+hide 9
+hide 10
+hide 11
+hide 12
+hide 13
+hide 19
+hide 20
+hide 21
+hide 22
+hide 23
+number_move 14 10 5
+number_move 15 10 38
+number_move 16 10 71
+number_move 17 10 104
+number_move 18 10 137
+save tests/fixtures/quantity_functions_length_port.gsp
+move 2 250 180
+save tests/fixtures/quantity_functions_length_edited_port.gsp
+open tests/fixtures/quantity_functions_native.gsp
+show_all
+hide 4
+hide 5
+hide 6
+hide 8
+hide 9
+hide 10
+hide 11
+hide 12
+hide 13
+hide 14
+hide 15
+hide 16
+hide 17
+hide 18
+number_move 19 10 5
+number_move 20 10 38
+number_move 21 10 71
+number_move 22 10 104
+number_move 23 10 137
+hide 7
+rotate_value 2 1 22
+iterate_point_live 2 24 21
+save tests/fixtures/quantity_functions_angle_port.gsp
+move 7 220 125
+save tests/fixtures/quantity_functions_angle_edited_port.gsp
+new
+point 160 150
+point 220 150
+circle 1 2
+radius 3
+area 3
+point 40 230
+calculate_parameter 4 trunc(v)
+calculate_parameter 7 v/5
+calculate_parameter 5 ln(v)
+calculate_parameter 9 v*2
+translate_marked_distance 6 8 0
+iterate_point_live 6 11 10
+hide 3
+hide 4
+hide 5
+number_move 7 10 5
+number_move 8 10 38
+number_move 9 10 71
+number_move 10 10 104
+save tests/fixtures/quantity_functions_iteration_port.gsp
+move 2 250 150
+save tests/fixtures/quantity_functions_iteration_edited_port.gsp

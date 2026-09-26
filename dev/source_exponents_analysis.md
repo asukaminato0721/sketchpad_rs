@@ -42,7 +42,8 @@ With a 30-pixel circle radius, n=0.5 gives one step; n=2 gives three steps.
 The numeric iteration maps n to area^n, with the area fixed within each
 sequence. It advances a referenced exponent at the second source index and
 refreshes its labels when n changes. The example uses zero-decimal labels
-without rounding the carried state: n=0.5 gives labels 3, 6, and 58.
+without rounding the carried state: n=0.5 gives labels 3, 6, and 58;
+n=0.7 gives 3, 8, and 205.
 The exponent parameter is placed below the calculator captions to avoid
 overlap. Tests also cover a negative dimensional base: a fractional exponent becomes undefined and suppresses dependent
 iteration; restoring an integer exponent recovers the value and geometry.

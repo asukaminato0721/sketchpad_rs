@@ -1,0 +1,36 @@
+new
+point 100 180
+point 180 140
+point 60 180
+line 1 2
+parallel 3 4
+coordinate_system 199 125
+show_grid off
+save tests/fixtures/parallel_line_equation_base_port.gsp
+equation 5
+save tests/fixtures/parallel_line_equation_port.gsp
+move 2 100 100
+save tests/fixtures/parallel_line_equation_vertical_port.gsp
+new
+point 100 180
+point 180 140
+point 60 180
+line 1 2
+perpendicular 3 4
+coordinate_system 199 125
+show_grid off
+save tests/fixtures/perpendicular_line_equation_base_port.gsp
+equation 5
+save tests/fixtures/perpendicular_line_equation_port.gsp
+move 2 180 180
+save tests/fixtures/perpendicular_line_equation_vertical_port.gsp
+new
+coordinate_system 199 125
+show_grid off
+equation 3
+save tests/fixtures/x_axis_line_equation_port.gsp
+new
+coordinate_system 199 125
+show_grid off
+equation 5
+save tests/fixtures/y_axis_line_equation_port.gsp

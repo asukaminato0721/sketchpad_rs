@@ -1,0 +1,27 @@
+new
+named_parameter n 0.5 240 5
+point 160 180
+point 220 180
+circle 2 3
+dilate_value 4 2 1
+coordinate_system 199 125
+show_grid off
+save tests/fixtures/ratio_circle_equation_base_port.gsp
+hide 1
+equation 5
+save tests/fixtures/ratio_circle_equation_port.gsp
+parameter_value 1 -0.75
+save tests/fixtures/ratio_circle_equation_edited_port.gsp
+new
+point 160 180
+point 40 180
+point 100 180
+segment 2 3
+circle_segment 1 4
+coordinate_system 199 125
+show_grid off
+save tests/fixtures/segment_radius_circle_equation_base_port.gsp
+equation 5
+save tests/fixtures/segment_radius_circle_equation_port.gsp
+move 3 130 180
+save tests/fixtures/segment_radius_circle_equation_edited_port.gsp

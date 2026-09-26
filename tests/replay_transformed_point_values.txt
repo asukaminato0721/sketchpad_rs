@@ -1,0 +1,49 @@
+new
+point 120 180
+point 200 180
+segment 1 2
+rotate 3 1 90
+save tests/fixtures/transformed_segment_point_base_port.gsp
+point_on 4 120 140
+point_value 5
+measurement_precision 6 4
+calculate_parameter 6 v*4
+point 60 220
+translate_rectangular_fixed 8 0.5 0
+iterate_point_live 8 9 7
+save tests/fixtures/transformed_segment_point_value_iteration_port.gsp
+move 5 120 120
+save tests/fixtures/transformed_segment_point_value_iteration_edited_port.gsp
+new
+named_parameter n 0.5 240 5
+point 160 180
+point 220 180
+circle 2 3
+dilate_value 4 2 1
+save tests/fixtures/transformed_circle_point_base_port.gsp
+point_on 5 160 150
+point_value 6
+measurement_precision 7 4
+calculate_parameter 7 v*8+1
+point 40 220
+translate_rectangular_fixed 9 0.5 0
+iterate_point_live 9 10 8
+save tests/fixtures/transformed_circle_point_value_iteration_port.gsp
+move 6 130 180
+parameter_value 1 -0.75
+save tests/fixtures/transformed_circle_point_value_iteration_edited_port.gsp
+new
+point 100 180
+point 180 140
+point 60 180
+segment 1 2
+parallel 3 4
+point_on 5 100 160
+point_value 6
+calculate_parameter 7 v*4
+point 40 220
+translate_rectangular_fixed 9 0.5 0
+iterate_point_live 9 10 8
+save tests/fixtures/constructed_line_point_value_iteration_port.gsp
+move 6 120 150
+save tests/fixtures/constructed_line_point_value_iteration_edited_port.gsp

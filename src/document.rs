@@ -29576,6 +29576,161 @@ mod tests {
     }
 
     #[test]
+    fn native_measurement_functions_import_update_and_keep_quantity_units() {
+        let bytes = include_bytes!("../tests/fixtures/quantity_functions_native.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        for (x, angle_point) in [
+            (220., Point { x: 160., y: 120. }),
+            (250., Point { x: 220., y: 125. }),
+        ] {
+            doc.move_point(2, Point { x, y: 180. });
+            doc.move_point(7, angle_point);
+            for (source, first, unit) in [
+                (4, 9, NumericUnit::Area),
+                (5, 14, NumericUnit::Length),
+                (8, 19, NumericUnit::Degrees),
+            ] {
+                let value = doc.numeric_value(source).unwrap();
+                let expected = [
+                    value.ln(),
+                    value.log10(),
+                    1.,
+                    (value + 0.5).floor(),
+                    value.trunc(),
+                ];
+                for (offset, expected) in expected.into_iter().enumerate() {
+                    let id = first + offset;
+                    assert_eq!(
+                        doc.objects[id - 1].kind.numeric_unit(),
+                        Some(if offset < 3 {
+                            NumericUnit::Scalar
+                        } else {
+                            unit
+                        })
+                    );
+                    assert_eq!(doc.numeric_value(id), Some(expected));
+                    doc.set_numeric_precision(&[id], 5).unwrap();
+                }
+            }
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            for id in 9..=23 {
+                assert_eq!(reopened.numeric_value(id), doc.numeric_value(id));
+                assert_eq!(
+                    reopened.objects[id - 1].kind.numeric_unit(),
+                    doc.objects[id - 1].kind.numeric_unit()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rounded_quantities_drive_marked_distance_angle_and_live_depth() {
+        let bytes = include_bytes!("../tests/fixtures/quantity_functions_iteration_port.gsp");
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        for (x, distance, depth) in [(220., 0.2, 4), (250., 0.4, 5)] {
+            doc.move_point(2, Point { x, y: 150. });
+            assert_eq!(doc.numeric_value(8), Some(distance));
+            let points = doc.point_iteration_images(12).unwrap();
+            assert_eq!(points.len(), depth);
+            for (i, point) in points.iter().enumerate() {
+                assert!(
+                    (point.x - (40. + distance * 37.79527559055118 * (i + 2) as f64)).abs() < 1e-10
+                );
+                assert_eq!(point.y, 230.);
+            }
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.point_iteration_images(12), Some(points));
+        }
+        doc.selected.insert(12);
+        let pasted = doc.paste(&doc.copy_selected().unwrap()).unwrap();
+        let copy = pasted
+            .into_iter()
+            .find(|id| matches!(doc.objects[*id - 1].kind, Kind::PointIteration(..)))
+            .unwrap();
+        assert_eq!(doc.point_iteration_images(copy).unwrap().len(), 5);
+        assert!(
+            !Document::from_bytes(&doc.encode().unwrap(), None)
+                .unwrap()
+                .partial_view
+        );
+
+        let mut angle = Document::from_bytes(
+            include_bytes!("../tests/fixtures/quantity_functions_angle_port.gsp"),
+            None,
+        )
+        .unwrap();
+        assert!(!angle.partial_view);
+        angle.move_point(7, Point { x: 220., y: 125. });
+        assert_eq!(angle.numeric_value(22), Some(43.));
+        assert_eq!(angle.numeric_value(23), Some(42.));
+        let point = angle.position(24).unwrap();
+        assert!((point.x - (160. + 60. * 43_f64.to_radians().cos())).abs() < 1e-10);
+        assert!((point.y - (180. - 60. * 43_f64.to_radians().sin())).abs() < 1e-10);
+        assert_eq!(angle.point_iteration_images(25).unwrap().len(), 1);
+        let reopened = Document::from_bytes(&angle.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_iteration_images(25),
+            angle.point_iteration_images(25)
+        );
+    }
+
+    #[test]
+    fn quantity_log_domains_suppress_depth_and_recover_typed_distances() {
+        let mut doc = Document::from_bytes(
+            include_bytes!("../tests/fixtures/quantity_functions_native.gsp"),
+            None,
+        )
+        .unwrap();
+        doc.set_parameter_value(6, 1.).unwrap();
+        let scaled = doc
+            .add_multi_calculation(&[5, 6], "v1*v2", (10, 5))
+            .unwrap();
+        let rounded = doc
+            .add_parameter_calculation(scaled, "round(v)", (10, 38))
+            .unwrap();
+        let logarithm = doc
+            .add_parameter_calculation(scaled, "ln(v)", (10, 71))
+            .unwrap();
+        let depth = doc
+            .add_parameter_calculation(logarithm, "v*8", (10, 104))
+            .unwrap();
+        let image = doc.add(Kind::MarkedDistanceTranslatedPoint(2, rounded, 0.));
+        let iteration = doc
+            .add_point_iteration_with_depth_value(2, image, depth)
+            .unwrap();
+        assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 3);
+        for parameter in [-1., 0.] {
+            doc.set_parameter_value(6, parameter).unwrap();
+            assert_eq!(doc.numeric_value(logarithm), None);
+            assert_eq!(doc.point_iteration_images(iteration), None);
+            assert_eq!(
+                doc.objects[rounded - 1].kind.numeric_unit(),
+                Some(NumericUnit::Length)
+            );
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert!(!reopened.partial_view);
+            assert_eq!(reopened.numeric_value(logarithm), None);
+            assert_eq!(reopened.position(image), doc.position(image));
+        }
+        doc.set_parameter_value(6, 2.).unwrap();
+        assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 9);
+        assert_eq!(doc.numeric_value(rounded), Some(3.));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(
+            reopened.point_iteration_images(iteration),
+            doc.point_iteration_images(iteration)
+        );
+    }
+
+    #[test]
     fn native_source_exponents_discard_units_and_follow_parameter_edits() {
         for bytes in [
             include_bytes!("../tests/fixtures/source_exponent_area_native.gsp").as_slice(),
@@ -29714,7 +29869,7 @@ mod tests {
             None,
         )
         .unwrap();
-        for initial in [0.5, 1.] {
+        for initial in [0.5, 0.7, 1.] {
             numeric.set_parameter_value(5, initial).unwrap();
             let base = numeric.numeric_value(4).unwrap();
             let mut value = base.powf(initial);
