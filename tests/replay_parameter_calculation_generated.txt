@@ -1,0 +1,5 @@
+open tests/fixtures/table_parameter_default.gsp
+parameter_value 1 2
+calculate_parameter 1 (t[1]^2+3)/2
+check
+save tests/fixtures/parameter_calculation_generated_port.gsp

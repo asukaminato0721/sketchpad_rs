@@ -149,20 +149,11 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             )],
         ));
     }
-    if let Kind::ParameterCalculation(source, group) = &object.kind {
+    if let Kind::ParameterCalculation(_, group) = &object.kind {
         let value = doc.parameter_calculation_value(id)?;
-        let Kind::Parameter(parameter) = &doc.objects.get(source.checked_sub(1)?)?.kind else {
-            return None;
-        };
-        let name = match parameter.name() {
-            "t[1]" => "t₁",
-            "t[2]" => "t₂",
-            name => name,
-        };
-        return Some((
-            group.anchor(),
-            vec![format!("{} = {value:.2}", group.expression(name))],
-        ));
+        let expression = doc.parameter_calculation_expression(id)?;
+        let expression = expression.replace("t[1]", "t₁").replace("t[2]", "t₂");
+        return Some((group.anchor(), vec![format!("{expression} = {value:.2}")]));
     }
     if let Kind::ValueTable(source, group) = &object.kind
         && let Some((name, mut values)) = group.named_label_values()

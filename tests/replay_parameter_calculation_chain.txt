@@ -1,0 +1,4 @@
+open tests/fixtures/parameter_calculation_chain_native.gsp
+parameter_value 1 2
+check
+save tests/fixtures/parameter_calculation_chain_value2_port.gsp

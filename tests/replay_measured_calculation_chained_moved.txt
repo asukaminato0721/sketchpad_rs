@@ -1,0 +1,4 @@
+open tests/fixtures/calculation_length_chained_division_port.gsp
+move 2 400 218
+check
+save tests/fixtures/calculation_length_chained_moved_port.gsp

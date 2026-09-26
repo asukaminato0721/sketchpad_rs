@@ -18,4 +18,6 @@ Native `calculation_length_divide_two_native.gsp` differs from multiplication by
 
 A two-digit factor adds one u16 digit token: the code-48 group grows from 176 to 178 bytes, the `0907` payload from 98 to 100, and the expression token count from three to four. `assets/measurement_times_twelve_group.bin` is the native template. Native length × 12 and length ÷ 12 files import byte-identically; generated length × 23 and length ÷ 12 files displayed 114.85 cm and 0.42 cm and saved byte-identically in Sketchpad 5.
 
+A code-48 length calculation can itself be the source of another code-48 length calculation. Patching a second calculation's one-reference record from the original length measurement to the first calculated value made native Sketchpad display `(AB·3)·2 = 29.96 cm`; it saved the file byte-identically. The port now imports, evaluates, creates, and remaps these chains. Its generated multiplication and subsequent division files displayed 29.96 cm and 9.99 cm in native Sketchpad, and both saved byte-identically. After moving the original endpoint, native Sketchpad displayed 6.55 cm, 19.64 cm, 39.28 cm, and 13.09 cm for the measurement and its three dependent results; the moved file also saved byte-identically.
+
 Other source types, operators, operands above 99, and expression nesting still need native fixtures before broadening the writer.

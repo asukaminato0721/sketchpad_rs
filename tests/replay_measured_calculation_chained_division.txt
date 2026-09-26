@@ -1,0 +1,4 @@
+open tests/fixtures/calculation_length_times_six_chained_port.gsp
+divide_length 6 3 133
+check
+save tests/fixtures/calculation_length_chained_division_port.gsp

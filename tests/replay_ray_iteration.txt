@@ -1,0 +1,8 @@
+new
+point 150 180
+translate_rectangular_fixed 1 1 1
+ray 1 2
+named_parameter n 4 10 5
+iterate_ray 1 2 3 4
+check
+save tests/fixtures/point_translation_carried_ray_parameter_port.gsp

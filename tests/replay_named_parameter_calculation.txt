@@ -1,0 +1,5 @@
+new
+named_parameter speed 2.5 10 5
+calculate_parameter 1 speed^2+1
+check
+save tests/fixtures/named_parameter_calculation_port.gsp

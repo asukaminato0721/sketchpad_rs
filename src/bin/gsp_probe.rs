@@ -301,17 +301,25 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "calculate_length" | "divide_length" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
-                    let [source, factor] = parts.as_slice() else {
-                        return Err(format!("expected {command} MEASUREMENT_ID FACTOR"));
+                    let (source, factor, y) = match parts.as_slice() {
+                        [source, factor] => (*source, *factor, 34),
+                        [source, factor, y] => (
+                            *source,
+                            *factor,
+                            y.parse::<i16>().map_err(|_| "invalid calculation row")?,
+                        ),
+                        _ => {
+                            return Err(format!("expected {command} MEASUREMENT_ID FACTOR [Y]"));
+                        }
                     };
                     let source = source.parse().map_err(|_| "invalid measurement ID")?;
                     let factor = factor
                         .parse()
                         .map_err(|_| "invalid multiplication factor")?;
                     let id = if command == "divide_length" {
-                        document.add_measured_length_division(source, factor, (10, 34))?
+                        document.add_measured_length_division(source, factor, (10, y))?
                     } else {
-                        document.add_measured_length_calculation(source, factor, (10, 34))?
+                        document.add_measured_length_calculation(source, factor, (10, y))?
                     };
                     println!("line {}: {command} -> object {id}", index + 1);
                 }
@@ -319,7 +327,9 @@ fn replay(path: &str) -> Result<(), String> {
                     let Some((source, expression)) = rest.split_once(char::is_whitespace) else {
                         return Err("expected calculate_parameter SOURCE EXPRESSION".into());
                     };
-                    let source = source.parse().map_err(|_| "invalid parameter ID")?;
+                    let source = source
+                        .parse()
+                        .map_err(|_| "invalid calculation source ID")?;
                     let row = document
                         .objects
                         .iter()

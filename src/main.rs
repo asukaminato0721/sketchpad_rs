@@ -4200,7 +4200,8 @@ impl Editor {
                         self.calculation_draft = if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
                                 Some(Kind::Parameter(group)) => format!("{}^2", group.name()),
-                                Some(Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)) => "× 2".into(),
+                                Some(Kind::ParameterCalculation(_, _)) => "v + 1".into(),
+                                Some(Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _)) => "× 2".into(),
                                 _ => "2 + 3".into(),
                             }
                         } else { "2 + 3".into() };
@@ -6094,12 +6095,12 @@ impl Editor {
                             self.doc
                                 .objects
                                 .get(id - 1)
-                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_)))
+                                .is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _)))
                         })
                     {
                         "Selected length × factor (0–99) or ÷ divisor (1–99); also supports two integers"
-                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))) {
-                        "Use the selected parameter in an expression, for example t[1]^2 + 1"
+                    } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_) | Kind::ParameterCalculation(_, _)))) {
+                        "Use the selected parameter by name, or a selected calculation as v"
                     } else {
                         "Enter two integers from 0 to 99 with +, -, *, or /"
                     },
@@ -6142,6 +6143,7 @@ impl Editor {
                                     | Kind::CircleCircumference(_)
                                     | Kind::CircleRadius(_)
                                     | Kind::ArcLength(_)
+                                    | Kind::MeasuredCalculation(_, _)
                             )
                         })
                     })
@@ -6150,10 +6152,12 @@ impl Editor {
                 };
                 let selected_parameter = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
-                        self.doc
-                            .objects
-                            .get(id - 1)
-                            .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
+                        self.doc.objects.get(id - 1).is_some_and(|object| {
+                            matches!(
+                                object.kind,
+                                Kind::Parameter(_) | Kind::ParameterCalculation(_, _)
+                            )
+                        })
                     })
                 } else {
                     None

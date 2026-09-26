@@ -1,0 +1,4 @@
+open tests/fixtures/calculation_length_times_three_port.gsp
+calculate_length 5 2 100
+check
+save tests/fixtures/calculation_length_times_six_chained_port.gsp

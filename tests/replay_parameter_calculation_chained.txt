@@ -1,0 +1,4 @@
+open tests/fixtures/parameter_calculation_even_tokens_port.gsp
+calculate_parameter 2 v+3*2
+check
+save tests/fixtures/parameter_calculation_chained_port.gsp

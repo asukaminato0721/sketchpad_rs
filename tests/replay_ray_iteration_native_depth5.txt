@@ -1,0 +1,4 @@
+open tests/fixtures/point_translation_carried_ray_parameter_native.gsp
+parameter_value 4 5
+check
+save tests/fixtures/point_translation_carried_ray_native_depth5_port.gsp

@@ -2330,14 +2330,14 @@ impl Document {
                         }
                     }
                     (48, None, [source]) if *source > 0
-                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_))) => {
+                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::PolygonPerimeter(_) | Kind::CircleCircumference(_) | Kind::CircleRadius(_) | Kind::ArcLength(_) | Kind::MeasuredCalculation(_, _))) => {
                         match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
                             _ => Kind::Unsupported(code),
                         }
                     }
                     (48, None, [source]) if *source > 0
-                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_))) => {
+                        && objects.get(source - 1).is_some_and(|object| matches!(object.kind, Kind::Parameter(_) | Kind::ParameterCalculation(_, _))) => {
                         match ParameterCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::ParameterCalculation(*source, group),
                             _ => Kind::Unsupported(code),
@@ -4365,20 +4365,26 @@ impl Document {
         else {
             return Err("Invalid parameter ID".into());
         };
-        let Kind::Parameter(parameter) = &object.kind else {
-            return Err("Select a supported parameter".into());
-        };
         if object.deleted || object.page != self.active_page {
-            return Err("Select a parameter on the active page".into());
+            return Err("Select a parameter or calculation on the active page".into());
         }
+        let (source_name, source_value) = match &object.kind {
+            Kind::Parameter(parameter) => (parameter.name().to_owned(), parameter.value()),
+            Kind::ParameterCalculation(_, _) => (
+                "v".to_owned(),
+                self.parameter_calculation_value(source)
+                    .ok_or("Selected calculation is undefined")?,
+            ),
+            _ => return Err("Select a supported parameter or calculation".into()),
+        };
         let group = ParameterCalculationGroup::from_expression(
             u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
-            parameter.name(),
+            &source_name,
             expression,
             anchor,
         )?;
-        if group.value(parameter.value()).is_none() {
-            return Err("Calculation is undefined for the current parameter value".into());
+        if group.value(source_value).is_none() {
+            return Err("Calculation is undefined for the current source value".into());
         }
         self.checkpoint();
         Ok(self.append_object(Kind::ParameterCalculation(source, group)))
@@ -4422,6 +4428,7 @@ impl Document {
                                 | Kind::CircleCircumference(_)
                                 | Kind::CircleRadius(_)
                                 | Kind::ArcLength(_)
+                                | Kind::MeasuredCalculation(_, _)
                         )
                 })
         {
@@ -4441,7 +4448,7 @@ impl Document {
         let Kind::MeasuredCalculation(source, group) = &object.kind else {
             return None;
         };
-        if object.deleted {
+        if object.deleted || *source >= id {
             return None;
         }
         let measurement = match self.objects.get(source.checked_sub(1)?)?.kind {
@@ -4451,6 +4458,7 @@ impl Document {
             Kind::CircleCircumference(_) => self.circle_circumference_cm(*source)?,
             Kind::CircleRadius(_) => self.circle_radius_cm(*source)?,
             Kind::ArcLength(_) => self.arc_length_cm(*source)?,
+            Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(*source)?,
             _ => return None,
         };
         Some(if group.divides() {
@@ -4464,19 +4472,53 @@ impl Document {
         let Kind::ParameterCalculation(source, group) = &object.kind else {
             return None;
         };
-        if object.deleted {
+        if object.deleted || *source >= id {
             return None;
         }
         let source = self.objects.get(source.checked_sub(1)?)?;
-        let Kind::Parameter(parameter) = &source.kind else {
-            return None;
-        };
         if source.deleted {
             return None;
         }
-        group.value(parameter.value())
+        let value = match &source.kind {
+            Kind::Parameter(parameter) => parameter.value(),
+            Kind::ParameterCalculation(_, _) => self.parameter_calculation_value(source.id)?,
+            _ => return None,
+        };
+        group.value(value)
+    }
+    pub fn parameter_calculation_expression(&self, id: usize) -> Option<String> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::ParameterCalculation(source, group) = &object.kind else {
+            return None;
+        };
+        if object.deleted || *source >= id {
+            return None;
+        }
+        let source_object = self.objects.get(source.checked_sub(1)?)?;
+        if source_object.deleted {
+            return None;
+        }
+        let name = match &source_object.kind {
+            Kind::Parameter(parameter) => parameter.name().to_owned(),
+            Kind::ParameterCalculation(_, _) => self.parameter_calculation_expression(*source)?,
+            _ => return None,
+        };
+        Some(group.expression(&name))
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
+        if let Kind::MeasuredCalculation(source, group) =
+            &self.objects.get(id.checked_sub(1)?)?.kind
+        {
+            if *source >= id {
+                return None;
+            }
+            let source_name = self.length_measurement_name(*source)?;
+            return Some(format!(
+                "({source_name} {} {})",
+                if group.divides() { "÷" } else { "·" },
+                group.factor()
+            ));
+        }
         let (first, second) = match self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::SegmentLength(segment) => {
                 let Kind::Segment(first, second) = self.objects.get(segment.checked_sub(1)?)?.kind
@@ -8934,19 +8976,22 @@ impl Document {
                 Kind::MeasuredCalculation(source, group) => {
                     MeasuredCalculationGroup::parse(group.as_bytes())?;
                     if group.source_id() as usize != *source
+                        || *source >= o.id
                         || !self
                             .objects
                             .get(source.saturating_sub(1))
                             .is_some_and(|object| {
-                                matches!(
-                                    object.kind,
-                                    Kind::SegmentLength(_)
-                                        | Kind::PointDistance(_, _)
-                                        | Kind::PolygonPerimeter(_)
-                                        | Kind::CircleCircumference(_)
-                                        | Kind::CircleRadius(_)
-                                        | Kind::ArcLength(_)
-                                )
+                                !object.deleted
+                                    && matches!(
+                                        object.kind,
+                                        Kind::SegmentLength(_)
+                                            | Kind::PointDistance(_, _)
+                                            | Kind::PolygonPerimeter(_)
+                                            | Kind::CircleCircumference(_)
+                                            | Kind::CircleRadius(_)
+                                            | Kind::ArcLength(_)
+                                            | Kind::MeasuredCalculation(_, _)
+                                    )
                             })
                     {
                         return Err("Unsupported measured calculation source".into());
@@ -8955,10 +9000,17 @@ impl Document {
                 Kind::ParameterCalculation(source, group) => {
                     ParameterCalculationGroup::parse(group.as_bytes())?;
                     if group.source_id() as usize != *source
+                        || *source >= o.id
                         || !self
                             .objects
                             .get(source.saturating_sub(1))
-                            .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
+                            .is_some_and(|object| {
+                                !object.deleted
+                                    && matches!(
+                                        object.kind,
+                                        Kind::Parameter(_) | Kind::ParameterCalculation(_, _)
+                                    )
+                            })
                     {
                         return Err("Unsupported parameter calculation source".into());
                     }
@@ -17875,6 +17927,45 @@ mod tests {
     }
 
     #[test]
+    fn chained_measured_calculations_update_and_remap() {
+        let bytes =
+            include_bytes!("../tests/fixtures/calculation_length_chained_division_port.gsp");
+        let mut document = Document::from_bytes(bytes, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        assert!(matches!(
+            document.objects[5].kind,
+            Kind::MeasuredCalculation(5, _)
+        ));
+        assert!(matches!(
+            document.objects[6].kind,
+            Kind::MeasuredCalculation(6, _)
+        ));
+        let base = document.segment_length_cm(4).unwrap();
+        assert!((document.measured_calculation_cm(6).unwrap() - base * 6.).abs() < 1e-10);
+        assert!((document.measured_calculation_cm(7).unwrap() - base * 2.).abs() < 1e-10);
+        assert!(document.length_measurement_name(7).unwrap().contains("AB"));
+        assert!(document.move_point(2, Point { x: 400., y: 218. }));
+        let moved_base = document.segment_length_cm(4).unwrap();
+        assert!((document.measured_calculation_cm(7).unwrap() - moved_base * 2.).abs() < 1e-10);
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert!((reopened.measured_calculation_cm(7).unwrap() - moved_base * 2.).abs() < 1e-10);
+
+        document.selected.insert(7);
+        let clipboard = document.copy_selected().unwrap();
+        let pasted = document.paste(&clipboard).unwrap();
+        let clone_id = *pasted.last().unwrap();
+        let cloned = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(!cloned.partial_view);
+        assert!(matches!(&cloned.objects[clone_id - 1].kind,
+            Kind::MeasuredCalculation(source, group) if *source != 6 && group.source_id() as usize == *source));
+        assert!(
+            (cloned.measured_calculation_cm(clone_id).unwrap() - moved_base * 2.).abs() < 1e-10
+        );
+    }
+
+    #[test]
     fn parameter_calculation_chain_imports_and_updates() {
         let native = include_bytes!("../tests/fixtures/parameter_calculation_chain_native.gsp");
         let mut document = Document::from_bytes(native, None).unwrap();
@@ -17950,6 +18041,41 @@ mod tests {
                 .add_parameter_calculation(1, "speed+999999999999999", (10, 100))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn chained_parameter_calculations_update_and_remap() {
+        let bytes = include_bytes!("../tests/fixtures/parameter_calculation_chained_port.gsp");
+        let mut document = Document::from_bytes(bytes, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        assert!(matches!(
+            document.objects[3].kind,
+            Kind::ParameterCalculation(2, _)
+        ));
+        assert_eq!(document.parameter_calculation_value(4), Some(30.));
+        assert!(
+            document
+                .parameter_calculation_expression(4)
+                .unwrap()
+                .contains("t[1]")
+        );
+        document.set_parameter_value(1, 3.).unwrap();
+        assert_eq!(document.parameter_calculation_value(2), Some(36.));
+        assert_eq!(document.parameter_calculation_value(4), Some(42.));
+        let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(!reopened.partial_view);
+        assert_eq!(reopened.parameter_calculation_value(4), Some(42.));
+
+        document.selected.insert(4);
+        let clipboard = document.copy_selected().unwrap();
+        let pasted = document.paste(&clipboard).unwrap();
+        let clone_id = *pasted.last().unwrap();
+        let cloned = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+        assert!(!cloned.partial_view);
+        assert!(matches!(&cloned.objects[clone_id - 1].kind,
+            Kind::ParameterCalculation(source, group) if *source != 2 && group.source_id() as usize == *source));
+        assert_eq!(cloned.parameter_calculation_value(clone_id), Some(42.));
     }
 
     #[test]

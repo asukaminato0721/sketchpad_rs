@@ -1,0 +1,8 @@
+open tests/fixtures/wine_segment_length.gsp
+calculate_length 4 23
+check
+save tests/fixtures/calculation_length_times_twenty_three_port.gsp
+open tests/fixtures/wine_segment_length.gsp
+divide_length 4 12
+check
+save tests/fixtures/calculation_length_divide_twelve_port.gsp
