@@ -34,7 +34,7 @@ fn is_point_header(payload: &[u8]) -> bool {
     matches!(
         (code, subtype),
         (
-            0 | 75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+            0 | 75 | 88 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
             4
         ) | (0, 41)
             | (1, 11)
@@ -42,7 +42,7 @@ fn is_point_header(payload: &[u8]) -> bool {
             | (101, 89)
             | (9 | 11 | 12 | 13 | 14, 45)
             | (67 | 68 | 69 | 95 | 109 | 110 | 123, 56)
-    )
+    ) || (payload.len() == 28 && code == 16 && subtype == 89 && payload[6..8] == [1, 0])
 }
 
 fn is_legacy_free_point_header(payload: &[u8]) -> bool {
@@ -305,7 +305,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
             && payload[6..10] == [12, 0, 67, 0]
             && matches!(code, 16..=21 | 24 | 27..=30 | 32..=34))
         || (payload.len() == 28
-            && matches!(code, 27 | 29 | 30 | 33)
+            && matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
             && payload[6..8] == [2, 0]
             && matches!(u16::from_le_bytes([payload[8], payload[9]]), 12 | 13))
         || (payload[6..8] == [6, 0]

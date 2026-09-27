@@ -665,6 +665,7 @@ impl Document {
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
+                Kind::IterationPointAlias(_) => d.iteration_endpoint(id),
                 Kind::Midpoint(a, b) => {
                     let (a, b) = if let Some(host) = object.midpoint_host {
                         let (a, b, mode) = d.line_points(host)?;
@@ -693,7 +694,7 @@ impl Document {
                     intersect_straight(first, second)
                 }
                 Kind::LineCircleIntersection(a, b, variant) => {
-                    line_circle_intersection(d.line_points(*a)?, d.circle_points(*b)?, *variant)
+                    d.straight_round_intersection(*a, *b, *variant)
                 }
                 Kind::CircleCircleIntersection(a, b, variant) => {
                     circle_circle_intersection(d.circle_points(*a)?, d.circle_points(*b)?, *variant)
@@ -705,6 +706,67 @@ impl Document {
         }
         go(self, id, &mut BTreeSet::new())
     }
+    /// Native 11/12 share their wire identity for circles and bounded arcs.
+    /// Circle branches retain ordered straight roots. Arc branches select the
+    /// oriented straight roots after arc/extent filtering, including a sole hit.
+    fn straight_round_intersection(
+        &self,
+        straight: usize,
+        round: usize,
+        variant: usize,
+    ) -> Option<Point> {
+        if variant > 1 {
+            return None;
+        }
+        let line = self.line_points(straight)?;
+        let object = self.objects.get(round.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        if object.kind.is_circle() {
+            return line_circle_intersection(line, self.circle_points(round)?, variant);
+        }
+        if !is_arc_kind(&object.kind) {
+            return None;
+        }
+        if let Some((start, end)) = self.linear_three_point_arc(round) {
+            return intersect_straight(line, (start, end, LineMode::Segment));
+        }
+        let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(round)?;
+        let mut hits = Vec::new();
+        for root in 0..2 {
+            let Some(point) = line_circle_intersection(line, (center, radius), root) else {
+                continue;
+            };
+            let angle = (if clockwise_y { center.y - point.y } else { point.y - center.y })
+                .atan2(point.x - center.x);
+            let mut progress = if sweep >= 0. {
+                (angle - start).rem_euclid(std::f64::consts::TAU)
+            } else {
+                (start - angle).rem_euclid(std::f64::consts::TAU)
+            };
+            // A root rounded just below the start angle is the inclusive start,
+            // rather than a full turn beyond it. Do not use arc_parameter here:
+            // that projection clamps points outside the sweep to an endpoint.
+            if std::f64::consts::TAU - progress <= 1e-10 {
+                progress = 0.;
+            }
+            if progress <= sweep.abs() + 1e-10 {
+                hits.push(point);
+            }
+        }
+        // Roots arrive in descending straight parameter order. Native arc
+        // orientation reverses the circle branch assignment; the start angle
+        // does not determine branch order. A sole surviving hit serves both.
+        let screen_sweep = if clockwise_y { -sweep } else { sweep };
+        if (variant == 1) == (screen_sweep < 0.) {
+            hits.first()
+        } else {
+            hits.last()
+        }
+        .copied()
+    }
+
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
         if let Some(value) = self.evaluation_polygon(id) {
             return value;
@@ -776,7 +838,9 @@ impl Document {
                     }
                 }
                 (
-                    NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation,
+                    NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation
+                        | NativeTransformFlavor::Vector | NativeTransformFlavor::FixedPolar
+                        | NativeTransformFlavor::Reflection,
                     _,
                 ) => {}
                 _ => return false,
@@ -897,10 +961,15 @@ impl Document {
                         x: first.x + second.x,
                         y: first.y + second.y,
                     };
-                    let direction = normalize(sum).unwrap_or(Point {
-                        x: -first.y,
-                        y: first.x,
-                    });
+                    normalize(sum)?;
+                    // Native's path parameter uses the sum of unit arms with
+                    // a fixed sqrt(2250)-pixel coefficient. Normalizing that
+                    // sum changes every point-on-bisector value and position.
+                    let scale = 2250f64.sqrt();
+                    let direction = Point {
+                        x: sum.x * scale,
+                        y: sum.y * scale,
+                    };
                     Some((
                         b,
                         Point {

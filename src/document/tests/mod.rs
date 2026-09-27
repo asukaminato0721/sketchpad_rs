@@ -69,6 +69,9 @@ mod iteration_mappings;
 mod labeled_literal_paths;
 mod legacy;
 mod locus;
+mod numeric_locus;
+mod locus_metadata54;
+mod iteration_endpoint;
 mod mapped_geometry;
 mod mapped_iteration;
 mod measurement_precision;
@@ -138,3 +141,10 @@ mod point_numeric_labels;
 mod mapped_numeric_labels;
 
 mod coordinate_points;
+mod bisector_parameters;
+
+mod inherited_point_transforms;
+
+mod straight_transform_sources54;
+
+mod arc_intersections55;

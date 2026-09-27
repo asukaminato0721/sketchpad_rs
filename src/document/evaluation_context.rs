@@ -109,6 +109,22 @@ impl Document {
         Some(())
     }
 
+    /// A terminal nested mapping overrides its own seeds while retaining unrelated
+    /// substitutions established by its caller.
+    pub(super) fn inherit_evaluation_seeds(&mut self, original: &Document) -> Option<()> {
+        let target = self.evaluation_context.as_mut()?;
+        if let Some(parent) = &original.evaluation_context {
+            target.seed_points.extend(parent.seed_points.iter().map(|(&id, &value)| (id, value)));
+            target.seed_numbers.extend(parent.seed_numbers.iter().map(|(&id, &value)| (id, value)));
+        }
+        Some(())
+    }
+    pub(super) fn clear_evaluation_seed_ids(&mut self, ids: &[usize]) {
+        if let Some(context) = &mut self.evaluation_context {
+            for id in ids { context.seed_points.remove(id); context.seed_numbers.remove(id); }
+        }
+    }
+
     pub(super) fn clear_evaluation_seeds(&mut self) {
         if let Some(context) = &mut self.evaluation_context {
             context.seed_points.clear();

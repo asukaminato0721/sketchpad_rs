@@ -517,6 +517,10 @@ impl Document {
                             .collect::<Result<Vec<_>, _>>()?;
                         Self::append_multi_page_reference_group(&mut groups, object, 101, &refs)?;
                     }
+                    Kind::IterationPointAlias(binding) => {
+                        let reference = self.multi_page_local_reference(page, object.id, *binding)?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 88, &[reference])?;
+                    }
                     Kind::Free(point) => {
                         if !point.x.is_finite() || !point.y.is_finite() {
                             return Err("Multi-page point coordinates must be finite".into());

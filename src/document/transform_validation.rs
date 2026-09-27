@@ -283,16 +283,21 @@ pub(super) fn validate_transform(
             _ => return Err(invalid()),
         }
     } else if straight {
-        let center = match definition.transform() {
-            Transform::Rotate { center, .. } | Transform::Dilate { center, .. } => *center,
-            _ => return Err(invalid()),
-        };
-        if document.position(center).is_none() {
-            return Err(invalid());
+        if let Transform::Rotate { center, .. } | Transform::Dilate { center, .. } = definition.transform() {
+            if document.position(*center).is_none() {
+                return Err(invalid());
+            }
         }
         let zero = matches!(definition.transform(), Transform::Dilate {
             ratio: NumericExpr::Literal { magnitude, .. }, .. } if *magnitude == 0.);
-        if zero || document.straight_transform_has_suppressed_ancestor(definition.source()) {
+        // Native retains typed straight chains when a live source loses its
+        // direction, including coincident primitive endpoints and undefined
+        // derived paths. Parent roles and operation parameters were checked above.
+        let undefined_source = document.line_points(definition.source())
+            .is_none_or(|(start, end, _)| start == end);
+        if zero || undefined_source
+            || document.straight_transform_has_suppressed_ancestor(definition.source())
+        {
             return Ok(());
         }
     }

@@ -788,12 +788,22 @@ impl Document {
             sample.frozen_evaluation_document(source).unwrap_or(sample).point_numeric_label(source)
         })
     }
+    pub(super) fn mapped_terminal_point(&self, source: usize, iteration: usize) -> Option<Point> {
+        let outputs = self.mapped_iteration_outputs(source, iteration, true, |sample, id| sample.position(id))?;
+        (outputs.len() == 1).then(|| outputs[0]).flatten()
+    }
     fn mapped_iteration_images<T>(
+        &self, source: usize, iteration: usize, evaluate: impl FnMut(&Document, usize) -> Option<T>,
+    ) -> Option<Vec<T>> {
+        Some(self.mapped_iteration_outputs(source, iteration, false, evaluate)?.into_iter().flatten().collect())
+    }
+    fn mapped_iteration_outputs<T>(
         &self,
         source: usize,
         iteration: usize,
+        terminal_only: bool,
         mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
-    ) -> Option<Vec<T>> {
+    ) -> Option<Vec<Option<T>>> {
         let object = self.objects.get(iteration.checked_sub(1)?)?;
         let Kind::MappedPointIteration {
             seeds,
@@ -808,7 +818,18 @@ impl Document {
         if object.deleted || !carried.contains(&source) {
             return None;
         }
-        let depth = self.numeric_iteration_depth(*depth)?;
+        let depth = if terminal_only {
+            match *depth {
+                IterationDepth::Fixed(value) => (1..=128).contains(&value).then_some(value)?,
+                IterationDepth::Value(id) => {
+                    let raw = self.unitless_numeric_value(id)?;
+                    if raw < 0. { return None; }
+                    let value = raw.trunc();
+                    if !(0. ..=128.).contains(&value) { return None; }
+                    value as u32
+                }
+            }
+        } else { self.numeric_iteration_depth(*depth)? };
         let initial: Vec<_> = seeds
             .iter()
             .map(|id| MappedValue::read(self, *id))
@@ -816,14 +837,16 @@ impl Document {
         let mut level = vec![initial];
         let mut sample = self.clone();
         let external = self.mapped_external_inputs(seeds, branches, carried)?;
-        sample.freeze_evaluation_inputs(self, &external)?;
+        if terminal_only { sample.freeze_scoped_evaluation_inputs(self, &external)?; sample.inherit_evaluation_seeds(self)?; }
+        else { sample.freeze_evaluation_inputs(self, &external)?; }
+        if depth == 0 { return Some(vec![evaluate(&sample, source)]); }
         let mut result = Vec::new();
         let mut generated = 0;
         for step in 0..depth {
             let mut next = Vec::new();
             let mut seen = BTreeSet::new();
             for state in &level {
-                sample.clear_evaluation_seeds();
+                if terminal_only { sample.clear_evaluation_seed_ids(seeds); } else { sample.clear_evaluation_seeds(); }
                 for (id, value) in seeds.iter().zip(state) {
                     value.substitute(&mut sample, *id)?;
                 }
@@ -843,17 +866,15 @@ impl Document {
                 return None;
             }
             generated += next.len();
-            if !*final_only || step + 1 == depth {
+            if (!terminal_only && !*final_only) || step + 1 == depth {
                 for state in &next {
-                    sample.clear_evaluation_seeds();
+                    if terminal_only { sample.clear_evaluation_seed_ids(seeds); } else { sample.clear_evaluation_seeds(); }
                     for (id, value) in seeds.iter().zip(state) {
                         value.substitute(&mut sample, *id)?;
                     }
                     // Undefined carried geometry hides only that image. Other
                     // bindings and earlier valid generations remain available.
-                    if let Some(value) = evaluate(&sample, source) {
-                        result.push(value);
-                    }
+                    result.push(evaluate(&sample, source));
                 }
             }
             level = next;

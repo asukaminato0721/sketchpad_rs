@@ -253,9 +253,8 @@ fn mixed_straight_transform_guards_keep_unproved_hosts_and_units_closed() {
     assert_eq!(d.encode().unwrap(), before);
     for kind in [
         Kind::GraphAxis(2, 3, 1),
-        Kind::Parallel(2, 5),
-        Kind::Perpendicular(2, 5),
-        Kind::Bisector(2, 1, 3),
+        Kind::CircleAxis(2, 0),
+        Kind::DistanceAxis(2, 3, 0),
     ] {
         assert_eq!(kind.fixed_transform_straight_mode(), None);
         let id = d.add(kind);

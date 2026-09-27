@@ -381,7 +381,8 @@ impl TransformDefinition {
             || (straight
                 && !matches!(
                     flavor,
-                    F::FixedRotation | F::NumericRotation | F::FixedDilation | F::NumericDilation
+                    F::Vector | F::FixedPolar | F::Reflection
+                        | F::FixedRotation | F::NumericRotation | F::FixedDilation | F::NumericDilation
                 ))
         {
             return Err("Unsupported transform element/expression/wire flavor".into());
@@ -940,8 +941,11 @@ mod tests {
             TransformDefinition::new(
                 1,
                 ElementType::Line,
-                Transform::Reflect { mirror: 2 },
-                NativeTransformFlavor::Reflection
+                Transform::Translate(DisplacementExpr::Cartesian {
+                    horizontal: NumericExpr::Literal { magnitude: 1., unit: NumericUnit::Length, scale: 37.79527559055118 },
+                    vertical: NumericExpr::Literal { magnitude: 1., unit: NumericUnit::Length, scale: 37.79527559055118 },
+                }),
+                NativeTransformFlavor::FixedCartesian
             )
             .is_err()
         );
@@ -949,8 +953,8 @@ mod tests {
             TransformDefinition::new(
                 1,
                 ElementType::Ray,
-                Transform::Translate(DisplacementExpr::Vector { start: 2, end: 3 }),
-                NativeTransformFlavor::Vector
+                Transform::Rotate { center: 2, angle: NumericExpr::DirectedAngle { first: 2, vertex: 3, last: 4 } },
+                NativeTransformFlavor::PointAngleRotation
             )
             .is_err()
         );

@@ -3,11 +3,22 @@ use sketchpad_rs::document::{Kind, LineMode};
 
 impl Editor {
     fn append_transformed_selection(&mut self, source: usize, kind: Kind) {
-        let kind = if self.doc.objects.get(source.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
+        let element = self.doc.objects.get(source.saturating_sub(1)).and_then(|object| {
+            use sketchpad_rs::document::transform_model::ElementType;
+            if object.kind.is_arc() {
+                Some(ElementType::Arc)
+            } else {
+                match object.kind.fixed_transform_straight_mode() {
+                    Some(LineMode::Ray) => Some(ElementType::Ray),
+                    Some(LineMode::Line) => Some(ElementType::Line),
+                    _ => None,
+                }
+            }
+        });
+        let kind = if let Some(element) = element {
             let definition = kind.transform_definition().expect("Transform command creates a transform");
             match sketchpad_rs::document::transform_model::TransformDefinition::new(
-                source, sketchpad_rs::document::transform_model::ElementType::Arc,
-                definition.transform().clone(), definition.wire_flavor(),
+                source, element, definition.transform().clone(), definition.wire_flavor(),
             ) {
                 Ok(definition) => Kind::Transformed(definition),
                 Err(error) => { self.status = error; return; }
@@ -28,6 +39,10 @@ impl Editor {
         }
         let source = self.selection_order[0];
         let source_is_arc = self.doc.objects[source - 1].kind.is_arc();
+        let source_is_unbounded_straight = self.doc.objects[source - 1]
+            .kind.fixed_transform_straight_mode().is_some()
+            && self.doc.line_points(source).is_some()
+            && matches!(self.translation_mode, TranslationMode::FixedPolar | TranslationMode::MarkedVector);
         let source_is_segment = matches!(
             self.doc
                 .objects
@@ -52,6 +67,7 @@ impl Editor {
         );
         if self.doc.position(source).is_none()
             && !source_is_arc
+            && !source_is_unbounded_straight
             && !source_is_segment
             && !source_is_circle
             && !(source_is_polygon
@@ -323,6 +339,12 @@ impl Editor {
             Kind::ReflectedPoint(source, mirror)
         } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
             Kind::ReflectedCircle(source, mirror)
+        } else if self.doc.objects.get(source.saturating_sub(1))
+            .is_some_and(|object| object.kind.fixed_transform_straight_mode().is_some())
+            && self.doc.line_points(source).is_some()
+        {
+            // The common append path preserves the source's ray/line extent.
+            Kind::ReflectedSegment(source, mirror)
         } else if matches!(
             self.doc
                 .objects

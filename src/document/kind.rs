@@ -76,21 +76,13 @@ impl Kind {
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
     }
+    /// Straight source families supported by native transform schemas.
     pub fn fixed_transform_straight_mode(&self) -> Option<LineMode> {
         match self {
-            Kind::Ray(..) => Some(LineMode::Ray),
-            Kind::Line(..) => Some(LineMode::Line),
+            Kind::Ray(..) | Kind::Bisector(..) => Some(LineMode::Ray),
+            Kind::Line(..) | Kind::Parallel(..) | Kind::Perpendicular(..) => Some(LineMode::Line),
             _ => {
                 let definition = self.transform_definition()?;
-                if !matches!(
-                    definition.wire_flavor(),
-                    NativeTransformFlavor::FixedRotation
-                        | NativeTransformFlavor::FixedDilation
-                        | NativeTransformFlavor::NumericRotation
-                        | NativeTransformFlavor::NumericDilation
-                ) {
-                    return None;
-                }
                 match definition.element() {
                     ElementType::Ray => Some(LineMode::Ray),
                     ElementType::Line => Some(LineMode::Line),
@@ -329,7 +321,8 @@ impl Kind {
             | Kind::Calculation(_)
             | Kind::FunctionDefinition(_)
             | Kind::Unsupported(_) => vec![],
-            Kind::ToolPointOnPath(host)
+            Kind::IterationPointAlias(host)
+            | Kind::ToolPointOnPath(host)
             | Kind::SegmentMidpoint(host)
             | Kind::PointOnSegment(host, _)
             | Kind::PointOnRay(host, _)
@@ -726,6 +719,7 @@ impl Kind {
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
+            Kind::IterationPointAlias(binding) => Kind::IterationPointAlias(m(binding)),
             Kind::Midpoint(a, b) => Kind::Midpoint(m(a), m(b)),
             Kind::Segment(a, b) => Kind::Segment(m(a), m(b)),
             Kind::Line(a, b) => Kind::Line(m(a), m(b)),
@@ -797,6 +791,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::PlainText { .. }
+            | Kind::IterationPointAlias(_)
             | Kind::CoordinatePoint(_)
             | Kind::MappedElement(_)
             | Kind::Colorized(_)
@@ -892,7 +887,10 @@ pub(super) fn straight_point_constraint_matches(kind: &Kind, payload: &[u8]) -> 
     }
     let subtype = u16::from_le_bytes([prefix[2], prefix[3]]);
     straight_point_constraint_subtype(kind).is_some_and(|expected| subtype == u16::from(expected))
-        || matches!((kind, subtype), (Kind::Parallel(..), 46) | (Kind::Perpendicular(..), 47))
+        || matches!(
+            (kind, subtype),
+            (Kind::Bisector(..), 44) | (Kind::Parallel(..), 46) | (Kind::Perpendicular(..), 47)
+        )
 }
 
 pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
@@ -935,6 +933,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
         || matches!(
             kind,
             Kind::Free(_)
+                | Kind::IterationPointAlias(_)
                 | Kind::ToolPointOnPath(_)
                 | Kind::SegmentMidpoint(_)
                 | Kind::PointOnSegment(_, _)
@@ -1020,6 +1019,28 @@ pub(super) fn expected_parameter_locus_refs(
     Some(refs)
 }
 
+/// Native records fix target/path/driver roles and the final target, while
+/// intermediate dependency nodes may be stored in a different traversal order.
+/// Match the complete multiset so omissions, duplicates and unrelated nodes
+/// cannot acquire validity merely by naming a supported target.
+pub(super) fn locus_refs_match(objects: &[Object], refs: &[usize]) -> bool {
+    let Some((&target, &driver)) = refs.first().zip(refs.get(2)) else {
+        return false;
+    };
+    let Some(expected) = expected_locus_refs(objects, driver, target) else {
+        return false;
+    };
+    if refs.len() != expected.len()
+        || refs.get(..3) != expected.get(..3)
+        || refs.last() != Some(&target)
+    {
+        return false;
+    }
+    let mut captured = refs[3..].to_vec();
+    captured.sort_unstable();
+    captured == expected[3..]
+}
+
 pub(super) fn expected_locus_refs(
     objects: &[Object],
     driver: usize,
@@ -1053,6 +1074,7 @@ pub(super) fn expected_locus_refs(
             || object.kind.is_circle()
             || is_arc_kind(&object.kind)
             || is_locus_polygon_kind(&object.kind)
+            || object.kind.numeric_unit().is_some()
         {
             object.kind.dependencies()
         } else {
@@ -1303,6 +1325,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
     }
     match kind {
         Kind::Free(_)
+        | Kind::IterationPointAlias(_)
         | Kind::MappedElement(_)
         | Kind::ToolPointOnPath(_)
         | Kind::SegmentMidpoint(_)

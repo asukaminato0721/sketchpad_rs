@@ -5,7 +5,7 @@ use super::iteration::{
     supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_coordinate_unit_kind,
+    expected_parameter_locus_refs, is_arc_kind, is_coordinate_unit_kind,
     is_literal_plot_path_kind, is_locus_polygon_kind, is_locus_straight_kind, is_point_kind,
     is_segment_kind, is_straight_kind, is_value_plot_path_kind, polygon_vertex_count,
     straight_kind_mode,
@@ -402,6 +402,7 @@ impl Document {
                         | 67
                         | 68
                         | 69
+                        | 88
                         | 109
                         | 110
                         | 75
@@ -568,10 +569,21 @@ impl Document {
                             safe = false;
                         }
                     }
+                    0x7d3 if matches!(code, 11 | 12) => {
+                        // Bounded arc intersections have references only.
+                        constraint_payload = Some((d.to_vec(), r.data.start));
+                    }
+                    0x7d3 if code == 16 => {
+                        // Proved vector packets have references only. Retain
+                        // unproved payloads for strict typing without treating
+                        // an otherwise unsupported record as safe structure.
+                        constraint_payload = Some((d.to_vec(), r.data.start));
+                        safe = false;
+                    }
                     0x7d3
                         if matches!(
                             code,
-                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57 | 75 | 109 | 110
+                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57 | 75 | 88 | 109 | 110
                         ) =>
                     {
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -941,6 +953,11 @@ impl Document {
                 &b[group_start..rs[i].data.end], text_style_count,
             ) {
                 caption
+            } else if let Some(alias) = super::iteration_endpoint::decode(
+                &objects, page, objects.len() + 1, h, &refs,
+                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+            ) {
+                alias
             } else if let Some(definition) = super::coordinate_points::decode(
                 &objects, page, objects.len() + 1, h, &refs,
                 constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
@@ -956,11 +973,18 @@ impl Document {
                 constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
             ) {
                 Kind::MappedElement(definition)
-            } else if let Some(definition) = super::transform_arc_decode::decode_arc_transform(
+            } else if let Some(definition) = super::transform_decode::decode_native_transform(
                 &objects, page, objects.len() + 1, h, &refs,
                 constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
             ) {
                 Kind::Transformed(definition)
+            } else if matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
+                && h.len() == 28 && h[6..8] == [2, 0]
+                && matches!(u16::from_le_bytes([h[8], h[9]]), 12 | 13)
+            {
+                // A known ray/line output that failed the shared schema must
+                // not fall through to a legacy point/circle construction.
+                Kind::Unsupported(code)
             } else {
                 match (code, point, refs.as_slice()) {
                     (89, None, [parameter, seed, first, second, carried_second, carried_first, polygon, segments @ ..])
@@ -1111,9 +1135,7 @@ impl Document {
                                 h[6..10] == [6, 0, 42, 0]
                             }
                         })
-                            && refs.first().zip(refs.get(2)).and_then(|(&target, &driver)| {
-                                expected_locus_refs(&objects, driver, target)
-                            }).as_ref() == Some(&refs)
+                            && super::kind::locus_refs_match(&objects, &refs)
                             && locus_range.as_ref().is_some_and(|data| {
                                 data.len() == 40
                                     && f64_at(data, 0) == 0.0
@@ -1125,10 +1147,12 @@ impl Document {
                                     })
                                     && f64_at(data, 24).is_finite()
                                     && refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
-                                        data[32..] == if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
-                                            [0, 0, 0, 0, 0, 0, 0, 0]
+                                        if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
+                                            data[32..] == [0; 8]
                                         } else {
-                                            [1, 0, 0, 0, 0, 0, 0, 0]
+                                            // Native point curves retain either flag; the
+                                            // output header and dependency roles define the element.
+                                            data[36..] == [0; 4] && u32_at(data, 32) <= 1
                                         }
                                     })
                             }) => Kind::Locus(refs.clone(), u32_at(locus_range.as_ref().unwrap(), 16)),
@@ -1490,7 +1514,7 @@ impl Document {
                             (Some(kind), Some((payload, _)))
                                 if straight_kind_mode(kind) == Some(LineMode::Ray)
                                     && payload.len() == 12
-                                    && payload[..4] == [15, 0, 13, 0]
+                                    && super::kind::straight_point_constraint_matches(kind, payload)
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnRay(*host, f64_at(payload, 4))
@@ -1698,6 +1722,14 @@ impl Document {
                             && [start, end].iter().all(|&&id| is_point_kind(&objects[id - 1].kind)) => {
                         match (&objects[source - 1].kind, &h[8..10]) {
                             (kind, [4, 0]) if is_point_kind(kind) => Kind::VectorTranslatedPoint(*source, *start, *end),
+                            // Native copies the mapped point identity onto its vector image.
+                            // Read the actual source header so arbitrary point kinds cannot
+                            // acquire an unexplained application subtype.
+                            (kind, [89, 0]) if is_point_kind(kind)
+                                && h.len() == 28 && h[6..8] == [1, 0]
+                                && constraint_payload.is_none()
+                                && [source, start, end].iter().all(|&&id| id < objects.len() + 1 && objects[id - 1].page == page && !objects[id - 1].deleted)
+                                && objects[source - 1].header_offset.is_some_and(|at| b.get(at + 6..at + 10) == Some(&[1, 0, 89, 0])) => Kind::VectorTranslatedPoint(*source, *start, *end),
                             (kind, [14, 0]) if is_segment_kind(kind) => Kind::VectorTranslatedSegment(*source, *start, *end),
                             (kind, [28, 0]) if kind.is_circle() => Kind::VectorTranslatedCircle(*source, *start, *end),
                             (kind, _) if kind.is_polygon() && h[6..8] == [4, 0]
@@ -1848,6 +1880,13 @@ impl Document {
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
                                 object.kind.is_circle()
+                                    || (is_arc_kind(&object.kind)
+                                        && object.page == page
+                                        && objects[a - 1].page == page
+                                        && h.len() == 28
+                                        && h[6..10] == [1, 0, 45, 0]
+                                        && point.is_none()
+                                        && constraint_payload.is_none())
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 1)
@@ -1858,6 +1897,13 @@ impl Document {
                             .is_some_and(|object| is_straight_kind(&object.kind))
                             && objects.get(b.saturating_sub(1)).is_some_and(|object| {
                                 object.kind.is_circle()
+                                    || (is_arc_kind(&object.kind)
+                                        && object.page == page
+                                        && objects[a - 1].page == page
+                                        && h.len() == 28
+                                        && h[6..10] == [1, 0, 45, 0]
+                                        && point.is_none()
+                                        && constraint_payload.is_none())
                             }) =>
                     {
                         Kind::LineCircleIntersection(*a, *b, 0)

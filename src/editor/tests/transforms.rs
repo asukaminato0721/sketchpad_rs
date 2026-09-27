@@ -208,7 +208,9 @@ fn fixed_transform_commands_accept_transformed_segments_and_circles() {
         editor.dilate_selected();
         editor.marked_mirror = Some(source);
         editor.reflect_selected();
-        assert_eq!(editor.doc.objects.len(), 3);
+        assert_eq!(editor.doc.objects.len(), 4);
+        assert_eq!(editor.doc.line_points(4).unwrap().2, if ray { LineMode::Ray } else { LineMode::Line });
+        editor.doc.verify_roundtrip().unwrap();
     }
 }
 
@@ -265,12 +267,12 @@ fn fixed_rotated_ray_and_line_commands_pick_the_correct_extents() {
         editor.dilate_selected();
         editor.marked_mirror = Some(4);
         editor.reflect_selected();
-        assert_eq!(editor.doc.objects.len(), count + 1);
+        assert_eq!(editor.doc.objects.len(), count + 2);
         editor.select_only(4);
         editor.rotation_use_marked = true;
         editor.marked_angle = Some(MarkedAngle::Points([1, 2, 3]));
         editor.rotate_selected();
-        assert_eq!(editor.doc.objects.len(), count + 1);
+        assert_eq!(editor.doc.objects.len(), count + 2);
     }
 }
 

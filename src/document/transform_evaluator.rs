@@ -245,6 +245,9 @@ impl Document {
                 if mode != expected {
                     return Err(Error::WrongElement(source));
                 }
+                if start == end {
+                    return Err(Error::Undefined);
+                }
                 TransformGeometry::Straight { start, end, mode }
             }
             ElementType::Circle if kind.is_circle() => {
@@ -384,9 +387,12 @@ impl Document {
         };
         match &mut geometry {
             TransformGeometry::Point(p) => *p = apply(*p)?,
-            TransformGeometry::Straight { start, end, .. } => {
+            TransformGeometry::Straight { start, end, mode } => {
                 *start = apply(*start)?;
                 *end = apply(*end)?;
+                if *mode != LineMode::Segment && start == end {
+                    return Err(Error::Undefined);
+                }
             }
             TransformGeometry::Circle { center, radius } => {
                 *center = apply(*center)?;

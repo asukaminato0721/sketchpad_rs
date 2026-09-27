@@ -1,6 +1,6 @@
-//! Arc output typing for the shared native transform schemas.
+//! Shared native transform schemas with independently validated output typing.
 //! Appearance, caches and unknown auxiliary records remain in the preserving serializer.
-use super::Object;
+use super::{LineMode, Object};
 use super::decode::{polar_distance_scale, transform_angle_degrees};
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
 use super::records::{f64_at, u32_at};
@@ -10,7 +10,7 @@ use super::transform_model::{
 };
 use crate::table_records::NumericUnit;
 
-pub(super) fn decode_arc_transform(
+pub(super) fn decode_native_transform(
     objects: &[Object],
     page: usize,
     object_id: usize,
@@ -18,9 +18,15 @@ pub(super) fn decode_arc_transform(
     references: &[usize],
     constraint: Option<&[u8]>,
 ) -> Option<TransformDefinition> {
-    if header.len() != 28 || header[6..10] != [12, 0, 67, 0] {
+    if header.len() != 28 {
         return None;
     }
+    let element = match header[6..10] {
+        [12, 0, 67, 0] => ElementType::Arc,
+        [2, 0, 13, 0] => ElementType::Ray,
+        [2, 0, 12, 0] => ElementType::Line,
+        _ => return None,
+    };
     let code = u16::from_le_bytes(header[..2].try_into().ok()?);
     let get = |id: usize| {
         objects
@@ -31,7 +37,14 @@ pub(super) fn decode_arc_transform(
         return None;
     }
     let source = *references.first()?;
-    if !is_arc_kind(&get(source)?.kind) {
+    let source_kind = &get(source)?.kind;
+    let source_matches = match element {
+        ElementType::Arc => is_arc_kind(source_kind),
+        ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
+        ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),
+        _ => false,
+    };
+    if !source_matches {
         return None;
     }
     let point = |id: usize| get(id).is_some_and(|o| is_point_kind(&o.kind));
@@ -215,5 +228,5 @@ pub(super) fn decode_arc_transform(
         }
         _ => return None,
     };
-    TransformDefinition::new(source, ElementType::Arc, transform, flavor).ok()
+    TransformDefinition::new(source, element, transform, flavor).ok()
 }

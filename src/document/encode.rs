@@ -163,7 +163,8 @@ impl Document {
                     Kind::PointOnSegment(_, t) if out.get(i..i + 4) == Some(&[15, 0, 14, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnRay(_, t) if out.get(i..i + 4) == Some(&[15, 0, 13, 0]) => {
+                    Kind::PointOnRay(host, t) if out.get(i..i + 4).is_some_and(|payload|
+                        super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnLine(host, t)
@@ -1511,6 +1512,7 @@ impl Document {
                 continue;
             }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
+                Kind::IterationPointAlias(binding) => (88, vec![binding]),
                 Kind::Free(_) => (0, vec![]),
                 Kind::PointOnSegment(host, _)
                 | Kind::PointOnRay(host, _)
@@ -1571,7 +1573,8 @@ impl Document {
             put_record(&mut added, 0x7d0, &h);
             let label_after_references = matches!(
                 o.kind,
-                Kind::Midpoint(..)
+                Kind::IterationPointAlias(..)
+                    | Kind::Midpoint(..)
                     | Kind::SegmentMidpoint(..)
                     | Kind::Intersection(..)
                     | Kind::LineCircleIntersection(..)

@@ -21,6 +21,7 @@ mod geometry;
 mod history;
 mod images;
 mod iteration;
+mod iteration_endpoint;
 mod movement;
 pub use movement::MovementValue;
 mod kind;
@@ -42,7 +43,7 @@ mod tool_creation;
 mod tool_inputs;
 pub mod transform_evaluator;
 pub mod transform_model;
-mod transform_arc_decode;
+mod transform_decode;
 mod transform_validation;
 mod transform_wire;
 mod transforms;
@@ -228,6 +229,8 @@ pub enum Kind {
         depth: IterationDepth,
         final_only: bool,
     },
+    /// A Native code88 point in the terminal scope of a single mapped binding.
+    IterationPointAlias(usize),
     IterationValues(usize, usize),
     PointRatio(usize, usize, usize),
     Midpoint(usize, usize),

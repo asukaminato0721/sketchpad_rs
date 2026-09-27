@@ -1267,8 +1267,9 @@ fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancesto
     let b = unsupported.add(Kind::Free(Point { x: 150., y: 120. }));
     let c = unsupported.add(Kind::Free(Point { x: 120., y: 150. }));
     let bisector = unsupported.add(Kind::Bisector(a, b, c));
-    unsupported.add(Kind::RotatedRay(bisector, a, 45.));
-    assert!(unsupported.encode().is_err());
+    let image = unsupported.add(Kind::RotatedRay(bisector, a, 45.));
+    assert_eq!(unsupported.line_points(image).unwrap().2, LineMode::Ray);
+    unsupported.verify_roundtrip().unwrap();
 }
 
 #[test]

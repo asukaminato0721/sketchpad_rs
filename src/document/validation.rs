@@ -4,7 +4,7 @@ use super::iteration::{
     supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_point_kind,
+    locus_refs_match, expected_parameter_locus_refs, is_arc_kind, is_point_kind,
     is_segment_kind, is_straight_kind, literal_plot_path_accepts, polygon_vertex_count,
     straight_kind_mode, value_plot_path_accepts,
 };
@@ -150,6 +150,11 @@ impl Document {
                     if o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(value.saturating_sub(1)).is_some_and(|o|!o.deleted&&o.kind.is_iteration_depth_value())
                         || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
                         || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
+                }
+                Kind::IterationPointAlias(binding) => {
+                    if super::iteration_endpoint::binding_source(&self.objects, *binding, o.page, o.id).is_none() {
+                        return Err(format!("Invalid iteration point alias {}", o.id));
+                    }
                 }
                 Kind::Colorized(definition) => {
                     if !definition.supported(&self.objects, o.page, o.id) {
@@ -490,14 +495,7 @@ impl Document {
             }
             if let Kind::Locus(ref refs, samples) = o.kind {
                 if !(2..=10_000).contains(&samples)
-                    || refs
-                        .first()
-                        .zip(refs.get(2))
-                        .and_then(|(&target, &driver)| {
-                            expected_locus_refs(&self.objects, driver, target)
-                        })
-                        .as_ref()
-                        != Some(refs)
+                    || !locus_refs_match(&self.objects, refs)
                     || self.locus_segments(o.id, 2).is_none()
                 {
                     return Err(format!("Invalid locus {}", o.id));
@@ -520,12 +518,13 @@ impl Document {
             {
                 return Err(format!("Invalid segment in length measurement {}", o.id));
             }
-            if matches!(o.kind, Kind::PointDistance(_, _))
-                && self
-                    .point_distance_cm(o.id)
-                    .is_none_or(|value| !value.is_finite())
-            {
-                return Err(format!("Invalid points in distance measurement {}", o.id));
+            if let Kind::PointDistance(first, second) = o.kind {
+                if [first, second].iter().any(|&id| {
+                    let parent = &self.objects[id - 1];
+                    parent.page != o.page || !is_point_kind(&parent.kind)
+                }) || self.point_distance_cm(o.id).is_some_and(|value| !value.is_finite()) {
+                    return Err(format!("Invalid points in distance measurement {}", o.id));
+                }
             }
             if matches!(o.kind, Kind::PointLineDistance(_, _))
                 && self.point_line_distance_cm(o.id).is_none()
@@ -805,8 +804,17 @@ impl Document {
                             Kind::PathValuePoint(_, host) => host == second,
                             _ => false,
                         });
+                // A valid straight path can become undefined when its defining
+                // arms coincide or oppose. Native retains the measurement DAG.
+                let undefined_straight_value = kind == ValueEquationKind::PointValue
+                    && self.objects.get(second.saturating_sub(1)).is_some_and(|host| {
+                        is_straight_kind(&host.kind)
+                            && self.point_constraint_line_points(second).is_none()
+                    });
                 if !hosts_match
-                    || (self.value_equation_value(o.id).is_none() && !undefined_center_value)
+                    || (self.value_equation_value(o.id).is_none()
+                        && !undefined_center_value
+                        && !undefined_straight_value)
                 {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
@@ -914,6 +922,7 @@ impl Document {
                     !self.objects.get(id.saturating_sub(1)).is_some_and(|point| {
                         !point.deleted && point.page == o.page && id < o.id && is_point_kind(&point.kind)
                             && (self.position(id).is_some() || match point.kind {
+                                Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
                                 Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
@@ -978,9 +987,14 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::LineCircleIntersection(a,b,variant)
-                    if variant > 1 || self.line_points(a).is_none() || self.circle_points(b).is_none())
+                    if variant > 1 || if self.objects.get(b.saturating_sub(1)).is_some_and(|o| is_arc_kind(&o.kind)) {
+                        self.objects.get(a.saturating_sub(1)).is_none_or(|o| o.deleted || !is_straight_kind(&o.kind))
+                            || self.objects[b - 1].deleted
+                    } else {
+                        self.line_points(a).is_none() || self.circle_points(b).is_none()
+                    })
             {
-                return Err(format!("Invalid line and circle in intersection {}", o.id));
+                return Err(format!("Invalid straight and round path in intersection {}", o.id));
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::CircleCircleIntersection(a,b,variant)

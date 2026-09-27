@@ -141,7 +141,7 @@ fn angle_bisector_matches_original_record_and_updates() {
         document.line_points(id),
         Some((
             Point { x: 0., y: 0. },
-            Point { x: 0., y: 1. },
+            Point { x: 0., y: 2. / 2f64.sqrt() * 2250f64.sqrt() },
             LineMode::Ray
         ))
     );

@@ -566,7 +566,7 @@ impl Editor {
         }
         let ids: Vec<_> = self.selection_order.clone();
         if ids.len() != 2 {
-            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            self.status = "Select two straight objects, a straight object and circle or arc, or two circles".into();
             return;
         }
         let (a, b) = (ids[0], ids[1]);
@@ -576,10 +576,15 @@ impl Editor {
             self.status = "Select objects on the current page".into();
             return;
         }
+        let round = |id: usize| {
+            self.doc.circle_points(id).is_some()
+                || self.doc.objects[id - 1].kind.is_arc()
+                    && self.doc.arc_points(id, 1).is_some()
+        };
         let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
             vec![Kind::Intersection(a, b)]
-        } else if (self.doc.line_points(a).is_some() && self.doc.circle_points(b).is_some())
-            || (self.doc.circle_points(a).is_some() && self.doc.line_points(b).is_some())
+        } else if (self.doc.line_points(a).is_some() && round(b))
+            || (round(a) && self.doc.line_points(b).is_some())
         {
             let (line, circle) = if self.doc.line_points(a).is_some() {
                 (a, b)
@@ -596,7 +601,7 @@ impl Editor {
                 Kind::CircleCircleIntersection(a, b, 1),
             ]
         } else {
-            self.status = "Select two straight objects, a line and circle, or two circles".into();
+            self.status = "Select two straight objects, a straight object and circle or arc, or two circles".into();
             return;
         };
         self.doc.selected.clear();
