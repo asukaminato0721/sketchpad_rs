@@ -28,7 +28,7 @@ fn collect(path: &Path, output: &mut Vec<PathBuf>) {
 fn source_unit(kind: &Kind, role: CalculationSourceKind) -> Option<NumericUnit> {
     match role {
         CalculationSourceKind::Numeric => kind.numeric_unit(),
-        CalculationSourceKind::Function if matches!(kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => Some(NumericUnit::Scalar),
+        CalculationSourceKind::Function if matches!(kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)) => Some(NumericUnit::Scalar),
         _ => None,
     }
 }

@@ -72,7 +72,8 @@ fn numeric_tool_givens_bind_typed_parameters_measurements_and_calculations_atomi
             .unwrap();
         let before = document.encode().unwrap();
         let history = document.undo.len();
-        let output = document.invoke_embedded_tool(0, &[source])
+        let output = document
+            .invoke_embedded_tool(0, &[source])
             .unwrap_or_else(|error| panic!("{suffix}: {error}"))[0];
         assert_eq!(
             document.objects[output - 1].kind.numeric_unit(),

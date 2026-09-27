@@ -40,7 +40,7 @@ impl Editor {
                 .get(id.saturating_sub(1))
                 .map(|object| &object.kind)
             {
-                Some(Kind::Segment(_, _) | Kind::SegmentLength(_) | Kind::PointDistance(_, _)) => {
+                Some(kind) if kind.is_defining_distance() => {
                     selected_distances.push(id);
                 }
                 Some(_) if selected_origin.is_none() && self.doc.position(id).is_some() => {
@@ -419,10 +419,7 @@ impl Editor {
             return;
         };
         let arc = *arc;
-        if !matches!(
-            self.doc.objects.get(arc.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
-        ) {
+        if !self.doc.objects.get(arc.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
             self.status = "Select one arc to measure".into();
             return;
         }
@@ -444,10 +441,7 @@ impl Editor {
             return;
         };
         let arc = *arc;
-        if !matches!(
-            self.doc.objects.get(arc.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
-        ) {
+        if !self.doc.objects.get(arc.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
             self.status = "Select one arc to measure".into();
             return;
         }

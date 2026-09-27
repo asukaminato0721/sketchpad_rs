@@ -1,4 +1,4 @@
-use super::{is_circle_construction_host, Editor};
+use super::{Editor, is_circle_construction_host};
 use sketchpad_rs::document::Kind;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 

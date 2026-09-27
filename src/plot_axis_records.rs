@@ -25,13 +25,20 @@ pub fn decode_group(group: &[u8]) -> Result<[u32; 2], String> {
     let mut end = 56;
     if word(group, end + 4) == 0x07d5 {
         let len = word(group, end) as usize;
-        let data = end.checked_add(8).and_then(|start| {
-            start.checked_add(len).and_then(|stop| group.get(start..stop))
-        }).ok_or("Invalid Plot Value point label")?;
+        let data = end
+            .checked_add(8)
+            .and_then(|start| {
+                start
+                    .checked_add(len)
+                    .and_then(|stop| group.get(start..stop))
+            })
+            .ok_or("Invalid Plot Value point label")?;
         crate::text_records::LabelAux::parse(data)?;
         end += 8 + len + len % 2;
         if group.get(end..end + 10).is_none()
-            || word(group, end) != 2 || word(group, end + 4) != 0x07d8 {
+            || word(group, end) != 2
+            || word(group, end + 4) != 0x07d8
+        {
             return Err("Missing Plot Value point label font".into());
         }
         end += 10;
@@ -75,13 +82,20 @@ pub fn decode_literal_group(group: &[u8]) -> Result<(u32, f64), String> {
     let mut end = 72;
     if word(group, end + 4) == 0x07d5 {
         let len = word(group, end) as usize;
-        let data = end.checked_add(8).and_then(|start| {
-            start.checked_add(len).and_then(|stop| group.get(start..stop))
-        }).ok_or("Invalid literal Plot Value point label")?;
+        let data = end
+            .checked_add(8)
+            .and_then(|start| {
+                start
+                    .checked_add(len)
+                    .and_then(|stop| group.get(start..stop))
+            })
+            .ok_or("Invalid literal Plot Value point label")?;
         crate::text_records::LabelAux::parse(data)?;
         end += 8 + len + len % 2;
         if group.get(end..end + 10).is_none()
-            || word(group, end) != 2 || word(group, end + 4) != 0x07d8 {
+            || word(group, end) != 2
+            || word(group, end + 4) != 0x07d8
+        {
             return Err("Missing literal Plot Value point label font".into());
         }
         end += 10;
@@ -155,12 +169,20 @@ mod tests {
     #[test]
     fn native_literal_label_suffix_is_typed_ordered_and_bounded() {
         for (group, expected) in [
-            (include_bytes!("../tests/fixtures/labeled_literal_circle_native.bin").as_slice(), (3, 0.0)),
-            (include_bytes!("../tests/fixtures/labeled_literal_segment_native.bin").as_slice(), (7, 0.5)),
+            (
+                include_bytes!("../tests/fixtures/labeled_literal_circle_native.bin").as_slice(),
+                (3, 0.0),
+            ),
+            (
+                include_bytes!("../tests/fixtures/labeled_literal_segment_native.bin").as_slice(),
+                (7, 0.5),
+            ),
         ] {
             assert_eq!(group.len(), 124);
             assert_eq!(decode_literal_group(group).unwrap(), expected);
-            for end in 72..group.len() { assert!(decode_literal_group(&group[..end]).is_err()); }
+            for end in 72..group.len() {
+                assert!(decode_literal_group(&group[..end]).is_err());
+            }
             let mut missing_font = group.to_vec();
             missing_font.drain(106..116);
             assert!(decode_literal_group(&missing_font).is_err());

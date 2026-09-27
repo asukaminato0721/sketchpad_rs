@@ -210,16 +210,28 @@ fn native_calculated_polygon_path_uses_live_wrapped_perimeter_values() {
     assert_eq!(doc.position(9), doc.point_at_polygon_parameter(5, 0.25));
     let calculation = doc.add_parameter_calculation(8, "p/2", (30, 20)).unwrap();
     let created = doc.plot_parameter_on_path(calculation, Some(5)).unwrap();
-    assert_eq!(doc.position(created), doc.point_at_polygon_parameter(5, 0.125));
+    assert_eq!(
+        doc.position(created),
+        doc.point_at_polygon_parameter(5, 0.125)
+    );
     doc.selected.insert(9);
     doc.selected.insert(created);
     let clipboard = doc.copy_selected().unwrap();
     let mut pasted = Document::new();
     let ids = pasted.paste(&clipboard).unwrap();
     let copied = *ids.last().unwrap();
-    assert!(matches!(pasted.objects[copied - 1].kind, Kind::PathValuePoint(..)));
+    assert!(matches!(
+        pasted.objects[copied - 1].kind,
+        Kind::PathValuePoint(..)
+    ));
     let original = doc.position(created).unwrap();
-    assert_eq!(pasted.position(copied), Some(Point { x: original.x + 20., y: original.y + 20. }));
+    assert_eq!(
+        pasted.position(copied),
+        Some(Point {
+            x: original.x + 20.,
+            y: original.y + 20.
+        })
+    );
     let reopened = Document::from_bytes(&pasted.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(copied), pasted.position(copied));
     let original_state = doc.objects.clone();
@@ -238,7 +250,10 @@ fn original_ningde_calculated_point_retains_polygon_and_scalar_dependencies() {
     let doc = Document::from_bytes(bytes, None).unwrap();
     assert_eq!(doc.objects[16].kind, Kind::PathValuePoint(16, 15));
     assert!(matches!(&doc.objects[14].kind, Kind::Polygon(vertices) if vertices == &[11,10,9,10]));
-    assert_eq!(doc.objects[15].kind.numeric_unit(), Some(crate::table_records::NumericUnit::Scalar));
+    assert_eq!(
+        doc.objects[15].kind.numeric_unit(),
+        Some(crate::table_records::NumericUnit::Scalar)
+    );
     let value = doc.numeric_value(16).unwrap();
     assert_eq!(doc.position(17), doc.point_at_polygon_parameter(15, value));
     assert!(doc.position(17).is_some());
@@ -249,10 +264,18 @@ fn original_ningde_calculated_point_retains_polygon_and_scalar_dependencies() {
 #[test]
 fn native_verified_authored_polygon_calculated_paths_round_trip() {
     for (bytes, parameter, point) in [
-        (include_bytes!("../../../tests/fixtures/numeric_polygon_path_generated_verified.gsp").as_slice(),
-            0.5, Point { x: 250., y: 100. }),
-        (include_bytes!("../../../tests/fixtures/numeric_polygon_path_negative_verified.gsp").as_slice(),
-            -0.5, Point { x: 150., y: 200. }),
+        (
+            include_bytes!("../../../tests/fixtures/numeric_polygon_path_generated_verified.gsp")
+                .as_slice(),
+            0.5,
+            Point { x: 250., y: 100. },
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/numeric_polygon_path_negative_verified.gsp")
+                .as_slice(),
+            -0.5,
+            Point { x: 150., y: 200. },
+        ),
     ] {
         let doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -267,9 +290,28 @@ fn native_verified_authored_polygon_calculated_paths_round_trip() {
 #[test]
 fn native_literal_polygon_path_wraps_perimeter_and_tracks_live_host() {
     for (bytes, value, point) in [
-        (include_bytes!("../../../tests/fixtures/literal_polygon_path_quarter_native_verified.gsp").as_slice(), 0.25, Point { x: 190., y: 100. }),
-        (include_bytes!("../../../tests/fixtures/literal_polygon_path_negative_native_verified.gsp").as_slice(), -0.25, Point { x: 130., y: 160. }),
-        (include_bytes!("../../../tests/fixtures/literal_polygon_path_over_native_verified.gsp").as_slice(), 1.25, Point { x: 190., y: 100. }),
+        (
+            include_bytes!(
+                "../../../tests/fixtures/literal_polygon_path_quarter_native_verified.gsp"
+            )
+            .as_slice(),
+            0.25,
+            Point { x: 190., y: 100. },
+        ),
+        (
+            include_bytes!(
+                "../../../tests/fixtures/literal_polygon_path_negative_native_verified.gsp"
+            )
+            .as_slice(),
+            -0.25,
+            Point { x: 130., y: 160. },
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/literal_polygon_path_over_native_verified.gsp")
+                .as_slice(),
+            1.25,
+            Point { x: 190., y: 100. },
+        ),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -286,7 +328,13 @@ fn native_literal_polygon_path_wraps_perimeter_and_tracks_live_host() {
         let clipboard = doc.copy_selected().unwrap();
         let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
         let original = doc.position(6).unwrap();
-        assert_eq!(doc.position(copied), Some(Point { x: original.x + 20., y: original.y + 20. }));
+        assert_eq!(
+            doc.position(copied),
+            Some(Point {
+                x: original.x + 20.,
+                y: original.y + 20.
+            })
+        );
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert_eq!(reopened.position(copied), doc.position(copied));
         let mut deletion = Document::from_bytes(bytes, None).unwrap();
@@ -298,10 +346,15 @@ fn native_literal_polygon_path_wraps_perimeter_and_tracks_live_host() {
 #[test]
 fn literal_polygon_path_creation_rejects_undefined_and_invalid_hosts_atomically() {
     let mut doc = Document::new();
-    for point in [Point { x: 100., y: 100. }, Point { x: 220., y: 100. }, Point { x: 220., y: 160. }, Point { x: 100., y: 160. }] {
+    for point in [
+        Point { x: 100., y: 100. },
+        Point { x: 220., y: 100. },
+        Point { x: 220., y: 160. },
+        Point { x: 100., y: 160. },
+    ] {
         doc.add(Kind::Free(point));
     }
-    let host = doc.add(Kind::Polygon(vec![1,2,3,4]));
+    let host = doc.add(Kind::Polygon(vec![1, 2, 3, 4]));
     let point = doc.plot_literal_on_path(-0.25, Some(host)).unwrap();
     assert_eq!(doc.position(point), Some(Point { x: 130., y: 160. }));
     doc.undo();
@@ -313,7 +366,9 @@ fn literal_polygon_path_creation_rejects_undefined_and_invalid_hosts_atomically(
         assert!(doc.plot_literal_on_path(value, Some(invalid)).is_err());
         assert_eq!(doc.encode().unwrap(), snapshot);
     }
-    for id in 2..=4 { assert!(doc.move_point(id, Point { x: 100., y: 100. })); }
+    for id in 2..=4 {
+        assert!(doc.move_point(id, Point { x: 100., y: 100. }));
+    }
     let count = doc.objects.len();
     assert!(doc.plot_literal_on_path(0.25, Some(host)).is_err());
     assert_eq!(doc.objects.len(), count);
@@ -323,8 +378,12 @@ fn literal_polygon_path_creation_rejects_undefined_and_invalid_hosts_atomically(
 #[test]
 fn authored_literal_polygon_paths_save_native_initial_and_vertex_edited_geometry() {
     for bytes in [
-        include_bytes!("../../../tests/fixtures/literal_polygon_path_generated_native_verified.gsp").as_slice(),
-        include_bytes!("../../../tests/fixtures/literal_polygon_path_edited_native_verified.gsp").as_slice(),
+        include_bytes!(
+            "../../../tests/fixtures/literal_polygon_path_generated_native_verified.gsp"
+        )
+        .as_slice(),
+        include_bytes!("../../../tests/fixtures/literal_polygon_path_edited_native_verified.gsp")
+            .as_slice(),
     ] {
         let doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -340,11 +399,13 @@ fn authored_literal_polygon_paths_save_native_initial_and_vertex_edited_geometry
 
 #[test]
 fn native_transformed_polygon_boundary_retains_edge_fraction_and_live_host() {
-    let bytes = include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
-    assert_eq!(doc.objects[5].kind, Kind::VectorTranslatedPolygon(5,1,4));
-    assert_eq!(doc.objects[6].kind, Kind::PointOnPolygon(6,2,0.25));
+    assert_eq!(doc.objects[5].kind, Kind::VectorTranslatedPolygon(5, 1, 4));
+    assert_eq!(doc.objects[6].kind, Kind::PointOnPolygon(6, 2, 0.25));
     assert_eq!(doc.position(7), Some(Point { x: 190., y: 220. }));
     assert_eq!(doc.encode().unwrap(), bytes);
     assert!(doc.move_point(3, Point { x: 240., y: 180. }));
@@ -352,7 +413,7 @@ fn native_transformed_polygon_boundary_retains_edge_fraction_and_live_host() {
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(7), doc.position(7));
     assert!(doc.move_point(7, Point { x: 105., y: 190. }));
-    assert_eq!(doc.objects[6].kind, Kind::PointOnPolygon(6,3,0.5));
+    assert_eq!(doc.objects[6].kind, Kind::PointOnPolygon(6, 3, 0.5));
     assert_eq!(doc.position(7), Some(Point { x: 100., y: 190. }));
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.objects[6].kind, doc.objects[6].kind);
@@ -360,8 +421,15 @@ fn native_transformed_polygon_boundary_retains_edge_fraction_and_live_host() {
     let clipboard = doc.copy_selected().unwrap();
     let copied = *doc.paste(&clipboard).unwrap().last().unwrap();
     assert_eq!(doc.position(copied), Some(Point { x: 120., y: 210. }));
-    let host = match doc.objects[copied - 1].kind { Kind::PointOnPolygon(host,3,0.5) => host, ref kind => panic!("Unexpected kind: {kind:?}") };
-    assert!(transform_is(&doc.objects[host - 1].kind, NativeTransformFlavor::Vector, &[ElementType::Polygon]));
+    let host = match doc.objects[copied - 1].kind {
+        Kind::PointOnPolygon(host, 3, 0.5) => host,
+        ref kind => panic!("Unexpected kind: {kind:?}"),
+    };
+    assert!(transform_is(
+        &doc.objects[host - 1].kind,
+        NativeTransformFlavor::Vector,
+        &[ElementType::Polygon]
+    ));
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.position(copied), doc.position(copied));
 }
@@ -369,24 +437,38 @@ fn native_transformed_polygon_boundary_retains_edge_fraction_and_live_host() {
 #[test]
 fn deleting_a_new_polygon_transform_chain_compacts_boundary_groups_before_validation() {
     let mut doc = Document::new();
-    for (x,y) in [(100.,100.),(220.,100.),(220.,160.),(100.,160.)] {
-        doc.add(Kind::Free(Point { x,y }));
+    for (x, y) in [(100., 100.), (220., 100.), (220., 160.), (100., 160.)] {
+        doc.add(Kind::Free(Point { x, y }));
     }
-    let polygon = doc.add(Kind::Polygon(vec![1,2,3,4]));
-    let transformed = doc.add(Kind::VectorTranslatedPolygon(polygon,1,4));
-    let point = doc.add(doc.constrained_point(transformed, Point { x: 190., y: 220. }).unwrap());
+    let polygon = doc.add(Kind::Polygon(vec![1, 2, 3, 4]));
+    let transformed = doc.add(Kind::VectorTranslatedPolygon(polygon, 1, 4));
+    let point = doc.add(
+        doc.constrained_point(transformed, Point { x: 190., y: 220. })
+            .unwrap(),
+    );
     doc.selected.insert(1);
     let deleted = doc.clear_selected().unwrap();
-    for id in [polygon, transformed, point] { assert!(deleted.contains(&id)); }
+    for id in [polygon, transformed, point] {
+        assert!(deleted.contains(&id));
+    }
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(reopened.objects.len(), 3);
-    assert!(reopened.objects.iter().all(|o| matches!(o.kind, Kind::Free(_))));
+    assert!(
+        reopened
+            .objects
+            .iter()
+            .all(|o| matches!(o.kind, Kind::Free(_)))
+    );
 }
 
 #[test]
 fn copied_polygon_boundary_labels_follow_the_native_constraint_record_order() {
-    let bytes = include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp");
-    let verified = include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_copy_label_order_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp"
+    );
+    let verified = include_bytes!(
+        "../../../tests/fixtures/transformed_polygon_boundary_copy_label_order_native_verified.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(doc.move_point(2, Point { x: 240., y: 110. }));
     assert!(doc.move_point(7, Point { x: 105., y: 190. }));
@@ -396,31 +478,53 @@ fn copied_polygon_boundary_labels_follow_the_native_constraint_record_order() {
     assert_eq!(doc.encode().unwrap(), verified);
     let reopened = Document::from_bytes(verified, None).unwrap();
     assert_eq!(reopened.objects[14].label, doc.objects[14].label);
-    assert_eq!(reopened.objects[14].kind, Kind::PointOnPolygon(14,3,0.5));
+    assert_eq!(reopened.objects[14].kind, Kind::PointOnPolygon(14, 3, 0.5));
     assert_eq!(reopened.position(15), Some(Point { x: 120., y: 210. }));
 }
 
 #[test]
 fn native_authored_transformed_boundary_and_vertex_edit_keep_known_constraints() {
-    let edited = Document::from_bytes(include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_host_edited_native_verified.gsp"), None).unwrap();
-    assert_eq!(edited.objects[2].kind, Kind::Free(Point { x: 240., y: 180. }));
-    assert_eq!(edited.objects[6].kind, Kind::PointOnPolygon(6,2,0.25));
+    let edited = Document::from_bytes(
+        include_bytes!(
+            "../../../tests/fixtures/transformed_polygon_boundary_host_edited_native_verified.gsp"
+        ),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        edited.objects[2].kind,
+        Kind::Free(Point { x: 240., y: 180. })
+    );
+    assert_eq!(edited.objects[6].kind, Kind::PointOnPolygon(6, 2, 0.25));
     assert_eq!(edited.position(7), Some(Point { x: 205., y: 235. }));
-    let dragged = Document::from_bytes(include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_dragged_native_verified.gsp"), None).unwrap();
-    assert_eq!(dragged.objects[6].kind, Kind::PointOnPolygon(6,3,0.5));
+    let dragged = Document::from_bytes(
+        include_bytes!(
+            "../../../tests/fixtures/transformed_polygon_boundary_dragged_native_verified.gsp"
+        ),
+        None,
+    )
+    .unwrap();
+    assert_eq!(dragged.objects[6].kind, Kind::PointOnPolygon(6, 3, 0.5));
     assert_eq!(dragged.position(7), Some(Point { x: 100., y: 190. }));
-    let bytes = include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_generated_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/transformed_polygon_boundary_generated_native_verified.gsp"
+    );
     let generated = Document::from_bytes(bytes, None).unwrap();
     assert!(!generated.partial_view);
-    assert_eq!(generated.objects[6].kind, Kind::PointOnPolygon(6,2,0.25));
+    assert_eq!(generated.objects[6].kind, Kind::PointOnPolygon(6, 2, 0.25));
     assert_eq!(generated.position(7), Some(Point { x: 190., y: 220. }));
     assert_eq!(generated.numeric_value(8), Some(210. / 360.));
     assert_eq!(generated.encode().unwrap(), bytes);
-    let copied_bytes = include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_copied_native_verified.gsp");
+    let copied_bytes = include_bytes!(
+        "../../../tests/fixtures/transformed_polygon_boundary_copied_native_verified.gsp"
+    );
     let copied = Document::from_bytes(copied_bytes, None).unwrap();
     assert!(!copied.partial_view);
-    assert_eq!(copied.objects[2].kind, Kind::Free(Point { x: 240., y: 180. }));
-    assert_eq!(copied.objects[14].kind, Kind::PointOnPolygon(14,3,0.5));
+    assert_eq!(
+        copied.objects[2].kind,
+        Kind::Free(Point { x: 240., y: 180. })
+    );
+    assert_eq!(copied.objects[14].kind, Kind::PointOnPolygon(14, 3, 0.5));
     assert_eq!(copied.position(15), Some(Point { x: 120., y: 210. }));
     assert_eq!(copied.encode().unwrap(), copied_bytes);
 }

@@ -391,12 +391,26 @@ fn polygon_boundary_point_command_animates_and_saves() {
 
 #[test]
 fn point_on_object_command_accepts_a_known_transformed_polygon() {
-    let mut editor = Editor::new(Document::from_bytes(include_bytes!("../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp"), None).unwrap());
+    let mut editor = Editor::new(
+        Document::from_bytes(
+            include_bytes!(
+                "../../../tests/fixtures/transformed_polygon_boundary_vector_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap(),
+    );
     editor.select_only(6);
     editor.point_on_object();
     let point = editor.doc.objects.len();
-    assert_eq!(editor.doc.objects[point - 1].kind, Kind::PointOnPolygon(6,0,0.5));
+    assert_eq!(
+        editor.doc.objects[point - 1].kind,
+        Kind::PointOnPolygon(6, 0, 0.5)
+    );
     assert_eq!(editor.doc.position(point), Some(Point { x: 160., y: 160. }));
     let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
-    assert_eq!(reopened.objects[point - 1].kind, editor.doc.objects[point - 1].kind);
+    assert_eq!(
+        reopened.objects[point - 1].kind,
+        editor.doc.objects[point - 1].kind
+    );
 }

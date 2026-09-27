@@ -1,5 +1,6 @@
 use super::kind::{
-    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, is_point_kind,
+    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_polygon_kind,
+    is_locus_straight_kind, is_point_kind,
 };
 use super::{Document, Kind, LineMode, Point};
 
@@ -8,10 +9,14 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot construct a locus in this sketch safely".into());
         }
-        if let Some(Kind::Parameter(group)) = self.objects.get(driver.saturating_sub(1)).map(|o| &o.kind) {
+        if let Some(Kind::Parameter(group)) =
+            self.objects.get(driver.saturating_sub(1)).map(|o| &o.kind)
+        {
             let (min, max) = if group.unit() == crate::table_records::NumericUnit::Degrees {
                 group.animation_domain()
-            } else { (0., 1.) };
+            } else {
+                (0., 1.)
+            };
             return self.construct_parameter_locus(driver, target, min, max, 500);
         }
         let refs = expected_locus_refs(&self.objects, driver, target)
@@ -28,21 +33,52 @@ impl Document {
         };
         Ok(self.add(Kind::Locus(refs, samples)))
     }
-    pub fn construct_parameter_locus(&mut self, driver: usize, target: usize, min: f64, max: f64, samples: u32) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || !min.is_finite() || !max.is_finite()
-            || min >= max || !(2..=4096).contains(&samples)
-        { return Err("Invalid parameter locus range or sketch".into()); }
+    pub fn construct_parameter_locus(
+        &mut self,
+        driver: usize,
+        target: usize,
+        min: f64,
+        max: f64,
+        samples: u32,
+    ) -> Result<usize, String> {
+        if self.partial_view
+            || self.page_count != 1
+            || !min.is_finite()
+            || !max.is_finite()
+            || min >= max
+            || !(2..=4096).contains(&samples)
+        {
+            return Err("Invalid parameter locus range or sketch".into());
+        }
         let refs = expected_parameter_locus_refs(&self.objects, driver, target)
             .ok_or("Select a parameter and a dependent point")?;
-        let Kind::Parameter(group) = &self.objects[driver - 1].kind else { unreachable!() };
+        let Kind::Parameter(group) = &self.objects[driver - 1].kind else {
+            unreachable!()
+        };
         let scale = group.native_unit_scale();
-        Ok(self.add(Kind::ParameterLocus(refs, min * scale, max * scale, samples)))
+        Ok(self.add(Kind::ParameterLocus(
+            refs,
+            min * scale,
+            max * scale,
+            samples,
+        )))
     }
 
-    fn parameter_locus_strokes(&self, refs: &[usize], min: f64, max: f64, samples: u32, subdivisions: usize) -> Option<Vec<(Point, Point, LineMode)>> {
+    fn parameter_locus_strokes(
+        &self,
+        refs: &[usize],
+        min: f64,
+        max: f64,
+        samples: u32,
+        subdivisions: usize,
+    ) -> Option<Vec<(Point, Point, LineMode)>> {
         let (&target, &driver) = (refs.first()?, refs.get(1)?);
-        let Kind::Parameter(parameter) = &self.objects.get(driver.checked_sub(1)?)?.kind else { return None; };
-        if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) { return None; }
+        let Kind::Parameter(parameter) = &self.objects.get(driver.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+            return None;
+        }
         let count = subdivisions.clamp(2, 4096).min(samples as usize);
         let mut sample = self.clone();
         let mut parameter = parameter.clone();
@@ -50,11 +86,19 @@ impl Document {
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
             let value = (min + (max - min) * fraction) / parameter.native_unit_scale();
-            if !parameter.set_evaluation_value(value) { points.push(None); continue; }
+            if !parameter.set_evaluation_value(value) {
+                points.push(None);
+                continue;
+            }
             sample.objects[driver - 1].kind = Kind::Parameter(parameter.clone());
             points.push(sample.position(target));
         }
-        Some(points.windows(2).filter_map(|pair| Some((pair[0]?, pair[1]?, LineMode::Segment))).collect())
+        Some(
+            points
+                .windows(2)
+                .filter_map(|pair| Some((pair[0]?, pair[1]?, LineMode::Segment)))
+                .collect(),
+        )
     }
 
     // Keep sample slots even when the target is undefined. Neighboring valid
@@ -102,7 +146,9 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<(Point, Point, LineMode)>> {
-        if let Kind::ParameterLocus(ref refs, min, max, samples) = self.objects.get(id.checked_sub(1)?)?.kind {
+        if let Kind::ParameterLocus(ref refs, min, max, samples) =
+            self.objects.get(id.checked_sub(1)?)?.kind
+        {
             return self.parameter_locus_strokes(refs, min, max, samples, subdivisions);
         }
         let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {

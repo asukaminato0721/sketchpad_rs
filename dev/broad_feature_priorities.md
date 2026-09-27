@@ -157,3 +157,168 @@ next work on function definitions/plot dependencies and iteration bindings;
 they are not additive recovery predictions. Copying and custom tools remain
 deferred. Evidence: `/tmp/numeric_import_audit38.log` and
 `/tmp/broad_measure_roots_checkpoint38.log`.
+
+
+Checkpoint 39 restores common primitive-function roots before tackling referenced
+function definitions. Definitions now share all 13 calculator built-ins and π/e
+constants; valid signed function-caption positions also decode. This restores
+271 drawing slots, including 119 downstream calculations, reducing unsupported
+slots from 64477 to 64206. All 1599 files round-trip exactly; embedded prototype
+counts are unchanged. The calendar's `1-sgn(x-trunc(x))` predecessor and original
+negative-position music function are retained as real corpus regressions.
+See [native creation and actual writer evidence](function_primitives_analysis.md).
+Referenced/parameter-dependent function definitions, plots and iteration roots
+remain next priorities. Copying and custom-tool authoring remain deferred.
+
+
+The referenced-function prerequisite now has a validated expression API with
+numeric/function source roles and live callbacks. Native-created parameter and
+nested-function controls plus actual contextual record-writer edits establish
+code71 headers, source indexes and exact native saves. The drawing audit finds
+700 such primitive definitions,694 within the token bound;245 already have
+supported parents. Document/plot/editor integration is still required and no
+additional corpus recovery is claimed yet. See
+[referenced expression evidence](function_references_analysis.md).
+
+
+Checkpoint 41 connects the referenced expression API to code71 documents,
+source-role validation, live function/calculation dependencies, authoring/editing,
+Cartesian/parametric plots and numeric iteration. Native evidence requires
+Degree predecessors to convert to radians in radian mode and mapped coefficients
+to advance inside each function call; both behaviors are implemented. The actual
+38-object original/edited API outputs save exactly in Native and match numeric
+and iterative results. New definitions use the destination drawing's font
+namespace; imported presentation records remain untouched.
+The final scan restores 919 drawing slots (229 code71 definitions,439 code48
+calculations and251 other descendants), plus three prototype slots in the shared
+reader. All1599 source files remain exact; unsupported slots fall to63284.
+See [implementation and Native evidence](function_references_analysis.md).
+Remaining priorities include wider function/plot and iteration roots, function
+wrapper variants and result-unit propagation. Copying and custom-tool authoring
+remain deferred.
+
+
+Checkpoint 42 targets the code59 coordinate-unit root identified by the dependency
+audit, together with literal code67/68 point references. Numeric calculations and
+parameters now define stored axis scale through the common numeric interface;
+finite segments use shared geometry. The point reader no longer treats the
+reference count as object1. This restores 3841 drawing slots, including282
+calculations, plus one prototype slot, with all1599 original bytes preserved.
+Nine actual API writer states have exact Native-save proofs, including zero,
+negative and restored units. See [coordinate evidence](coordinate_units_analysis.md).
+
+The refreshed drawing-only iteration audit finds706 unsupported iteration roots
+with ready direct parents (45 code76 and661 code89), and1766 code77 bindings whose
+iteration root has ready direct parents. These are overlapping prerequisite
+cohorts, not additive recovery predictions. General mapped-DAG iteration is the
+next broad target: evaluate carried constructions under simultaneous seed
+substitution instead of adding per-shape variants. Code62 action layouts also
+have3062 ready-parent objects, but their behavior requires separate Native
+controls. The reproducible audit is [iteration_root_audit.rs](iteration_root_audit.rs),
+with final results in `/tmp/iteration_root_audit42_final.log`.
+Function-call result-unit propagation and broader mapped-coordinate variants
+remain prerequisites for some numeric descendants. Copying and custom-tool
+implementation remain deferred; exact display matching is not required.
+
+
+Checkpoint43 implements the common simultaneous state substitution prerequisite
+for derived point and Scalar seeds, with generic point/segment transforms and
+supported coordinate DAGs. It restores269 drawing objects, including110
+iteration definitions and159 bindings, while preserving all1599 source bytes.
+Actual API writer controls and the original five-branch pentagon establish
+Native behavior. No new transform-by-shape kinds were added. See
+[derived graph evidence](mapped_derived_transform_analysis43.md) and
+[numeric/mixed state evidence](numeric_mapped43_analysis.md).
+The remaining broad iteration cohorts need geometric numeric inputs, path and
+intersection graphs, wider carried shapes, or consolidation of the single-seed
+specialized representations. They remain ahead of visual-fidelity work. Copying
+and custom-tool support are still deferred.
+
+Checkpoint 44 extends the same mapped evaluator to ordinary point/path,
+intersection, circle, polygon, arc and measurement prerequisites. The initial
+strict cohort audit restores 108 definitions and 314 point/segment bindings in
+77 drawings, without adding shape-specific iteration kinds. Explicit carried
+nodes recompute per state; omitted dependencies retain their original values,
+including function coefficient environments. Runtime substitution preserves the
+original element kinds. Native proofs cover circle/segment path points, three
+intersection families, live angle/length measurements and an original arc graph.
+Undefined carried geometry retains valid earlier images and independent bindings.
+Single-seed consolidation, wider binding types and action prerequisites remain
+broad follow-up targets; copying and custom tools stay deferred.
+See [path/intersection evidence](mapped_path_intersection_analysis44.md) and
+[measurement/arc evidence](measurement_mapped44_analysis.md).
+
+Checkpoint45 implements the single-seed point/Scalar cohort through the common
+mapped DAG:404 roots and720 point/segment bindings. A recursive polygon source
+fix for reflection adds1314 drawing objects. The final corpus scan recovers2443
+slots including5 prototype slots, leaving56308 unsupported; all1599 originals
+remain exact and scoped gates pass825 tests. No shape×transform Kind products
+were introduced. Source/mirror edits, canonical legacy writer layouts, real
+midpoint-host dependencies, stable carried authoring order and frozen external
+hosts have Native evidence. See [single-seed evidence](single_seed_iteration_analysis45.md)
+and [polygon source evidence](transformed_curves45_analysis.md).
+
+The refreshed [numeric prerequisite audit](numeric_import_audit.rs), logged in
+`/tmp/sketchpad_numeric_audit45.log`, finds5142 unsupported drawing calculations:
+5128 unavailable typed parents,9 header layouts,5 incompatible function units.
+The remaining calculator work still mainly follows missing construction roots.
+The [action-root audit](action_roots45_analysis.md) finds3064 of5540 unsupported
+actions have decoded direct parents. Original payload+paired HTM prove lists of
+movement pairs and optional labels; most movement sources need path/control
+setters rather than only Free points. Hide/Show action option words must retain
+their distinct semantics, not be discarded. Shared action layout/pair support
+and wider iteration/arc outputs remain broad next targets. Copying and custom
+tools remain deferred; pixel-identical raster output is not a release goal.
+
+
+Checkpoint 46 implements the shared action-record prerequisite identified by
+[action audit45](action_roots45_analysis.md): optional Native labels/metadata
+and multi-pair Movement restore 1,799 drawing objects, 47 prototype slots, 1,846
+slots total. Runtime movement uses one typed value interface across point,
+path and numeric constructions. Copying and custom tools remain deferred.
+Next high-coverage candidates remain broader iteration bindings (code 77),
+the root dependencies behind 5,142 calculations, and remaining action families
+(code 62 now 3,741). Native normalizes scalar constant calculations into a
+Parameter layout with mode 0; inspect this shared numeric root against actual
+GSP/HTM before widening its parser. Counts are root-priority evidence, not
+runtime parity claims.
+
+
+Checkpoint 47 extends the shared iteration output readers to circles, polygons,
+rays, lines and arcs, recovering 389 drawing bindings in 102 files plus one
+prototype slot. Authoring, rendering, picking, styles and level selection use the
+same mapped DAG and existing transform model. Typed-Length circle radii repair a
+shared prerequisite exposed by an original spiral. All 1,599 corpus originals
+remain byte-exact; 859 scoped checks pass. See [binding evidence](iteration_bindings47_analysis.md)
+and [Native evidence](iteration_bindings47_native_analysis.md).
+
+The remaining code 77 cohort has 5,823 drawing slots and mostly needs unsupported
+iteration parents or source constructions. Numeric calculations still have 5,142
+unsupported slots, chiefly missing typed parents. Prioritize those common roots
+and remaining action families over isolated enum variants. Copying and custom
+tools stay deferred; matching every rendered pixel is outside the requested scope.
+
+
+Checkpoint 48 applies two shared roots: analytic Arc in the existing generic
+transform model and the Hide/Show option/caption policy. The actual final scan
+recovers 3,997 slots (3,937 drawings and 60 prototypes), leaving 50,075 unsupported.
+All 1,599 originals remain exact. Arc adds 503 slots across live transform chains
+and downstream consumers; visibility adds 3,494 slots without requiring a separate
+button enum for each mode or target type. See [arc evidence](transformed_arcs48_native_analysis.md).
+
+Next prioritize missing iteration/source prerequisites behind 5,809 code-77
+bindings and typed construction roots behind 5,139 calculations. Remaining
+code-62 actions have 293 drawing slots. Favor common readers, shared geometry and
+value adapters over special-case enum products. Copying and custom tools remain
+deferred, and exact raster matching remains outside scope.
+
+
+The refreshed read-only audits are logged in
+`/tmp/sketchpad_numeric_import_audit48.log` and
+`/tmp/sketchpad_iteration_root_audit48.log`. Of 5,139 unsupported calculations,
+5,125 have unavailable numeric/function parent types; nine have unsupported
+headers and five incompatible function units. Parent references overlap: 4,937
+point to another code-48 calculation, 660 to code-94 point values, and 522 to
+code-47 measurements. This makes upstream construction support the main next
+step rather than broadly weakening calculation parsing. The iteration audit
+also separates ready direct parents from unproven semantic support.

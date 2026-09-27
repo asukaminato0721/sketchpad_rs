@@ -149,15 +149,14 @@ impl Editor {
                 self.animation_button_dialog = Some(draft);
             }
         }
-        if let Some(mut draft) = self.movement_button_dialog {
+        if let Some(mut draft) = self.movement_button_dialog.clone() {
             let mut create = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("movement_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Movement Button");
-                ui.label(format!(
-                    "Move point {} toward point {}",
-                    draft.source, draft.destination
-                ));
+                for &(source, destination) in &draft.pairs {
+                    ui.label(format!("Move object {source} toward object {destination}"));
+                }
                 egui::ComboBox::from_label("Speed")
                     .selected_text(match draft.speed {
                         MovementSpeed::Slow => "Slow",
@@ -185,9 +184,8 @@ impl Editor {
             if cancel {
                 self.movement_button_dialog = None;
             } else if create {
-                match self.doc.add_movement_button(
-                    draft.source,
-                    draft.destination,
+                match self.doc.add_movement_button_for_pairs(
+                    &draft.pairs,
                     draft.speed,
                     draft.follow,
                 ) {

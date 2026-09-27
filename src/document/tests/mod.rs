@@ -1,8 +1,8 @@
 use super::geometry::{intersect_straight, reflect_point, rotate_point_about};
 use super::kind::{is_segment_kind, straight_kind_mode};
 use super::records::{f64_at, header, put_record, records, u32_at};
-use super::{Document, IterationDepth, Kind, LineMode, Point, TextStyleCommand};
 use super::transform_model::{ElementType, NativeLiteralRole, NativeTransformFlavor};
+use super::{Document, IterationDepth, Kind, LineMode, Point, TextStyleCommand};
 use crate::action_records::{
     AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction,
 };
@@ -27,9 +27,10 @@ fn transform_is(kind: &Kind, flavor: NativeTransformFlavor, elements: &[ElementT
 
 fn transform_literal_is(kind: &Kind, role: NativeLiteralRole, value: f64) -> bool {
     kind.transform_definition().is_some_and(|definition| {
-        definition.native_literals().iter().any(|literal| {
-            literal.role == role && literal.value == value
-        })
+        definition
+            .native_literals()
+            .iter()
+            .any(|literal| literal.role == role && literal.value == value)
     })
 }
 
@@ -49,6 +50,7 @@ fn expected_page(bytes: &[u8], page: usize) -> Vec<u8> {
 
 mod actions;
 mod animation_buttons;
+mod arc_plot_paths;
 mod calculated_iteration;
 mod calculation_units;
 mod calculations;
@@ -59,14 +61,16 @@ mod constructions;
 mod coordinates;
 mod curve_styles;
 mod editing;
-mod equations;
 mod embedded_tools;
-mod functions;
+mod equations;
 mod fixed_straight_dependents;
+mod functions;
 mod iteration_mappings;
+mod labeled_literal_paths;
 mod legacy;
-mod mapped_iteration;
 mod locus;
+mod mapped_geometry;
+mod mapped_iteration;
 mod measurement_precision;
 mod measurements;
 mod multi_page_actions;
@@ -77,19 +81,18 @@ mod numeric_precision;
 mod numeric_transforms;
 mod page_links;
 mod pages;
-mod plot_paths_and_tables;
-mod transformed_plot_paths;
-mod labeled_literal_paths;
 mod plot_path_header_flags;
-mod arc_plot_paths;
+mod plot_paths_and_tables;
 mod plot_points;
 mod point_iteration;
-mod polygons;
 mod polygon_boundary;
+mod polygons;
 mod quantity_functions;
 mod roundtrip;
+mod single_seed_iteration;
 mod text_and_style;
 mod tracing_and_coordinates;
+mod transformed_plot_paths;
 mod transforms;
 mod translations;
 
@@ -98,9 +101,9 @@ mod mixed_straight_chains;
 mod tool_structure;
 
 mod tool_execution;
-mod tool_path_decoding;
-mod tool_numeric_units;
 mod tool_numeric_execution;
+mod tool_numeric_units;
+mod tool_path_decoding;
 mod tool_segment_inputs;
 
 mod tool_creation;
@@ -108,3 +111,11 @@ mod tool_creation;
 mod tool_numeric_placement;
 
 mod numeric_point_clipboard;
+
+mod movement_controls;
+
+mod iteration_bindings;
+
+mod transformed_arcs;
+
+mod visibility_options;

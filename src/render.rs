@@ -56,18 +56,26 @@ fn svg_stroke(style: Option<VisualStyle>) -> String {
 fn curve_screen_paths(vp: &Viewport, segments: &[(Point, Point, LineMode)]) -> Vec<Vec<Pos2>> {
     let mut paths = Vec::new();
     let mut current: Vec<Pos2> = Vec::new();
-    for &(start,end,mode) in segments {
-        if let Some((a,b)) = clipped_line(vp.screen(start),vp.screen(end),mode,vp.rect) {
+    for &(start, end, mode) in segments {
+        if let Some((a, b)) = clipped_line(vp.screen(start), vp.screen(end), mode, vp.rect) {
             if current.last().copied() == Some(a) && mode == LineMode::Segment {
                 current.push(b);
             } else {
-                if !current.is_empty() { paths.push(std::mem::take(&mut current)); }
-                current.extend([a,b]);
+                if !current.is_empty() {
+                    paths.push(std::mem::take(&mut current));
+                }
+                current.extend([a, b]);
             }
-            if mode != LineMode::Segment { paths.push(std::mem::take(&mut current)); }
-        } else if !current.is_empty() { paths.push(std::mem::take(&mut current)); }
+            if mode != LineMode::Segment {
+                paths.push(std::mem::take(&mut current));
+            }
+        } else if !current.is_empty() {
+            paths.push(std::mem::take(&mut current));
+        }
     }
-    if !current.is_empty() { paths.push(current); }
+    if !current.is_empty() {
+        paths.push(current);
+    }
     paths
 }
 
@@ -190,11 +198,16 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
     if let Kind::Calculation(group) = &object.kind
         && group.is_native_radian_angle()
         && group.display_mode() == 3
-        && let Some(name) = object.label.as_ref()
+        && let Some(name) = object
+            .label
+            .as_ref()
             .and_then(|label| label.name_utf8().ok())
             .filter(|name| !name.is_empty())
     {
-        return Some((group.anchor(), vec![format!("{name} = {}", group.value_text())]));
+        return Some((
+            group.anchor(),
+            vec![format!("{name} = {}", group.value_text())],
+        ));
     }
     if let Kind::LengthPairCalculation(_, _, group) = &object.kind {
         let value = doc.length_pair_calculation_value(id).map_or_else(
@@ -232,11 +245,17 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         ));
     }
     if let Kind::ParameterCalculation(_, group) = &object.kind {
-        if group.caption_suppressed() { return None; }
+        if group.caption_suppressed() {
+            return None;
+        }
         let value = doc
             .parameter_calculation_display_value(id)
             .map_or_else(|| "undefined".into(), |value| group.value_text(value));
-        let name = object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty());
+        let name = object
+            .label
+            .as_ref()
+            .and_then(|label| label.name_utf8().ok())
+            .filter(|name| !name.is_empty());
         let caption = match (group.display_mode(), name) {
             (1 | 3, Some(name)) => format!("{name} = {value}"),
             (1, None) => value,
@@ -257,8 +276,10 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             && let Some(last) = values.last_mut()
         {
             *last = crate::table_records::named_table_value_text(
-                parameter.value(), parameter.precision(),
-            ).ok()?;
+                parameter.value(),
+                parameter.precision(),
+            )
+            .ok()?;
         }
         let mut lines = vec![display_parameter_indices(&name)];
         lines.extend(values);
@@ -328,15 +349,20 @@ pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
 
 // Reorder only polygon fill slots; preserve all other drawing and picking order.
 fn ordered_polygon_fills(doc: &Document) -> Vec<&crate::document::Object> {
-    let mut polygons: Vec<_> = doc.objects.iter()
-        .filter(|o| doc.is_displayed(o.id) && o.kind.is_polygon()).collect();
+    let mut polygons: Vec<_> = doc
+        .objects
+        .iter()
+        .filter(|o| doc.is_displayed(o.id) && o.kind.is_polygon())
+        .collect();
     polygons.sort_by_key(|o| o.interior_order.unwrap_or(0));
     polygons
 }
 
 pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
     doc.mapped_point_binding_images(id).is_some_and(|images| {
-        images.into_iter().any(|point| vp.screen(point).distance(at) < 11.)
+        images
+            .into_iter()
+            .any(|point| vp.screen(point).distance(at) < 11.)
     })
 }
 
@@ -356,19 +382,45 @@ pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
             inside
         });
     }
-    doc.branch_segment_iteration_images(id)
-        .is_some_and(|segments| {
-            segments.into_iter().any(|(a, b)| {
-                let (a, b) = (vp.screen(a), vp.screen(b));
-                let delta = b - a;
-                let t = if delta.length_sq() > 0. {
-                    ((at - a).dot(delta) / delta.length_sq()).clamp(0., 1.)
-                } else {
-                    0.
-                };
-                at.distance(a + delta * t) < 7.
-            })
+    let near = |a: Pos2, b: Pos2| {
+        let delta = b - a;
+        let t = if delta.length_sq() > 0. {
+            ((at - a).dot(delta) / delta.length_sq()).clamp(0., 1.)
+        } else {
+            0.
+        };
+        at.distance(a + delta * t) < 7.
+    };
+    if doc
+        .branch_segment_iteration_images(id)
+        .is_some_and(|images| {
+            images
+                .into_iter()
+                .any(|(a, b)| near(vp.screen(a), vp.screen(b)))
         })
+    {
+        return true;
+    }
+    for (images, mode) in [
+        (doc.ray_iteration_images(id), LineMode::Ray),
+        (doc.line_iteration_images(id), LineMode::Line),
+    ] {
+        if images.is_some_and(|images| {
+            images.into_iter().any(|(a, b)| {
+                clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect)
+                    .is_some_and(|(a, b)| near(a, b))
+            })
+        }) {
+            return true;
+        }
+    }
+    doc.arc_iteration_images(id, 96).is_some_and(|images| {
+        images.into_iter().any(|points| {
+            points
+                .windows(2)
+                .any(|pair| near(vp.screen(pair[0]), vp.screen(pair[1])))
+        })
+    })
 }
 
 pub fn picture_screen_quad(vp: &Viewport, png: &[u8], transform: [f64; 6]) -> Option<[Pos2; 4]> {
@@ -1016,8 +1068,18 @@ pub fn svg_page_with_button_offset(
         {
             if matches!(o.visual_style, Some(VisualStyle::Stroke { .. })) {
                 for path in curve_screen_paths(vp, &segments) {
-                    let points = path.iter().map(|p| format!("{},{}",p.x,p.y)).collect::<Vec<_>>().join(" ");
-                    writeln!(svg,"<polyline points=\"{}\"{}/>",points,svg_stroke(o.visual_style)).unwrap();
+                    let points = path
+                        .iter()
+                        .map(|p| format!("{},{}", p.x, p.y))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    writeln!(
+                        svg,
+                        "<polyline points=\"{}\"{}/>",
+                        points,
+                        svg_stroke(o.visual_style)
+                    )
+                    .unwrap();
                 }
             } else {
                 for (start, end, mode) in segments {
@@ -1063,7 +1125,11 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
-        let polygon_object = if o.kind.is_polygon() { polygon_fills.next().unwrap() } else { o };
+        let polygon_object = if o.kind.is_polygon() {
+            polygon_fills.next().unwrap()
+        } else {
+            o
+        };
         if let Some(points) = doc.polygon_points(polygon_object.id) {
             let vertices = points
                 .into_iter()
@@ -1148,12 +1214,58 @@ pub fn svg_page_with_button_offset(
                 writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#176bd6\" stroke-width=\"2\"/>", start.x, start.y, end.x, end.y).unwrap();
             }
         }
+        if let Some(lines) = doc.line_iteration_images(o.id) {
+            for (start, end) in lines {
+                if let Some((a, b)) =
+                    clipped_line(vp.screen(start), vp.screen(end), LineMode::Line, r)
+                {
+                    writeln!(
+                        svg,
+                        "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+                        svg_stroke(o.visual_style),
+                        a.x,
+                        a.y,
+                        b.x,
+                        b.y
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        if let Some(arcs) = doc.arc_iteration_images(o.id, 96) {
+            for points in arcs {
+                let vertices = points
+                    .into_iter()
+                    .map(|p| {
+                        let at = vp.screen(p);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    svg,
+                    "<polyline{} points=\"{}\" fill=\"none\"/>",
+                    svg_stroke(o.visual_style),
+                    vertices
+                )
+                .unwrap();
+            }
+        }
         if let Some(rays) = doc.ray_iteration_images(o.id) {
             for (start, through) in rays {
                 if let Some((a, b)) =
                     clipped_line(vp.screen(start), vp.screen(through), LineMode::Ray, r)
                 {
-                    writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#176bd6\" stroke-width=\"2\"/>", a.x, a.y, b.x, b.y).unwrap();
+                    writeln!(
+                        svg,
+                        "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
+                        svg_stroke(o.visual_style),
+                        a.x,
+                        a.y,
+                        b.x,
+                        b.y
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -1183,13 +1295,19 @@ pub fn svg_page_with_button_offset(
     {
         if let Some(images) = doc.point_iteration_images(object.id) {
             let (radius, color) = match object.visual_style {
-                Some(VisualStyle::Point { shape, color }) => (point_radius(shape), css_color(color)),
+                Some(VisualStyle::Point { shape, color }) => {
+                    (point_radius(shape), css_color(color))
+                }
                 _ => (2., "#176bd6".into()),
             };
             for point in images {
                 let at = vp.screen(point);
-                writeln!(svg, "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\"/>",
-                    at.x, at.y, radius, color).unwrap();
+                writeln!(
+                    svg,
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\"/>",
+                    at.x, at.y, radius, color
+                )
+                .unwrap();
             }
         }
     }
@@ -1399,7 +1517,9 @@ pub fn svg_page_with_button_offset(
                 if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" }, xml_text(&text)).unwrap();
             row += 1;
         }
-        if let Kind::FunctionDefinition(expression) = object.kind {
+        if let Kind::FunctionDefinition(expression) | Kind::ReferencedFunction(_, expression) =
+            object.kind
+        {
             let (x, y) = object
                 .function_anchor
                 .map(|(x, y)| (r.min.x + x as f32 + 2., r.min.y + y as f32 + 23.))
@@ -1409,8 +1529,10 @@ pub fn svg_page_with_button_offset(
                 "<text x=\"{}\" y=\"{}\">{}</text>",
                 x,
                 y,
-                doc.function_display_text(object.id)
-                    .unwrap_or_else(|| expression.display())
+                xml_text(
+                    &doc.function_display_text(object.id)
+                        .unwrap_or_else(|| expression.display())
+                )
             )
             .unwrap();
             row += 1;
@@ -1425,8 +1547,10 @@ pub fn svg_page_with_button_offset(
                 "<text x=\"{}\" y=\"{}\">{}</text>",
                 x,
                 y,
-                doc.function_display_text(object.id)
-                    .unwrap_or_else(|| { expression.display().replacen("f(x)", "f′(x)", 1) })
+                xml_text(
+                    &doc.function_display_text(object.id)
+                        .unwrap_or_else(|| { expression.display().replacen("f(x)", "f′(x)", 1) })
+                )
             )
             .unwrap();
             row += 1;
@@ -1888,6 +2012,21 @@ impl GeometryRenderer {
                     }
                 }
             }
+            if let Some(lines) = doc.line_iteration_images(o.id) {
+                for (start, end) in lines {
+                    if let Some((a, b)) =
+                        clipped_line(vp.screen(start), vp.screen(end), LineMode::Line, vp.rect)
+                    {
+                        mesh.styled_path(&[a, b], false, stroke, col);
+                    }
+                }
+            }
+            if let Some(arcs) = doc.arc_iteration_images(o.id, 96) {
+                for points in arcs {
+                    let points = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
+                    mesh.styled_path(&points, false, stroke, col);
+                }
+            }
             if let Some(rays) = doc.ray_iteration_images(o.id) {
                 for (start, through) in rays {
                     if let Some((a, b)) =
@@ -1921,8 +2060,10 @@ impl GeometryRenderer {
                 })
                 .or_else(|| doc.locus_strokes(o.id, 384))
             {
-                if matches!(o.visual_style,Some(VisualStyle::Stroke { .. })) {
-                    for path in curve_screen_paths(vp,&segments) { mesh.styled_path(&path,false,stroke,col); }
+                if matches!(o.visual_style, Some(VisualStyle::Stroke { .. })) {
+                    for path in curve_screen_paths(vp, &segments) {
+                        mesh.styled_path(&path, false, stroke, col);
+                    }
                 } else {
                     for (start, end, mode) in segments {
                         if let Some((a, b)) =
@@ -1959,7 +2100,7 @@ impl GeometryRenderer {
                         }
                     }
                 }
-                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => {
+                ref kind if kind.is_arc() => {
                     if let Some(points) = doc.arc_points(o.id, 128) {
                         let screen = points
                             .into_iter()
@@ -2014,14 +2155,19 @@ impl GeometryRenderer {
             }
             if let Some(images) = doc.point_iteration_images(o.id) {
                 let (radius, color) = match o.visual_style {
-                    Some(VisualStyle::Point { shape, color }) => (point_radius(shape), rgba(color, 1.)),
+                    Some(VisualStyle::Point { shape, color }) => {
+                        (point_radius(shape), rgba(color, 1.))
+                    }
                     _ => (2., blue),
                 };
                 let highlighted = doc.selected.contains(&o.id)
                     || matches!(o.kind, Kind::IterationBinding(_, parent) if doc.selected.contains(&parent));
                 for point in images {
-                    mesh.disk(vp.screen(point), if highlighted {radius + 1.5} else {radius},
-                        if highlighted {selected} else {color});
+                    mesh.disk(
+                        vp.screen(point),
+                        if highlighted { radius + 1.5 } else { radius },
+                        if highlighted { selected } else { color },
+                    );
                 }
             }
         }
@@ -2075,9 +2221,12 @@ mod tests {
     #[test]
     fn native_calculation_caption_flag_is_independent_of_geometry() {
         let suppressed = Document::from_bytes(
-            include_bytes!("../tests/fixtures/numeric_calculation_trailing_decimal_cube84_native_verified.gsp"),
+            include_bytes!(
+                "../tests/fixtures/numeric_calculation_trailing_decimal_cube84_native_verified.gsp"
+            ),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(suppressed.numeric_value(5), Some(2.));
         assert!(number_lines_for_object(&suppressed, 5).is_none());
         assert!(suppressed.position(14).is_some());
@@ -2097,9 +2246,13 @@ mod tests {
         let mut doc = Document::from_bytes(
             include_bytes!("../tests/fixtures/numeric_angle_ray_undefined_native_verified.gsp"),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(doc.numeric_value(6), None);
-        assert_eq!(doc.parameter_calculation_display_value(6), Some(f64::INFINITY));
+        assert_eq!(
+            doc.parameter_calculation_display_value(6),
+            Some(f64::INFINITY)
+        );
         assert!(number_lines_for_object(&doc, 6).unwrap().1[0].ends_with("∞°"));
         assert!(doc.line_points(8).is_none());
         doc.set_parameter_value(5, 4.).unwrap();
@@ -2111,26 +2264,64 @@ mod tests {
     #[test]
     fn native_radian_literal_calculations_render_named_and_formula_modes() {
         for (bytes, value, text) in [
-            (include_bytes!("../tests/fixtures/numeric_scalar_fraction_precision_native_verified.gsp").as_slice(), 0.075, "0.07"),
-            (include_bytes!("../tests/fixtures/numeric_scalar_true_half_precision_native_verified.gsp").as_slice(), 0.125, "0.13"),
-            (include_bytes!("../tests/fixtures/numeric_scalar_negative_half_precision_native_verified.gsp").as_slice(), -0.125, "-0.13"),
+            (
+                include_bytes!(
+                    "../tests/fixtures/numeric_scalar_fraction_precision_native_verified.gsp"
+                )
+                .as_slice(),
+                0.075,
+                "0.07",
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/numeric_scalar_true_half_precision_native_verified.gsp"
+                )
+                .as_slice(),
+                0.125,
+                "0.13",
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/numeric_scalar_negative_half_precision_native_verified.gsp"
+                )
+                .as_slice(),
+                -0.125,
+                "-0.13",
+            ),
         ] {
             let doc = Document::from_bytes(bytes, None).unwrap();
             assert_eq!(doc.numeric_value(17), Some(value));
             let caption = &number_lines_for_object(&doc, 17).unwrap().1[0];
             assert!(caption.ends_with(text), "{caption}");
         }
-        let mut named = Document::from_bytes(include_bytes!(
-            "../tests/fixtures/numeric_sourcefree_radian_named_native_verified.gsp"
-        ), None).unwrap();
-        assert_eq!(number_lines_for_object(&named, 5).unwrap().1, vec!["x轴首刻度 = 15.00°"]);
+        let mut named = Document::from_bytes(
+            include_bytes!("../tests/fixtures/numeric_sourcefree_radian_named_native_verified.gsp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            number_lines_for_object(&named, 5).unwrap().1,
+            vec!["x轴首刻度 = 15.00°"]
+        );
         assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("x轴首刻度"));
-        named.objects[4].label.as_mut().unwrap().set_name("θ").unwrap();
-        assert_eq!(number_lines_for_object(&named, 5).unwrap().1, vec!["θ = 15.00°"]);
+        named.objects[4]
+            .label
+            .as_mut()
+            .unwrap()
+            .set_name("θ")
+            .unwrap();
+        assert_eq!(
+            number_lines_for_object(&named, 5).unwrap().1,
+            vec!["θ = 15.00°"]
+        );
         assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("θ"));
-        let unnamed = Document::from_bytes(include_bytes!(
-            "../tests/fixtures/numeric_sourcefree_radian_unnamed_native_verified.gsp"
-        ), None).unwrap();
+        let unnamed = Document::from_bytes(
+            include_bytes!(
+                "../tests/fixtures/numeric_sourcefree_radian_unnamed_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
         let caption = &number_lines_for_object(&unnamed, 5).unwrap().1[0];
         assert!(caption.contains("180°"), "{caption}");
         assert!(caption.contains("14.28571°"), "{caption}");
@@ -2238,7 +2429,10 @@ mod tests {
         if std::env::var_os("SKETCHPAD_WRITE_LEGACY_STYLE_FIXTURE").is_some() {
             std::fs::write("/tmp/legacy_polygon_modern_copy_writer.gsp", &saved).unwrap();
         }
-        assert_eq!(saved, include_bytes!("../tests/fixtures/legacy_polygon_modern_copy_native_verified.gsp"));
+        assert_eq!(
+            saved,
+            include_bytes!("../tests/fixtures/legacy_polygon_modern_copy_native_verified.gsp")
+        );
         let reopened = Document::from_bytes(&saved, None).unwrap();
         assert!(
             svg_page(&reopened, &vp)
@@ -2250,7 +2444,11 @@ mod tests {
     #[test]
     fn polygon_fills_follow_signed_native_rank_and_keep_other_draw_slots() {
         let mut doc = Document::new();
-        for p in [Point { x: 100., y: 100. }, Point { x: 300., y: 100. }, Point { x: 200., y: 300. }] {
+        for p in [
+            Point { x: 100., y: 100. },
+            Point { x: 300., y: 100. },
+            Point { x: 200., y: 300. },
+        ] {
             doc.add(Kind::Free(p));
         }
         let orange = doc.add(Kind::Polygon(vec![1, 2, 3]));
@@ -2258,15 +2456,52 @@ mod tests {
         let green = doc.add(Kind::Polygon(vec![1, 2, 3]));
         let blue = doc.add(Kind::Polygon(vec![1, 2, 3]));
         for (id, rank, color) in [
-            (orange, 0, RgbColor { red: 255, green: 128, blue: 0 }),
-            (green, -1, RgbColor { red: 0, green: 255, blue: 0 }),
-            (blue, 0, RgbColor { red: 0, green: 0, blue: 255 }),
+            (
+                orange,
+                0,
+                RgbColor {
+                    red: 255,
+                    green: 128,
+                    blue: 0,
+                },
+            ),
+            (
+                green,
+                -1,
+                RgbColor {
+                    red: 0,
+                    green: 255,
+                    blue: 0,
+                },
+            ),
+            (
+                blue,
+                0,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255,
+                },
+            ),
         ] {
             doc.objects[id - 1].interior_order = Some(rank);
-            doc.objects[id - 1].visual_style = Some(VisualStyle::Polygon { color, opacity: 32767 });
+            doc.objects[id - 1].visual_style = Some(VisualStyle::Polygon {
+                color,
+                opacity: 32767,
+            });
         }
-        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [green, orange, blue]);
-        let vp = Viewport { rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.)), scale: 1., center: Point { x: 200., y: 200. } };
+        assert_eq!(
+            ordered_polygon_fills(&doc)
+                .iter()
+                .map(|o| o.id)
+                .collect::<Vec<_>>(),
+            [green, orange, blue]
+        );
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.)),
+            scale: 1.,
+            center: Point { x: 200., y: 200. },
+        };
         let svg = svg_page(&doc, &vp).unwrap();
         let green_at = svg.find("fill=\"#00ff00\"").unwrap();
         let orange_at = svg.find("fill=\"#ff8000\"").unwrap();
@@ -2275,26 +2510,92 @@ mod tests {
         assert!(green_at < line_at && line_at < orange_at && orange_at < blue_at);
         assert_eq!(doc.objects[line - 1].kind, Kind::Segment(1, 2));
         doc.objects[green - 1].visible = false;
-        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [orange, blue]);
+        assert_eq!(
+            ordered_polygon_fills(&doc)
+                .iter()
+                .map(|o| o.id)
+                .collect::<Vec<_>>(),
+            [orange, blue]
+        );
         doc.objects[green - 1].visible = true;
         doc.objects[orange - 1].interior_order = Some(i32::MAX);
         doc.objects[green - 1].interior_order = Some(i32::MIN);
-        assert_eq!(ordered_polygon_fills(&doc).iter().map(|o| o.id).collect::<Vec<_>>(), [green, blue, orange]);
+        assert_eq!(
+            ordered_polygon_fills(&doc)
+                .iter()
+                .map(|o| o.id)
+                .collect::<Vec<_>>(),
+            [green, blue, orange]
+        );
     }
     #[test]
     fn styled_point_curve_samples_keep_dash_phase_and_undefined_breaks() {
-        let vp=Viewport {rect:Rect::from_min_size(Pos2::ZERO,egui::vec2(300.,300.)),scale:1.,center:Point{x:0.,y:0.}};
-        let samples=(0..30).map(|x|(Point{x:x as f64,y:0.},Point{x:x as f64+1.,y:0.},LineMode::Segment)).collect::<Vec<_>>();
-        let paths=curve_screen_paths(&vp,&samples);
-        assert_eq!(paths.len(),1); assert_eq!(paths[0].len(),31);
-        let mut mesh=Mesh {vertices:Vec::new(),width:300.,height:300.,ppp:1.};
-        let color=[0.1,0.6,0.8,1.];
-        mesh.styled_path(&paths[0],false,SegmentLineStyle {width:LineWidth::Thick,pattern:LinePattern::Dashed},color);
-        assert_eq!(mesh.vertices.len(),108); // 18 painted 1px samples, 12 gap samples.
-        assert!(mesh.vertices.iter().all(|v|v.color==color));
-        assert!(!mesh.vertices.iter().any(|v| {let x=(v.pos[0]+1.)*150.;x>159.1&&x<164.9}));
-        let broken=[(Point{x:0.,y:0.},Point{x:1.,y:0.},LineMode::Segment),(Point{x:1.,y:0.},Point{x:2.,y:0.},LineMode::Segment),(Point{x:10.,y:0.},Point{x:11.,y:0.},LineMode::Segment)];
-        assert_eq!(curve_screen_paths(&vp,&broken).iter().map(Vec::len).collect::<Vec<_>>(),vec![3,2]);
+        let vp = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(300., 300.)),
+            scale: 1.,
+            center: Point { x: 0., y: 0. },
+        };
+        let samples = (0..30)
+            .map(|x| {
+                (
+                    Point { x: x as f64, y: 0. },
+                    Point {
+                        x: x as f64 + 1.,
+                        y: 0.,
+                    },
+                    LineMode::Segment,
+                )
+            })
+            .collect::<Vec<_>>();
+        let paths = curve_screen_paths(&vp, &samples);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].len(), 31);
+        let mut mesh = Mesh {
+            vertices: Vec::new(),
+            width: 300.,
+            height: 300.,
+            ppp: 1.,
+        };
+        let color = [0.1, 0.6, 0.8, 1.];
+        mesh.styled_path(
+            &paths[0],
+            false,
+            SegmentLineStyle {
+                width: LineWidth::Thick,
+                pattern: LinePattern::Dashed,
+            },
+            color,
+        );
+        assert_eq!(mesh.vertices.len(), 108); // 18 painted 1px samples, 12 gap samples.
+        assert!(mesh.vertices.iter().all(|v| v.color == color));
+        assert!(!mesh.vertices.iter().any(|v| {
+            let x = (v.pos[0] + 1.) * 150.;
+            x > 159.1 && x < 164.9
+        }));
+        let broken = [
+            (
+                Point { x: 0., y: 0. },
+                Point { x: 1., y: 0. },
+                LineMode::Segment,
+            ),
+            (
+                Point { x: 1., y: 0. },
+                Point { x: 2., y: 0. },
+                LineMode::Segment,
+            ),
+            (
+                Point { x: 10., y: 0. },
+                Point { x: 11., y: 0. },
+                LineMode::Segment,
+            ),
+        ];
+        assert_eq!(
+            curve_screen_paths(&vp, &broken)
+                .iter()
+                .map(Vec::len)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
     }
 
     #[test]
@@ -2960,7 +3261,7 @@ mod tests {
         assert!(
             svg_page(&doc, &viewport)
                 .unwrap()
-                .contains("Show Segment</text>")
+                .contains("显示线段</text>")
         );
     }
     #[test]

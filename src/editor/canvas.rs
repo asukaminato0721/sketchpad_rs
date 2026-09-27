@@ -27,57 +27,64 @@ impl Editor {
                 if response.drag_started() && self.tool == Tool::Select {
                     if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
                         if let Some(id) = self.hit(&vp, p) {
-                            if self.doc.objects[id - 1].measurement_anchor.is_some() || matches!(
-                                self.doc.objects[id - 1].kind,
-                                Kind::Free(_)
-                                    | Kind::GraphVerticalUnit(_, _)
-                                    | Kind::Image { .. }
-                                    | Kind::PlainText { .. }
-                                    | Kind::Parameter(_)
-                                    | Kind::Calculation(_)
-                                    | Kind::MeasuredCalculation(_, _)
-                                    | Kind::LengthPairCalculation(_, _, _)
-                                    | Kind::ParameterCalculation(_, _)
-                                    | Kind::ValueTable(_, _)
-                                    | Kind::ValueTablePair(_, _, _)
-                                    | Kind::PointOnSegment(_, _)
-                                    | Kind::PointOnRay(_, _)
-                                    | Kind::PointOnLine(_, _)
-                                    | Kind::PointOnCircle(_, _, _)
-                                    | Kind::PointOnArc(_, _)
-                            ) {
-                                self.drag_offset = if let Some((x,y)) = self.doc.objects[id-1].measurement_anchor {
+                            if self.doc.objects[id - 1].measurement_anchor.is_some()
+                                || matches!(
+                                    self.doc.objects[id - 1].kind,
+                                    Kind::Free(_)
+                                        | Kind::GraphVerticalUnit(_, _)
+                                        | Kind::Image { .. }
+                                        | Kind::PlainText { .. }
+                                        | Kind::Parameter(_)
+                                        | Kind::Calculation(_)
+                                        | Kind::MeasuredCalculation(_, _)
+                                        | Kind::LengthPairCalculation(_, _, _)
+                                        | Kind::ParameterCalculation(_, _)
+                                        | Kind::ValueTable(_, _)
+                                        | Kind::ValueTablePair(_, _, _)
+                                        | Kind::PointOnSegment(_, _)
+                                        | Kind::PointOnRay(_, _)
+                                        | Kind::PointOnLine(_, _)
+                                        | Kind::PointOnCircle(_, _, _)
+                                        | Kind::PointOnArc(_, _)
+                                )
+                            {
+                                self.drag_offset = if let Some((x, y)) =
+                                    self.doc.objects[id - 1].measurement_anchor
+                                {
                                     p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
-                                } else { match &self.doc.objects[id - 1].kind {
-                                    Kind::PlainText { rect, .. } => {
-                                        p - vp.screen(Point {
-                                            x: rect.left.into(),
-                                            y: rect.top.into(),
-                                        })
+                                } else {
+                                    match &self.doc.objects[id - 1].kind {
+                                        Kind::PlainText { rect, .. } => {
+                                            p - vp.screen(Point {
+                                                x: rect.left.into(),
+                                                y: rect.top.into(),
+                                            })
+                                        }
+                                        Kind::Parameter(_)
+                                        | Kind::Calculation(_)
+                                        | Kind::MeasuredCalculation(_, _)
+                                        | Kind::LengthPairCalculation(_, _, _)
+                                        | Kind::ParameterCalculation(_, _)
+                                        | Kind::ValueTable(_, _)
+                                        | Kind::ValueTablePair(_, _, _) => {
+                                            let anchor =
+                                                sketchpad_rs::render::number_lines_for_object(
+                                                    &self.doc, id,
+                                                )
+                                                .unwrap()
+                                                .0;
+                                            p - (vp.rect.min
+                                                + egui::vec2(anchor.0 as f32, anchor.1 as f32))
+                                        }
+                                        Kind::Image { transform, .. } => {
+                                            p - vp.screen(Point {
+                                                x: transform[2],
+                                                y: transform[5],
+                                            })
+                                        }
+                                        _ => egui::Vec2::ZERO,
                                     }
-                                    Kind::Parameter(_)
-                                    | Kind::Calculation(_)
-                                    | Kind::MeasuredCalculation(_, _)
-                                    | Kind::LengthPairCalculation(_, _, _)
-                                    | Kind::ParameterCalculation(_, _)
-                                    | Kind::ValueTable(_, _)
-                                    | Kind::ValueTablePair(_, _, _) => {
-                                        let anchor = sketchpad_rs::render::number_lines_for_object(
-                                            &self.doc, id,
-                                        )
-                                        .unwrap()
-                                        .0;
-                                        p - (vp.rect.min
-                                            + egui::vec2(anchor.0 as f32, anchor.1 as f32))
-                                    }
-                                    Kind::Image { transform, .. } => {
-                                        p - vp.screen(Point {
-                                            x: transform[2],
-                                            y: transform[5],
-                                        })
-                                    }
-                                    _ => egui::Vec2::ZERO,
-                                }};
+                                };
                                 self.doc.checkpoint();
                                 self.animations.retain(|track| track.id != id);
                                 self.movements.retain(|track| track.source != id);
@@ -89,9 +96,12 @@ impl Editor {
                 }
                 if response.dragged() {
                     if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
-                        if self.doc.objects[id-1].measurement_anchor.is_some() {
+                        if self.doc.objects[id - 1].measurement_anchor.is_some() {
                             let at = p - self.drag_offset - vp.rect.min;
-                            if let Err(error) = self.doc.drag_measurement_caption(id, (at.x.round() as i16, at.y.round() as i16)) {
+                            if let Err(error) = self.doc.drag_measurement_caption(
+                                id,
+                                (at.x.round() as i16, at.y.round() as i16),
+                            ) {
                                 self.status = error;
                             }
                         } else if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
@@ -141,16 +151,12 @@ impl Editor {
                     && let Some(id) = self.hit(&vp, p)
                 {
                     match self.doc.objects[id - 1].kind {
-                        Kind::FunctionDefinition(expression) => {
-                            self.function_edit_id = Some(id);
-                            self.function_dialog = Some(false);
-                            self.function_draft = expression
-                                .display()
-                                .strip_prefix("f(x) = ")
-                                .unwrap_or("x")
-                                .into();
+                        Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) => {
+                            self.begin_function_dialog(false, Some(id));
                         }
-                        Kind::FunctionPlot(..) | Kind::ParametricPlot(..) | Kind::ParameterLocus(..) => {
+                        Kind::FunctionPlot(..)
+                        | Kind::ParametricPlot(..)
+                        | Kind::ParameterLocus(..) => {
                             if let Some((min, max, samples)) = self.doc.plot_range(id) {
                                 self.plot_range_dialog = Some(id);
                                 self.plot_min_draft = min.to_string();
@@ -486,20 +492,30 @@ impl Editor {
                             .rect_filled(rect, 0., egui::Color32::from_rgb(255, 188, 230));
                     }
                     let style = self.doc.text_font_state(id);
-                    let size = style.as_ref().map_or(16., |style| f32::from(style.size_code));
-                    let font_id = self.canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size);
+                    let size = style
+                        .as_ref()
+                        .map_or(16., |style| f32::from(style.size_code));
+                    let font_id = self
+                        .canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size);
                     let color = egui::Color32::from_gray(35);
                     let format = egui::text::TextFormat {
                         font_id,
                         color,
                         italics: style.as_ref().is_some_and(|style| style.italic),
-                        underline: if style.as_ref().is_some_and(|style| style.underline) { egui::Stroke::new(1., color) } else { egui::Stroke::NONE },
+                        underline: if style.as_ref().is_some_and(|style| style.underline) {
+                            egui::Stroke::new(1., color)
+                        } else {
+                            egui::Stroke::NONE
+                        },
                         ..Default::default()
                     };
-                    let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
+                    let galley = ui
+                        .painter()
+                        .layout_job(egui::text::LayoutJob::single_section(text, format));
                     ui.painter().galley(rect.min, galley.clone(), color);
                     if style.as_ref().is_some_and(|style| style.bold) {
-                        ui.painter().galley(rect.min + egui::vec2(0.7, 0.), galley, color);
+                        ui.painter()
+                            .galley(rect.min + egui::vec2(0.7, 0.), galley, color);
                     }
                 }
                 if matches!(self.tool, Tool::Custom(_)) {
@@ -508,7 +524,11 @@ impl Editor {
                         super::custom_tools::PathStart::New(point) => Some(point),
                     });
                     if let Some(start) = start {
-                        ui.painter().circle_stroke(vp.screen(start), 5., egui::Stroke::new(1.5, egui::Color32::from_rgb(180, 40, 100)));
+                        ui.painter().circle_stroke(
+                            vp.screen(start),
+                            5.,
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(180, 40, 100)),
+                        );
                     }
                 }
             });

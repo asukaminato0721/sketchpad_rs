@@ -3,7 +3,7 @@
 use super::geometry::{
     marked_rotation_theta, ratio_of_points, reflect_point, rotate_point_about, scale_point_about,
 };
-use super::kind::is_point_kind;
+use super::kind::{is_arc_kind, is_point_kind};
 use super::transform_model::{DisplacementExpr, ElementType, NumericExpr, Transform};
 use super::{Document, Kind, LineMode, Point};
 use crate::table_records::NumericUnit;
@@ -112,6 +112,14 @@ pub enum TransformGeometry {
     Circle {
         center: Point,
         radius: f64,
+    },
+    /// An analytic circular arc; signed sweep preserves construction orientation.
+    Arc {
+        center: Point,
+        radius: f64,
+        start: f64,
+        sweep: f64,
+        clockwise_y: bool,
     },
     Polygon(Vec<Point>),
 }
@@ -243,6 +251,14 @@ impl Document {
                 let (center, radius) = self.circle_points(source).ok_or(Error::Undefined)?;
                 TransformGeometry::Circle { center, radius }
             }
+            ElementType::Arc if is_arc_kind(kind) => {
+                if let Some((start, end)) = self.linear_three_point_arc(source) {
+                    TransformGeometry::Straight { start, end, mode: LineMode::Segment }
+                } else {
+                    let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(source).ok_or(Error::Undefined)?;
+                    TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }
+                }
+            }
             ElementType::Polygon if kind.is_polygon() => {
                 TransformGeometry::Polygon(self.polygon_points(source).ok_or(Error::Undefined)?)
             }
@@ -327,7 +343,7 @@ impl Document {
                 if factor == 0.
                     && matches!(
                         definition.element(),
-                        ElementType::Ray | ElementType::Line | ElementType::Circle
+                        ElementType::Ray | ElementType::Line | ElementType::Circle | ElementType::Arc
                     )
                 {
                     return Err(Error::Undefined);
@@ -378,6 +394,19 @@ impl Document {
                 if !radius.is_finite() || *radius <= 0. {
                     return Err(Error::Undefined);
                 }
+            }
+            TransformGeometry::Arc { center, radius, start, sweep, clockwise_y } => {
+                let first = Point {
+                    x: center.x + *radius * start.cos(),
+                    y: center.y + if *clockwise_y { -*radius * start.sin() } else { *radius * start.sin() },
+                };
+                let first = apply(first)?;
+                *center = apply(*center)?;
+                *radius *= radius_factor;
+                if !radius.is_finite() || *radius <= 0. { return Err(Error::Undefined); }
+                *start = (if *clockwise_y { center.y - first.y } else { first.y - center.y })
+                    .atan2(first.x - center.x);
+                if matches!(definition.transform(), Transform::Reflect { .. }) { *sweep = -*sweep; }
             }
             TransformGeometry::Polygon(vertices) => {
                 for p in vertices {
@@ -435,6 +464,13 @@ mod tests {
                 },
                 None => assert_eq!(result, Err(Error::Undefined)),
             },
+            ElementType::Arc => {
+                if let Some((center, radius, start, sweep, clockwise_y)) = document.arc_geometry(id) {
+                    assert_eq!(result, Ok(TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }));
+                } else if let Some((start, end)) = document.linear_three_point_arc(id) {
+                    assert_eq!(result, Ok(TransformGeometry::Straight { start, end, mode: LineMode::Segment }));
+                } else { assert_eq!(result, Err(Error::Undefined)); }
+            }
             ElementType::Polygon => match document.polygon_points(id) {
                 Some(expected) => match result {
                     Ok(TransformGeometry::Polygon(points)) => {
@@ -507,7 +543,12 @@ mod tests {
                                     close(apply(d.position(sequence.source).unwrap()), expected)
                                 }
                                 TransformGeometry::Straight { start, end, .. } => {
-                                    let (a, b, _) = d.line_points(sequence.source).unwrap();
+                                    let (a, b) = if sequence.element == ElementType::Arc {
+                                        d.linear_three_point_arc(sequence.source).unwrap()
+                                    } else {
+                                        let (a, b, _) = d.line_points(sequence.source).unwrap();
+                                        (a, b)
+                                    };
                                     close(apply(a), start);
                                     close(apply(b), end);
                                 }
@@ -515,6 +556,12 @@ mod tests {
                                     apply(d.circle_points(sequence.source).unwrap().0),
                                     center,
                                 ),
+                                TransformGeometry::Arc { center, .. } => {
+                                    close(apply(d.arc_geometry(sequence.source).unwrap().0), center);
+                                    for t in [0., 0.25, 0.5, 1.] {
+                                        close(apply(d.point_on_arc(sequence.source, t).unwrap()), d.point_on_arc(object.id, t).unwrap());
+                                    }
+                                }
                                 TransformGeometry::Polygon(points) => {
                                     for (source, expected) in d
                                         .polygon_points(sequence.source)

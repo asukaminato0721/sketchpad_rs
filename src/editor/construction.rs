@@ -1,4 +1,4 @@
-use super::{is_circle_construction_host, Editor};
+use super::{Editor, is_circle_construction_host};
 use sketchpad_rs::document::transform_model::{ElementType, NativeTransformFlavor};
 use sketchpad_rs::document::{IterationDepth, Kind, Point};
 
@@ -151,7 +151,10 @@ impl Editor {
         }
         let (driver, target) = if matches!(
             self.doc.objects[ids[0] - 1].kind,
-            Kind::PointOnSegment(_, _) | Kind::PointOnCircle(_, _, _) | Kind::PointOnArc(_, _) | Kind::Parameter(_)
+            Kind::PointOnSegment(_, _)
+                | Kind::PointOnCircle(_, _, _)
+                | Kind::PointOnArc(_, _)
+                | Kind::Parameter(_)
         ) {
             (ids[0], ids[1])
         } else {
@@ -165,7 +168,133 @@ impl Editor {
             Err(error) => self.status = error,
         }
     }
+    fn iterate_geometry_selection(&mut self, depth: u32) -> bool {
+        if self.selection_order.len() < 3 {
+            return false;
+        }
+        let mappings = self
+            .selection_order
+            .iter()
+            .filter_map(|&id| {
+                let definition = self
+                    .doc
+                    .objects
+                    .get(id.checked_sub(1)?)?
+                    .kind
+                    .transform_definition()?;
+                (definition.element() == ElementType::Point
+                    && self.selection_order.contains(&definition.source()))
+                .then_some((definition.source(), id))
+            })
+            .collect::<Vec<_>>();
+        let [(seed, image)] = mappings.as_slice() else {
+            return false;
+        };
+        let (seed, image) = (*seed, *image);
+        let geometry = |kind: &Kind| {
+            kind.is_segment()
+                || kind.is_circle()
+                || kind.is_polygon()
+                || matches!(
+                    kind,
+                    Kind::Ray(..)
+                        | Kind::Line(..)
+                        | Kind::Bisector(..)
+                        | Kind::Parallel(..)
+                        | Kind::Perpendicular(..)
+                        | Kind::CenterArc(..)
+                        | Kind::ThreePointArc(..)
+                        | Kind::ArcOnCircle(..)
+                )
+                || kind
+                    .transform_definition()
+                    .is_some_and(|definition| definition.element() != ElementType::Point)
+        };
+        let bindings = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.doc
+                    .objects
+                    .get(id - 1)
+                    .is_some_and(|object| geometry(&object.kind))
+            })
+            .collect::<Vec<_>>();
+        if bindings.is_empty() {
+            return false;
+        }
+        let values = self
+            .selection_order
+            .iter()
+            .copied()
+            .filter(|&id| self.doc.objects[id - 1].kind.is_iteration_depth_value())
+            .collect::<Vec<_>>();
+        if values.len() > 1
+            || self.selection_order.iter().any(|id| {
+                ![seed, image].contains(id) && !bindings.contains(id) && !values.contains(id)
+            })
+        {
+            return false;
+        }
+        let broad = !matches!(self.doc.objects[seed - 1].kind, Kind::Free(_))
+            || bindings.len() > 1
+            || bindings
+                .iter()
+                .any(|&id| match self.doc.objects[id - 1].kind {
+                    Kind::Segment(..) | Kind::Circle(..) => false,
+                    Kind::Ray(..) => values.is_empty(),
+                    _ => true,
+                });
+        if !broad {
+            return false;
+        }
+        let mut dependent = vec![false; self.doc.objects.len() + 1];
+        dependent[seed] = true;
+        for object in &self.doc.objects {
+            if object.id != seed {
+                dependent[object.id] = self.doc.dependencies_of(object.id).is_some_and(|parents| {
+                    parents
+                        .into_iter()
+                        .any(|parent| dependent.get(parent).copied().unwrap_or(false))
+                });
+            }
+        }
+        let mut carried = std::collections::BTreeSet::new();
+        let mut pending = bindings.clone();
+        pending.push(image);
+        while let Some(id) = pending.pop() {
+            if id == seed || carried.contains(&id) {
+                continue;
+            }
+            if dependent[id] || bindings.contains(&id) || id == image {
+                carried.insert(id);
+                pending.extend(self.doc.dependencies_of(id).unwrap_or_default());
+            }
+        }
+        let depth = values
+            .first()
+            .copied()
+            .map_or(IterationDepth::Fixed(depth), IterationDepth::Value);
+        match self.doc.add_mapped_point_iteration_with_bindings(
+            &[seed],
+            &[vec![image]],
+            &carried.into_iter().collect::<Vec<_>>(),
+            &bindings,
+            depth,
+        ) {
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Created iteration {id}");
+            }
+            Err(error) => self.status = error,
+        }
+        true
+    }
     pub(super) fn iterate_selected(&mut self, depth: u32) {
+        if self.iterate_geometry_selection(depth) {
+            return;
+        }
         if !(2..=8).contains(&self.selection_order.len()) {
             self.status =
                 "Select a free point and transformed image; optionally add their segment or circle, ray with a depth parameter, or parameter mapping with a numeric label".into();
@@ -177,7 +306,9 @@ impl Editor {
             .copied()
             .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Free(_)));
         let image = self.selection_order.iter().copied().find(|id| {
-            self.doc.objects[*id - 1].kind.transform_definition()
+            self.doc.objects[*id - 1]
+                .kind
+                .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Point)
         });
         let (Some(seed), Some(image)) = (seed, image) else {
@@ -190,12 +321,25 @@ impl Editor {
             .copied()
             .find(|id| matches!(self.doc.objects[*id - 1].kind, Kind::Polygon(_)));
         let result = if let Some(polygon) = selected_polygon {
-            let images = self.selection_order.iter().copied().filter(|id| {
-                self.doc.objects[*id - 1].kind.transform_definition().is_some_and(|definition| {
-                    definition.element() == ElementType::Point && definition.source() == seed
-                        && matches!(definition.wire_flavor(), NativeTransformFlavor::FixedPolar | NativeTransformFlavor::FixedCartesian)
+            let images = self
+                .selection_order
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.doc.objects[*id - 1]
+                        .kind
+                        .transform_definition()
+                        .is_some_and(|definition| {
+                            definition.element() == ElementType::Point
+                                && definition.source() == seed
+                                && matches!(
+                                    definition.wire_flavor(),
+                                    NativeTransformFlavor::FixedPolar
+                                        | NativeTransformFlavor::FixedCartesian
+                                )
+                        })
                 })
-            }).collect::<Vec<_>>();
+                .collect::<Vec<_>>();
             let segments = self
                 .selection_order
                 .iter()
@@ -353,18 +497,22 @@ impl Editor {
             return;
         }
         let host = self.selection_order.iter().copied().find(|id| {
-            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || is_circle_construction_host(&o.kind)) || matches!(
-                self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                Some(
-                    Kind::Polygon(_)
-                        | Kind::Segment(_, _)
-                        | Kind::Ray(_, _)
-                        | Kind::Line(_, _)
-                        | Kind::ThreePointArc(_, _, _)
-                        | Kind::ArcOnCircle(_, _, _)
-                        | Kind::CenterArc(_, _, _)
+            self.doc
+                .objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind))
+                || matches!(
+                    self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                    Some(
+                        Kind::Polygon(_)
+                            | Kind::Segment(_, _)
+                            | Kind::Ray(_, _)
+                            | Kind::Line(_, _)
+                            | Kind::ThreePointArc(_, _, _)
+                            | Kind::ArcOnCircle(_, _, _)
+                            | Kind::CenterArc(_, _, _)
+                    )
                 )
-            )
         });
         let Some(host) = host else {
             self.status = "Select a segment, ray, line, circle, arc, or polygon".into();
@@ -519,7 +667,10 @@ impl Editor {
             self.status = "Select the center, arc start, then its end direction".into();
             return;
         }
-        if ids.iter().any(|id| self.doc.objects[*id - 1].page != self.doc.active_page) {
+        if ids
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+        {
             self.status = "Select points on the current page".into();
             return;
         }

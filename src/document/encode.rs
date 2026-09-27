@@ -1,9 +1,11 @@
-use super::iteration::mapped_segment_binding;
-use super::embedded_tools::document_records;
-use super::transform_model::{ElementType, NativeTransformFlavor};
 use super::calculations::calculation_source_ids;
-use super::kind::{is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding, straight_kind_mode};
+use super::embedded_tools::document_records;
+use super::kind::{
+    is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding,
+    straight_kind_mode,
+};
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
+use super::transform_model::{ElementType, NativeTransformFlavor};
 use super::{Document, IterationDepth, Kind, LineMode};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkUrlButtonGroup, MovementButtonGroup,
@@ -21,9 +23,11 @@ use crate::{
 
 impl Document {
     pub fn encode(&self) -> Result<Vec<u8>, String> {
-        if self.objects.iter().any(|object| {
-            matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
-        }) {
+        if self
+            .objects
+            .iter()
+            .any(|object| matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_)))
+        {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
         let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
@@ -106,6 +110,11 @@ impl Document {
             }
             if let Some(i) = o.constraint_offset {
                 match o.kind {
+                    Kind::GraphHorizontalUnit(_, step)
+                        if out.get(i..i + 4) == Some(&[52, 0, 0, 0]) =>
+                    {
+                        out[i + 4..i + 12].copy_from_slice(&step.to_le_bytes());
+                    }
                     Kind::GraphVerticalUnit(_, step)
                         if matches!(out.get(i..i + 4), Some([55, 0, 0, 0] | [54, 0, 0, 0])) =>
                     {
@@ -152,44 +161,6 @@ impl Document {
                 }
             }
             if let (
-                Kind::HideShowButton {
-                    targets,
-                    action,
-                    label,
-                    anchor,
-                },
-                Some(i),
-            ) = (&o.kind, o.header_offset)
-            {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
-                    .ok_or("Missing saved action button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved action button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = HideShowButtonGroup::parse(&out[start..end])?;
-                group.set_targets(
-                    &targets
-                        .iter()
-                        .map(|&target| target as u32)
-                        .collect::<Vec<_>>(),
-                )?;
-                group.set_action(*action);
-                group.set_label(label)?;
-                group.set_screen_anchor(*anchor);
-                group.set_hidden(!o.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err("Editing a saved button label cannot change its byte length".into());
-                }
-                out[start..end].copy_from_slice(&encoded);
-            }
-            if let (
                 Kind::AnimationButton {
                     targets,
                     label,
@@ -232,8 +203,7 @@ impl Document {
             }
             if let (
                 Kind::MovementButton {
-                    source,
-                    destination,
+                    pairs,
                     speed,
                     follow,
                     label,
@@ -254,7 +224,12 @@ impl Document {
                 let start = rs[start_record].start;
                 let end = rs[end_record].data.end;
                 let mut group = MovementButtonGroup::parse(&out[start..end])?;
-                group.set_targets(*source as u32, *destination as u32)?;
+                group.set_target_pairs(
+                    &pairs
+                        .iter()
+                        .map(|&(source, destination)| (source as u32, destination as u32))
+                        .collect::<Vec<_>>(),
+                )?;
                 group.set_speed(*speed);
                 group.set_follows_destination(*follow);
                 group.set_label(label)?;
@@ -468,7 +443,9 @@ impl Document {
         if self.objects.len() == self.source_count {
             let out = self.patch_marked_coordinate_link(out)?;
             let out = self.patch_text_font_overrides(self.patch_visual_styles(
-                self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
+                self.patch_trace_flags(self.patch_text_and_labels(
+                    self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+                )?)?,
             )?)?;
             return self.patch_last_moved_marker(out);
         }
@@ -501,22 +478,50 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
-            if let Kind::MappedPointIteration { ref seeds, ref branches, ref carried, depth, final_only } = o.kind {
+            if let Kind::MappedPointIteration {
+                ref seeds,
+                ref branches,
+                ref carried,
+                depth,
+                final_only,
+            } = o.kind
+            {
                 let mut header = *include_bytes!("../../assets/mapped_point_iteration_header.bin");
-                header[..2].copy_from_slice(&(if matches!(depth, IterationDepth::Fixed(_)) { 76u16 } else { 89u16 }).to_le_bytes());
-                if !o.visible { header[2] |= 1; }
+                header[..2].copy_from_slice(
+                    &(if matches!(depth, IterationDepth::Fixed(_)) {
+                        76u16
+                    } else {
+                        89u16
+                    })
+                    .to_le_bytes(),
+                );
+                if !o.visible {
+                    header[2] |= 1;
+                }
                 put_record(&mut added, 0x07d0, &header);
                 let mut ids = Vec::new();
-                if let IterationDepth::Value(id) = depth { ids.push(id); }
-                ids.extend(seeds); ids.extend(branches.iter().flatten()); ids.extend(carried);
+                if let IterationDepth::Value(id) = depth {
+                    ids.push(id);
+                }
+                ids.extend(seeds);
+                ids.extend(branches.iter().flatten());
+                ids.extend(carried);
                 let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
-                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for id in ids {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &refs);
-                let mut definition = *include_bytes!("../../assets/mapped_point_iteration_definition.bin");
+                let mut definition =
+                    *include_bytes!("../../assets/mapped_point_iteration_definition.bin");
                 definition[4..6].copy_from_slice(&u16::from(final_only).to_le_bytes());
                 definition[6..8].copy_from_slice(&(seeds.len() as u16).to_le_bytes());
                 definition[8..12].copy_from_slice(&(branches.len() as u32).to_le_bytes());
-                definition[16..20].copy_from_slice(&self.numeric_iteration_depth(depth).unwrap_or(0).to_le_bytes());
+                definition[16..20].copy_from_slice(
+                    &self
+                        .numeric_iteration_depth(depth)
+                        .unwrap_or(0)
+                        .to_le_bytes(),
+                );
                 put_record(&mut added, 0x090a, &definition);
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
@@ -716,69 +721,7 @@ impl Document {
                 continue;
             }
             if let Kind::IterationBinding(image, iteration) = o.kind {
-                let segment = self.objects.get(image - 1)
-                    .is_some_and(|object| mapped_segment_binding(&object.kind));
-                let circle = matches!(
-                    self.objects.get(image - 1).map(|o| &o.kind),
-                    Some(Kind::Circle(_, _))
-                );
-                let ray = matches!(
-                    self.objects.get(image - 1).map(|object| &object.kind),
-                    Some(Kind::Ray(_, _))
-                );
-                let ray_iteration = matches!(
-                    self.objects.get(iteration - 1).map(|object| &object.kind),
-                    Some(Kind::RayIteration(_, _, _, _))
-                );
-                let numeric_iteration = matches!(
-                    self.objects.get(iteration - 1).map(|o| &o.kind),
-                    Some(Kind::PointParameterIteration(_, _, _, _, _, _))
-                );
-                let branch_polygon = matches!(
-                    self.objects.get(iteration - 1).map(|o| &o.kind),
-                    Some(Kind::BranchingPolygonIteration { .. } | Kind::MappedPointIteration { .. })
-                );
-                let segment_value_depth = matches!(
-                    self.objects.get(iteration - 1).map(|o| &o.kind),
-                    Some(
-                        Kind::MappedPointIteration { depth: IterationDepth::Value(_), .. }
-                            | Kind::SegmentIteration(_, _, _, IterationDepth::Value(_))
-                            | Kind::CircleIteration(_, _, _, IterationDepth::Value(_))
-                            | Kind::PointIteration(_, _, IterationDepth::Value(_))
-                    )
-                );
-                let mut group = if segment_value_depth {
-                    if segment || circle {
-                        *include_bytes!("../../assets/segment_value_depth_segment_binding.bin")
-                    } else {
-                        *include_bytes!("../../assets/segment_value_depth_point_binding.bin")
-                    }
-                } else if branch_polygon && crate::document::kind::is_point_kind(&self.objects[image - 1].kind) {
-                    *include_bytes!("../../assets/point_iteration_binding_group.bin")
-                } else if branch_polygon {
-                    if segment {
-                        *include_bytes!("../../assets/branch_polygon_iteration_segment_binding.bin")
-                    } else {
-                        *include_bytes!("../../assets/branch_polygon_iteration_polygon_binding.bin")
-                    }
-                } else if numeric_iteration
-                    && matches!(
-                        self.objects.get(image - 1).map(|o| &o.kind),
-                        Some(Kind::PointNumericLabel(_, _))
-                    )
-                {
-                    *include_bytes!("../../assets/point_parameter_iteration_label_binding.bin")
-                } else if numeric_iteration {
-                    *include_bytes!("../../assets/point_parameter_iteration_point_binding.bin")
-                } else if ray {
-                    *include_bytes!("../../assets/ray_iteration_binding_group.bin")
-                } else if ray_iteration {
-                    *include_bytes!("../../assets/ray_iteration_point_binding_group.bin")
-                } else if segment || circle {
-                    *include_bytes!("../../assets/segment_iteration_binding_group.bin")
-                } else {
-                    *include_bytes!("../../assets/point_iteration_binding_group.bin")
-                };
+                let mut group = self.iteration_binding_template(image, iteration).to_vec();
                 group[48..52].copy_from_slice(&(image as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(iteration as u32).to_le_bytes());
                 if !o.visible {
@@ -858,6 +801,8 @@ impl Document {
             if let Kind::HideShowButton {
                 targets,
                 action,
+                options,
+                caption_flags,
                 label,
                 anchor,
             } = &o.kind
@@ -869,6 +814,8 @@ impl Document {
                 let mut group =
                     HideShowButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
                 group.set_action(*action);
+                group.set_options(*options);
+                group.set_caption_flags(*caption_flags)?;
                 group.set_hidden(!o.visible);
                 added.extend_from_slice(&group.encode());
                 continue;
@@ -892,17 +839,18 @@ impl Document {
                 continue;
             }
             if let Kind::MovementButton {
-                source,
-                destination,
+                pairs,
                 speed,
                 follow,
                 label,
                 anchor,
             } = &o.kind
             {
-                let mut group = MovementButtonGroup::from_original_template(
-                    *source as u32,
-                    *destination as u32,
+                let mut group = MovementButtonGroup::from_original_template_pairs(
+                    &pairs
+                        .iter()
+                        .map(|&(source, destination)| (source as u32, destination as u32))
+                        .collect::<Vec<_>>(),
                     label,
                     *anchor,
                 )?;
@@ -973,6 +921,31 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::ReferencedFunction(sources, expression) = &o.kind {
+                let mut group =
+                    function_records::encode_referenced_definition_group(sources, *expression)?;
+                // Native's template uses a later style in its own drawing namespace.
+                // Newly authored formulas use this drawing's existing default style.
+                let mut font_probe = b"GSP4".to_vec();
+                font_probe.extend_from_slice(&group);
+                let font = records(&font_probe)?
+                    .into_iter()
+                    .find(|r| r.kind == 0x07d8 && r.data.len() == 2)
+                    .ok_or("Missing function text style")?;
+                group[font.data.start - 4..font.data.end - 4].copy_from_slice(&0_u16.to_le_bytes());
+
+                if let Some(anchor) = o.function_anchor {
+                    function_records::set_group_expression_anchor(&mut group, anchor)?;
+                }
+                if let Some(name) = &o.function_name {
+                    function_records::set_group_definition_name(&mut group, name)?;
+                }
+                if !o.visible {
+                    group[10] |= 1;
+                }
+                added.extend_from_slice(&group);
+                continue;
+            }
             if let Kind::DerivativeFunction(source, expression) = o.kind {
                 let mut group = function_records::encode_derivative_group(source, expression)?;
                 if let Some(anchor) = o.function_anchor {
@@ -1016,10 +989,12 @@ impl Document {
             if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind {
                 // Native PlotXY has only its point header and three references.
                 let mut point_header = [
-                    69, 0, 0, 0, 0, 0, 1, 0, 56, 0, 33, 2, 255, 0, 0, 0,
-                    255, 255, 81, 92, 193, 189, 240, 255, 0, 0, 0, 0,
+                    69, 0, 0, 0, 0, 0, 1, 0, 56, 0, 33, 2, 255, 0, 0, 0, 255, 255, 81, 92, 193,
+                    189, 240, 255, 0, 0, 0, 0,
                 ];
-                if !o.visible { point_header[2] |= 1; }
+                if !o.visible {
+                    point_header[2] |= 1;
+                }
                 put_record(&mut added, 0x07d0, &point_header);
                 let mut refs = 3_u32.to_le_bytes().to_vec();
                 for id in [x, y, frame] {
@@ -1027,16 +1002,24 @@ impl Document {
                 }
                 put_record(&mut added, 0x07d2, &refs);
                 if let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
-            if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
+            if let Kind::PlottedPoint(frame, mode, stored) = o.kind {
                 let mut group =
-                    plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
+                    plot_points_records::encode_frame_point_group(frame as u32, mode, stored)?;
                 if !o.visible {
                     group[10] |= 1;
+                }
+                if let Some(label) = &o.label {
+                    let end = group.len() - 8;
+                    group.splice(
+                        end..end,
+                        crate::text_records::encode_point_label_records(label),
+                    );
                 }
                 added.extend_from_slice(&group);
                 continue;
@@ -1066,22 +1049,32 @@ impl Document {
                 continue;
             }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
-                let mut h = [97, 0, 0, 0, 0, 0, 6, 0, 42, 0, 34, 1, 128, 0, 0, 0,
-                    255, 255, 81, 92, 193, 189, 240, 255, 0, 0, 0, 0];
-                if !o.visible { h[2] |= 1; }
+                let mut h = [
+                    97, 0, 0, 0, 0, 0, 6, 0, 42, 0, 34, 1, 128, 0, 0, 0, 255, 255, 81, 92, 193,
+                    189, 240, 255, 0, 0, 0, 0,
+                ];
+                if !o.visible {
+                    h[2] |= 1;
+                }
                 put_record(&mut added, 0x07d0, &h);
                 let mut references = (refs.len() as u32).to_le_bytes().to_vec();
-                for &id in refs { references.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for &id in refs {
+                    references.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &references);
                 let mut range = min.to_le_bytes().to_vec();
                 range.extend_from_slice(&max.to_le_bytes());
                 range.extend_from_slice(&samples.to_le_bytes());
-                range.extend_from_slice(&[4, 0, 3, 0, 0, 0, 0, 0, 36, 98, 92, 1, 1, 0, 0, 0, 0, 0, 0, 0]);
+                range.extend_from_slice(&[
+                    4, 0, 3, 0, 0, 0, 0, 0, 36, 98, 92, 1, 1, 0, 0, 0, 0, 0, 0, 0,
+                ]);
                 let driver = *refs.get(1).ok_or("Parameter locus has no driver")?;
                 let Kind::Parameter(parameter) = &self.objects[driver - 1].kind else {
                     return Err("Parameter locus has no parameter driver".into());
                 };
-                let tag = parameter.locus_unit_tag().ok_or("Unsupported parameter locus units")?;
+                let tag = parameter
+                    .locus_unit_tag()
+                    .ok_or("Unsupported parameter locus units")?;
                 range[32..36].copy_from_slice(&tag.to_le_bytes());
                 put_record(&mut added, 0x0902, &range);
                 put_record(&mut added, 0x07d7, &[]);
@@ -1106,7 +1099,8 @@ impl Document {
                     h[10] = 0x21;
                     h[12..16].copy_from_slice(&[0xff, 0xb2, 0x66, 0]);
                     h[17] = 0x7f;
-                    let flavor = target_kind.transform_definition()
+                    let flavor = target_kind
+                        .transform_definition()
                         .filter(|definition| definition.element() == ElementType::Polygon)
                         .map(|definition| definition.wire_flavor());
                     match flavor {
@@ -1118,12 +1112,18 @@ impl Document {
                         }
                         _ => {}
                     }
-                    let rank = if matches!(flavor,
-                        Some(NativeTransformFlavor::Vector
-                            | NativeTransformFlavor::FixedPolar
-                            | NativeTransformFlavor::FixedCartesian)) {
+                    let rank = if matches!(
+                        flavor,
+                        Some(
+                            NativeTransformFlavor::Vector
+                                | NativeTransformFlavor::FixedPolar
+                                | NativeTransformFlavor::FixedCartesian
+                        )
+                    ) {
                         2u32
-                    } else { 1u32 };
+                    } else {
+                        1u32
+                    };
                     h[20..24].copy_from_slice(&rank.to_le_bytes());
                 } else if straight_target || curved_target {
                     h[8] = 43;
@@ -1249,7 +1249,12 @@ impl Document {
                         }) {
                     value_equation_records::encode_straight_point_value_group(references)?
                 } else if kind == ValueEquationKind::PointValue
-                    && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CenterArc(..)))
+                    && matches!(
+                        self.objects
+                            .get(second.saturating_sub(1))
+                            .map(|object| &object.kind),
+                        Some(Kind::CenterArc(..))
+                    )
                 {
                     value_equation_records::encode_circle_arc_point_value_group(references)?
                 } else if kind == ValueEquationKind::PointValue
@@ -1257,7 +1262,11 @@ impl Document {
                         self.objects
                             .get(second.saturating_sub(1))
                             .map(|object| &object.kind),
-                        Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
+                        Some(
+                            Kind::ThreePointArc(_, _, _)
+                                | Kind::ArcOnCircle(_, _, _)
+                                | Kind::CenterArc(_, _, _)
+                        )
                     )
                 {
                     let Some(crate::value_equation_records::EquationValue::PointValue(parameter)) =
@@ -1405,12 +1414,17 @@ impl Document {
                 use super::transform_wire::{PolygonWire, TransformWirePresentation};
                 let polygon = if definition.element() == ElementType::Polygon {
                     Some(PolygonWire {
-                        vertex_count: polygon_vertex_count_for_encoding(&self.objects, definition.source())
-                            .ok_or("Interior transform requires a supported polygon source")?,
+                        vertex_count: polygon_vertex_count_for_encoding(
+                            &self.objects,
+                            definition.source(),
+                        )
+                        .ok_or("Interior transform requires a supported polygon source")?,
                         interior_order: o.interior_order.ok_or("Missing polygon drawing order")?,
-                        vector_locus_target: definition.wire_flavor() == NativeTransformFlavor::Vector
+                        vector_locus_target: definition.wire_flavor()
+                            == NativeTransformFlavor::Vector
                             && self.objects.iter().any(|candidate| {
-                                !candidate.deleted && matches!(&candidate.kind,
+                                !candidate.deleted
+                                    && matches!(&candidate.kind,
                                     Kind::Locus(refs, _) if refs.first() == Some(&o.id))
                             }),
                     })
@@ -1419,7 +1433,11 @@ impl Document {
                 };
                 let mut group = super::transform_wire::encode_group(
                     &definition,
-                    TransformWirePresentation { visible: o.visible, label: o.label.as_ref(), polygon },
+                    TransformWirePresentation {
+                        visible: o.visible,
+                        label: o.label.as_ref(),
+                        polygon,
+                    },
                 )?;
                 if o.presentation_suppressed {
                     group[10] |= 2;
@@ -1479,17 +1497,34 @@ impl Document {
                 h[2] |= 2;
             }
             if o.kind.is_polygon() {
-                h[20..24].copy_from_slice(&o.interior_order
-                    .ok_or("Missing polygon drawing order")?.to_le_bytes());
+                h[20..24].copy_from_slice(
+                    &o.interior_order
+                        .ok_or("Missing polygon drawing order")?
+                        .to_le_bytes(),
+                );
             }
             put_record(&mut added, 0x7d0, &h);
-            let label_after_references = matches!(o.kind,
-                Kind::Midpoint(..) | Kind::SegmentMidpoint(..) | Kind::Intersection(..) | Kind::LineCircleIntersection(..));
-            let label_after_constraint = matches!(o.kind,
-                Kind::PointOnSegment(..) | Kind::PointOnRay(..) | Kind::PointOnLine(..)
-                | Kind::PointOnCircle(..) | Kind::PointOnArc(..) | Kind::PointOnPolygon(..));
+            let label_after_references = matches!(
+                o.kind,
+                Kind::Midpoint(..)
+                    | Kind::SegmentMidpoint(..)
+                    | Kind::Intersection(..)
+                    | Kind::LineCircleIntersection(..)
+                    | Kind::CircleCircleIntersection(..)
+            );
+            let label_after_constraint = matches!(
+                o.kind,
+                Kind::PointOnSegment(..)
+                    | Kind::PointOnRay(..)
+                    | Kind::PointOnLine(..)
+                    | Kind::PointOnCircle(..)
+                    | Kind::PointOnArc(..)
+                    | Kind::PointOnPolygon(..)
+            );
             if !label_after_constraint
-                && !label_after_references && let Some(label) = &o.label {
+                && !label_after_references
+                && let Some(label) = &o.label
+            {
                 added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
             }
             if let Kind::Free(p) = o.kind {
@@ -1505,7 +1540,8 @@ impl Document {
                 }
                 put_record(&mut added, 0x7d2, &idx);
                 if label_after_references && let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 match o.kind {
                     Kind::PointOnSegment(_, t) => {
@@ -1531,8 +1567,7 @@ impl Document {
                     Kind::PointOnPolygon(host, edge, t) => {
                         let count = polygon_vertex_count_for_encoding(&self.objects, host)
                             .ok_or("Missing polygon boundary host")?;
-                        let subtype =
-                            polygon_subtype(count).ok_or("Too many polygon vertices")?;
+                        let subtype = polygon_subtype(count).ok_or("Too many polygon vertices")?;
                         let mut payload = 15u16.to_le_bytes().to_vec();
                         payload.extend_from_slice(&subtype.to_le_bytes());
                         payload.extend_from_slice(&t.to_le_bytes());
@@ -1549,7 +1584,8 @@ impl Document {
                     _ => {}
                 }
                 if label_after_constraint && let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
             }
             put_record(&mut added, 0x7d7, &[]);
@@ -1572,7 +1608,8 @@ impl Document {
         }
         for (record, object) in added_headers.iter().zip(added_objects) {
             let flags = &mut added[record.data.start - 4 + 2];
-            *flags = (*flags & !3) | u8::from(!object.visible)
+            *flags = (*flags & !3)
+                | u8::from(!object.visible)
                 | (u8::from(object.presentation_suppressed) << 1);
         }
         let added_len = added.len();
@@ -1586,17 +1623,19 @@ impl Document {
                 matches!(
                     o.kind,
                     Kind::FunctionDefinition(_)
+                        | Kind::ReferencedFunction(_, _)
                         | Kind::DerivativeFunction(_, _)
                         | Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
                         | Kind::ParameterLocus(_, _, _, _)
-                        | Kind::PlottedPoint(_, _, _, _)
+                        | Kind::PlottedPoint(_, _, _)
                         | Kind::NumericCoordinatePoint(_, _, _)
                         | Kind::CoordinateMeasurement { .. }
-                ) || o.kind.transform_definition().is_some_and(|definition| {
-                    definition.element() == ElementType::Polygon
-                })
+                ) || o
+                    .kind
+                    .transform_definition()
+                    .is_some_and(|definition| definition.element() == ElementType::Polygon)
             })
             .map(|o| o.id);
         if let Some(id) = last_marker_object {
@@ -1624,9 +1663,9 @@ impl Document {
             out.splice(resource_at..resource_at, resource);
         }
         let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
-            self.patch_visual_styles(
-                self.patch_trace_flags(self.patch_text_and_labels(self.compact_deleted(out)?)?)?,
-            )?,
+            self.patch_visual_styles(self.patch_trace_flags(self.patch_text_and_labels(
+                self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+            )?)?)?,
         )?)?;
         self.patch_last_moved_marker(out)
     }

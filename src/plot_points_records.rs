@@ -37,8 +37,8 @@ impl PlotPointsMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotPoint {
     pub mode: PlotPointsMode,
-    /// Source anchor first, active coordinate system second.
-    pub references: [u32; 2],
+    /// The sole geometric dependency: the active coordinate system.
+    pub coordinate_system: u32,
     /// Cartesian x/y; polar radius/angle in radians as stored in GSP4.
     pub stored: [f64; 2],
 }
@@ -149,14 +149,33 @@ fn object_group(rs: &[Record], ordinal: usize) -> Result<Range<usize>, String> {
 
 pub fn decode_group(group: &[u8]) -> Result<PlotPoint, String> {
     let rs = records(group, 0)?;
-    if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != [0x07d0, 0x07d2, 0x07d3, 0x07d7]
-        || rs[0].payload.len() != 28
-        || rs[1].payload.len() != 8
+    let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
+    if !matches!(
+        kinds.as_slice(),
+        [0x07d0, 0x07d2, 0x07d3, 0x07d7]
+            | [0x07d0, 0x07d2, 0x07d3, 0x232e, 0x07d7]
+            | [0x07d0, 0x07d2, 0x07d3, 0x07d5, 0x07d8, 0x07d7]
+            | [0x07d0, 0x07d2, 0x07d3, 0x07d5, 0x07d8, 0x232e, 0x07d7]
+    ) || rs[0].payload.len() != 28
         || rs[2].payload.len() != 20
+        || !rs.last().unwrap().payload.is_empty()
     {
         return Err("Unsupported Plot Points record sequence".into());
     }
-    let code = u32_at(group, rs[0].payload.start);
+    if kinds[3] == 0x07d5 {
+        crate::text_records::LabelAux::parse(&group[rs[3].payload.clone()])?;
+        if rs[4].payload.len() != 2 {
+            return Err("Invalid Plot Points label font".into());
+        }
+    }
+    if rs
+        .iter()
+        .any(|record| record.kind == 0x232e && !record.payload.is_empty())
+    {
+        return Err("Unsupported Plot Points attribute payload".into());
+    }
+    let header = u32_at(group, rs[0].payload.start);
+    let code = header & 0xffff;
     let mode = match code {
         67 => PlotPointsMode::Cartesian,
         68 => PlotPointsMode::Polar,
@@ -165,12 +184,20 @@ pub fn decode_group(group: &[u8]) -> Result<PlotPoint, String> {
     if u32_at(group, rs[2].payload.start) != code {
         return Err("Invalid Plot Points payload tag".into());
     }
-    let refs = [
-        u32_at(group, rs[1].payload.start),
-        u32_at(group, rs[1].payload.start + 4),
-    ];
-    if refs[0] == 0 || refs[1] == 0 || refs[0] == refs[1] {
-        return Err("Invalid Plot Points dependencies".into());
+    if header >> 16 > 4 || group[rs[0].payload.start + 6..rs[0].payload.start + 10] != [1, 0, 56, 0]
+    {
+        return Err("Unsupported Plot Points header".into());
+    }
+    let reference_data = &group[rs[1].payload.clone()];
+    // 07d2 starts with a reference count, independent of the visibility flags
+    // in the object header. Both Native templates and every observed corpus
+    // point store [1, frame]; the first word is not an object dependency.
+    if reference_data.len() != 8 || u32_at(reference_data, 0) != 1 {
+        return Err("Invalid Plot Points dependency count".into());
+    }
+    let coordinate_system = u32_at(reference_data, 4);
+    if coordinate_system == 0 {
+        return Err("Invalid Plot Points coordinate system".into());
     }
     let stored = [
         f64::from_le_bytes(
@@ -189,25 +216,29 @@ pub fn decode_group(group: &[u8]) -> Result<PlotPoint, String> {
     }
     Ok(PlotPoint {
         mode,
-        references: refs,
+        coordinate_system,
         stored,
     })
 }
 
-/// Remap dependencies of an original group. The point remains t[1]=1.00 on
+/// Remap the frame of an original group. `references` is [count=1, frame].
+/// The point remains t[1]=1.00 on
 /// both coordinates, with the original's exact Cartesian/polar cache bytes.
 pub fn encode_t1_group(mode: PlotPointsMode, references: [u32; 2]) -> Result<Vec<u8>, String> {
     let stored = decode_group(&mode.template()[last_group(mode.template())?])?.stored;
     encode_group(mode, references, stored)
 }
 
+/// Encode the observed counted packet `[1, frame]`. The first word is a
+/// reference count; it never identifies a source object. Prefer the typed
+/// `encode_frame_point_group` entry point for new callers.
 pub fn encode_group(
     mode: PlotPointsMode,
     references: [u32; 2],
     stored: [f64; 2],
 ) -> Result<Vec<u8>, String> {
-    if references[0] == 0 || references[1] == 0 || references[0] == references[1] {
-        return Err("Invalid Plot Points dependencies".into());
+    if references[0] != 1 || references[1] == 0 {
+        return Err("Expected Plot Points reference count 1 and a nonzero frame".into());
     }
     if stored.iter().any(|value| !value.is_finite()) {
         return Err("Non-finite Plot Points coordinates".into());
@@ -227,9 +258,19 @@ pub fn encode_group(
     Ok(group)
 }
 
+/// A literal point depending only on its coordinate system. The Native
+/// dialog templates and corpus points encode the same counted dependency.
+pub fn encode_frame_point_group(
+    frame: u32,
+    mode: PlotPointsMode,
+    stored: [f64; 2],
+) -> Result<Vec<u8>, String> {
+    encode_group(mode, [1, frame], stored)
+}
+
 /// Appends the observed one-column t[1] plot to a single-page original base.
-/// The source and frame are validated by ID and code; unsupported table data
-/// is rejected instead of silently plotted from an unrelated measurement.
+/// The table source and frame are validated by ID and code; the plotted point
+/// itself depends only on the frame. `references` is the [count=1, frame] packet.
 pub fn append_t1_plot(
     base: &[u8],
     mode: PlotPointsMode,
@@ -314,19 +355,19 @@ mod tests {
     fn original_cartesian_and_polar_groups_decode() {
         let cart = decode_group(&CARTESIAN[last_group(CARTESIAN).unwrap()]).unwrap();
         assert_eq!(cart.mode, PlotPointsMode::Cartesian);
-        assert_eq!(cart.references, [1, 8]);
+        assert_eq!(cart.coordinate_system, 8);
         assert_eq!(cart.stored, [1., 1.]);
         assert_eq!(
-            encode_t1_group(cart.mode, cart.references).unwrap(),
+            encode_t1_group(cart.mode, [1, cart.coordinate_system]).unwrap(),
             &CARTESIAN[last_group(CARTESIAN).unwrap()]
         );
         let polar = decode_group(&POLAR[last_group(POLAR).unwrap()]).unwrap();
         assert_eq!(polar.mode, PlotPointsMode::Polar);
-        assert_eq!(polar.references, [1, 8]);
+        assert_eq!(polar.coordinate_system, 8);
         assert_eq!(polar.stored[0], 1.);
         assert!((polar.stored[1] - std::f64::consts::PI / 180.).abs() < 1e-15);
         assert_eq!(
-            encode_t1_group(polar.mode, polar.references).unwrap(),
+            encode_t1_group(polar.mode, [1, polar.coordinate_system]).unwrap(),
             &POLAR[last_group(POLAR).unwrap()]
         );
     }
@@ -346,12 +387,126 @@ mod tests {
         let file = include_bytes!("../tests/fixtures/plot_points_table_two_rows_original.gsp");
         let rs = records(file, 4).unwrap();
         assert_eq!(rs.iter().filter(|r| r.kind == 0x07d0).count(), 9);
-        assert_eq!(
-            decode_group(&file[last_group(file).unwrap()])
+        let point = decode_group(&file[last_group(file).unwrap()]).unwrap();
+        assert_eq!(point.coordinate_system, 8);
+    }
+
+    fn original_hex(hex: &str) -> Vec<u8> {
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn corpus_literal_points_have_one_frame_dependency_with_optional_labels() {
+        // 2024年年历表.gsp object 21 and 心脏线.gsp object 9, extracted
+        // from their actual drawing groups, not from reordered HTM object IDs.
+        let cart = original_hex(concat!(
+            "1c000000d007000043000100000001003800210180000000ffff515cc1bdf0ff00000000",
+            "08000000d20700000100000014000000",
+            "14000000d30700004300000000000000000000000000000000000000",
+            "1a000000d5070000070001000100edffffff00000000000000000000000001004f00",
+            "02000000d80700000300",
+            "00000000d7070000"
+        ));
+        let polar = original_hex(concat!(
+            "1c000000d0070000440000000000010038002101ff000000ffff515cc1bdf0ff00000000",
+            "08000000d20700000100000007000000",
+            "14000000d307000044000000000000000000e03f282d4454fb210940",
+            "1a000000d50700000600000000000800050000000000986e12c1515c614101004400",
+            "02000000d80700000000",
+            "00000000d7070000"
+        ));
+        let a = decode_group(&cart).unwrap();
+        assert_eq!(a.coordinate_system, 20);
+        assert_eq!(a.mode, PlotPointsMode::Cartesian);
+        assert_eq!(a.stored, [0.0, 0.0]);
+        let b = decode_group(&polar).unwrap();
+        assert_eq!(b.coordinate_system, 7);
+        assert_eq!(b.mode, PlotPointsMode::Polar);
+        assert_eq!(b.stored, [0.5, 3.1415926535898]);
+        let at_pi = b.position(basis()).unwrap();
+        assert!((at_pi.x - (259.0 - 0.5 * (basis().x_unit.x - 259.0))).abs() < 1e-12);
+        assert!((at_pi.y - 195.0).abs() < 1e-12);
+        // Visibility flags are independent of dependency packet grammar.
+        for flags in 0_u32..=4 {
+            let mut group = cart.clone();
+            group[8..12].copy_from_slice(&(67 | flags << 16).to_le_bytes());
+            assert_eq!(decode_group(&group).unwrap(), a);
+        }
+    }
+
+    #[test]
+    fn original_empty_attributes_are_bounded_and_do_not_add_dependencies() {
+        // 三角函数线.gsp object 97 and 函数图象(田野风).gsp object 1031.
+        let labeled = original_hex(concat!(
+            "1c000000d0070000430000000000010038002102ffffff00ffff0000c1bdf0ff00000000",
+            "08000000d2070000010000005e000000",
+            "14000000d307000043000000000000000000f03f0000000000000000",
+            "20000000d50700000700010000000800e8ff00000000000000000000000006004128312c302900e4",
+            "02000000d80700000100",
+            "000000002e230000",
+            "00000000d7070000"
+        ));
+        let bare = original_hex(concat!(
+            "1c000000d0070000430001000000010038002101ff000000ffffee3fc1bdf0ff00000000",
+            "08000000d2070000010000008f000000",
+            "14000000d307000043000000000000000000f03f000000000000f03f",
+            "000000002e230000",
+            "00000000d7070000"
+        ));
+        for (group, frame, stored) in [(labeled, 94, [1.0, 0.0]), (bare, 143, [1.0, 1.0])] {
+            let point = decode_group(&group).unwrap();
+            assert_eq!(point.coordinate_system, frame);
+            assert_eq!(point.stored, stored);
+            let attribute = records(&group, 0)
                 .unwrap()
-                .references,
-            [1, 8]
+                .into_iter()
+                .find(|record| record.kind == 0x232e)
+                .unwrap();
+            let mut nonempty = group.clone();
+            nonempty[attribute.start..attribute.start + 4].copy_from_slice(&2_u32.to_le_bytes());
+            nonempty.splice(attribute.payload.start..attribute.payload.start, [0, 0]);
+            assert!(decode_group(&nonempty).is_err());
+        }
+    }
+
+    #[test]
+    fn frame_writer_matches_original_payload_and_rejects_fake_sources() {
+        // Unlabeled original object 130 in 2024年年历表.gsp, with its
+        // visibility flag cleared because a newly authored point is visible.
+        let original_visible = original_hex(concat!(
+            "1c000000d0070000430000000000010038002102ff000000ffff515cc1bdf0ff00000000",
+            "08000000d20700000100000014000000",
+            "14000000d307000043000000000000000000f0bf0000000000000000",
+            "00000000d7070000"
+        ));
+        assert_eq!(
+            encode_frame_point_group(20, PlotPointsMode::Cartesian, [-1.0, 0.0]).unwrap(),
+            original_visible
         );
+        for mode in [PlotPointsMode::Cartesian, PlotPointsMode::Polar] {
+            let group = encode_frame_point_group(1, mode, [2.5, -0.75]).unwrap();
+            let point = decode_group(&group).unwrap();
+            assert_eq!(point.coordinate_system, 1);
+            assert_eq!(point.stored, [2.5, -0.75]);
+            assert!(encode_frame_point_group(0, mode, [0.0, 0.0]).is_err());
+            assert!(encode_frame_point_group(1, mode, [f64::INFINITY, 0.0]).is_err());
+            assert!(encode_group(mode, [2, 20], [0.0, 0.0]).is_err());
+            let rs = records(&group, 0).unwrap();
+            for count in [0_u32, 2, u32::MAX] {
+                let mut broken = group.clone();
+                broken[rs[1].payload.start..rs[1].payload.start + 4]
+                    .copy_from_slice(&count.to_le_bytes());
+                assert!(decode_group(&broken).is_err());
+            }
+            let mut wrong_tag = group.clone();
+            wrong_tag[rs[2].payload.start..rs[2].payload.start + 4]
+                .copy_from_slice(&66_u32.to_le_bytes());
+            assert!(decode_group(&wrong_tag).is_err());
+            assert!(decode_group(&group[..group.len() - 1]).is_err());
+        }
     }
 
     #[test]

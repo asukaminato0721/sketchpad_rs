@@ -1,20 +1,20 @@
 # Corpus decoding coverage
 
-Checkpoint 38 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
+Checkpoint 48 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
 
-Documents: 1599 total, 89 with all object kinds decoded, 1510 with unsupported objects, 0 failed.
+Documents: 1599 total, 96 with all object kinds decoded, 1503 with unsupported objects, 0 failed.
 
 Byte-preserving round trips: 1599/1599; object slots: 285703.
 
-Partial views: 1519/1599 (includes multi-page structural edit restrictions).
+Partial views: 1512/1599 (includes multi-page structural edit restrictions).
 
-Drawing objects: 280347 slots; 90 documents with all drawing kinds decoded.
+Drawing objects: 280347 slots; 97 documents with all drawing kinds decoded.
 
-Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 4167 decoded, 1189 undecoded.
+Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 4284 decoded, 1072 undecoded.
 
-Isolated tool views: 31 complete, 72 partial, 0 failed, with separate object and font namespaces.
+Isolated tool views: 33 complete, 70 partial, 0 failed, with separate object and font namespaces.
 
-Unsupported object slots including tool prototypes: 64477 (63288 drawing slots and 1189 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Unsupported object slots including tool prototypes: 50075 (49003 drawing slots and 1072 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
 
 Embedded tool prototypes are decoded through isolated documents. Declared point placeholders receive neutral coordinates; declared path, finite-segment, and generic-numeric placeholders retain typed abstract inputs. Other unknown prototype constructions remain unsupported. The drawing and prototype histograms retain separate namespaces. Complete isolated decoding does not establish invocation or authoring support for every tool. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects, or to snapshots that counted every prototype slot as undecoded.
 
@@ -23,16 +23,16 @@ Inspect complete groups and parent payloads before selecting a target.
 
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
-| 77 | 7405 | 797 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 48 | 5982 | 481 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 62 | 5540 | 428 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 16 | 3493 | 362 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 77 | 5809 | 622 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
+| 48 | 5139 | 430 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 | 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
-| 90 | 2711 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 89 | 2538 | 772 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 34 | 1928 | 139 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
-| 35 | 1904 | 402 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
+| 90 | 2708 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 16 | 2674 | 315 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 89 | 1956 | 606 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
+| 35 | 1901 | 401 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
+| 15 | 1711 | 352 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 101 | 1441 | 80 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
 
 Run the command again for the current full report and all examples.
 
@@ -321,3 +321,225 @@ The actual original/edited 28-object API writer outputs open and save exactly in
 Native. The final scan is `/tmp/sketchpad_corpus_checkpoint38_final.log`.
 See [function call evidence](function_applications_analysis.md).
 Scoped gates pass 628 library, 109 editor, 34 numeric-import and four coverage tests.
+
+
+Checkpoint 39 shares the calculator's built-in registry with primitive function
+definitions: inverse trig, sign, rounding, truncation and π/e constants now
+import, evaluate, plot and save. Signed caption positions are accepted without
+the former artificial 4096 bound. It recovers 271 drawing objects, including
+119 calculations, with all 1599 exact source round trips and unchanged
+prototype counts. Native-created six-function controls and actual original /
+edited 38-object API writer outputs establish native token semantics and exact
+saves. The final scan is `/tmp/sketchpad_corpus_checkpoint39_final.log`.
+See [primitive function evidence](function_primitives_analysis.md).
+
+Scoped gates pass 631 library, 109 editor, 34 numeric-import and four coverage tests.
+
+
+Checkpoint 40 establishes the referenced-expression parser and Native record
+writer controls, without claiming new document coverage. Checkpoint 41 connects
+those references to the real document DAG, authoring/editing, plotting,
+calculator calls and numeric iteration. It restores 919 drawing objects,
+including 229 function definitions and 439 calculations, plus three prototype
+objects through the shared reader. All 1599 exact source round trips remain;
+one additional drawing is fully decoded. Original/edited actual 38-object API
+writer outputs save byte-identically in Native. The final scan is
+`/tmp/sketchpad_corpus_checkpoint41_final.log`. See
+[referenced function evidence](function_references_analysis.md).
+Scoped gates pass 642 library, 112 editor, 34 numeric-import and four coverage tests.
+
+
+Checkpoint 42 supports numeric-sized coordinate axes through shared numeric and
+segment interfaces, and corrects literal Cartesian/Polar point dependencies:
+07d2 stores a count followed by the frame ID, rather than two source IDs.
+The shared reader restores 3841 drawing objects (282 calculations) and one
+prototype object, reducing unsupported slots to 59442. All 1599 original files
+remain byte-identical with zero import failures. Nine actual Document API writer
+states save exactly in Native, covering live edits, Scalar/Degree/Area/Compound
+units, negative/zero units and restoration. Meaningful regressions also cover
+labels, removal of unrelated objects, malformed input and undo/redo.
+See [coordinate units and point dependencies](coordinate_units_analysis.md).
+The final scan is `/tmp/sketchpad_corpus_checkpoint42_final.log`.
+Scoped gates pass 650 library, 115 editor, 34 numeric-import and four coverage
+tests (803 total). Copying and custom tools remain deferred; these counts do not
+establish complete command parity or unrestricted editing of partial documents.
+
+
+Checkpoint43 extends simultaneous iteration through the shared dependency graph:
+derived point seeds and Scalar seeds, including mixed mappings, substitute their
+values before the next branch is evaluated. Generic point/segment transforms and
+supported coordinate dependencies reuse ordinary geometry evaluation. The scan
+restores269 drawing slots:12 fixed definitions,98 live-depth definitions and159
+bindings, reducing unsupported slots to59173. Prototype counts are unchanged.
+All1599 originals remain byte-identical with zero import failures. Native checks
+prove the actual derived-segment and numeric/mixed API writers, live edits and
+the original five-branch pentagon's25 final images. See
+[derived seed evidence](mapped_derived_transform_analysis43.md) and
+[scalar state evidence](numeric_mapped43_analysis.md).
+The final scan is `/tmp/sketchpad_corpus_checkpoint43_final.log`.
+Copying and custom tools remain deferred; general single-seed representation,
+typed numeric states beyond Scalar and wider carried DAGs remain incomplete.
+Scoped gates pass656 library,115 editor,34 numeric-import and four coverage tests
+(809 total), using the same copying/custom-tool filters. Evidence:
+`/tmp/sketchpad_checkpoint43_lib_final_gate2.log`,
+`/tmp/sketchpad_checkpoint43_editor_gate.log`,
+`/tmp/sketchpad_checkpoint43_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint43_coverage_gate.log` (all exit0).
+
+
+Checkpoint44 extends the existing mapped DAG predicate to ordinary geometry and
+numeric measurements. It restores422 drawing slots across77 files:108 roots
+(104 live-depth and4 fixed-depth) and314 point/segment bindings. Unsupported
+slots fall to58751, including57566 drawing slots and1185 prototype slots.
+All1599 originals remain byte-identical, with zero import failures. The final
+scan is `/tmp/sketchpad_corpus_checkpoint44_final.log`.
+Native full/abbreviated carried controls establish that only explicit carried
+nodes and seeds update per state. External construction values and function
+coefficient environments stay frozen; runtime caches preserve original Kind
+metadata. Undefined carried images retain valid prefixes and other bindings.
+Native measurements cover live angle/length inputs and a real center-arc graph;
+path controls cover circle/segment positions and three intersection families.
+The evidence also fixes oriented circle-circle branch choice and label ordering
+for new transformed points and circle-circle intersections. Fixed/numeric
+rotations and labeled API intersection files have exact Native writer proofs.
+See [path/intersection evidence](mapped_path_intersection_analysis44.md) and
+[measurement/arc evidence](measurement_mapped44_analysis.md).
+Copying and custom tools remain deferred. General single-seed mapped storage,
+binding types beyond points/segments and undefined branch-target behavior remain
+outside this change. Decoding gains do not imply complete command parity.
+Scoped regression gates pass664 library,115 editor,34 numeric-import and four
+coverage tests (817 total), with the same copying/custom-tool filters.
+Evidence: `/tmp/sketchpad_checkpoint44_lib_gate.log`,
+`/tmp/sketchpad_checkpoint44_editor_gate.log`,
+`/tmp/sketchpad_checkpoint44_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint44_coverage_gate.log` (all exit0).
+
+Checkpoint45 adds single-seed point/Scalar mappings through the same carried DAG,
+recovering404 roots (377 live-depth and27 fixed-depth) plus720 point/segment
+bindings. Generic authoring retains canonical existing point/segment/circle/ray
+and branching-polygon wire adapters; shared binding templates and style handling
+keep authoring, save/reopen and image-level edits consistent. Fresh carried
+lists are stably ordered by their actual Native construction dependencies.
+Midpoint dependencies include their segment host, and temporary seed values
+preserve the original point kind. Original imported record order stays intact;
+Native's historical unsorted-carried packet-order artifact is documented rather
+than claimed equivalent to the port's graph evaluation.
+
+The recursive polygon-source predicate additionally restores1314 drawing
+reflection objects; the same parser changes restore5 prototype bindings/roots.
+Total unsupported slots fall from58751 to56308:55128 drawing and1180 prototype
+slots. All1599 originals are byte-identical and there are zero import failures;
+93 documents now have all kinds decoded,94 all drawing kinds. The final scan is
+`/tmp/sketchpad_corpus_checkpoint45_final.log`.
+
+Native evidence includes11 fresh single-seed API controls, two original grid
+constructions, an original compound-reflection graph and three fresh reflected
+polygon API states including source and mirror edits. Source restoration,
+final-level choice and structural undo/redo have meaningful regressions.
+See [single-seed evidence](single_seed_iteration_analysis45.md) and
+[recursive polygon evidence](transformed_curves45_analysis.md).
+Scoped gates pass672 library,115 editor,34 numeric-import and4 coverage tests
+(825 total), with the same copying/custom-tool filters. Evidence:
+`/tmp/sketchpad_checkpoint45_lib_final.log`,
+`/tmp/sketchpad_checkpoint45_editor_gate.log`,
+`/tmp/sketchpad_checkpoint45_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint45_coverage_gate.log` (all exit0).
+Copying and custom tools remain deferred. Wider binding geometry, typed numeric
+seeds beyond Scalar, general iteration dialogs and action variants remain open.
+
+
+Checkpoint 46 adds shared lossless action record roles, optional labels and
+empty metadata, plus ordered Movement pair lists. This restores 1,799 drawing
+buttons and 47 prototype slots without adding copy or custom-tool implementation.
+Unsupported slots fall 56,308 → 54,462. All 1,599 originals remain byte-identical,
+zero imports fail, and 95 documents have every object kind decoded.
+The final scan is `/tmp/sketchpad_corpus_checkpoint46_final.log`.
+
+Movement controls share point/numeric values and preserve their original
+construction: free and constrained points, supported coordinate units, and
+editable Parameters use their existing mutation paths. Initial targets are
+frozen together; actual Native overlap controls establish action order for
+Follow. New buttons accept multiple selected source/destination pairs and an
+entire activation has one undo checkpoint. Partial-document numeric editing
+continues to use the existing Parameter safety policy. Runtime evidence and
+limitations are recorded in [movement controls](movement_controls46_analysis.md)
+and [action records](action_records46_analysis.md). Decoding counts include
+buttons whose parents or runtime controls remain unavailable.
+
+
+The shared horizontal-unit writer now emits edited positive steps for fresh
+coordinate groups and patches saved code 52 constraints. Native accepted both
+fresh square/rectangular edited controls; strict saved/reopen regressions cover
+these paths. Stored Movement validation does not require an active page or a
+currently defined value, while activation retains runtime safety guards.
+Final scoped gates pass 687 library, 120 editor, 34 numeric-import and 4 coverage
+checks (845 total), with the copying/custom-tool filters unchanged. Logs:
+`/tmp/sketchpad_checkpoint46_lib_final.log`,
+`/tmp/sketchpad_checkpoint46_editor_gate.log`,
+`/tmp/sketchpad_checkpoint46_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint46_coverage_gate.log`. All exited 0; `git diff --check`
+is clean. Exact animation timing and newly observed polygon-point cache words
+remain outside this checkpoint's verified parity.
+
+
+Native's translated-Y control additionally proves that dependent square Y units
+use the live horizontal step; their saved Y step is a cache. Shared geometry now
+follows that dependency, while rectangular units retain independent steps. A
+visible derived-point regression checks Native coordinates, horizontal edits,
+unchanged cached metadata, strict save/reopen and whole-action undo/redo.
+
+
+## Checkpoint 47: shared iteration output adapters
+
+Generic carried-DAG bindings now expose circles, polygons, rays, lines and arcs
+through the existing element/transform model. No shape-by-transform Kind products
+were added. The corpus recovers 389 drawing bindings across 102 files plus one
+prototype slot: 390 slots total, leaving 54,072 unsupported. All 1,599 originals
+remain byte-exact, zero imports fail, and 95 documents have every kind decoded.
+Final scan: `/tmp/sketchpad_corpus_checkpoint47_final.log`.
+
+The Iterate command accepts a selected point mapping and supported geometry,
+including derived point seeds and optional live Scalar depth. The adapters share
+SVG/GPU drawing, picking, independent binding styles, final-level selection and
+undefined-image isolation. Dependencies of derived seeds are carried; omitted
+external hosts remain frozen. Circle-by-radius uses typed Length quantities as
+well as defining segments. Original multipage calculation/table validation now
+compares embedded references in page-local space while retaining global Kind IDs.
+
+Scoped gates pass 700 library, 121 editor, 34 numeric-import and 4 coverage tests
+(859 total); copying and custom-tool checks remain excluded. All gates exited 0.
+Logs: `/tmp/sketchpad_checkpoint47_lib_final.log`,
+`/tmp/sketchpad_checkpoint47_editor_gate.log`,
+`/tmp/sketchpad_checkpoint47_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint47_coverage_gate.log`.
+See [binding audit and regressions](iteration_bindings47_analysis.md) and
+[Native controls](iteration_bindings47_native_analysis.md). Decoding recovery does
+not establish runtime completeness for every corpus iteration. Wider unsupported
+parent roots and non-Scalar seed roles remain priorities; pixel-identical output,
+copying and custom tools remain deferred.
+
+
+## Checkpoint 48: analytic arcs and shared visibility actions
+
+The common transform carrier now accepts analytic arcs across all fourteen wire
+flavors, retaining source dependencies, directed parameterization, reflection,
+signed scale, and undefined zero-scale ancestors. Linear three-point arcs retain
+arc construction identity. Editing, picking, Point on Object, measurements and
+mapped iteration consumers use the same geometry adapters. No shape-by-operation
+Kind products were added. Actual coverage recovers 489 drawing slots and 14
+prototype slots; the prior dependency audit's reach counts were upper bounds.
+See [arc evidence](transformed_arcs48_native_analysis.md).
+
+Hide/Show options 0–7 retain their native words. Fixed modes 0–3 assign one shared
+visibility without changing the next action; alternating modes 4–7 change it
+once per click. Caption format and visibility words are retained, custom format 7
+is distinguished from automatically generated captions, and hidden Hide/Show
+children can execute through Presentation. Full-group caption patches handle
+changing byte lengths, optional label insertion and page-local references.
+This recovers 3,448 drawing slots and 46 prototype slots.
+
+Combined unsupported slots fall from 54,072 to 50,075: 3,997 recovered slots.
+All 1,599 original files remain byte-exact, with 96 completely decoded documents
+and zero failures. Final scan: `/tmp/sketchpad_corpus_checkpoint48_final.log`.
+Copying and custom-tool support remain deferred. Exact raster matching is outside
+the requested scope; this checkpoint does not establish full command parity.

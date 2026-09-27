@@ -104,11 +104,13 @@ fn contextual_unplaced_points_accept_constructed_path_modes_only_in_tool_context
         assert!(prototype.encode().is_err());
     }
     let native = Document::from_bytes(include_bytes!("../../../tests/fixtures/embedded_tool_constrained_point_from_endpoints_created_native_verified.gsp"), None).unwrap();
-    assert!(native
-        .embedded_tool_inputs(0)
-        .unwrap()
-        .iter()
-        .all(|input| input.kind() == Some(EmbeddedToolInputKind::Point)));
+    assert!(
+        native
+            .embedded_tool_inputs(0)
+            .unwrap()
+            .iter()
+            .all(|input| input.kind() == Some(EmbeddedToolInputKind::Point))
+    );
     assert_eq!(
         native.embedded_tool_document(0).unwrap().objects[3].kind,
         Kind::ToolPointOnPath(3)

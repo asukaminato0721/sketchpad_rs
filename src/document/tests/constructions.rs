@@ -60,27 +60,27 @@ fn circle_intersections_update_and_reopen() {
     let second_circle = document.add(Kind::Circle(other_center, other_radius));
     let near = document.add(Kind::LineCircleIntersection(line, first_circle, 0));
     let far = document.add(Kind::LineCircleIntersection(line, first_circle, 1));
-    let upper = document.add(Kind::CircleCircleIntersection(
+    let first_branch = document.add(Kind::CircleCircleIntersection(
         first_circle,
         second_circle,
         0,
     ));
-    let lower = document.add(Kind::CircleCircleIntersection(
+    let second_branch = document.add(Kind::CircleCircleIntersection(
         first_circle,
         second_circle,
         1,
     ));
     assert_eq!(document.position(near), Some(Point { x: 5., y: 0. }));
     assert_eq!(document.position(far), Some(Point { x: -5., y: 0. }));
-    assert!(document.position(upper).unwrap().y < 0.);
-    assert!(document.position(lower).unwrap().y > 0.);
+    assert!(document.position(first_branch).unwrap().y > 0.);
+    assert!(document.position(second_branch).unwrap().y < 0.);
     let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
-    for id in [near, far, upper, lower] {
+    for id in [near, far, first_branch, second_branch] {
         assert_eq!(reopened.position(id), document.position(id));
     }
     document.move_point(other_center, Point { x: 30., y: 0. });
-    assert!(document.position(upper).is_none());
-    assert!(document.position(lower).is_none());
+    assert!(document.position(first_branch).is_none());
+    assert!(document.position(second_branch).is_none());
 }
 #[test]
 fn line_circle_second_root_stays_undefined_outside_segment() {
@@ -446,82 +446,138 @@ fn edited_derived_line_anchors_keep_native_center_and_magnitude() {
 }
 
 fn center_arc_document(end: Point) -> Document {
-    let mut d=Document::new();
-    let center=d.add(Kind::Free(Point{x:200.,y:180.}));
-    let start=d.add(Kind::Free(Point{x:260.,y:180.}));
-    let end=d.add(Kind::Free(end));
-    let arc=d.add(Kind::CenterArc(center,start,end));
-    d.add(Kind::ArcAngle(arc));d.add(Kind::ArcLength(arc));
-    let midpoint=d.add(Kind::PointOnArc(arc,0.5));d.add(Kind::Segment(center,midpoint));
+    let mut d = Document::new();
+    let center = d.add(Kind::Free(Point { x: 200., y: 180. }));
+    let start = d.add(Kind::Free(Point { x: 260., y: 180. }));
+    let end = d.add(Kind::Free(end));
+    let arc = d.add(Kind::CenterArc(center, start, end));
+    d.add(Kind::ArcAngle(arc));
+    d.add(Kind::ArcLength(arc));
+    let midpoint = d.add(Kind::PointOnArc(arc, 0.5));
+    d.add(Kind::Segment(center, midpoint));
     d
 }
 
 #[test]
 fn centered_arcs_import_native_geometry_and_match_native_writer() {
-    for (bytes,angle) in [
-        (include_bytes!("../../../tests/fixtures/center_arc_quarter_native_verified.gsp").as_slice(),Some(90.)),
-        (include_bytes!("../../../tests/fixtures/center_arc_radial_native_verified.gsp").as_slice(),Some(90.)),
-        (include_bytes!("../../../tests/fixtures/center_arc_major_native_verified.gsp").as_slice(),Some(270.)),
-        (include_bytes!("../../../tests/fixtures/center_arc_coincident_native_verified.gsp").as_slice(),None),
+    for (bytes, angle) in [
+        (
+            include_bytes!("../../../tests/fixtures/center_arc_quarter_native_verified.gsp")
+                .as_slice(),
+            Some(90.),
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/center_arc_radial_native_verified.gsp")
+                .as_slice(),
+            Some(90.),
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/center_arc_major_native_verified.gsp")
+                .as_slice(),
+            Some(270.),
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/center_arc_coincident_native_verified.gsp")
+                .as_slice(),
+            None,
+        ),
     ] {
-        let d=Document::from_bytes(bytes,None).unwrap();
+        let d = Document::from_bytes(bytes, None).unwrap();
         assert!(!d.partial_view);
-        assert!(matches!(d.objects[3].kind,Kind::CenterArc(1,2,_)));
-        if let Some(angle)=angle {
-            assert!((d.numeric_value(5).unwrap()-angle).abs()<1e-12);
-            assert!((d.numeric_value(6).unwrap()-angle.to_radians()*60./37.79527559055118).abs()<1e-12);
-            let theta=angle.to_radians()*0.5;
-            assert!(d.position(7).unwrap().distance(Point{x:200.+60.*theta.cos(),y:180.-60.*theta.sin()})<1e-10);
+        assert!(matches!(d.objects[3].kind, Kind::CenterArc(1, 2, _)));
+        if let Some(angle) = angle {
+            assert!((d.numeric_value(5).unwrap() - angle).abs() < 1e-12);
+            assert!(
+                (d.numeric_value(6).unwrap() - angle.to_radians() * 60. / 37.79527559055118).abs()
+                    < 1e-12
+            );
+            let theta = angle.to_radians() * 0.5;
+            assert!(
+                d.position(7).unwrap().distance(Point {
+                    x: 200. + 60. * theta.cos(),
+                    y: 180. - 60. * theta.sin()
+                }) < 1e-10
+            );
         } else {
-            assert_eq!(d.numeric_value(5),None);assert_eq!(d.numeric_value(6),None);
-            assert_eq!(d.position(7),None);assert_eq!(d.arc_points(4,20),None);
+            assert_eq!(d.numeric_value(5), None);
+            assert_eq!(d.numeric_value(6), None);
+            assert_eq!(d.position(7), None);
+            assert_eq!(d.arc_points(4, 20), None);
         }
-        assert_eq!(d.encode().unwrap(),bytes);
+        assert_eq!(d.encode().unwrap(), bytes);
         d.verify_roundtrip().unwrap();
     }
-    let d=center_arc_document(Point{x:200.,y:120.});
-    assert_eq!(d.encode().unwrap(),include_bytes!("../../../tests/fixtures/center_arc_quarter_native_verified.gsp"));
+    let d = center_arc_document(Point { x: 200., y: 120. });
+    assert_eq!(
+        d.encode().unwrap(),
+        include_bytes!("../../../tests/fixtures/center_arc_quarter_native_verified.gsp")
+    );
 }
 
 #[test]
 fn centered_arcs_drive_points_values_measurements_and_edit_history() {
-    let mut d=center_arc_document(Point{x:200.,y:60.});
-    let t=d.add_named_parameter("t",0.25,(10,120)).unwrap();
-    let image=d.plot_parameter_on_path(t,Some(4)).unwrap();
-    let literal=d.plot_literal_on_path(0.5,Some(4)).unwrap();
-    let value=d.add(Kind::ValueEquation{kind:crate::value_equation_records::ValueEquationKind::PointValue,first:image,second:4});
-    let scalar=d.add_parameter_calculation(5,"v/180°",(10,160)).unwrap();
-    assert!((d.numeric_value(value).unwrap()-0.25).abs()<1e-12);
-    assert_eq!(d.numeric_value(scalar),Some(0.5));
-    assert_eq!(d.position(literal),d.position(7));
-    let before=d.encode().unwrap();
-    d.set_parameter_value(t,1.).unwrap();
-    assert!(d.position(image).unwrap().distance(Point{x:200.,y:120.})<1e-10);
-    d.checkpoint();assert!(d.move_point(3,Point{x:200.,y:240.}));
-    assert_eq!(d.numeric_value(5),Some(270.));
-    assert_eq!(d.numeric_value(scalar),Some(1.5));
+    let mut d = center_arc_document(Point { x: 200., y: 60. });
+    let t = d.add_named_parameter("t", 0.25, (10, 120)).unwrap();
+    let image = d.plot_parameter_on_path(t, Some(4)).unwrap();
+    let literal = d.plot_literal_on_path(0.5, Some(4)).unwrap();
+    let value = d.add(Kind::ValueEquation {
+        kind: crate::value_equation_records::ValueEquationKind::PointValue,
+        first: image,
+        second: 4,
+    });
+    let scalar = d.add_parameter_calculation(5, "v/180°", (10, 160)).unwrap();
+    assert!((d.numeric_value(value).unwrap() - 0.25).abs() < 1e-12);
+    assert_eq!(d.numeric_value(scalar), Some(0.5));
+    assert_eq!(d.position(literal), d.position(7));
+    let before = d.encode().unwrap();
+    d.set_parameter_value(t, 1.).unwrap();
+    assert!(
+        d.position(image)
+            .unwrap()
+            .distance(Point { x: 200., y: 120. })
+            < 1e-10
+    );
+    d.checkpoint();
+    assert!(d.move_point(3, Point { x: 200., y: 240. }));
+    assert_eq!(d.numeric_value(5), Some(270.));
+    assert_eq!(d.numeric_value(scalar), Some(1.5));
     d.verify_roundtrip().unwrap();
-    let after=d.encode().unwrap();
-    assert_eq!(after,include_bytes!("../../../tests/fixtures/center_arc_dynamic_writer_native_verified.gsp"));
-    d.undo();d.undo();assert_eq!(d.encode().unwrap(),before);
-    d.redo();d.redo();assert_eq!(d.encode().unwrap(),after);
-    d.checkpoint();assert!(d.move_point(3,Point{x:320.,y:180.}));
-    assert_eq!(d.position(image),None);assert_eq!(d.position(literal),None);
-    assert_eq!(d.numeric_value(5),None);
+    let after = d.encode().unwrap();
+    assert_eq!(
+        after,
+        include_bytes!("../../../tests/fixtures/center_arc_dynamic_writer_native_verified.gsp")
+    );
+    d.undo();
+    d.undo();
+    assert_eq!(d.encode().unwrap(), before);
+    d.redo();
+    d.redo();
+    assert_eq!(d.encode().unwrap(), after);
+    d.checkpoint();
+    assert!(d.move_point(3, Point { x: 320., y: 180. }));
+    assert_eq!(d.position(image), None);
+    assert_eq!(d.position(literal), None);
+    assert_eq!(d.numeric_value(5), None);
     d.verify_roundtrip().unwrap();
-    assert_eq!(d.encode().unwrap(),include_bytes!("../../../tests/fixtures/center_arc_undefined_writer_native_verified.gsp"));
+    assert_eq!(
+        d.encode().unwrap(),
+        include_bytes!("../../../tests/fixtures/center_arc_undefined_writer_native_verified.gsp")
+    );
 }
 
 #[test]
 fn centered_arc_original_clock_keeps_small_sweeps_and_source_records() {
-    let bytes=include_bytes!("../../../tests/fixtures/center_arc_clock_corpus.gsp");
-    let d=Document::from_bytes(bytes,None).unwrap();
-    assert!(matches!(d.objects.iter().find(|o|o.id==94).unwrap().kind,Kind::CenterArc(6,90,93)));
-    assert!((d.numeric_value(95).unwrap()-0.001).abs()<1e-12);
-    let center=d.position(6).unwrap();
-    let radius=center.distance(d.position(90).unwrap());
-    assert!((radius-98.5).abs()<1e-10);
-    assert!((center.distance(d.arc_points(94,2).unwrap()[1])-radius).abs()<1e-10);
-    assert_eq!(d.encode().unwrap(),bytes);
+    let bytes = include_bytes!("../../../tests/fixtures/center_arc_clock_corpus.gsp");
+    let d = Document::from_bytes(bytes, None).unwrap();
+    assert!(matches!(
+        d.objects.iter().find(|o| o.id == 94).unwrap().kind,
+        Kind::CenterArc(6, 90, 93)
+    ));
+    assert!((d.numeric_value(95).unwrap() - 0.001).abs() < 1e-12);
+    let center = d.position(6).unwrap();
+    let radius = center.distance(d.position(90).unwrap());
+    assert!((radius - 98.5).abs() < 1e-10);
+    assert!((center.distance(d.arc_points(94, 2).unwrap()[1]) - radius).abs() < 1e-10);
+    assert_eq!(d.encode().unwrap(), bytes);
     d.verify_roundtrip().unwrap();
 }

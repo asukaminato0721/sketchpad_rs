@@ -305,8 +305,10 @@ impl Document {
         input_types: Vec<EmbeddedToolInput>,
         inputs: &[usize],
     ) -> Result<Vec<usize>, String> {
-        let local_inputs: Vec<_> = input_types.iter()
-            .map(|input| input.local_id as u32).collect();
+        let local_inputs: Vec<_> = input_types
+            .iter()
+            .map(|input| input.local_id as u32)
+            .collect();
         if inputs.len() != local_inputs.len() || inputs.is_empty() {
             return Err("Select the tool's ordered inputs".into());
         }
@@ -407,7 +409,8 @@ impl Document {
             materialized.kind = match object.kind.remap_checked(&ids)? {
                 Kind::ParameterCalculation(_, mut group) => {
                     group.set_anchor(candidate.next_tool_numeric_anchor()?)?;
-                    let font = candidate.imported_caption_font_index(caption_style.as_ref().unwrap())?;
+                    let font =
+                        candidate.imported_caption_font_index(caption_style.as_ref().unwrap())?;
                     let group = group.with_caption_font(font)?;
                     let sources = group.sources();
                     let units = sources
@@ -426,7 +429,8 @@ impl Document {
                         &sources.iter().map(|&id| id as usize).collect::<Vec<_>>(),
                         &candidate.objects,
                         0,
-                    ).ok_or("Tool calculation cannot be materialized")?
+                    )
+                    .ok_or("Tool calculation cannot be materialized")?
                 }
                 Kind::SegmentMidpoint(host) => match candidate.objects[host - 1].kind {
                     Kind::Segment(a, b) => Kind::Midpoint(a, b),

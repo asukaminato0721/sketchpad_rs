@@ -207,7 +207,10 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
         || aux[..12] != [0xfc, 0x08, 0, 0, 0x16, 0, 0, 0, 4, 0, 0, 0]
         || aux[18..22] != [0x3c, 0x30, 0x3e, 0]
         || u16::from_le_bytes(aux[24..26].try_into().unwrap()) != 6
-        || !matches!(u16::from_le_bytes(aux[26..28].try_into().unwrap()), 0 | 1 | 3)
+        || !matches!(
+            u16::from_le_bytes(aux[26..28].try_into().unwrap()),
+            0 | 1 | 3
+        )
         || u16::from_le_bytes(aux[28..30].try_into().unwrap()) > 5
     {
         return Err("Unsupported coordinate measurement format".into());

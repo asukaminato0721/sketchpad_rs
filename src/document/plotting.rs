@@ -1,4 +1,7 @@
-use super::kind::{is_arc_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts, value_plot_path_accepts, literal_plot_path_accepts};
+use super::kind::{
+    is_arc_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind,
+    literal_plot_path_accepts, plot_path_accepts, value_plot_path_accepts,
+};
 use super::{Document, Kind, Point};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{plot_axis_records, plot_points_records, style_records};
@@ -15,14 +18,6 @@ impl Document {
         let frame = self
             .active_coordinate_system()
             .ok_or("Define a coordinate system before plotting points")?;
-        let source = self
-            .objects
-            .first()
-            .filter(|object| {
-                object.page == self.active_page && !object.deleted && object.id != frame
-            })
-            .ok_or("Plot Points requires a source object on this page")?
-            .id;
         if coordinates.iter().any(|value| !value.is_finite()) {
             return Err("Plot coordinates must be finite".into());
         }
@@ -40,11 +35,11 @@ impl Document {
         self.graph_frame(frame)
             .and_then(|frame| frame.world(x, y))
             .ok_or("Plot coordinates are outside the supported range")?;
-        let group = plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
+        let group = plot_points_records::encode_frame_point_group(frame as u32, mode, stored)?;
         let plot = plot_points_records::decode_group(&group)?;
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
-        let id = self.append_object(Kind::PlottedPoint(source, frame, mode, plot.stored));
+        let id = self.append_object(Kind::PlottedPoint(frame, mode, plot.stored));
         self.objects[id - 1].visual_style = style;
         Ok(id)
     }
@@ -62,12 +57,6 @@ impl Document {
         let frame = self
             .active_coordinate_system()
             .ok_or("Define a coordinate system before plotting table data")?;
-        let source = self
-            .objects
-            .first()
-            .filter(|object| !object.deleted && object.page == self.active_page)
-            .ok_or("Plot Table Data requires a source object")?
-            .id;
         let Some(object) = table
             .checked_sub(1)
             .and_then(|index| self.objects.get(index))
@@ -104,10 +93,9 @@ impl Document {
                     stored[1] * plot_points_records::DEGREES_TO_RADIANS,
                 ],
             };
-            let group =
-                plot_points_records::encode_group(mode, [source as u32, frame as u32], stored)?;
+            let group = plot_points_records::encode_frame_point_group(frame as u32, mode, stored)?;
             let style = style_records::visual_style(&group[8..36]);
-            let id = self.append_object(Kind::PlottedPoint(source, frame, mode, stored));
+            let id = self.append_object(Kind::PlottedPoint(frame, mode, stored));
             self.objects[id - 1].visual_style = style;
             ids.push(id);
         }
@@ -116,10 +104,13 @@ impl Document {
     /// The numeric category accepted by Plot Value; undefined values report an
     /// error when plotting rather than opening the literal-value dialog.
     pub fn is_scalar_plot_source(&self, id: usize) -> bool {
-        id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|object| {
-            !object.deleted && object.page == self.active_page
-                && object.kind.numeric_unit() == Some(crate::table_records::NumericUnit::Scalar)
-        })
+        id.checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .is_some_and(|object| {
+                !object.deleted
+                    && object.page == self.active_page
+                    && object.kind.numeric_unit() == Some(crate::table_records::NumericUnit::Scalar)
+            })
     }
 
     /// Uses the same geometry eligibility as the plotting API at an in-range
@@ -128,7 +119,9 @@ impl Document {
         let Some(object) = id.checked_sub(1).and_then(|index| self.objects.get(index)) else {
             return false;
         };
-        if object.deleted || object.page != self.active_page { return false; }
+        if object.deleted || object.page != self.active_page {
+            return false;
+        }
         if object.kind.is_polygon() {
             return self.point_at_polygon_parameter(id, 0.5).is_some();
         }
@@ -147,18 +140,29 @@ impl Document {
             if !value.is_finite() || !self.plot_arc_host_available(path) {
                 return Err("Select a valid arc and a finite value".into());
             }
-            if self.undefined_arc_plot(path, value) { return Ok(None); }
-            return self.plotted_arc_position(path, value).map(Some)
+            if self.undefined_arc_plot(path, value) {
+                return Ok(None);
+            }
+            return self
+                .plotted_arc_position(path, value)
+                .map(Some)
                 .ok_or("Arc geometry is outside the supported range".into());
         }
         if is_transformed_plot_path_kind(&object.kind) && value.is_finite() {
             let (start, end, _) = self.line_points(path).ok_or("Invalid transformed path")?;
             if is_transformed_plot_ray_kind(&object.kind) && value < 0.0 {
-                if start == end { return Err("Invalid transformed path".into()); }
+                if start == end {
+                    return Err("Invalid transformed path".into());
+                }
                 return Ok(None);
             }
-            let point = Point { x: start.x + (end.x - start.x) * value, y: start.y + (end.y - start.y) * value };
-            return (point.x.is_finite() && point.y.is_finite()).then_some(Some(point)).ok_or("Plotted value is outside the supported range".into());
+            let point = Point {
+                x: start.x + (end.x - start.x) * value,
+                y: start.y + (end.y - start.y) * value,
+            };
+            return (point.x.is_finite() && point.y.is_finite())
+                .then_some(Some(point))
+                .ok_or("Plotted value is outside the supported range".into());
         }
         if !plot_path_accepts(&object.kind, value) {
             return Err(match object.kind {
@@ -211,7 +215,9 @@ impl Document {
         if !self.is_scalar_plot_source(source) {
             return Err("Select a scalar numeric value".into());
         }
-        let value = self.numeric_value(source).ok_or("Numeric value is undefined")?;
+        let value = self
+            .numeric_value(source)
+            .ok_or("Numeric value is undefined")?;
         let host = self
             .objects
             .get(path.checked_sub(1).ok_or("Invalid path")?)
@@ -246,9 +252,14 @@ impl Document {
         let path = path
             .or_else(|| self.active_x_axis(self.active_page))
             .ok_or("No coordinate axis or selected path")?;
-        if self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.kind.is_polygon()) {
+        if self
+            .objects
+            .get(path.saturating_sub(1))
+            .is_some_and(|host| host.kind.is_polygon())
+        {
             let host = &self.objects[path - 1];
-            if host.deleted || host.page != self.active_page
+            if host.deleted
+                || host.page != self.active_page
                 || !literal_plot_path_accepts(&host.kind, value)
                 || self.point_at_polygon_parameter(path, value).is_none()
             {

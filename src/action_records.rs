@@ -9,6 +9,7 @@ pub const ANIMATION_SETTINGS: u32 = 0x07d3;
 pub const ACTION_PAYLOAD: u32 = 0x0906;
 pub const BUTTON_LABEL: u32 = 0x07d5;
 pub const BUTTON_AUX: u32 = 0x07d8;
+pub const BUTTON_METADATA: u32 = 0x232e;
 pub const OBJECT_END: u32 = 0x07d7;
 pub const BROKEN_PAGE_LINK_TARGET: usize = 0xbd66;
 
@@ -16,6 +17,34 @@ pub const BROKEN_PAGE_LINK_TARGET: usize = 0xbd66;
 pub enum VisibilityAction {
     Hide,
     Show,
+}
+
+/// Preserved Native Hide/Show policy word. Only bit 2 selects alternating
+/// actions; the other verified bits remain intact across edits and saves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VisibilityOptions(u16);
+
+impl VisibilityOptions {
+    pub fn from_native(word: u16) -> Result<Self, String> {
+        if word > 7 {
+            return Err("Unsupported Hide/Show option word".into());
+        }
+        Ok(Self(word))
+    }
+
+    pub fn native_word(self) -> u16 {
+        self.0
+    }
+
+    pub fn alternates(self) -> bool {
+        self.0 & 4 != 0
+    }
+}
+
+impl Default for VisibilityOptions {
+    fn default() -> Self {
+        Self(7)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,14 +149,149 @@ struct Record {
     padding: Option<u8>,
 }
 
+/// Ordered records, including the original optional label and empty metadata.
+/// Required roles are unique after parsing, so access never depends on offsets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ActionRecords {
+    records: Vec<Record>,
+}
+
+impl ActionRecords {
+    fn parse(bytes: &[u8], animation: bool) -> Result<Self, String> {
+        let records = parse_record_list(bytes, if animation { 8 } else { 7 })?;
+        let mut kinds = records.iter().map(|record| record.kind).peekable();
+        for required in [OBJECT_HEADER, OBJECT_REFS] {
+            if kinds.next() != Some(required) {
+                return Err("Unexpected action button record order".into());
+            }
+        }
+        if animation && kinds.next() != Some(ANIMATION_SETTINGS) {
+            return Err("Missing Animation settings record".into());
+        }
+        if kinds.next() != Some(ACTION_PAYLOAD) {
+            return Err("Missing action payload record".into());
+        }
+        if kinds.peek() == Some(&BUTTON_LABEL) {
+            kinds.next();
+        }
+        if kinds.next() != Some(BUTTON_AUX) {
+            return Err("Missing action auxiliary record".into());
+        }
+        if kinds.peek() == Some(&BUTTON_METADATA) {
+            kinds.next();
+        }
+        if kinds.next() != Some(OBJECT_END) || kinds.next().is_some() {
+            return Err("Unexpected action button record order".into());
+        }
+        let result = Self { records };
+        if result
+            .optional_record(BUTTON_METADATA)
+            .is_some_and(|record| !record.payload.is_empty())
+        {
+            return Err("Unsupported nonempty action metadata".into());
+        }
+        if let Some(record) = result.optional_record(BUTTON_LABEL) {
+            let label = &record.payload;
+            if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
+                return Err("Action button label is truncated".into());
+            }
+        }
+        Ok(result)
+    }
+
+    fn optional_record(&self, kind: u32) -> Option<&Record> {
+        self.records.iter().find(|record| record.kind == kind)
+    }
+
+    fn record(&self, kind: u32) -> &Record {
+        self.optional_record(kind)
+            .expect("validated required action record")
+    }
+
+    fn record_mut(&mut self, kind: u32) -> &mut Record {
+        self.records
+            .iter_mut()
+            .find(|record| record.kind == kind)
+            .expect("validated required action record")
+    }
+
+    fn label_bytes(&self) -> &[u8] {
+        let Some(record) = self.optional_record(BUTTON_LABEL) else {
+            return &[];
+        };
+        let len = u16_at(&record.payload, 22) as usize;
+        &record.payload[24..24 + len]
+    }
+
+    fn set_label(
+        &mut self,
+        label: &str,
+        template: &[u8],
+        allow_zero_suffix_parity: bool,
+    ) -> Result<(), String> {
+        let bytes = label.as_bytes();
+        let len =
+            u16::try_from(bytes.len()).map_err(|_| "Action button label exceeds 65535 bytes")?;
+        if bytes == self.label_bytes() {
+            return Ok(());
+        }
+        let existing = self.optional_record(BUTTON_LABEL);
+        let inserting = existing.is_none();
+        let mut record = if let Some(record) = existing {
+            record.clone()
+        } else {
+            parse_record_list(template, 8)?
+                .into_iter()
+                .find(|record| record.kind == BUTTON_LABEL)
+                .ok_or("Action template has no label record")?
+        };
+        let old_len = u16_at(&record.payload, 22) as usize;
+        let mut suffix = record.payload[24 + old_len..].to_vec();
+        if old_len % 2 != bytes.len() % 2 {
+            // New labels use the Native template's text terminator convention.
+            // Existing opaque suffixes may only move in the proven Animation case.
+            if !(inserting || allow_zero_suffix_parity)
+                || suffix.len() != if old_len % 2 == 0 { 2 } else { 1 }
+                || suffix.iter().any(|byte| *byte != 0)
+            {
+                return Err(
+                    "Action button label byte parity differs; opaque suffix cannot be moved safely"
+                        .into(),
+                );
+            }
+            suffix = vec![0; if bytes.len() % 2 == 0 { 2 } else { 1 }];
+        }
+        record.payload.truncate(22);
+        record.payload.extend_from_slice(&len.to_le_bytes());
+        record.payload.extend_from_slice(bytes);
+        record.payload.extend_from_slice(&suffix);
+        record.padding = if record.payload.len() % 2 != 0 {
+            Some(record.padding.unwrap_or(0))
+        } else {
+            None
+        };
+        if inserting {
+            let index = self
+                .records
+                .iter()
+                .position(|record| record.kind == BUTTON_AUX)
+                .expect("validated action auxiliary record");
+            self.records.insert(index, record);
+        } else {
+            *self.record_mut(BUTTON_LABEL) = record;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HideShowButtonGroup {
-    records: [Record; 6],
+    records: ActionRecords,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnimationButtonGroup {
-    records: [Record; 7],
+    records: ActionRecords,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,7 +315,7 @@ impl MovementSpeed {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MovementButtonGroup {
-    records: [Record; 6],
+    records: ActionRecords,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,7 +326,7 @@ pub enum ScrollPlacement {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScrollButtonGroup {
-    records: [Record; 6],
+    records: ActionRecords,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,7 +337,7 @@ pub enum PresentationMode {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentationButtonGroup {
-    records: [Record; 6],
+    records: ActionRecords,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,7 +495,11 @@ impl LinkUrlButtonGroup {
         let action = &records[1].payload;
         let text_alignment = if action.len() >= 26 {
             let end = 26usize + usize::from(u16_at(action, 24));
-            if action.len() > (end + 2) & !1 { 4 } else { 2 }
+            if action.len() > (end + 2) & !1 {
+                4
+            } else {
+                2
+            }
         } else {
             2
         };
@@ -536,7 +704,7 @@ fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
 
-fn parse_records<const N: usize>(bytes: &[u8], kinds: [u32; N]) -> Result<[Record; N], String> {
+fn parse_record_list(bytes: &[u8], max_records: usize) -> Result<Vec<Record>, String> {
     let mut offset = 0usize;
     let mut parsed = Vec::new();
     while offset < bytes.len() {
@@ -563,11 +731,15 @@ fn parse_records<const N: usize>(bytes: &[u8], kinds: [u32; N]) -> Result<[Recor
             padding: (len % 2 != 0).then(|| bytes[end]),
         });
         offset = padded_end;
-        if parsed.len() > N {
+        if parsed.len() > max_records {
             return Err("Unexpected extra record in action button group".into());
         }
     }
-    let records: [Record; N] = parsed
+    Ok(parsed)
+}
+
+fn parse_records<const N: usize>(bytes: &[u8], kinds: [u32; N]) -> Result<[Record; N], String> {
+    let records: [Record; N] = parse_record_list(bytes, N)?
         .try_into()
         .map_err(|_| "Wrong number of action button records")?;
     if std::array::from_fn::<_, N, _>(|index| records[index].kind) != kinds {
@@ -591,17 +763,7 @@ fn encode_records(records: &[Record]) -> Vec<u8> {
 
 impl HideShowButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
-                OBJECT_HEADER,
-                OBJECT_REFS,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                OBJECT_END,
-            ],
-        )?;
+        let records = ActionRecords::parse(bytes, false)?;
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -633,11 +795,11 @@ impl HideShowButtonGroup {
     }
 
     fn validate(&self) -> Result<(), String> {
-        let header = &self.records[0].payload;
+        let header = &self.records.record(OBJECT_HEADER).payload;
         if header.len() != 28 || u16_at(header, 0) != 62 {
             return Err("Hide/Show button needs a 28-byte object code 62 header".into());
         }
-        let refs = &self.records[1].payload;
+        let refs = &self.records.record(OBJECT_REFS).payload;
         if refs.len() < 8
             || (refs.len() - 4) % 4 != 0
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
@@ -647,26 +809,25 @@ impl HideShowButtonGroup {
         if self.target_ids().iter().any(|&id| id == 0) {
             return Err("Hide/Show button references object zero".into());
         }
-        let action = &self.records[2].payload;
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
         if action.len() != 24
             || u32_at(action, 0) != ACTION_PAYLOAD
             || u32_at(action, 4) != 24
-            || !matches!((u16_at(action, 12), u16_at(action, 14)), (0 | 1, 7))
+            || (!matches!(u16_at(action, 12), 0 | 1)
+                || VisibilityOptions::from_native(u16_at(action, 14)).is_err())
         {
             return Err("Unsupported Hide/Show action payload".into());
         }
-        let label = &self.records[3].payload;
-        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
-            return Err("Hide/Show button label is truncated".into());
-        }
-        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
             return Err("Hide/Show button has invalid auxiliary or terminator record".into());
         }
         Ok(())
     }
 
     pub fn target_ids(&self) -> Vec<u32> {
-        self.records[1].payload[4..]
+        self.records.record(OBJECT_REFS).payload[4..]
             .chunks_exact(4)
             .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
             .collect()
@@ -685,7 +846,7 @@ impl HideShowButtonGroup {
         if count == 0 || targets.contains(&0) {
             return Err("A Hide/Show button needs nonzero target IDs".into());
         }
-        let payload = &mut self.records[1].payload;
+        let payload = &mut self.records.record_mut(OBJECT_REFS).payload;
         payload.clear();
         payload.extend_from_slice(&count.to_le_bytes());
         for target in targets {
@@ -695,11 +856,58 @@ impl HideShowButtonGroup {
     }
 
     pub fn action(&self) -> VisibilityAction {
-        if u16_at(&self.records[2].payload, 12) == 0 {
+        if u16_at(&self.records.record(ACTION_PAYLOAD).payload, 12) == 0 {
             VisibilityAction::Hide
         } else {
             VisibilityAction::Show
         }
+    }
+
+    pub fn options(&self) -> VisibilityOptions {
+        VisibilityOptions(u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14))
+    }
+
+    pub fn set_options(&mut self, options: VisibilityOptions) {
+        self.records.record_mut(ACTION_PAYLOAD).payload[14..16]
+            .copy_from_slice(&options.native_word().to_le_bytes());
+    }
+
+    /// Retain both the Native label format and its separate visible word.
+    pub fn caption_flags(&self) -> Option<u32> {
+        self.records
+            .optional_record(BUTTON_LABEL)
+            .map(|record| u32_at(&record.payload, 0))
+    }
+
+    pub fn set_caption_flags(&mut self, flags: Option<u32>) -> Result<(), String> {
+        let Some(flags) = flags else {
+            self.records
+                .records
+                .retain(|record| record.kind != BUTTON_LABEL);
+            return Ok(());
+        };
+        if self.records.optional_record(BUTTON_LABEL).is_none() {
+            let template = ActionRecords::parse(
+                include_bytes!("../assets/action_hide_show_two_points_group.bin"),
+                false,
+            )?;
+            let index = self
+                .records
+                .records
+                .iter()
+                .position(|record| record.kind == BUTTON_AUX)
+                .expect("validated action auxiliary record");
+            self.records
+                .records
+                .insert(index, template.record(BUTTON_LABEL).clone());
+            self.records.set_label(
+                "",
+                include_bytes!("../assets/action_hide_show_two_points_group.bin"),
+                true,
+            )?;
+        }
+        self.records.record_mut(BUTTON_LABEL).payload[..4].copy_from_slice(&flags.to_le_bytes());
+        Ok(())
     }
 
     pub fn set_action(&mut self, action: VisibilityAction) {
@@ -707,15 +915,17 @@ impl HideShowButtonGroup {
             VisibilityAction::Hide => 0,
             VisibilityAction::Show => 1,
         };
-        self.records[2].payload[12..14].copy_from_slice(&code.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[12..14]
+            .copy_from_slice(&code.to_le_bytes());
     }
 
     pub fn set_link_destination(&mut self, linked: bool) {
-        self.records[2].payload[18..20].copy_from_slice(&u16::from(linked).to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[18..20]
+            .copy_from_slice(&u16::from(linked).to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[2].payload;
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
         (
             i16::from_le_bytes(payload[20..22].try_into().unwrap()),
             i16::from_le_bytes(payload[22..24].try_into().unwrap()),
@@ -723,14 +933,14 @@ impl HideShowButtonGroup {
     }
 
     pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
-        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
-        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
     }
 
     pub fn label_bytes(&self) -> &[u8] {
-        let payload = &self.records[3].payload;
-        let len = u16_at(payload, 22) as usize;
-        &payload[24..24 + len]
+        self.records.label_bytes()
     }
 
     pub fn label_utf8(&self) -> Result<&str, String> {
@@ -739,53 +949,59 @@ impl HideShowButtonGroup {
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        let bytes = label.as_bytes();
+        self.records.set_label(
+            label,
+            include_bytes!("../assets/action_hide_show_two_points_group.bin"),
+            false,
+        )
+    }
+
+    /// Native action-driven captions rebuild their terminating zero and its
+    /// alignment byte. This is separate from strict user text edits, whose
+    /// arbitrary suffix bytes remain opaque and preserved.
+    pub fn set_generated_label(&mut self, label: &str) -> Result<(), String> {
         let len =
-            u16::try_from(bytes.len()).map_err(|_| "Action button label exceeds 65535 bytes")?;
-        let old_len = self.label_bytes().len();
-        let old = &self.records[3].payload;
-        let suffix = old[24 + old_len..].to_vec();
-        if old_len % 2 != bytes.len() % 2 {
-            return Err(
-                "Action button label byte parity differs; opaque suffix cannot be moved safely"
-                    .into(),
-            );
+            u16::try_from(label.len()).map_err(|_| "Action button label exceeds 65535 bytes")?;
+        let Some(old) = self.records.optional_record(BUTTON_LABEL) else {
+            if label.is_empty() {
+                return Ok(());
+            }
+            return Err("An absent caption cannot acquire a generated label".into());
+        };
+        let old_len = u16_at(&old.payload, 22) as usize;
+        let suffix = &old.payload[24 + old_len..];
+        if suffix.len() != if old_len % 2 == 0 { 2 } else { 1 } || suffix.first() != Some(&0) {
+            return Err("Unsupported generated caption suffix".into());
         }
-        let payload = &mut self.records[3].payload;
-        payload.truncate(22);
-        payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
-        payload.extend_from_slice(&suffix);
-        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
+        let mut record = old.clone();
+        record.payload.truncate(22);
+        record.payload.extend_from_slice(&len.to_le_bytes());
+        record.payload.extend_from_slice(label.as_bytes());
+        record.payload.extend(std::iter::repeat_n(
+            0,
+            if label.len() % 2 == 0 { 2 } else { 1 },
+        ));
+        record.padding = None;
+        *self.records.record_mut(BUTTON_LABEL) = record;
         Ok(())
     }
 
     pub fn is_hidden(&self) -> bool {
-        self.records[0].payload[2] != 0
+        self.records.record(OBJECT_HEADER).payload[2] != 0
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records[0].payload[2] = u8::from(hidden);
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_records(&self.records)
+        encode_records(&self.records.records)
     }
 }
 
 impl PresentationButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
-                OBJECT_HEADER,
-                OBJECT_REFS,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                OBJECT_END,
-            ],
-        )?;
+        let records = ActionRecords::parse(bytes, false)?;
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -804,10 +1020,9 @@ impl PresentationButtonGroup {
     }
 
     fn validate(&self) -> Result<(), String> {
-        let header = &self.records[0].payload;
-        let refs = &self.records[1].payload;
-        let action = &self.records[2].payload;
-        let label = &self.records[3].payload;
+        let header = &self.records.record(OBJECT_HEADER).payload;
+        let refs = &self.records.record(OBJECT_REFS).payload;
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
         if header.len() != 28 || u16_at(header, 0) != 62 {
             return Err("Presentation button needs an object code 62 header".into());
         }
@@ -827,17 +1042,16 @@ impl PresentationButtonGroup {
         {
             return Err("Unsupported Presentation button action".into());
         }
-        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
-            return Err("Presentation button label is truncated".into());
-        }
-        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
             return Err("Presentation button auxiliary records are invalid".into());
         }
         Ok(())
     }
 
     pub fn target_ids(&self) -> Vec<u32> {
-        self.records[1].payload[4..]
+        self.records.record(OBJECT_REFS).payload[4..]
             .chunks_exact(4)
             .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
             .collect()
@@ -848,7 +1062,7 @@ impl PresentationButtonGroup {
         if count == 0 || targets.contains(&0) {
             return Err("Presentation button needs nonzero targets".into());
         }
-        let refs = &mut self.records[1].payload;
+        let refs = &mut self.records.record_mut(OBJECT_REFS).payload;
         refs.clear();
         refs.extend_from_slice(&count.to_le_bytes());
         for target in targets {
@@ -858,7 +1072,7 @@ impl PresentationButtonGroup {
     }
 
     pub fn mode(&self) -> PresentationMode {
-        if u16_at(&self.records[2].payload, 14) == 0 {
+        if u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14) == 0 {
             PresentationMode::Simultaneous
         } else {
             PresentationMode::Sequential
@@ -870,12 +1084,14 @@ impl PresentationButtonGroup {
             PresentationMode::Simultaneous => (0, 600),
             PresentationMode::Sequential => (1, 0),
         };
-        self.records[2].payload[14..16].copy_from_slice(&code.to_le_bytes());
-        self.records[2].payload[16..20].copy_from_slice(&delay.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[14..16]
+            .copy_from_slice(&code.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[16..20]
+            .copy_from_slice(&delay.to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[2].payload;
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
         (
             i16::from_le_bytes(payload[20..22].try_into().unwrap()),
             i16::from_le_bytes(payload[22..24].try_into().unwrap()),
@@ -883,57 +1099,37 @@ impl PresentationButtonGroup {
     }
 
     pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
-        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
-        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
     }
 
     pub fn label_utf8(&self) -> Result<&str, String> {
-        let payload = &self.records[3].payload;
-        let len = u16_at(payload, 22) as usize;
-        std::str::from_utf8(&payload[24..24 + len])
-            .map_err(|_| "Presentation button label is not UTF-8".into())
+        std::str::from_utf8(self.records.label_bytes())
+            .map_err(|_| "Action button label is not UTF-8".into())
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        let bytes = label.as_bytes();
-        let len =
-            u16::try_from(bytes.len()).map_err(|_| "Presentation button label is too long")?;
-        let payload = &mut self.records[3].payload;
-        let old_len = u16_at(payload, 22) as usize;
-        if old_len % 2 != bytes.len() % 2 {
-            return Err("Presentation button label byte parity differs".into());
-        }
-        let suffix = payload[24 + old_len..].to_vec();
-        payload.truncate(22);
-        payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
-        payload.extend_from_slice(&suffix);
-        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
-        Ok(())
+        self.records.set_label(
+            label,
+            include_bytes!("../assets/action_presentation_group.bin"),
+            false,
+        )
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records[0].payload[2] = u8::from(hidden);
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_records(&self.records)
+        encode_records(&self.records.records)
     }
 }
 
 impl ScrollButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
-                OBJECT_HEADER,
-                OBJECT_REFS,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                OBJECT_END,
-            ],
-        )?;
+        let records = ActionRecords::parse(bytes, false)?;
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -952,10 +1148,9 @@ impl ScrollButtonGroup {
     }
 
     fn validate(&self) -> Result<(), String> {
-        let header = &self.records[0].payload;
-        let refs = &self.records[1].payload;
-        let action = &self.records[2].payload;
-        let label = &self.records[3].payload;
+        let header = &self.records.record(OBJECT_HEADER).payload;
+        let refs = &self.records.record(OBJECT_REFS).payload;
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
         if header.len() != 28 || u16_at(header, 0) != 62 {
             return Err("Scroll button needs an object code 62 header".into());
         }
@@ -972,29 +1167,28 @@ impl ScrollButtonGroup {
         {
             return Err("Unsupported Scroll button action".into());
         }
-        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
-            return Err("Scroll button label is truncated".into());
-        }
-        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
             return Err("Scroll button auxiliary records are invalid".into());
         }
         Ok(())
     }
 
     pub fn target_id(&self) -> u32 {
-        u32_at(&self.records[1].payload, 4)
+        u32_at(&self.records.record(OBJECT_REFS).payload, 4)
     }
 
     pub fn set_target(&mut self, target: u32) -> Result<(), String> {
         if target == 0 {
             return Err("Scroll target must be nonzero".into());
         }
-        self.records[1].payload[4..8].copy_from_slice(&target.to_le_bytes());
+        self.records.record_mut(OBJECT_REFS).payload[4..8].copy_from_slice(&target.to_le_bytes());
         Ok(())
     }
 
     pub fn placement(&self) -> ScrollPlacement {
-        if u16_at(&self.records[2].payload, 14) == 0 {
+        if u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14) == 0 {
             ScrollPlacement::UpperLeft
         } else {
             ScrollPlacement::Center
@@ -1006,11 +1200,12 @@ impl ScrollButtonGroup {
             ScrollPlacement::UpperLeft => 0,
             ScrollPlacement::Center => 1,
         };
-        self.records[2].payload[14..16].copy_from_slice(&code.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[14..16]
+            .copy_from_slice(&code.to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[2].payload;
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
         (
             i16::from_le_bytes(payload[20..22].try_into().unwrap()),
             i16::from_le_bytes(payload[22..24].try_into().unwrap()),
@@ -1018,56 +1213,37 @@ impl ScrollButtonGroup {
     }
 
     pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
-        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
-        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
     }
 
     pub fn label_utf8(&self) -> Result<&str, String> {
-        let payload = &self.records[3].payload;
-        let len = u16_at(payload, 22) as usize;
-        std::str::from_utf8(&payload[24..24 + len])
-            .map_err(|_| "Scroll button label is not UTF-8".into())
+        std::str::from_utf8(self.records.label_bytes())
+            .map_err(|_| "Action button label is not UTF-8".into())
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        let bytes = label.as_bytes();
-        let len = u16::try_from(bytes.len()).map_err(|_| "Scroll button label is too long")?;
-        let payload = &mut self.records[3].payload;
-        let old_len = u16_at(payload, 22) as usize;
-        if old_len % 2 != bytes.len() % 2 {
-            return Err("Scroll button label byte parity differs".into());
-        }
-        let suffix = payload[24 + old_len..].to_vec();
-        payload.truncate(22);
-        payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
-        payload.extend_from_slice(&suffix);
-        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
-        Ok(())
+        self.records.set_label(
+            label,
+            include_bytes!("../assets/action_scroll_group.bin"),
+            false,
+        )
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records[0].payload[2] = u8::from(hidden);
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_records(&self.records)
+        encode_records(&self.records.records)
     }
 }
 
 impl MovementButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
-                OBJECT_HEADER,
-                OBJECT_REFS,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                OBJECT_END,
-            ],
-        )?;
+        let records = ActionRecords::parse(bytes, false)?;
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -1079,24 +1255,40 @@ impl MovementButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
+        Self::from_original_template_pairs(&[(source, destination)], label, anchor)
+    }
+
+    pub fn from_original_template_pairs(
+        pairs: &[(u32, u32)],
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
         let mut group = Self::parse(include_bytes!("../assets/action_movement_group.bin"))?;
-        group.set_targets(source, destination)?;
+        group.set_target_pairs(pairs)?;
+        // Native omits 07d5 for a newly authored empty caption. Reusing the
+        // template record for nonempty captions follows its zero suffix layout.
+        group
+            .records
+            .records
+            .retain(|record| record.kind != BUTTON_LABEL);
         group.set_label(label)?;
         group.set_screen_anchor(anchor);
         Ok(group)
     }
 
     fn validate(&self) -> Result<(), String> {
-        let header = &self.records[0].payload;
-        let refs = &self.records[1].payload;
-        let action = &self.records[2].payload;
-        let label = &self.records[3].payload;
+        let header = &self.records.record(OBJECT_HEADER).payload;
+        let refs = &self.records.record(OBJECT_REFS).payload;
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
         if header.len() != 28 || u16_at(header, 0) != 62 {
             return Err("Movement button needs an object code 62 header".into());
         }
-        if refs.len() != 12 || u32_at(refs, 0) != 2 || u32_at(refs, 4) == 0 || u32_at(refs, 8) == 0
+        if refs.len() < 12
+            || (refs.len() - 4) % 8 != 0
+            || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
+            || self.target_ids().contains(&0)
         {
-            return Err("Movement button needs a source and destination".into());
+            return Err("Movement button needs nonzero source/destination pairs".into());
         }
         if action.len() != 24
             || u32_at(action, 0) != ACTION_PAYLOAD
@@ -1109,33 +1301,58 @@ impl MovementButtonGroup {
         {
             return Err("Unsupported Movement button action".into());
         }
-        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
-            return Err("Movement button label is truncated".into());
-        }
-        if self.records[4].payload.len() != 2 || !self.records[5].payload.is_empty() {
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
             return Err("Movement button auxiliary records are invalid".into());
         }
         Ok(())
     }
 
-    pub fn target_ids(&self) -> [u32; 2] {
-        [
-            u32_at(&self.records[1].payload, 4),
-            u32_at(&self.records[1].payload, 8),
-        ]
+    pub fn target_ids(&self) -> Vec<u32> {
+        self.records.record(OBJECT_REFS).payload[4..]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
     }
 
+    pub fn target_pairs(&self) -> Vec<(u32, u32)> {
+        self.target_ids()
+            .chunks_exact(2)
+            .map(|pair| (pair[0], pair[1]))
+            .collect()
+    }
+
+    /// Replace the target list with one source/destination pair.
     pub fn set_targets(&mut self, source: u32, destination: u32) -> Result<(), String> {
-        if source == 0 || destination == 0 {
-            return Err("Movement targets must be nonzero".into());
+        self.set_target_pairs(&[(source, destination)])
+    }
+
+    pub fn set_target_pairs(&mut self, pairs: &[(u32, u32)]) -> Result<(), String> {
+        let count = pairs
+            .len()
+            .checked_mul(2)
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or("Too many Movement targets")?;
+        if pairs.is_empty()
+            || pairs
+                .iter()
+                .any(|&(source, destination)| source == 0 || destination == 0)
+        {
+            return Err("Movement targets must be nonzero pairs".into());
         }
-        self.records[1].payload[4..8].copy_from_slice(&source.to_le_bytes());
-        self.records[1].payload[8..12].copy_from_slice(&destination.to_le_bytes());
+        let payload = &mut self.records.record_mut(OBJECT_REFS).payload;
+        payload.clear();
+        payload.extend_from_slice(&count.to_le_bytes());
+        for &(source, destination) in pairs {
+            payload.extend_from_slice(&source.to_le_bytes());
+            payload.extend_from_slice(&destination.to_le_bytes());
+        }
         Ok(())
     }
 
     pub fn speed(&self) -> MovementSpeed {
-        match u16_at(&self.records[2].payload, 14) {
+        match u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14) {
             0 => MovementSpeed::Slow,
             1 => MovementSpeed::Medium,
             2 => MovementSpeed::Fast,
@@ -1144,20 +1361,22 @@ impl MovementButtonGroup {
     }
 
     pub fn set_speed(&mut self, speed: MovementSpeed) {
-        self.records[2].payload[14..16].copy_from_slice(&speed.code().to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[14..16]
+            .copy_from_slice(&speed.code().to_le_bytes());
     }
 
     pub fn follows_destination(&self) -> bool {
-        u16_at(&self.records[2].payload, 16) == 0
+        u16_at(&self.records.record(ACTION_PAYLOAD).payload, 16) == 0
     }
 
     pub fn set_follows_destination(&mut self, follow: bool) {
         let code: u16 = if follow { 0 } else { 1 };
-        self.records[2].payload[16..18].copy_from_slice(&code.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[16..18]
+            .copy_from_slice(&code.to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[2].payload;
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
         (
             i16::from_le_bytes(payload[20..22].try_into().unwrap()),
             i16::from_le_bytes(payload[22..24].try_into().unwrap()),
@@ -1165,57 +1384,37 @@ impl MovementButtonGroup {
     }
 
     pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
-        self.records[2].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
-        self.records[2].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
     }
 
     pub fn label_utf8(&self) -> Result<&str, String> {
-        let payload = &self.records[3].payload;
-        let len = u16_at(payload, 22) as usize;
-        std::str::from_utf8(&payload[24..24 + len])
-            .map_err(|_| "Movement button label is not UTF-8".into())
+        std::str::from_utf8(self.records.label_bytes())
+            .map_err(|_| "Action button label is not UTF-8".into())
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        let bytes = label.as_bytes();
-        let len = u16::try_from(bytes.len()).map_err(|_| "Movement button label is too long")?;
-        let payload = &mut self.records[3].payload;
-        let old_len = u16_at(payload, 22) as usize;
-        if old_len % 2 != bytes.len() % 2 {
-            return Err("Movement button label byte parity differs".into());
-        }
-        let suffix = payload[24 + old_len..].to_vec();
-        payload.truncate(22);
-        payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
-        payload.extend_from_slice(&suffix);
-        self.records[3].padding = (payload.len() % 2 != 0).then_some(0);
-        Ok(())
+        self.records.set_label(
+            label,
+            include_bytes!("../assets/action_movement_group.bin"),
+            false,
+        )
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records[0].payload[2] = u8::from(hidden);
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_records(&self.records)
+        encode_records(&self.records.records)
     }
 }
 
 impl AnimationButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
-                OBJECT_HEADER,
-                OBJECT_REFS,
-                ANIMATION_SETTINGS,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                OBJECT_END,
-            ],
-        )?;
+        let records = ActionRecords::parse(bytes, true)?;
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -1242,11 +1441,11 @@ impl AnimationButtonGroup {
     }
 
     fn validate(&self) -> Result<(), String> {
-        let header = &self.records[0].payload;
+        let header = &self.records.record(OBJECT_HEADER).payload;
         if header.len() != 28 || u16_at(header, 0) != 62 {
             return Err("Animation button needs a 28-byte object code 62 header".into());
         }
-        let refs = &self.records[1].payload;
+        let refs = &self.records.record(OBJECT_REFS).payload;
         if refs.len() < 8
             || (refs.len() - 4) % 4 != 0
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
@@ -1254,7 +1453,7 @@ impl AnimationButtonGroup {
         {
             return Err("Animation button needs nonzero targets".into());
         }
-        let settings = &self.records[2].payload;
+        let settings = &self.records.record(ANIMATION_SETTINGS).payload;
         // The settings payload starts after the 36-byte header group,
         // 16-byte target record, and its own 8-byte record header.
         let default_settings = &include_bytes!("../assets/action_animation_group.bin")[60..96];
@@ -1271,7 +1470,7 @@ impl AnimationButtonGroup {
         {
             return Err("Unsupported Animation button settings".into());
         }
-        let action = &self.records[3].payload;
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
         if action.len() != 24
             || u32_at(action, 0) != ACTION_PAYLOAD
             || u32_at(action, 4) != 24
@@ -1280,22 +1479,20 @@ impl AnimationButtonGroup {
         {
             return Err("Unsupported Animation button action".into());
         }
-        let label = &self.records[4].payload;
-        if label.len() < 24 || u16_at(label, 22) as usize > label.len() - 24 {
-            return Err("Animation button label is truncated".into());
-        }
-        if self.records[5].payload.len() != 2 || !self.records[6].payload.is_empty() {
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
             return Err("Animation button has invalid auxiliary or terminator record".into());
         }
         Ok(())
     }
 
     pub fn target_id(&self) -> u32 {
-        u32_at(&self.records[1].payload, 4)
+        u32_at(&self.records.record(OBJECT_REFS).payload, 4)
     }
 
     pub fn target_ids(&self) -> Vec<u32> {
-        self.records[1].payload[4..]
+        self.records.record(OBJECT_REFS).payload[4..]
             .chunks_exact(4)
             .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
             .collect()
@@ -1312,7 +1509,7 @@ impl AnimationButtonGroup {
     }
 
     pub fn settings_list(&self) -> Result<Vec<AnimationSettings>, String> {
-        let bytes = &self.records[2].payload;
+        let bytes = &self.records.record(ANIMATION_SETTINGS).payload;
         if bytes.len() < 36 || (bytes.len() - 4) % 32 != 0 {
             return Err("Animation settings are truncated".into());
         }
@@ -1397,7 +1594,7 @@ impl AnimationButtonGroup {
             AnimationDirection::Bidirectional => 0x20,
             AnimationDirection::Random => 0x30,
         };
-        let bytes = &mut self.records[2].payload;
+        let bytes = &mut self.records.record_mut(ANIMATION_SETTINGS).payload;
         let start = 4 + 32 * index;
         bytes[start + 3] = direction
             | if settings.once { 0x80 } else { 0 }
@@ -1443,7 +1640,7 @@ impl AnimationButtonGroup {
             return Err("Animation button needs nonzero targets".into());
         }
         let old_count = self.target_ids().len();
-        let refs = &mut self.records[1].payload;
+        let refs = &mut self.records.record_mut(OBJECT_REFS).payload;
         refs.clear();
         refs.extend_from_slice(&count.to_le_bytes());
         for target in targets {
@@ -1451,7 +1648,7 @@ impl AnimationButtonGroup {
         }
         if targets.len() != old_count {
             let default = &include_bytes!("../assets/action_animation_group.bin")[60..96];
-            let settings = &mut self.records[2].payload;
+            let settings = &mut self.records.record_mut(ANIMATION_SETTINGS).payload;
             settings.truncate(4);
             for _ in targets {
                 settings.extend_from_slice(&default[4..36]);
@@ -1461,7 +1658,7 @@ impl AnimationButtonGroup {
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
-        let payload = &self.records[3].payload;
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
         (
             i16::from_le_bytes(payload[20..22].try_into().unwrap()),
             i16::from_le_bytes(payload[22..24].try_into().unwrap()),
@@ -1469,51 +1666,280 @@ impl AnimationButtonGroup {
     }
 
     pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
-        self.records[3].payload[20..22].copy_from_slice(&anchor.0.to_le_bytes());
-        self.records[3].payload[22..24].copy_from_slice(&anchor.1.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
     }
 
     pub fn label_utf8(&self) -> Result<&str, String> {
-        let payload = &self.records[4].payload;
-        let len = u16_at(payload, 22) as usize;
-        std::str::from_utf8(&payload[24..24 + len])
-            .map_err(|_| "Animation button label is not UTF-8".into())
+        std::str::from_utf8(self.records.label_bytes())
+            .map_err(|_| "Action button label is not UTF-8".into())
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
-        let bytes = label.as_bytes();
-        let len = u16::try_from(bytes.len()).map_err(|_| "Animation button label is too long")?;
-        let payload = &mut self.records[4].payload;
-        let old_len = u16_at(payload, 22) as usize;
-        let mut suffix = payload[24 + old_len..].to_vec();
-        if old_len % 2 != bytes.len() % 2 {
-            if suffix.len() != if old_len % 2 == 0 { 2 } else { 1 }
-                || suffix.iter().any(|byte| *byte != 0)
-            {
-                return Err("Animation button label byte parity differs".into());
-            }
-            suffix = vec![0; if bytes.len() % 2 == 0 { 2 } else { 1 }];
-        }
-        payload.truncate(22);
-        payload.extend_from_slice(&len.to_le_bytes());
-        payload.extend_from_slice(bytes);
-        payload.extend_from_slice(&suffix);
-        self.records[4].padding = (payload.len() % 2 != 0).then_some(0);
-        Ok(())
+        self.records.set_label(
+            label,
+            include_bytes!("../assets/action_animation_group.bin"),
+            true,
+        )
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records[0].payload[2] = u8::from(hidden);
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_records(&self.records)
+        encode_records(&self.records.records)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercise real record-boundary validation independently of the document
+    /// decoder, including optional records and preserved opaque label bytes.
+    #[test]
+    fn authored_movement_empty_label_omits_optional_record() {
+        for label in ["", "Move", "Mover"] {
+            let group = MovementButtonGroup::from_original_template_pairs(
+                &[(4, 5), (6, 7)],
+                label,
+                (10, 5),
+            )
+            .unwrap();
+            let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
+            assert_eq!(reopened.label_utf8().unwrap(), label);
+            assert_eq!(reopened.target_pairs(), [(4, 5), (6, 7)]);
+            assert_eq!(
+                reopened.records.optional_record(BUTTON_LABEL).is_none(),
+                label.is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn native_movement_pair_list_and_optional_layout_groups_round_trip() {
+        let three_pairs = include_bytes!("../tests/fixtures/movement46_cube_three_pairs_group.bin");
+        let unlabeled = include_bytes!("../tests/fixtures/movement46_cube_unlabeled_group.bin");
+        let empty_metadata =
+            include_bytes!("../tests/fixtures/movement46_notebook_empty_metadata_group.bin");
+        let group = MovementButtonGroup::parse(three_pairs).unwrap();
+        assert_eq!(group.target_pairs(), [(8, 28), (12, 2), (22, 41)]);
+        assert_eq!(group.speed(), MovementSpeed::Instant);
+        assert_eq!(group.encode(), three_pairs);
+        for original in [unlabeled.as_slice(), empty_metadata.as_slice()] {
+            let mut group = MovementButtonGroup::parse(original).unwrap();
+            assert_eq!(group.encode(), original);
+            if original == unlabeled {
+                assert_eq!(group.label_utf8().unwrap(), "");
+                assert_eq!(group.target_pairs(), [(58, 61)]);
+                assert!(group.records.optional_record(BUTTON_LABEL).is_none());
+                group.set_label("").unwrap();
+                assert_eq!(group.encode(), original);
+                for label in ["Move", "Mover"] {
+                    let mut edited = group.clone();
+                    edited.set_label(label).unwrap();
+                    let reopened = MovementButtonGroup::parse(&edited.encode()).unwrap();
+                    assert_eq!(reopened.label_utf8().unwrap(), label);
+                    let non_label = reopened
+                        .records
+                        .records
+                        .iter()
+                        .filter(|record| record.kind != BUTTON_LABEL)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    assert_eq!(encode_records(&non_label), original);
+                }
+            } else {
+                assert!(group.records.record(BUTTON_METADATA).payload.is_empty());
+                group.set_target_pairs(&[(283, 365), (1, 2)]).unwrap();
+                let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
+                assert_eq!(reopened.target_pairs(), [(283, 365), (1, 2)]);
+                assert!(reopened.records.record(BUTTON_METADATA).payload.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn movement_pair_lists_reject_malformed_references_without_mutating() {
+        let mut group = MovementButtonGroup::from_original_template_pairs(
+            &[(8, 28), (12, 2), (22, 41)],
+            "Move",
+            (10, 5),
+        )
+        .unwrap();
+        // Imported labels with an opaque parity-dependent suffix retain their
+        // original strict editing rule, even though new labels support both.
+        assert!(group.set_label("Mover").is_err());
+        assert_eq!(group.target_pairs(), [(8, 28), (12, 2), (22, 41)]);
+        let original = group.encode();
+        for invalid in [vec![], vec![(0, 28)], vec![(8, 0)]] {
+            assert!(group.set_target_pairs(&invalid).is_err());
+            assert_eq!(group.encode(), original);
+        }
+        for invalid_refs in [
+            vec![0, 0, 0, 0],
+            [1_u32, 8].into_iter().flat_map(u32::to_le_bytes).collect(),
+            [3_u32, 8, 28, 12]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect(),
+            [2_u32, 8, 0]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect(),
+            [4_u32, 8, 28]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect(),
+        ] {
+            let mut malformed = group.clone();
+            malformed.records.record_mut(OBJECT_REFS).payload = invalid_refs;
+            assert!(MovementButtonGroup::parse(&malformed.encode()).is_err());
+        }
+        group.set_targets(7, 9).unwrap();
+        assert_eq!(group.target_pairs(), [(7, 9)]);
+        let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
+        assert_eq!(reopened.target_ids(), [7, 9]);
+    }
+
+    #[test]
+    fn shared_optional_action_layout_preserves_absence_and_metadata() {
+        let templates: &[(&[u8], bool)] = &[
+            (
+                include_bytes!("../assets/action_hide_show_two_points_group.bin"),
+                false,
+            ),
+            (include_bytes!("../assets/action_scroll_group.bin"), false),
+            (
+                include_bytes!("../assets/action_presentation_group.bin"),
+                false,
+            ),
+            (include_bytes!("../assets/action_movement_group.bin"), false),
+            (include_bytes!("../assets/action_animation_group.bin"), true),
+        ];
+        for &(template, animation) in templates {
+            let mut records = ActionRecords::parse(template, animation).unwrap();
+            records.records.retain(|record| record.kind != BUTTON_LABEL);
+            let end = records.records.len() - 1;
+            records.records.insert(
+                end,
+                Record {
+                    kind: BUTTON_METADATA,
+                    payload: vec![],
+                    padding: None,
+                },
+            );
+            let original = encode_records(&records.records);
+            let mut parsed = ActionRecords::parse(&original, animation).unwrap();
+            assert!(parsed.label_bytes().is_empty());
+            parsed.set_label("", template, false).unwrap();
+            assert_eq!(encode_records(&parsed.records), original);
+            // Insertion preserves all non-label records, including metadata.
+            for label in ["Label", "Even"] {
+                let mut edited = parsed.clone();
+                edited.set_label(label, template, false).unwrap();
+                let encoded = encode_records(&edited.records);
+                let reopened = ActionRecords::parse(&encoded, animation).unwrap();
+                assert_eq!(reopened.label_bytes(), label.as_bytes());
+                let non_label = reopened
+                    .records
+                    .iter()
+                    .filter(|record| record.kind != BUTTON_LABEL)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                assert_eq!(encode_records(&non_label), original);
+            }
+        }
+    }
+
+    #[test]
+    fn action_record_edits_preserve_opaque_suffix_and_alignment_padding() {
+        let mut group =
+            MovementButtonGroup::parse(include_bytes!("../assets/action_movement_group.bin"))
+                .unwrap();
+        let label_record = group.records.record_mut(BUTTON_LABEL);
+        label_record.payload.push(0xa5);
+        label_record.padding = Some(0x7e);
+        let original = group.encode();
+        let mut reopened = MovementButtonGroup::parse(&original).unwrap();
+        assert_eq!(reopened.encode(), original);
+        let caption = reopened.label_utf8().unwrap().to_owned();
+        reopened.set_label(&caption).unwrap();
+        assert_eq!(reopened.encode(), original);
+        reopened.set_label("Translate").unwrap();
+        let record = reopened.records.record(BUTTON_LABEL);
+        assert_eq!(&record.payload[33..], &[0, 0xa5]);
+        assert_eq!(record.padding, Some(0x7e));
+        let edited = reopened.encode();
+        assert_eq!(
+            MovementButtonGroup::parse(&edited).unwrap().encode(),
+            edited
+        );
+        assert!(reopened.set_label("Move").is_err());
+        assert_eq!(reopened.encode(), edited);
+    }
+
+    #[test]
+    fn optional_action_layout_rejects_unknown_misordered_or_truncated_records() {
+        let template = include_bytes!("../assets/action_movement_group.bin");
+        let original = ActionRecords::parse(template, false).unwrap();
+        let mut malformed = Vec::new();
+        let mut nonempty_metadata = original.clone();
+        nonempty_metadata.records.insert(
+            5,
+            Record {
+                kind: BUTTON_METADATA,
+                payload: vec![1],
+                padding: Some(0xa5),
+            },
+        );
+        malformed.push(nonempty_metadata);
+        let mut duplicate_label = original.clone();
+        duplicate_label
+            .records
+            .insert(4, original.record(BUTTON_LABEL).clone());
+        malformed.push(duplicate_label);
+        let mut wrong_order = original.clone();
+        wrong_order.records.swap(3, 4);
+        malformed.push(wrong_order);
+        let mut unknown = original.clone();
+        unknown.records.insert(
+            5,
+            Record {
+                kind: 0xabcd,
+                payload: vec![],
+                padding: None,
+            },
+        );
+        malformed.push(unknown);
+        let mut malformed_label = original.clone();
+        malformed_label.record_mut(BUTTON_LABEL).payload[22..24]
+            .copy_from_slice(&u16::MAX.to_le_bytes());
+        malformed.push(malformed_label);
+        let mut truncated_label = original.clone();
+        truncated_label
+            .record_mut(BUTTON_LABEL)
+            .payload
+            .truncate(23);
+        malformed.push(truncated_label);
+        for records in malformed {
+            assert!(MovementButtonGroup::parse(&encode_records(&records.records)).is_err());
+        }
+        let bytes = encode_records(&original.records);
+        for len in [1, 7, bytes.len() - 1] {
+            assert!(MovementButtonGroup::parse(&bytes[..len]).is_err());
+        }
+        // Unknown option values remain rejected after the verified0..7 extension.
+        let mut visibility =
+            HideShowButtonGroup::parse(include_bytes!("../assets/action_hide_show_group.bin"))
+                .unwrap();
+        visibility.records.record_mut(ACTION_PAYLOAD).payload[14..16]
+            .copy_from_slice(&8_u16.to_le_bytes());
+        assert!(HideShowButtonGroup::parse(&visibility.encode()).is_err());
+    }
 
     #[test]
     fn native_presentation_modes_round_trip() {
@@ -2213,7 +2639,10 @@ mod tests {
         assert_eq!(reparsed.action(), VisibilityAction::Show);
         assert!(reparsed.is_hidden());
         assert_eq!(reparsed.label_utf8().unwrap(), "Show Segment");
-        assert_eq!(&reparsed.records[3].payload[36..], &[0, 3]);
+        assert_eq!(
+            &reparsed.records.record(BUTTON_LABEL).payload[36..],
+            &[0, 3]
+        );
     }
 
     #[test]

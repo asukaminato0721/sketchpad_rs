@@ -1,7 +1,7 @@
 use super::{Document, Kind, Object};
 use crate::table_records::{
-    CalculationGroup, CalculationSourceKind, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
-    ParameterCalculationGroup, ParameterGroup,
+    CalculationGroup, CalculationSourceKind, LengthPairCalculationGroup, MeasuredCalculationGroup,
+    NumericUnit, ParameterCalculationGroup, ParameterGroup,
 };
 use crate::value_equation_records::ValueEquationKind;
 
@@ -16,18 +16,38 @@ pub(super) fn calculation_source_ids(
         .map(|id| base + id as usize)
         .collect()
 }
-pub(super) fn calculation_source_units(group: &ParameterCalculationGroup, refs: &[usize], objects: &[Object]) -> Option<Vec<NumericUnit>> {
+pub(super) fn calculation_source_units(
+    group: &ParameterCalculationGroup,
+    refs: &[usize],
+    objects: &[Object],
+) -> Option<Vec<NumericUnit>> {
     let kinds = group.source_kinds().ok()?;
-    if refs.len() != kinds.len() { return None; }
-    refs.iter().zip(kinds).map(|(id, kind)| {
-        let parent = objects.get(id.checked_sub(1)?)?;
-        if parent.deleted { return None; }
-        match kind {
-            CalculationSourceKind::Numeric => parent.kind.numeric_unit(),
-            CalculationSourceKind::Function if matches!(parent.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => Some(NumericUnit::Scalar),
-            _ => None,
-        }
-    }).collect()
+    if refs.len() != kinds.len() {
+        return None;
+    }
+    refs.iter()
+        .zip(kinds)
+        .map(|(id, kind)| {
+            let parent = objects.get(id.checked_sub(1)?)?;
+            if parent.deleted {
+                return None;
+            }
+            match kind {
+                CalculationSourceKind::Numeric => parent.kind.numeric_unit(),
+                CalculationSourceKind::Function
+                    if matches!(
+                        parent.kind,
+                        Kind::FunctionDefinition(_)
+                            | Kind::ReferencedFunction(_, _)
+                            | Kind::DerivativeFunction(_, _)
+                    ) =>
+                {
+                    Some(NumericUnit::Scalar)
+                }
+                _ => None,
+            }
+        })
+        .collect()
 }
 pub(super) fn parse_numeric_calculation(
     bytes: &[u8],
@@ -50,8 +70,10 @@ pub(super) fn parse_numeric_calculation(
     // Match the ordinary decoder's established concrete representations. A
     // native abstract template can specialize into either legacy wire family.
     match refs {
-        [first, second] if objects[*first - 1].kind.is_distance_value()
-            && objects[*second - 1].kind.is_distance_value() => {
+        [first, second]
+            if objects[*first - 1].kind.is_distance_value()
+                && objects[*second - 1].kind.is_distance_value() =>
+        {
             if let Ok(pair) = LengthPairCalculationGroup::parse(bytes) {
                 if pair.sources() == [(*first - page_base) as u32, (*second - page_base) as u32] {
                     return Some(Kind::LengthPairCalculation(*first, *second, pair));
@@ -127,21 +149,28 @@ impl Document {
         let displayed = (value * factor).round() / factor;
         self.update_parameter_value(id, displayed, false)
     }
-    fn update_parameter_value(
+    pub(super) fn update_parameter_value(
         &mut self,
         id: usize,
         value: f64,
         checkpoint: bool,
     ) -> Result<(), String> {
-        if id == 0 || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
-            || (self.page_count > 1 && (self.image_read_only
-                || self.source_count != self.objects.len()
-                || self.objects.iter().any(|object| object.deleted || matches!(object.kind, Kind::Unsupported(_))))) {
+        if id == 0
+            || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
+            || (self.page_count > 1
+                && (self.image_read_only
+                    || self.source_count != self.objects.len()
+                    || self.objects.iter().any(|object| {
+                        object.deleted || matches!(object.kind, Kind::Unsupported(_))
+                    })))
+        {
             return Err("Cannot edit a parameter in this sketch".into());
         }
         let object = self.objects.get(id - 1).ok_or("Select a parameter")?;
-        if object.deleted || object.page != self.active_page
-            || (self.page_count > 1 && id > self.source_count) {
+        if object.deleted
+            || object.page != self.active_page
+            || (self.page_count > 1 && id > self.source_count)
+        {
             return Err("Select a saved parameter on the current page".into());
         }
         let Kind::Parameter(group) = &object.kind else {
@@ -216,11 +245,17 @@ impl Document {
         self.checkpoint();
         Ok(self.append_object(Kind::Calculation(group)))
     }
-    pub fn set_calculation_expression(&mut self, id: usize, expression: &str) -> Result<(), String> {
+    pub fn set_calculation_expression(
+        &mut self,
+        id: usize,
+        expression: &str,
+    ) -> Result<(), String> {
         if self.partial_view || self.page_count != 1 || !self.safe_structure {
             return Err("Cannot edit a calculation in this sketch safely".into());
         }
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid calculation ID")?)
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid calculation ID")?)
             .filter(|object| !object.deleted && object.page == self.active_page)
             .ok_or("Select a calculation on the active page")?;
         let Kind::Calculation(group) = &object.kind else {
@@ -263,125 +298,233 @@ impl Document {
     /// using its current anchor rather than the spatially lowest caption.
     pub(super) fn next_tool_numeric_anchor(&self) -> Result<(i16, i16), String> {
         use crate::table_records::{cached_numeric_caption_step, numeric_caption_font_index};
-        let object = self.objects.iter()
-            .filter(|object| !object.deleted && object.page == self.active_page
-                && object.kind.numeric_unit().is_some())
+        let object = self
+            .objects
+            .iter()
+            .filter(|object| {
+                !object.deleted
+                    && object.page == self.active_page
+                    && object.kind.numeric_unit().is_some()
+            })
             .max_by_key(|object| object.id)
             .ok_or("No numeric caption precedes the tool output")?;
         let (anchor, step) = match &object.kind {
             Kind::Parameter(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
-            Kind::Calculation(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
+            Kind::Calculation(group) => {
+                (group.anchor(), cached_numeric_caption_step(group.bbox())?)
+            }
             Kind::ParameterCalculation(_, group) => {
-                let step = self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let step = self.tool_flat_numeric_caption_step(
+                    object,
+                    numeric_caption_font_index(group.as_bytes())?,
+                    false,
+                )?;
                 let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
-                let layout = if group.display_mode() == 1 { base } else if group.display_mode() == 3 && object.label.as_ref().is_some_and(|label| label.name_utf8().is_ok_and(|name| !name.is_empty())) {
-                    numeric_named_caption_layout(base, object.label.as_ref().unwrap().name_utf8().map_err(|error| error.to_string())?)?
+                let layout = if group.display_mode() == 1 {
+                    base
+                } else if group.display_mode() == 3
+                    && object
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.name_utf8().is_ok_and(|name| !name.is_empty()))
+                {
+                    numeric_named_caption_layout(
+                        base,
+                        object
+                            .label
+                            .as_ref()
+                            .unwrap()
+                            .name_utf8()
+                            .map_err(|error| error.to_string())?,
+                    )?
                 } else {
                     self.tool_numeric_expression_layout(object.id, base)?
                 };
-                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
+                (
+                    group.anchor(),
+                    layout
+                        .height()?
+                        .checked_add(1)
+                        .ok_or("Numeric caption layout overflow")?,
+                )
             }
             Kind::MeasuredCalculation(_, group) => {
-                let step = self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let step = self.tool_flat_numeric_caption_step(
+                    object,
+                    numeric_caption_font_index(group.as_bytes())?,
+                    false,
+                )?;
                 let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
                 let parsed = ParameterCalculationGroup::parse(group.as_bytes())?;
-                let layout = if parsed.display_mode() == 1 { base } else {
+                let layout = if parsed.display_mode() == 1 {
+                    base
+                } else {
                     self.tool_numeric_expression_layout(object.id, base)?
                 };
-                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
+                (
+                    group.anchor(),
+                    layout
+                        .height()?
+                        .checked_add(1)
+                        .ok_or("Numeric caption layout overflow")?,
+                )
             }
             Kind::LengthPairCalculation(_, _, group) => {
-                let step = self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let step = self.tool_flat_numeric_caption_step(
+                    object,
+                    numeric_caption_font_index(group.as_bytes())?,
+                    false,
+                )?;
                 let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
                 let parsed = ParameterCalculationGroup::parse(group.as_bytes())?;
-                let layout = if parsed.display_mode() == 1 { base } else {
+                let layout = if parsed.display_mode() == 1 {
+                    base
+                } else {
                     self.tool_numeric_expression_layout(object.id, base)?
                 };
-                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
+                (
+                    group.anchor(),
+                    layout
+                        .height()?
+                        .checked_add(1)
+                        .ok_or("Numeric caption layout overflow")?,
+                )
             }
             kind if numeric_measurement_caption_shape(kind).is_some() => {
                 let font = if let Some(header) = object.header_offset {
                     let rs = super::records::records(&self.original)?;
-                    let start = rs.iter().position(|record| record.kind == 0x07d0
-                        && record.data.start == header).ok_or("Missing numeric caption group")?;
-                    let record = rs[start + 1..].iter().take_while(|record| record.kind != 0x07d7)
+                    let start = rs
+                        .iter()
+                        .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                        .ok_or("Missing numeric caption group")?;
+                    let record = rs[start + 1..]
+                        .iter()
+                        .take_while(|record| record.kind != 0x07d7)
                         .find(|record| record.kind == 0x07d8 && record.data.len() == 2)
                         .ok_or("Missing measurement caption font")?;
-                    u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
-                } else { 1 };
+                    u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap())
+                        as usize
+                } else {
+                    1
+                };
                 let step = self.tool_flat_numeric_caption_step(object, font, true)?;
                 let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
-                let layout = numeric_measurement_caption_shape(&object.kind).unwrap().layout(base)?;
-                (object.measurement_anchor.ok_or("Missing measurement caption anchor")?, layout.height()? + 1)
+                let layout = numeric_measurement_caption_shape(&object.kind)
+                    .unwrap()
+                    .layout(base)?;
+                (
+                    object
+                        .measurement_anchor
+                        .ok_or("Missing measurement caption anchor")?,
+                    layout.height()? + 1,
+                )
             }
             _ => return Err("Tool placement needs a verified numeric caption layout".into()),
         };
-        let next = i32::from(anchor.1).checked_add(step)
+        let next = i32::from(anchor.1)
+            .checked_add(step)
             .and_then(|value| i16::try_from(value).ok())
             .ok_or("Numeric caption placement overflow")?;
         Ok((anchor.0, next))
     }
 
-    fn tool_numeric_expression_layout(&self, id: usize, base: crate::table_records::NumericCaptionLayout)
-        -> Result<crate::table_records::NumericCaptionLayout, String>
-    {
-        let object = id.checked_sub(1).and_then(|index| self.objects.get(index))
+    fn tool_numeric_expression_layout(
+        &self,
+        id: usize,
+        base: crate::table_records::NumericCaptionLayout,
+    ) -> Result<crate::table_records::NumericCaptionLayout, String> {
+        let object = id
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
             .ok_or("Invalid numeric caption source")?;
         match &object.kind {
             Kind::Parameter(_) => Ok(base),
             kind if numeric_measurement_caption_shape(kind).is_some() => {
                 // Square units decorate the measurement's value, not its source symbol.
-                numeric_measurement_caption_shape(kind).unwrap().source_layout(base)
-            },
+                numeric_measurement_caption_shape(kind)
+                    .unwrap()
+                    .source_layout(base)
+            }
             Kind::Calculation(group) => {
                 if group.is_native_radian_angle() && group.display_mode() == 3 {
                     Ok(base)
-                } else { group.expression_caption_layout(base) }
+                } else {
+                    group.expression_caption_layout(base)
+                }
             }
             Kind::ParameterCalculation(first, group) => {
                 if group.display_mode() == 3 {
-                    if let Some(name) = object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty()) {
+                    if let Some(name) = object
+                        .label
+                        .as_ref()
+                        .and_then(|label| label.name_utf8().ok())
+                        .filter(|name| !name.is_empty())
+                    {
                         return numeric_named_caption_layout(base, name);
                     }
                 }
                 if group.display_mode() != 0 && !group.caption_is_flat() {
-                    return Err("Non-formula fraction source expansion needs a native control".into());
+                    return Err(
+                        "Non-formula fraction source expansion needs a native control".into(),
+                    );
                 }
                 let sources = calculation_source_ids(*first, group);
-                let layouts = sources.into_iter().map(|source| {
-                    if source >= id { return Err("Invalid numeric caption dependency order".into()); }
-                    self.tool_numeric_expression_layout(source, base)
-                }).collect::<Result<Vec<_>, String>>()?;
+                let layouts = sources
+                    .into_iter()
+                    .map(|source| {
+                        if source >= id {
+                            return Err("Invalid numeric caption dependency order".into());
+                        }
+                        self.tool_numeric_expression_layout(source, base)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
                 group.expression_caption_layout(base, &layouts)
             }
             Kind::MeasuredCalculation(source, group) => {
-                if *source >= id { return Err("Invalid numeric caption dependency order".into()); }
-                ParameterCalculationGroup::parse(group.as_bytes())?
-                    .expression_caption_layout(base, &[self.tool_numeric_expression_layout(*source, base)?])
+                if *source >= id {
+                    return Err("Invalid numeric caption dependency order".into());
+                }
+                ParameterCalculationGroup::parse(group.as_bytes())?.expression_caption_layout(
+                    base,
+                    &[self.tool_numeric_expression_layout(*source, base)?],
+                )
             }
             Kind::LengthPairCalculation(first, second, group) => {
-                if *first >= id || *second >= id { return Err("Invalid numeric caption dependency order".into()); }
-                ParameterCalculationGroup::parse(group.as_bytes())?.expression_caption_layout(base,
-                    &[self.tool_numeric_expression_layout(*first, base)?, self.tool_numeric_expression_layout(*second, base)?])
+                if *first >= id || *second >= id {
+                    return Err("Invalid numeric caption dependency order".into());
+                }
+                ParameterCalculationGroup::parse(group.as_bytes())?.expression_caption_layout(
+                    base,
+                    &[
+                        self.tool_numeric_expression_layout(*first, base)?,
+                        self.tool_numeric_expression_layout(*second, base)?,
+                    ],
+                )
             }
             _ => Err("Numeric caption source layout needs a native control".into()),
         }
     }
 
-    fn tool_flat_numeric_caption_step(&self, object: &Object, index: usize, measurement: bool)
-        -> Result<i32, String>
-    {
+    fn tool_flat_numeric_caption_step(
+        &self,
+        object: &Object,
+        index: usize,
+        measurement: bool,
+    ) -> Result<i32, String> {
         if let Some(font) = &object.text_style_override {
-            if font.family == "Tahoma" && font.size_code == 18
-                && !font.bold && !font.italic && !font.underline
+            if font.family == "Tahoma"
+                && font.size_code == 18
+                && !font.bold
+                && !font.italic
+                && !font.underline
             {
                 return Ok(27);
             }
-            if font.family == "Tahoma" && font.size_code == 24 && (font.bold || measurement)
-                && !font.italic && !font.underline
+            if font.family == "Tahoma"
+                && font.size_code == 24
+                && (font.bold || measurement)
+                && !font.italic
+                && !font.underline
             {
                 return Ok(34);
             }
@@ -389,32 +532,55 @@ impl Document {
         }
         let rs = super::records::records(&self.original)?;
         let styles = super::embedded_tools::document_records(&rs)
-            .filter(|record| record.kind == 0x04b3).collect::<Vec<_>>();
-        let style = styles.get(index).ok_or("Missing numeric caption font style")?;
+            .filter(|record| record.kind == 0x04b3)
+            .collect::<Vec<_>>();
+        let style = styles
+            .get(index)
+            .ok_or("Missing numeric caption font style")?;
         let payload = &self.original[style.data.clone()];
-        let family_index = payload.get(..2).and_then(|bytes| bytes.try_into().ok())
-            .map(u16::from_le_bytes).ok_or("Invalid numeric caption font style")? as usize;
+        let family_index = payload
+            .get(..2)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_le_bytes)
+            .ok_or("Invalid numeric caption font style")? as usize;
         let family = super::embedded_tools::document_records(&rs)
-            .filter(|record| record.kind == 0x04b1).nth(family_index)
+            .filter(|record| record.kind == 0x04b1)
+            .nth(family_index)
             .ok_or("Missing numeric caption font family")?;
         let family_name = crate::text_style_records::decode_font_family_payload(
-            &self.original[family.data.clone()])?;
-        if object.text_style_override.is_none() && family_name == "Tahoma"
-            && payload.len() == 20 && payload[2..].iter().all(|byte| *byte == 0)
+            &self.original[family.data.clone()],
+        )?;
+        if object.text_style_override.is_none()
+            && family_name == "Tahoma"
+            && payload.len() == 20
+            && payload[2..].iter().all(|byte| *byte == 0)
         {
             return Ok(21);
         }
-        let font = object.text_style_override.clone().or_else(||
-            crate::text_style_records::decode_font_payloads(payload,
-                &self.original[family.data.clone()]).ok())
+        let font = object
+            .text_style_override
+            .clone()
+            .or_else(|| {
+                crate::text_style_records::decode_font_payloads(
+                    payload,
+                    &self.original[family.data.clone()],
+                )
+                .ok()
+            })
             .ok_or("Unsupported numeric caption font style")?;
-        if font.family == "Tahoma" && font.size_code == 18
-            && !font.bold && !font.italic && !font.underline
+        if font.family == "Tahoma"
+            && font.size_code == 18
+            && !font.bold
+            && !font.italic
+            && !font.underline
         {
             return Ok(27);
         }
-        if font.family == "Tahoma" && font.size_code == 24 && (font.bold || measurement)
-            && !font.italic && !font.underline
+        if font.family == "Tahoma"
+            && font.size_code == 24
+            && (font.bold || measurement)
+            && !font.italic
+            && !font.underline
         {
             return Ok(34);
         }
@@ -514,7 +680,17 @@ impl Document {
                 self.objects
                     .get(id.saturating_sub(1))
                     .filter(|o| !o.deleted && o.page == self.active_page)
-                    .and_then(|o| o.kind.numeric_unit().or_else(|| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)).then_some(NumericUnit::Scalar)))
+                    .and_then(|o| {
+                        o.kind.numeric_unit().or_else(|| {
+                            matches!(
+                                o.kind,
+                                Kind::FunctionDefinition(_)
+                                    | Kind::ReferencedFunction(_, _)
+                                    | Kind::DerivativeFunction(_, _)
+                            )
+                            .then_some(NumericUnit::Scalar)
+                        })
+                    })
             })
             .collect::<Option<Vec<_>>>()
             .ok_or("Select numeric values on the active page")?;
@@ -523,7 +699,8 @@ impl Document {
             .map(|id| u32::try_from(*id).map_err(|_| "Invalid calculation source ID"))
             .collect::<Result<Vec<_>, _>>()?;
         let group = ParameterCalculationGroup::from_sources(&ids, expression, anchor, &units)?;
-        calculation_source_units(&group, sources, &self.objects).ok_or("Calculation reference type disagrees with its expression")?;
+        calculation_source_units(&group, sources, &self.objects)
+            .ok_or("Calculation reference type disagrees with its expression")?;
         self.checkpoint();
         Ok(self.append_object(Kind::ParameterCalculation(sources[0], group)))
     }
@@ -646,21 +823,29 @@ impl Document {
         if object.deleted || *source >= id {
             return None;
         }
-        let measurement = match self.objects.get(source.checked_sub(1)?)?.kind {
-            Kind::SegmentLength(_) => self.segment_length_cm(*source)?,
-            Kind::PointDistance(_, _) => self.point_distance_cm(*source)?,
-            Kind::PointLineDistance(_, _) => self.point_line_distance_cm(*source)?,
-            Kind::PolygonPerimeter(_) => self.perimeter_cm(*source)?,
-            Kind::CircleCircumference(_) => self.circle_circumference_cm(*source)?,
-            Kind::CircleRadius(_) => self.circle_radius_cm(*source)?,
-            Kind::ArcLength(_) => self.arc_length_cm(*source)?,
-            Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(*source)?,
-            Kind::LengthPairCalculation(_, _, _) => self.length_pair_calculation_cm(*source)?,
-            Kind::ParameterCalculation(_, ref g) if g.unit() == NumericUnit::Length => {
-                self.parameter_calculation_value(*source)?
-            }
-            _ => return None,
-        };
+        let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
+        if matches!(source_kind, Kind::LengthPairCalculation(_, _, group) if group.length_power() != 1)
+        {
+            return None;
+        }
+        if !matches!(
+            source_kind,
+            Kind::SegmentLength(_)
+                | Kind::PointDistance(_, _)
+                | Kind::PointLineDistance(_, _)
+                | Kind::PolygonPerimeter(_)
+                | Kind::CircleCircumference(_)
+                | Kind::CircleRadius(_)
+                | Kind::ArcLength(_)
+                | Kind::MeasuredCalculation(_, _)
+                | Kind::LengthPairCalculation(_, _, _)
+        ) && !matches!(source_kind, Kind::ParameterCalculation(_, group) if group.unit() == NumericUnit::Length)
+        {
+            return None;
+        }
+        // Resolve the source as a construction value so a frozen measurement
+        // cannot be reopened through its original geometric predecessors.
+        let measurement = self.numeric_value(*source)?;
         Some(if group.divides() {
             measurement / f64::from(group.factor())
         } else {
@@ -669,16 +854,24 @@ impl Document {
     }
     pub fn parameter_calculation_value(&self, id: usize) -> Option<f64> {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
-        let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
+        let Kind::ParameterCalculation(first, _) = self.objects[id - 1].kind else {
+            return None;
+        };
         let sources = calculation_source_ids(first, group);
-        group.value_for_sources_with_functions(&values, &units, &|index, argument, unit| self.function_value_with_unit(*sources.get(index)?, argument, unit))
+        group.value_for_sources_with_functions(&values, &units, &|index, argument, unit| {
+            self.function_value_with_unit(*sources.get(index)?, argument, unit)
+        })
     }
 
     pub(crate) fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
-        let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
+        let Kind::ParameterCalculation(first, _) = self.objects[id - 1].kind else {
+            return None;
+        };
         let sources = calculation_source_ids(first, group);
-        group.display_value_with_functions(&values, &units, &|index, argument, unit| self.function_value_with_unit(*sources.get(index)?, argument, unit))
+        group.display_value_with_functions(&values, &units, &|index, argument, unit| {
+            self.function_value_with_unit(*sources.get(index)?, argument, unit)
+        })
     }
 
     fn parameter_calculation_inputs(
@@ -703,8 +896,15 @@ impl Document {
             return None;
         }
         let values = ids
-            .iter().zip(group.source_kinds().ok()?)
-            .map(|(source, kind)| if kind == CalculationSourceKind::Function { Some(0.) } else { self.numeric_value(*source) })
+            .iter()
+            .zip(group.source_kinds().ok()?)
+            .map(|(source, kind)| {
+                if kind == CalculationSourceKind::Function {
+                    Some(0.)
+                } else {
+                    self.numeric_value(*source)
+                }
+            })
             .collect::<Option<Vec<_>>>()?;
         let units = calculation_source_units(group, &ids, &self.objects)?;
         Some((group, values, units))
@@ -727,59 +927,82 @@ impl Document {
             if source_object.deleted {
                 return None;
             }
-            let source = &source;
-            let name = match &source_object.kind {
-                Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _) => self.function_symbol(*source)?,
-                Kind::Parameter(parameter) => {
-                    let name = self.parameter_display_name(*source)?;
-                    if parameter.display_mode() == 0 { format!("({name})") } else { name }
-                }
-                Kind::ParameterCalculation(_, g) if g.display_mode() == 3 => {
-                    if let Some(name) = source_object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty()) {
-                        name.to_owned()
-                    } else { self.parameter_calculation_expression(*source)? }
-                }
-                Kind::ParameterCalculation(_, _) => {
-                    self.parameter_calculation_expression(*source)?
-                }
-                Kind::AngleMeasurement(a, b, c) => format!(
-                    "∠{}{}{}",
-                    self.coordinate_point_name(*a)?,
-                    self.coordinate_point_name(*b)?,
-                    self.coordinate_point_name(*c)?
-                ),
-                Kind::ArcAngle(_) => format!("arc angle {source}"),
-                Kind::Calculation(g) if g.is_native_radian_angle() && g.display_mode() == 3 => {
-                    source_object.label.as_ref().and_then(|label| label.name_utf8().ok())
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_owned).unwrap_or_else(|| g.expression())
-                }
-                Kind::Calculation(g) => g.expression(),
-                Kind::PointRatio(_, _, _) => format!("Ratio {source}"),
-                Kind::SlopeMeasurement(_, _) => format!("Slope {source}"),
-                Kind::LengthPairCalculation(_, _, _)
-                | Kind::MeasuredCalculation(_, _)
-                | Kind::SegmentLength(_)
-                | Kind::PointDistance(_, _)
-                | Kind::PointLineDistance(_, _)
-                | Kind::PolygonPerimeter(_)
-                | Kind::CircleCircumference(_)
-                | Kind::CircleRadius(_)
-                | Kind::ArcLength(_) => self.length_measurement_name(*source)?,
-                Kind::CircleArea(_) | Kind::PolygonArea(_) => format!("Area {source}"),
-                Kind::CoordinateMeasurement { kind, first, .. } => {
-                    format!("{kind:?} {}", self.coordinate_point_name(*first)?)
-                }
-                Kind::ValueEquation {
-                    kind: ValueEquationKind::PointValue,
-                    first,
-                    ..
-                } => format!("Value of {}", self.coordinate_point_name(*first)?),
-                _ => return None,
-            };
+            let name = self.calculation_source_name(source)?;
             names.push(name);
         }
         Some(group.expression_for_sources(&names.iter().map(String::as_str).collect::<Vec<_>>()))
+    }
+    pub(super) fn calculation_source_name(&self, source: usize) -> Option<String> {
+        let source_object = self.objects.get(source.checked_sub(1)?)?;
+        if source_object.deleted {
+            return None;
+        }
+        let source = &source;
+        let name = match &source_object.kind {
+            Kind::FunctionDefinition(_)
+            | Kind::ReferencedFunction(_, _)
+            | Kind::DerivativeFunction(_, _) => self.function_symbol(*source)?,
+            Kind::Parameter(parameter) => {
+                let name = self.parameter_display_name(*source)?;
+                if parameter.display_mode() == 0 {
+                    format!("({name})")
+                } else {
+                    name
+                }
+            }
+            Kind::ParameterCalculation(_, g) if g.display_mode() == 3 => {
+                if let Some(name) = source_object
+                    .label
+                    .as_ref()
+                    .and_then(|label| label.name_utf8().ok())
+                    .filter(|name| !name.is_empty())
+                {
+                    name.to_owned()
+                } else {
+                    self.parameter_calculation_expression(*source)?
+                }
+            }
+            Kind::ParameterCalculation(_, _) => self.parameter_calculation_expression(*source)?,
+            Kind::AngleMeasurement(a, b, c) => format!(
+                "∠{}{}{}",
+                self.coordinate_point_name(*a)?,
+                self.coordinate_point_name(*b)?,
+                self.coordinate_point_name(*c)?
+            ),
+            Kind::ArcAngle(_) => format!("arc angle {source}"),
+            Kind::Calculation(g) if g.is_native_radian_angle() && g.display_mode() == 3 => {
+                source_object
+                    .label
+                    .as_ref()
+                    .and_then(|label| label.name_utf8().ok())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| g.expression())
+            }
+            Kind::Calculation(g) => g.expression(),
+            Kind::PointRatio(_, _, _) => format!("Ratio {source}"),
+            Kind::SlopeMeasurement(_, _) => format!("Slope {source}"),
+            Kind::LengthPairCalculation(_, _, _)
+            | Kind::MeasuredCalculation(_, _)
+            | Kind::SegmentLength(_)
+            | Kind::PointDistance(_, _)
+            | Kind::PointLineDistance(_, _)
+            | Kind::PolygonPerimeter(_)
+            | Kind::CircleCircumference(_)
+            | Kind::CircleRadius(_)
+            | Kind::ArcLength(_) => self.length_measurement_name(*source)?,
+            Kind::CircleArea(_) | Kind::PolygonArea(_) => format!("Area {source}"),
+            Kind::CoordinateMeasurement { kind, first, .. } => {
+                format!("{kind:?} {}", self.coordinate_point_name(*first)?)
+            }
+            Kind::ValueEquation {
+                kind: ValueEquationKind::PointValue,
+                first,
+                ..
+            } => format!("Value of {}", self.coordinate_point_name(*first)?),
+            _ => return None,
+        };
+        Some(name)
     }
     pub fn length_measurement_name(&self, id: usize) -> Option<String> {
         if let Kind::ParameterCalculation(_, g) = &self.objects.get(id.checked_sub(1)?)?.kind {
@@ -837,24 +1060,36 @@ impl Document {
     }
 }
 
-fn numeric_measurement_caption_shape(kind: &Kind) -> Option<crate::table_records::NumericCaptionShape> {
+fn numeric_measurement_caption_shape(
+    kind: &Kind,
+) -> Option<crate::table_records::NumericCaptionShape> {
     use crate::table_records::NumericCaptionShape;
     match kind {
-        Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::AngleMeasurement(_, _, _)
-        | Kind::SlopeMeasurement(_, _) | Kind::CircleRadius(_)
-        | Kind::ValueEquation { kind: ValueEquationKind::PointValue, .. } => Some(NumericCaptionShape::Flat),
+        Kind::SegmentLength(_)
+        | Kind::PointDistance(_, _)
+        | Kind::AngleMeasurement(_, _, _)
+        | Kind::SlopeMeasurement(_, _)
+        | Kind::CircleRadius(_)
+        | Kind::ValueEquation {
+            kind: ValueEquationKind::PointValue,
+            ..
+        } => Some(NumericCaptionShape::Flat),
         Kind::PolygonArea(_) | Kind::CircleArea(_) => Some(NumericCaptionShape::SquareUnit),
         _ => None,
     }
 }
 
-fn numeric_named_caption_layout(mut base: crate::table_records::NumericCaptionLayout, name: &str)
-    -> Result<crate::table_records::NumericCaptionLayout, String>
-{
+fn numeric_named_caption_layout(
+    mut base: crate::table_records::NumericCaptionLayout,
+    name: &str,
+) -> Result<crate::table_records::NumericCaptionLayout, String> {
     // Native m[1] has a subscript extending one pixel below the plain math row
     // in both independently controlled18Normal and24Bold profiles.
     if name == "m[1]" {
-        base.below = base.below.checked_add(1).ok_or("Numeric caption layout overflow")?;
+        base.below = base
+            .below
+            .checked_add(1)
+            .ok_or("Numeric caption layout overflow")?;
     } else if name.contains('[') || name.contains(']') {
         return Err("Indexed numeric caption name needs a native glyph layout control".into());
     }

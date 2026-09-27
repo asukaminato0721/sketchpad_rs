@@ -67,8 +67,11 @@ Construction is available through `Document::add_mapped_point_iteration` and
 `tests/mapped_point_iteration_replay.txt`: comma-separated seed/carried IDs,
 semicolon-separated branches, then fixed depth or `value:PARAMETER_ID`.
 There is no new desktop dialog for specifying general simultaneous mappings.
-Numeric state mappings, other construction graphs, and generic carried
-polygons/circles remain outside this family. Limits are 2–16 seeds,
+Checkpoint43 extends this family to Scalar and mixed point/Scalar state mappings,
+derived point seeds, generic point/segment transforms and supported coordinate
+DAGs; see [derived graph evidence](mapped_derived_transform_analysis43.md) and
+[scalar state evidence](numeric_mapped43_analysis.md). Geometric numeric inputs,
+wider path/intersection graphs and generic carried polygons/circles remain pending. Limits are 2–16 seeds,
 1–8 branches, depth 1–128; evaluation suppresses a sequence exceeding 20,000
 unique states in one generation or 100,000 generated states across all levels.
 The final-level display mode still computes and bounds the complete substitution

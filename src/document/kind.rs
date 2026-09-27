@@ -10,6 +10,16 @@ use crate::value_equation_records::ValueEquationKind;
 use std::collections::BTreeSet;
 
 impl Kind {
+    pub fn is_arc(&self) -> bool { is_arc_kind(self) }
+    pub fn is_function(&self) -> bool {
+        matches!(
+            self,
+            Self::FunctionDefinition(_)
+                | Self::ReferencedFunction(_, _)
+                | Self::DerivativeFunction(_, _)
+        )
+    }
+
     pub fn is_iteration_depth_value(&self) -> bool {
         matches!(
             self,
@@ -23,9 +33,7 @@ impl Kind {
         match self {
             Kind::Calculation(group) => Some(group.unit()),
             Kind::Parameter(group) => Some(group.unit()),
-            Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => {
-                Some(NumericUnit::Scalar)
-            }
+            Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => Some(NumericUnit::Scalar),
             Kind::LengthPairCalculation(_, _, group) => match group.length_power() {
                 0 => Some(NumericUnit::Scalar),
                 1 => Some(NumericUnit::Length),
@@ -57,12 +65,19 @@ impl Kind {
             _ => None,
         }
     }
+    /// A finite segment or a length quantity can define a coordinate unit.
+    pub fn is_defining_distance(&self) -> bool {
+        self.is_segment() || self.is_distance_value()
+    }
     pub fn is_distance_value(&self) -> bool {
         self.numeric_unit() == Some(NumericUnit::Length)
     }
     /// Marked translation interprets scalar values as signed centimeters.
     pub fn is_marked_distance_value(&self) -> bool {
-        matches!(self.numeric_unit(), Some(NumericUnit::Length | NumericUnit::Scalar))
+        matches!(
+            self.numeric_unit(),
+            Some(NumericUnit::Length | NumericUnit::Scalar)
+        )
     }
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
@@ -192,13 +207,11 @@ impl Kind {
         if let Kind::AnimationButton { targets, .. } = self {
             return targets.clone();
         }
-        if let Kind::MovementButton {
-            source,
-            destination,
-            ..
-        } = self
-        {
-            return vec![*source, *destination];
+        if let Kind::MovementButton { pairs, .. } = self {
+            return pairs
+                .iter()
+                .flat_map(|&(source, destination)| [source, destination])
+                .collect();
         }
         if let Kind::ScrollButton { target, .. } = self {
             return vec![*target];
@@ -354,10 +367,11 @@ impl Kind {
             | Kind::CoordinateSystem(a, b)
             | Kind::SlopeMeasurement(a, b)
             | Kind::FunctionPlot(a, b, _, _, _)
-            | Kind::PathValuePoint(a, b)
-            | Kind::PlottedPoint(a, b, _, _) => vec![a, b],
+            | Kind::PathValuePoint(a, b) => vec![a, b],
+            Kind::PlottedPoint(frame, _, _) => vec![frame],
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
             | Kind::NumericCoordinatePoint(x, y, frame) => vec![x, y, frame],
+            Kind::ReferencedFunction(ref sources, _) => sources.clone(),
             Kind::DerivativeFunction(source, _) => vec![source],
             Kind::Bisector(a, b, c)
             | Kind::ThreePointArc(a, b, c)
@@ -441,6 +455,8 @@ impl Kind {
         if let Kind::HideShowButton {
             targets,
             action,
+            options,
+            caption_flags,
             label,
             anchor,
         } = self
@@ -448,6 +464,8 @@ impl Kind {
             return Kind::HideShowButton {
                 targets: targets.iter().map(|&target| m(target)).collect(),
                 action: *action,
+                options: *options,
+                caption_flags: *caption_flags,
                 label: label.clone(),
                 anchor: *anchor,
             };
@@ -467,8 +485,7 @@ impl Kind {
             };
         }
         if let Kind::MovementButton {
-            source,
-            destination,
+            pairs,
             speed,
             follow,
             label,
@@ -476,8 +493,10 @@ impl Kind {
         } = self
         {
             return Kind::MovementButton {
-                source: m(*source),
-                destination: m(*destination),
+                pairs: pairs
+                    .iter()
+                    .map(|&(source, destination)| (m(source), m(destination)))
+                    .collect(),
                 speed: *speed,
                 follow: *follow,
                 label: label.clone(),
@@ -662,6 +681,9 @@ impl Kind {
             }
             Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
             Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
+            Kind::ReferencedFunction(ref sources, expr) => {
+                Kind::ReferencedFunction(sources.iter().map(|&id| m(id)).collect(), expr)
+            }
             Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
             Kind::DerivativeFunction(source, expr) => Kind::DerivativeFunction(m(source), expr),
             Kind::FunctionPlot(a, b, min, max, samples) => {
@@ -672,7 +694,7 @@ impl Kind {
             }
             Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
             Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
-            Kind::PlottedPoint(a, b, mode, stored) => Kind::PlottedPoint(m(a), m(b), mode, stored),
+            Kind::PlottedPoint(frame, mode, stored) => Kind::PlottedPoint(m(frame), mode, stored),
             Kind::NumericCoordinatePoint(x, y, frame) => {
                 Kind::NumericCoordinatePoint(m(x), m(y), m(frame))
             }
@@ -811,10 +833,12 @@ pub(super) fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
         )
 }
 pub(super) fn is_segment_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment))
-        || kind
-            .transform_definition()
-            .is_some_and(|definition| definition.element() == ElementType::Segment)
+    matches!(
+        kind,
+        Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment)
+    ) || kind
+        .transform_definition()
+        .is_some_and(|definition| definition.element() == ElementType::Segment)
 }
 
 pub(super) fn is_straight_kind(kind: &Kind) -> bool {
@@ -831,7 +855,9 @@ pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
         };
     }
     match kind {
-        Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment) => Some(LineMode::Segment),
+        Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment) => {
+            Some(LineMode::Segment)
+        }
         Kind::Ray(..) | Kind::Bisector(..) => Some(LineMode::Ray),
         Kind::Line(..)
         | Kind::Parallel(..)
@@ -862,7 +888,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::DistanceVerticalUnit(_, _, _)
                 | Kind::PathLiteralPoint(_, _)
                 | Kind::PathValuePoint(_, _)
-                | Kind::PlottedPoint(_, _, _, _)
+                | Kind::PlottedPoint(_, _, _)
                 | Kind::NumericCoordinatePoint(_, _, _)
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
@@ -871,28 +897,63 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
         )
 }
 
-pub(super) fn expected_parameter_locus_refs(objects: &[Object], driver: usize, target: usize) -> Option<Vec<usize>> {
-    fn dependent_path(objects: &[Object], driver: usize, current: usize, page: usize, found: &mut BTreeSet<usize>, visited: &mut BTreeSet<usize>) -> Option<bool> {
+pub(super) fn expected_parameter_locus_refs(
+    objects: &[Object],
+    driver: usize,
+    target: usize,
+) -> Option<Vec<usize>> {
+    fn dependent_path(
+        objects: &[Object],
+        driver: usize,
+        current: usize,
+        page: usize,
+        found: &mut BTreeSet<usize>,
+        visited: &mut BTreeSet<usize>,
+    ) -> Option<bool> {
         let object = objects.get(current.checked_sub(1)?)?;
-        if object.deleted || object.page != page { return None; }
-        if current == driver { return Some(true); }
-        if !visited.insert(current) { return Some(found.contains(&current)); }
+        if object.deleted || object.page != page {
+            return None;
+        }
+        if current == driver {
+            return Some(true);
+        }
+        if !visited.insert(current) {
+            return Some(found.contains(&current));
+        }
         let mut dependent = false;
         for parent in object.kind.dependencies() {
-            if parent >= current { return None; }
+            if parent >= current {
+                return None;
+            }
             dependent |= dependent_path(objects, driver, parent, page, found, visited)?;
         }
-        if dependent { found.insert(current); }
+        if dependent {
+            found.insert(current);
+        }
         Some(dependent)
     }
     let moving = objects.get(driver.checked_sub(1)?)?;
     let traced = objects.get(target.checked_sub(1)?)?;
-    if driver >= target || moving.deleted || traced.deleted || moving.page != traced.page
+    if driver >= target
+        || moving.deleted
+        || traced.deleted
+        || moving.page != traced.page
         || !matches!(&moving.kind, Kind::Parameter(group) if group.locus_unit_tag().is_some())
         || !is_point_kind(&traced.kind)
-    { return None; }
+    {
+        return None;
+    }
     let mut found = BTreeSet::new();
-    if !dependent_path(objects, driver, target, moving.page, &mut found, &mut BTreeSet::new())? { return None; }
+    if !dependent_path(
+        objects,
+        driver,
+        target,
+        moving.page,
+        &mut found,
+        &mut BTreeSet::new(),
+    )? {
+        return None;
+    }
     let mut refs = vec![target, driver];
     refs.extend(found);
     Some(refs)
@@ -977,10 +1038,7 @@ pub(super) fn expected_locus_refs(
             path
         }
         Kind::PointOnArc(path, _)
-            if matches!(
-                objects.get(path.checked_sub(1)?)?.kind,
-                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
-            ) =>
+            if is_arc_kind(&objects.get(path.checked_sub(1)?)?.kind) =>
         {
             path
         }
@@ -996,7 +1054,7 @@ pub(super) fn is_arc_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
-    )
+    ) || kind.transform_definition().is_some_and(|definition| definition.element() == ElementType::Arc)
 }
 
 pub(super) fn is_locus_polygon_kind(kind: &Kind) -> bool {
@@ -1024,11 +1082,9 @@ pub(super) fn is_locus_straight_kind(kind: &Kind) -> bool {
     )
 }
 
-pub(super) fn is_defining_distance_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Segment(_, _) | Kind::SegmentLength(_) | Kind::PointDistance(_, _)
-    )
+pub(super) fn is_coordinate_unit_kind(kind: &Kind) -> bool {
+    // Native stored axes use a numeric magnitude regardless of its units.
+    kind.is_segment() || kind.numeric_unit().is_some()
 }
 
 pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
@@ -1040,7 +1096,9 @@ pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
             | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
             | Kind::CircleAxis(_, 0 | 1)
             | Kind::DistanceAxis(_, _, 0 | 1)
-    ) || kind.is_circle() || is_arc_kind(kind) || is_transformed_plot_path_kind(kind)
+    ) || kind.is_circle()
+        || is_arc_kind(kind)
+        || is_transformed_plot_path_kind(kind)
 }
 
 pub(super) fn is_transformed_plot_ray_kind(kind: &Kind) -> bool {
@@ -1066,10 +1124,7 @@ pub(super) fn is_transformed_plot_path_kind(kind: &Kind) -> bool {
 pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
     value.is_finite()
         && is_plot_path_kind(kind)
-        && if matches!(
-            kind,
-            Kind::Segment(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..)
-        ) {
+        && if matches!(kind, Kind::Segment(..)) || is_arc_kind(kind) {
             (0.0..=1.0).contains(&value)
         } else if matches!(kind, Kind::Ray(..)) || is_transformed_plot_ray_kind(kind) {
             value >= 0.0
@@ -1084,7 +1139,9 @@ pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind)) && value.is_finite())
+    plot_path_accepts(kind, value)
+        || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind))
+            && value.is_finite())
 }
 
 /// Native code 123 also accepts a literal fraction of a polygon perimeter.
@@ -1093,7 +1150,9 @@ pub(super) fn is_literal_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn literal_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value) || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind)) && value.is_finite())
+    plot_path_accepts(kind, value)
+        || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind))
+            && value.is_finite())
 }
 
 /// Supported polygon transforms retain their source's vertex count. Require
@@ -1169,7 +1228,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             ElementType::Segment | ElementType::Ray | ElementType::Line => {
                 VisualStyle::Stroke { line, color: navy }
             }
-            ElementType::Circle => VisualStyle::Stroke { line, color: green },
+            ElementType::Circle | ElementType::Arc => VisualStyle::Stroke { line, color: green },
             ElementType::Polygon => VisualStyle::Polygon {
                 opacity: 32767,
                 color: RgbColor {
@@ -1209,7 +1268,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         Kind::Circle(_, _)
         | Kind::CircleBySegment(_, _)
         | Kind::ThreePointArc(_, _, _)
-        | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
+        | Kind::ArcOnCircle(_, _, _)
+        | Kind::CenterArc(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
         Kind::FunctionPlot(_, _, _, _, _) => Some(VisualStyle::Stroke {
             line: SegmentLineStyle {
                 width: LineWidth::Thin,
@@ -1244,5 +1304,15 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
 
 /// Class 6/subtype 42 point-locus templates use a medium solid maroon stroke.
 pub(super) fn point_locus_visual_style() -> VisualStyle {
-    VisualStyle::Stroke { line: SegmentLineStyle { width:LineWidth::Medium, pattern:LinePattern::Solid }, color:RgbColor { red:128,green:0,blue:0 } }
+    VisualStyle::Stroke {
+        line: SegmentLineStyle {
+            width: LineWidth::Medium,
+            pattern: LinePattern::Solid,
+        },
+        color: RgbColor {
+            red: 128,
+            green: 0,
+            blue: 0,
+        },
+    }
 }

@@ -43,11 +43,17 @@ fn plot_value_on_axis_tracks_its_axis_and_cross_opens() {
     assert_eq!(generated.plot_parameter_on_path(1, None).unwrap(), 9);
     let generated_bytes = generated.encode().unwrap();
     if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
-        fs::write("/tmp/graph_plot_value_axis_font14_writer.gsp", &generated_bytes).unwrap();
+        fs::write(
+            "/tmp/graph_plot_value_axis_font14_writer.gsp",
+            &generated_bytes,
+        )
+        .unwrap();
     }
     assert_eq!(
         generated_bytes,
-        include_bytes!("../../../tests/fixtures/graph_plot_value_axis_font14_writer_native_verified.gsp")
+        include_bytes!(
+            "../../../tests/fixtures/graph_plot_value_axis_font14_writer_native_verified.gsp"
+        )
     );
     let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
@@ -345,7 +351,7 @@ fn two_parameter_table_data_roundtrips_and_tracks_frame() {
     );
     assert_eq!(
         original.objects[9].kind,
-        Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [1., 1.])
+        Kind::PlottedPoint(9, PlotPointsMode::Cartesian, [1., 1.])
     );
     let before = original.position(10).unwrap();
     assert!((before.x - 236.79527559055118).abs() < 1e-9);
@@ -425,11 +431,11 @@ fn two_parameter_table_data_roundtrips_and_tracks_frame() {
     );
     assert_eq!(
         distinct_original.objects[9].kind,
-        Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [1., 1.])
+        Kind::PlottedPoint(9, PlotPointsMode::Cartesian, [1., 1.])
     );
     assert_eq!(
         distinct_original.objects[10].kind,
-        Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [2., 1.])
+        Kind::PlottedPoint(9, PlotPointsMode::Cartesian, [2., 1.])
     );
     assert!(
         (distinct_original.position(11).unwrap().x - (199. + 2. * 37.79527559055118)).abs() < 1e-9
@@ -548,7 +554,9 @@ fn default_table_keeps_fractional_snapshots_and_native_edit() {
     }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_snapshots_font14_writer_native_verified.gsp")
+        include_bytes!(
+            "../../../tests/fixtures/table_t1_snapshots_font14_writer_native_verified.gsp"
+        )
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
@@ -582,11 +590,17 @@ fn default_table_accepts_later_parameter_source() {
     ));
     let bytes = doc.encode().unwrap();
     if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
-        fs::write("/tmp/table_t1_late_source_snapshots_font14_writer.gsp", &bytes).unwrap();
+        fs::write(
+            "/tmp/table_t1_late_source_snapshots_font14_writer.gsp",
+            &bytes,
+        )
+        .unwrap();
     }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_late_source_snapshots_font14_writer_native_verified.gsp")
+        include_bytes!(
+            "../../../tests/fixtures/table_t1_late_source_snapshots_font14_writer_native_verified.gsp"
+        )
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
@@ -642,11 +656,17 @@ fn default_table_preserves_native_wide_values_and_mixed_snapshots() {
     ));
     let bytes = doc.encode().unwrap();
     if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
-        fs::write("/tmp/table_t1_mixed_width_snapshots_font14_writer.gsp", &bytes).unwrap();
+        fs::write(
+            "/tmp/table_t1_mixed_width_snapshots_font14_writer.gsp",
+            &bytes,
+        )
+        .unwrap();
     }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_mixed_width_snapshots_font14_writer_native_verified.gsp")
+        include_bytes!(
+            "../../../tests/fixtures/table_t1_mixed_width_snapshots_font14_writer_native_verified.gsp"
+        )
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);

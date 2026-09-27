@@ -16,7 +16,7 @@ fn plotted_points_open_move_and_reopen() {
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
-        assert!(matches!(doc.objects[8].kind, Kind::PlottedPoint(1, 8, m, _) if m == mode));
+        assert!(matches!(doc.objects[8].kind, Kind::PlottedPoint(8, m, _) if m == mode));
         assert_eq!(
             doc.objects[8].visual_style,
             Some(VisualStyle::Point {
@@ -107,7 +107,7 @@ fn named_parameter_table_plot_matches_original_point_group() {
     assert_eq!(native.encode().unwrap(), original);
     assert!(matches!(
         native.objects[8].kind,
-        Kind::PlottedPoint(1, 8, PlotPointsMode::Cartesian, [1.0, 1.0])
+        Kind::PlottedPoint(8, PlotPointsMode::Cartesian, [1.0, 1.0])
     ));
     let mut doc = Document::new();
     doc.add_named_parameter("speed", 2.5, (10, 5)).unwrap();
@@ -211,7 +211,7 @@ fn frame_only_plot_point_matches_original() {
     assert_eq!(native.encode().unwrap(), original);
     assert!(matches!(
         native.objects[6].kind,
-        Kind::PlottedPoint(1, 6, PlotPointsMode::Cartesian, [1.0, 1.0])
+        Kind::PlottedPoint(6, PlotPointsMode::Cartesian, [1.0, 1.0])
     ));
     let mut doc = Document::new();
     doc.add_default_coordinate_system(Point { x: 199., y: 125. })
@@ -250,7 +250,7 @@ fn plot_points_anchor_to_first_object_in_mixed_sketches() {
         assert_eq!(native.encode().unwrap(), original);
         assert!(matches!(
             native.objects[7].kind,
-            Kind::PlottedPoint(1, 7, PlotPointsMode::Cartesian, [1.0, 1.0])
+            Kind::PlottedPoint(7, PlotPointsMode::Cartesian, [1.0, 1.0])
         ));
         let mut doc = Document::new();
         if text_first {
@@ -286,7 +286,7 @@ fn polar_table_data_matches_original_point_group() {
     assert_eq!(native.encode().unwrap(), original);
     assert!(matches!(
         native.objects[9].kind,
-        Kind::PlottedPoint(1, 9, PlotPointsMode::Polar, [2.5, angle])
+        Kind::PlottedPoint(9, PlotPointsMode::Polar, [2.5, angle])
             if angle == plot_points_records::DEGREES_TO_RADIANS
     ));
     let base = include_bytes!("../../../tests/fixtures/plot_table_fraction_base_original.gsp");
@@ -316,7 +316,7 @@ fn distinct_polar_table_rows_plot_and_round_trip() {
     for (id, radius) in [(10, 1.0), (11, 2.0)] {
         assert!(matches!(
             native.objects[id - 1].kind,
-            Kind::PlottedPoint(1, 9, PlotPointsMode::Polar, [r, angle])
+            Kind::PlottedPoint(9, PlotPointsMode::Polar, [r, angle])
                 if r == radius && angle == plot_points_records::DEGREES_TO_RADIANS
         ));
     }
@@ -700,7 +700,7 @@ fn wine_saved_integrated_plots_preserve_all_bytes() {
     ] {
         let doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
-        assert!(matches!(doc.objects[8].kind, Kind::PlottedPoint(1, 8, m, _) if m == mode));
+        assert!(matches!(doc.objects[8].kind, Kind::PlottedPoint(8, m, _) if m == mode));
         assert!(doc.position(9).is_some());
         assert_eq!(doc.encode().unwrap(), bytes);
     }

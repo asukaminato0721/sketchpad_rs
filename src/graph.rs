@@ -530,6 +530,10 @@ pub fn set_coordinate_system_style(
     Err("Missing coordinate-system grid record".into())
 }
 
+pub fn set_horizontal_unit_step(group: &mut [u8], step: f64) -> Result<(), String> {
+    set_vertical_unit_code(group, 52, step)
+}
+
 pub fn set_vertical_unit_form(group: &mut [u8], form: GridForm, step: f64) -> Result<(), String> {
     let code: u16 = if form == GridForm::Rectangular {
         55

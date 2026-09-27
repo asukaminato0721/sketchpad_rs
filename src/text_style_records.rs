@@ -69,8 +69,14 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
 fn drawing_records(records: &[Record]) -> impl Iterator<Item = &Record> {
     let mut depth = 0usize;
     records.iter().filter(move |record| match record.kind {
-        0x03ea => { depth += 1; false }
-        0x03eb if depth > 0 => { depth -= 1; false }
+        0x03ea => {
+            depth += 1;
+            false
+        }
+        0x03eb if depth > 0 => {
+            depth -= 1;
+            false
+        }
         _ => depth == 0,
     })
 }
@@ -119,7 +125,10 @@ pub fn decode_font_state_at(bytes: &[u8], index: usize) -> Result<FontState, Str
     decode_font_payloads(style, family_record)
 }
 
-pub(crate) fn decode_font_payloads(style: &[u8], family_record: &[u8]) -> Result<FontState, String> {
+pub(crate) fn decode_font_payloads(
+    style: &[u8],
+    family_record: &[u8],
+) -> Result<FontState, String> {
     if style.len() != 20 {
         return Err("Unsupported font style record".into());
     }
@@ -316,19 +325,32 @@ mod tests {
             bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             bytes.extend_from_slice(&kind.to_le_bytes());
             bytes.extend_from_slice(payload);
-            if payload.len() % 2 != 0 { bytes.push(0); }
+            if payload.len() % 2 != 0 {
+                bytes.push(0);
+            }
         };
         append(0x03ea, &[]);
         let family = encode_font_family_payload("Only in tool").unwrap();
         append(0x04b1, &family);
-        let local_style = FontState { family: "Only in tool".into(), size_code: 18,
-            bold: false, italic: false, underline: false };
+        let local_style = FontState {
+            family: "Only in tool".into(),
+            size_code: 18,
+            bold: false,
+            italic: false,
+            underline: false,
+        };
         let payload = encode_style_payload(&[0; 20], &local_style).unwrap();
         append(0x04b3, &payload);
         append(0x03eb, &[]);
         bytes.extend_from_slice(&HELLO[4..]);
-        assert_eq!(font_families(&bytes).unwrap(), font_families(HELLO).unwrap());
-        assert_eq!(decode_font_state_at(&bytes, 0).unwrap(), decode_font_state(HELLO).unwrap());
+        assert_eq!(
+            font_families(&bytes).unwrap(),
+            font_families(HELLO).unwrap()
+        );
+        assert_eq!(
+            decode_font_state_at(&bytes, 0).unwrap(),
+            decode_font_state(HELLO).unwrap()
+        );
         assert!(decode_font_state_at(&bytes, 1).is_err());
     }
 

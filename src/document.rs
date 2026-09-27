@@ -3,18 +3,22 @@
 
 mod actions;
 mod calculations;
+mod button_encoding;
 mod coordinates;
 mod decode;
+mod embedded_tools;
 mod encode;
 mod encode_pages;
 mod encode_patches;
 mod encode_templates;
-mod embedded_tools;
+mod evaluation_context;
 mod functions;
 mod geometry;
 mod history;
 mod images;
 mod iteration;
+mod movement;
+pub use movement::MovementValue;
 mod kind;
 mod legacy;
 mod locus;
@@ -27,18 +31,19 @@ mod save;
 mod selection;
 mod style;
 mod tables;
+mod text;
 mod tool_creation;
 mod tool_inputs;
-mod text;
 pub mod transform_evaluator;
 pub mod transform_model;
+mod transform_arc_decode;
 mod transform_validation;
 mod transform_wire;
 mod transforms;
 mod validation;
 
 use crate::action_records::{
-    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction,
+    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction, VisibilityOptions,
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::function_records::SimpleFunction;
@@ -58,8 +63,8 @@ use kind::default_visual_style;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-pub use records::{Record, records};
 pub use embedded_tools::EmbeddedToolSummary;
+pub use records::{Record, records};
 pub use tool_inputs::{EmbeddedToolInput, EmbeddedToolInputKind};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,8 +115,7 @@ pub enum Kind {
         anchor: (i16, i16),
     },
     MovementButton {
-        source: usize,
-        destination: usize,
+        pairs: Vec<(usize, usize)>,
         speed: MovementSpeed,
         follow: bool,
         label: String,
@@ -126,6 +130,8 @@ pub enum Kind {
     HideShowButton {
         targets: Vec<usize>,
         action: VisibilityAction,
+        options: VisibilityOptions,
+        caption_flags: Option<u32>,
         label: String,
         anchor: (i16, i16),
     },
@@ -173,12 +179,13 @@ pub enum Kind {
         second: usize,
     },
     FunctionDefinition(SimpleFunction),
+    ReferencedFunction(Vec<usize>, SimpleFunction),
     DerivativeFunction(usize, SimpleFunction),
     FunctionPlot(usize, usize, f64, f64, u32),
     ParametricPlot(usize, usize, usize, f64, f64, u32, PlotPointsMode),
     PathLiteralPoint(usize, f64),
     PathValuePoint(usize, usize),
-    PlottedPoint(usize, usize, PlotPointsMode, [f64; 2]),
+    PlottedPoint(usize, PlotPointsMode, [f64; 2]),
     NumericCoordinatePoint(usize, usize, usize),
     // Parameter ranges retain native units (radians for angles). Public range
     // access and editing use the driver's displayed numeric units.
@@ -305,6 +312,20 @@ struct ClipboardObject {
     measurement_anchor: Option<(i16, i16)>,
 }
 
+impl Object {
+    /// Native midpoint records reference their segment host, even when the
+    /// convenient point-pair kind retains its endpoint IDs.
+    pub(super) fn construction_dependencies(&self) -> Vec<usize> {
+        if matches!(self.kind, Kind::Midpoint(..))
+            && let Some(host) = self.midpoint_host
+        {
+            vec![host]
+        } else {
+            self.kind.dependencies()
+        }
+    }
+}
+
 impl Clipboard {
     pub fn len(&self) -> usize {
         self.objects.len()
@@ -347,6 +368,7 @@ pub struct Document {
     pub angle_unit_radians: bool,
     pub marked_coordinate_system: Vec<Option<usize>>,
     pub frame_styles: BTreeMap<usize, (GridForm, bool)>,
+    evaluation_context: Option<evaluation_context::EvaluationContext>,
     original: Vec<u8>,
     run_font_families: Vec<String>,
     source_count: usize,
@@ -375,27 +397,67 @@ impl Document {
         self.append_object(kind)
     }
     fn append_object(&mut self, kind: Kind) -> usize {
+        let (kind, explicit_midpoint_host) = match kind {
+            Kind::SegmentMidpoint(host) => {
+                match self.objects.get(host.saturating_sub(1)).map(|o| &o.kind) {
+                    Some(Kind::Segment(a, b)) => (Kind::Midpoint(*a, *b), Some(host)),
+                    _ => (Kind::SegmentMidpoint(host), None),
+                }
+            }
+            other => (other, None),
+        };
         self.last_moved_object = None;
         let id = self.objects.len() + 1;
-        let inherited_transform_source = kind.transform_definition()
-            .filter(|definition| matches!(definition.element(),
-                transform_model::ElementType::Polygon | transform_model::ElementType::Ray
-                | transform_model::ElementType::Line))
+        let inherited_transform_source = kind
+            .transform_definition()
+            .filter(|definition| {
+                matches!(
+                    definition.element(),
+                    transform_model::ElementType::Polygon
+                        | transform_model::ElementType::Arc
+                        | transform_model::ElementType::Ray
+                        | transform_model::ElementType::Line
+                )
+            })
             .map(|definition| definition.source());
-        let visual_style = if let Some(source) = inherited_transform_source
-        {
+        let visual_style = if let Kind::IterationBinding(source, parent) = &kind {
+            let header = &self.iteration_binding_template(*source, *parent)[8..36];
+            if self
+                .objects
+                .get(source.saturating_sub(1))
+                .is_some_and(|o| kind::is_point_kind(&o.kind))
+            {
+                crate::style_records::iteration_point_binding_visual_style(header)
+            } else if self
+                .objects
+                .get(source.saturating_sub(1))
+                .is_some_and(|o| o.kind.is_polygon())
+            {
+                crate::style_records::iteration_binding_visual_style(header, true)
+            } else if self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
+                kind::is_straight_kind(&o.kind) || o.kind.is_circle() || kind::is_arc_kind(&o.kind)
+            }) {
+                crate::style_records::iteration_binding_visual_style(header, false)
+            } else {
+                None
+            }
+        } else if let Some(source) = inherited_transform_source {
             self.objects
                 .get(source.saturating_sub(1))
                 .and_then(|object| object.visual_style)
                 .or_else(|| default_visual_style(&kind))
-        } else if let Kind::Locus(refs,_) = &kind {
-            refs.first().and_then(|id| id.checked_sub(1)).and_then(|at| self.objects.get(at))
+        } else if let Kind::Locus(refs, _) = &kind {
+            refs.first()
+                .and_then(|id| id.checked_sub(1))
+                .and_then(|at| self.objects.get(at))
                 .filter(|target| kind::is_point_kind(&target.kind))
                 .map(|_| kind::point_locus_visual_style())
         } else {
             default_visual_style(&kind)
         };
-        let midpoint_host = if let Kind::Midpoint(a, b) = kind {
+        let midpoint_host = if explicit_midpoint_host.is_some() {
+            explicit_midpoint_host
+        } else if let Kind::Midpoint(a, b) = kind {
             self.objects
                 .iter()
                 .find(|object| {

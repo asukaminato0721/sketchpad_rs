@@ -133,7 +133,10 @@ impl Document {
             && object.kind.numeric_unit().is_none()
             && !matches!(
                 object.kind,
-                Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _) | Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                Kind::ValueTable(_, _)
+                    | Kind::ValueTablePair(_, _, _)
+                    | Kind::ValueEquation { .. }
+                    | Kind::CoordinateMeasurement { .. }
             )
         {
             return None;
@@ -171,7 +174,8 @@ impl Document {
         text_style_records::decode_font_payloads(
             payload,
             &self.original[family_record.data.clone()],
-        ).ok()
+        )
+        .ok()
     }
     pub fn text_font_families(&self) -> Option<Vec<String>> {
         let entries = records(&self.original).ok()?;

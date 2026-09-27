@@ -1,8 +1,32 @@
-use super::{Document, Kind, Point};
+use super::{Document, Kind, Object, Point};
 use crate::function_records::SimpleFunction;
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use std::collections::BTreeMap;
+
+pub(super) fn function_sources_valid(
+    expression: SimpleFunction,
+    sources: &[usize],
+    objects: &[Object],
+    page: usize,
+) -> bool {
+    use crate::table_records::CalculationSourceKind::{Function, Numeric};
+    let Ok(kinds) = expression.source_kinds(sources.len()) else {
+        return false;
+    };
+    sources.iter().zip(kinds).all(|(&id, role)| {
+        let Some(object) = id.checked_sub(1).and_then(|i| objects.get(i)) else {
+            return false;
+        };
+        !object.deleted
+            && object.page == page
+            && match role {
+                Some(Numeric) => object.kind.numeric_unit().is_some(),
+                Some(Function) => object.kind.is_function(),
+                None => object.kind.numeric_unit().is_some() || object.kind.is_function(),
+            }
+    })
+}
 
 impl Document {
     pub fn add_function_definition(&mut self, expression: SimpleFunction) -> Result<usize, String> {
@@ -10,16 +34,16 @@ impl Document {
     }
     pub(super) fn function_expression(&self, id: usize) -> Option<SimpleFunction> {
         match self.objects.get(id.checked_sub(1)?)?.kind {
-            Kind::FunctionDefinition(expression) | Kind::DerivativeFunction(_, expression) => {
-                Some(expression)
-            }
+            Kind::FunctionDefinition(expression)
+            | Kind::ReferencedFunction(_, expression)
+            | Kind::DerivativeFunction(_, expression) => Some(expression),
             _ => None,
         }
     }
     pub(super) fn function_symbol(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         match object.kind {
-            Kind::FunctionDefinition(_) => Some(
+            Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) => Some(
                 object
                     .function_name
                     .as_deref()
@@ -33,26 +57,91 @@ impl Document {
             _ => None,
         }
     }
+    pub fn function_sources(&self, id: usize) -> Option<&[usize]> {
+        match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::ReferencedFunction(sources, _) => Some(sources),
+            Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _) => Some(&[]),
+            _ => None,
+        }
+    }
     pub fn function_value(&self, id: usize, argument: f64) -> Option<f64> {
-        if !argument.is_finite() || self.objects.get(id.checked_sub(1)?)?.deleted { return None; }
-        let value = self.function_expression(id)?.evaluate_with_angle_unit(argument, self.angle_unit_radians);
+        if let Some(original) = self.frozen_evaluation_document(id) {
+            return original.function_value(id, argument);
+        }
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if !argument.is_finite() || object.deleted {
+            return None;
+        }
+        let sources = self.function_sources(id)?;
+        let parent = |index: usize| {
+            let source = *sources.get(index)?;
+            let parent = self.objects.get(source.checked_sub(1)?)?;
+            (source < id && !parent.deleted && parent.page == object.page).then_some(source)
+        };
+        let value = self.function_expression(id)?.evaluate_with_sources(
+            argument,
+            self.angle_unit_radians,
+            &|index| {
+                let source = parent(index)?;
+                let value = self.numeric_value(source)?;
+                Some(
+                    if self.angle_unit_radians
+                        && self.objects[source - 1].kind.numeric_unit()
+                            == Some(crate::table_records::NumericUnit::Degrees)
+                    {
+                        value.to_radians()
+                    } else {
+                        value
+                    },
+                )
+            },
+            &|index, x| self.function_value(parent(index)?, x),
+        );
         value.is_finite().then_some(value)
     }
-    pub(super) fn function_value_with_unit(&self, id: usize, argument: f64, unit: crate::table_records::NumericUnit) -> Option<f64> {
-        let argument = if unit == crate::table_records::NumericUnit::Degrees && self.angle_unit_radians {
-            argument.to_radians()
-        } else { argument };
+    fn function_may_have_poles(&self, id: usize) -> bool {
+        self.function_expression(id)
+            .is_some_and(|expression| expression.may_have_poles())
+            || self.function_sources(id).is_some_and(|sources| {
+                sources.iter().any(|&source| {
+                    source < id
+                        && self
+                            .objects
+                            .get(source.saturating_sub(1))
+                            .is_some_and(|o| o.kind.is_function())
+                        && self.function_may_have_poles(source)
+                })
+            })
+    }
+    pub(super) fn function_value_with_unit(
+        &self,
+        id: usize,
+        argument: f64,
+        unit: crate::table_records::NumericUnit,
+    ) -> Option<f64> {
+        let argument =
+            if unit == crate::table_records::NumericUnit::Degrees && self.angle_unit_radians {
+                argument.to_radians()
+            } else {
+                argument
+            };
         self.function_value(id, argument)
     }
     pub fn function_display_text(&self, id: usize) -> Option<String> {
         let expression = self.function_expression(id)?;
         let symbol = self.function_symbol(id)?;
-        Some(
-            expression
-                .display()
-                .replacen("f(x)", &format!("{symbol}(x)"), 1),
-        )
+        let text = if let Kind::ReferencedFunction(sources, _) = &self.objects[id - 1].kind {
+            let names = sources
+                .iter()
+                .map(|&source| self.calculation_source_name(source))
+                .collect::<Option<Vec<_>>>()?;
+            expression.display_for_sources(&names.iter().map(String::as_str).collect::<Vec<_>>())
+        } else {
+            expression.display()
+        };
+        Some(text.replacen("f(x)", &format!("{symbol}(x)"), 1))
     }
+
     pub fn add_derivative_function(&mut self, source: usize) -> Result<usize, String> {
         self.add_derivative_function_with_angle_unit(source, self.angle_unit_radians)
     }
@@ -89,6 +178,7 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot add a function to this sketch".into());
         }
+        expression.source_kinds(0)?;
         self.checkpoint();
         if expression.uses_trigonometry() {
             self.angle_unit_radians = radians;
@@ -122,11 +212,18 @@ impl Document {
         if object.id != definition
             || object.page != self.active_page
             || object.deleted
-            || !matches!(object.kind, Kind::FunctionDefinition(_))
+            || !matches!(
+                object.kind,
+                Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _)
+            )
         {
             return Err("Select one function definition".into());
         }
-        if object.kind == Kind::FunctionDefinition(expression)
+        let sources = self.function_sources(definition).unwrap().to_vec();
+        if !function_sources_valid(expression, &sources, &self.objects, object.page) {
+            return Err("Invalid function sources".into());
+        }
+        if self.function_expression(definition) == Some(expression)
             && (!expression.uses_trigonometry() || self.angle_unit_radians == radians)
         {
             return Ok(());
@@ -141,7 +238,11 @@ impl Document {
             }
         }
         self.checkpoint();
-        self.objects[definition - 1].kind = Kind::FunctionDefinition(expression);
+        self.objects[definition - 1].kind = if sources.is_empty() {
+            Kind::FunctionDefinition(expression)
+        } else {
+            Kind::ReferencedFunction(sources, expression)
+        };
         for (id, expression) in updates {
             if id != definition
                 && let Kind::DerivativeFunction(source, _) = self.objects[id - 1].kind
@@ -170,6 +271,7 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot plot a function in this sketch".into());
         }
+        expression.source_kinds(0)?;
         let frame = match self.active_coordinate_system() {
             Some(id) => id,
             None => self.add_default_coordinate_system(origin)?,
@@ -200,7 +302,9 @@ impl Document {
                     && !object.deleted
                     && matches!(
                         object.kind,
-                        Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                        Kind::FunctionDefinition(_)
+                            | Kind::ReferencedFunction(_, _)
+                            | Kind::DerivativeFunction(_, _)
                     )
             })
         {
@@ -223,13 +327,17 @@ impl Document {
     /// degrees here while retaining native radians in their stored descriptor.
     pub fn plot_range(&self, plot: usize) -> Option<(f64, f64, u32)> {
         let object = self.objects.get(plot.checked_sub(1)?)?;
-        if object.deleted { return None; }
+        if object.deleted {
+            return None;
+        }
         match &object.kind {
             Kind::FunctionPlot(_, _, min, max, samples)
             | Kind::ParametricPlot(_, _, _, min, max, samples, _) => Some((*min, *max, *samples)),
             Kind::ParameterLocus(refs, min, max, samples) => {
                 let driver = *refs.get(1)?;
-                let Kind::Parameter(group) = &self.objects.get(driver.checked_sub(1)?)?.kind else { return None; };
+                let Kind::Parameter(group) = &self.objects.get(driver.checked_sub(1)?)?.kind else {
+                    return None;
+                };
                 let scale = group.native_unit_scale();
                 Some((*min / scale, *max / scale, *samples))
             }
@@ -290,16 +398,13 @@ impl Document {
         else {
             return None;
         };
-        let expression = self.function_expression(definition)?;
+        self.function_expression(definition)?;
         let frame = self.graph_frame(frame)?;
         let count = count.min(samples as usize).clamp(2, 4096);
         (0..count)
             .map(|i| {
                 let x = min + (max - min) * (i as f64 / (count - 1) as f64);
-                let p = frame.world(
-                    x,
-                    expression.evaluate_with_angle_unit(x, self.angle_unit_radians),
-                )?;
+                let p = frame.world(x, self.function_value(definition, x).unwrap_or(f64::NAN))?;
                 Some(Point { x: p.x, y: p.y })
             })
             .collect()
@@ -310,15 +415,12 @@ impl Document {
         else {
             return None;
         };
-        let expression = self.function_expression(definition)?;
+        self.function_expression(definition)?;
         let frame = self.graph_frame(frame)?;
         let count = count.min(samples as usize).clamp(2, 4096);
         let sample = |index: usize| {
             let x = min + (max - min) * (index as f64 / (count - 1) as f64);
-            (
-                x,
-                expression.evaluate_with_angle_unit(x, self.angle_unit_radians),
-            )
+            (x, self.function_value(definition, x).unwrap_or(f64::NAN))
         };
         let mut segments = Vec::with_capacity(count - 1);
         let mut left = sample(0);
@@ -333,10 +435,10 @@ impl Document {
             let low = y0.min(y1);
             let high = y0.max(y1);
             let tolerance = 1e-3 * high.abs().max(low.abs()).max(1.0);
-            let crosses_gap = expression.may_have_poles()
+            let crosses_gap = self.function_may_have_poles(definition)
                 && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
                     let x = x0 + (x1 - x0) * fraction;
-                    let y = expression.evaluate_with_angle_unit(x, self.angle_unit_radians);
+                    let y = self.function_value(definition, x).unwrap_or(f64::NAN);
                     !y.is_finite() || y < low - tolerance || y > high + tolerance
                 });
             if crosses_gap {
@@ -370,7 +472,9 @@ impl Document {
                         && !object.deleted
                         && matches!(
                             object.kind,
-                            Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                            Kind::FunctionDefinition(_)
+                                | Kind::ReferencedFunction(_, _)
+                                | Kind::DerivativeFunction(_, _)
                         )
                 })
             {
@@ -406,12 +510,12 @@ impl Document {
         else {
             return None;
         };
-        let x_function = self.function_expression(x_id)?;
-        let y_function = self.function_expression(y_id)?;
+        self.function_expression(x_id)?;
+        self.function_expression(y_id)?;
         let frame = self.graph_frame(frame_id)?;
         let sample = |t: f64| {
-            let x = x_function.evaluate_with_angle_unit(t, self.angle_unit_radians);
-            let y = y_function.evaluate_with_angle_unit(t, self.angle_unit_radians);
+            let x = self.function_value(x_id, t).unwrap_or(f64::NAN);
+            let y = self.function_value(y_id, t).unwrap_or(f64::NAN);
             match mode {
                 PlotPointsMode::Cartesian => (x, y),
                 PlotPointsMode::Polar => (x * y.cos(), x * y.sin()),
@@ -433,7 +537,8 @@ impl Document {
                     .into_iter()
                     .map(f64::abs)
                     .fold(1.0, f64::max);
-            let crosses_gap = (x_function.may_have_poles() || y_function.may_have_poles())
+            let crosses_gap = (self.function_may_have_poles(x_id)
+                || self.function_may_have_poles(y_id))
                 && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
                     let (x, y) = sample(t0 + (t1 - t0) * fraction);
                     !x.is_finite()
@@ -451,5 +556,83 @@ impl Document {
             }
         }
         Some(segments)
+    }
+}
+
+impl Document {
+    pub fn add_referenced_function_definition(
+        &mut self,
+        sources: &[usize],
+        expression: SimpleFunction,
+    ) -> Result<usize, String> {
+        self.add_referenced_function_definition_with_angle_unit(sources, expression, true)
+    }
+    fn validate_new_function_sources(
+        &self,
+        sources: &[usize],
+        expression: SimpleFunction,
+    ) -> Result<(), String> {
+        if self.partial_view || self.page_count != 1 || !self.safe_structure {
+            return Err("Cannot add a function in this sketch safely".into());
+        }
+        if sources.is_empty()
+            || !function_sources_valid(expression, sources, &self.objects, self.active_page)
+        {
+            return Err("Select valid numeric or function sources".into());
+        }
+        crate::function_records::encode_referenced_definition_group(sources, expression)?;
+        Ok(())
+    }
+    pub fn add_referenced_function_definition_with_angle_unit(
+        &mut self,
+        sources: &[usize],
+        expression: SimpleFunction,
+        radians: bool,
+    ) -> Result<usize, String> {
+        self.validate_new_function_sources(sources, expression)?;
+        self.checkpoint();
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
+        Ok(self.append_object(Kind::ReferencedFunction(sources.to_vec(), expression)))
+    }
+    pub fn plot_new_referenced_function(
+        &mut self,
+        sources: &[usize],
+        expression: SimpleFunction,
+        origin: Point,
+    ) -> Result<usize, String> {
+        self.plot_new_referenced_function_with_angle_unit(sources, expression, origin, true)
+    }
+    pub fn plot_new_referenced_function_with_angle_unit(
+        &mut self,
+        sources: &[usize],
+        expression: SimpleFunction,
+        origin: Point,
+        radians: bool,
+    ) -> Result<usize, String> {
+        self.validate_new_function_sources(sources, expression)?;
+        if !origin.x.is_finite() || !origin.y.is_finite() {
+            return Err("Plot origin must be finite".into());
+        }
+        let frame = match self.active_coordinate_system() {
+            Some(frame) => {
+                self.checkpoint();
+                frame
+            }
+            // The frame constructor checkpoints the state before the entire command.
+            None => self.add_default_coordinate_system(origin)?,
+        };
+        if expression.uses_trigonometry() {
+            self.angle_unit_radians = radians;
+        }
+        let definition = self.append_object(Kind::ReferencedFunction(sources.to_vec(), expression));
+        Ok(self.append_object(Kind::FunctionPlot(
+            definition,
+            frame,
+            -5.265208333333335,
+            5.265208333333335,
+            750,
+        )))
     }
 }

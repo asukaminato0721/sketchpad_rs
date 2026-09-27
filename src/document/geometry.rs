@@ -1,6 +1,9 @@
+use super::kind::{
+    is_arc_kind, is_point_kind, is_straight_kind, is_transformed_plot_path_kind,
+    is_transformed_plot_ray_kind, plot_path_accepts,
+};
 use super::transform_evaluator::TransformGeometry;
 use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
-use super::kind::{is_arc_kind, is_point_kind, is_straight_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind, plot_path_accepts};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
@@ -138,7 +141,9 @@ fn line_circle_intersection(
         LineMode::Ray => t >= -1e-10,
         LineMode::Line => true,
     };
-    if !contains { return None; }
+    if !contains {
+        return None;
+    }
     let result = Point {
         x: a.x + dx * t,
         y: a.y + dy * t,
@@ -174,7 +179,7 @@ fn circle_circle_intersection(
         x: a.x + along * ux,
         y: a.y + along * uy,
     };
-    let mut results = [
+    let results = [
         Point {
             x: base.x - height * uy,
             y: base.y + height * ux,
@@ -184,7 +189,6 @@ fn circle_circle_intersection(
             y: base.y - height * ux,
         },
     ];
-    results.sort_by(|a, b| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)));
     results
         .get(variant)
         .copied()
@@ -230,48 +234,97 @@ fn three_point_arc_geometry(
 impl Document {
     /// Native code 95/123 retain negative ray values as undefined points.
     pub(super) fn undefined_transformed_ray_plot(&self, path: usize, value: f64) -> bool {
-        value.is_finite() && value < 0.0
-            && self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && is_transformed_plot_ray_kind(&host.kind))
-            && self.line_points(path).is_some_and(|(start, end, _)| start != end)
+        value.is_finite()
+            && value < 0.0
+            && self
+                .objects
+                .get(path.saturating_sub(1))
+                .is_some_and(|host| !host.deleted && is_transformed_plot_ray_kind(&host.kind))
+            && self
+                .line_points(path)
+                .is_some_and(|(start, end, _)| start != end)
     }
 
     pub(super) fn plot_arc_host_available(&self, path: usize) -> bool {
-        let Some(host) = path.checked_sub(1).and_then(|index| self.objects.get(index)) else {
+        if let Some(original) = self.frozen_evaluation_document(path) {
+            return original.plot_arc_host_available(path);
+        }
+        let Some(host) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+        else {
             return false;
         };
-        if host.deleted { return false; }
-        fn dependencies_available(document: &Document, id: usize,
-            page: usize, visiting: &mut BTreeSet<usize>) -> bool {
-            let Some(object) = id.checked_sub(1).and_then(|index| document.objects.get(index)) else {
+        if host.deleted {
+            return false;
+        }
+        fn dependencies_available(
+            document: &Document,
+            id: usize,
+            page: usize,
+            visiting: &mut BTreeSet<usize>,
+        ) -> bool {
+            let Some(object) = id
+                .checked_sub(1)
+                .and_then(|index| document.objects.get(index))
+            else {
                 return false;
             };
-            if object.deleted || object.page != page
-                || matches!(object.kind, Kind::Unsupported(_)) || !visiting.insert(id) {
+            if object.deleted
+                || object.page != page
+                || matches!(object.kind, Kind::Unsupported(_))
+                || !visiting.insert(id)
+            {
                 return false;
             }
-            let available = object.kind.dependencies().into_iter()
+            let available = object
+                .kind
+                .dependencies()
+                .into_iter()
                 .all(|parent| dependencies_available(document, parent, page, visiting));
             visiting.remove(&id);
             available
         }
-        if !host.kind.dependencies().into_iter().all(|id| {
-            dependencies_available(self, id, host.page, &mut BTreeSet::new())
-        }) { return false; }
+        if !host
+            .kind
+            .dependencies()
+            .into_iter()
+            .all(|id| dependencies_available(self, id, host.page, &mut BTreeSet::new()))
+        {
+            return false;
+        }
         let point_available = |id: usize| {
-            id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|point| {
-                id < path && !point.deleted && point.page == host.page
-                    && is_point_kind(&point.kind)
-                    && self.position(id).is_some_and(|position| position.x.is_finite() && position.y.is_finite())
-            })
+            id.checked_sub(1)
+                .and_then(|index| self.objects.get(index))
+                .is_some_and(|point| {
+                    id < path
+                        && !point.deleted
+                        && point.page == host.page
+                        && is_point_kind(&point.kind)
+                        && self.position(id).is_some_and(|position| {
+                            position.x.is_finite() && position.y.is_finite()
+                        })
+                })
         };
         match host.kind {
-            Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => [a, b, c].into_iter().all(point_available),
+            Kind::Transformed(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
+                self.plot_arc_host_available(definition.source()),
+            Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => {
+                [a, b, c].into_iter().all(point_available)
+            }
             Kind::ArcOnCircle(circle, start, end) => {
-                self.objects.get(circle.saturating_sub(1)).is_some_and(|object| {
-                    circle < path && !object.deleted && object.page == host.page && object.kind.is_circle()
-                }) && self.circle_points(circle).is_some()
+                self.objects
+                    .get(circle.saturating_sub(1))
+                    .is_some_and(|object| {
+                        circle < path
+                            && !object.deleted
+                            && object.page == host.page
+                            && object.kind.is_circle()
+                    })
+                    && self.circle_points(circle).is_some()
                     && [start, end].into_iter().all(|id| {
-                        point_available(id) && matches!(self.objects[id - 1].kind,
+                        point_available(id)
+                            && matches!(self.objects[id - 1].kind,
                             Kind::PointOnCircle(source, _, _) if source == circle)
                     })
             }
@@ -282,42 +335,79 @@ impl Document {
     /// Native three-point arcs with three distinct collinear positions form a
     /// segment only when the middle vertex is strictly between the endpoints.
     pub fn linear_three_point_arc(&self, path: usize) -> Option<(Point, Point)> {
+        if let Some(original) = self.frozen_evaluation_document(path) {
+            return original.linear_three_point_arc(path);
+        }
+        if self.objects.get(path.checked_sub(1)?)?.kind.transform_definition()
+            .is_some_and(|definition| definition.element() == super::transform_model::ElementType::Arc) {
+            return match self.evaluate_transform(path).ok()? {
+                TransformGeometry::Straight { start, end, mode: LineMode::Segment } => Some((start, end)),
+                _ => None,
+            };
+        }
         let Kind::ThreePointArc(a, b, c) = self.objects.get(path.checked_sub(1)?)?.kind else {
             return None;
         };
-        if !self.plot_arc_host_available(path) { return None; }
+        if !self.plot_arc_host_available(path) {
+            return None;
+        }
         let (a, b, c) = (self.position(a)?, self.position(b)?, self.position(c)?);
         let (dx, dy) = (c.x - a.x, c.y - a.y);
         let determinant = (b.x - a.x) * dy - (b.y - a.y) * dx;
         let length_squared = dx * dx + dy * dy;
         let projection = (b.x - a.x) * dx + (b.y - a.y) * dy;
-        (determinant == 0.0 && length_squared.is_finite() && length_squared > 0.0
-            && projection > 0.0 && projection < length_squared).then_some((a, c))
+        (determinant == 0.0
+            && length_squared.is_finite()
+            && length_squared > 0.0
+            && projection > 0.0
+            && projection < length_squared)
+            .then_some((a, c))
     }
 
     pub(super) fn undefined_arc_plot(&self, path: usize, value: f64) -> bool {
-        if !value.is_finite() || !self.plot_arc_host_available(path) { return false; }
-        if !(0.0..=1.0).contains(&value) { return true; }
+        if let Some(original) = self.frozen_evaluation_document(path) {
+            return original.undefined_arc_plot(path, value);
+        }
+        if !value.is_finite() || !self.plot_arc_host_available(path) {
+            return false;
+        }
+        if !(0.0..=1.0).contains(&value) {
+            return true;
+        }
         match self.objects[path - 1].kind {
             Kind::ThreePointArc(a, b, c) => {
-                let (a, b, c) = (self.position(a).unwrap(), self.position(b).unwrap(), self.position(c).unwrap());
-                if a == b || b == c || a == c { return true; }
+                let (a, b, c) = (
+                    self.position(a).unwrap(),
+                    self.position(b).unwrap(),
+                    self.position(c).unwrap(),
+                );
+                if a == b || b == c || a == c {
+                    return true;
+                }
                 let (dx, dy) = (c.x - a.x, c.y - a.y);
                 let determinant = (b.x - a.x) * dy - (b.y - a.y) * dx;
                 let length_squared = dx * dx + dy * dy;
                 let projection = (b.x - a.x) * dx + (b.y - a.y) * dy;
-                determinant == 0.0 && length_squared.is_finite() && length_squared > 0.0 && projection.is_finite()
+                determinant == 0.0
+                    && length_squared.is_finite()
+                    && length_squared > 0.0
+                    && projection.is_finite()
                     && (projection <= 0.0 || projection >= length_squared)
             }
             Kind::ArcOnCircle(_, start, end) => self.position(start) == self.position(end),
             Kind::CenterArc(..) => self.arc_geometry(path).is_none(),
+            Kind::Transformed(_) if self.objects[path - 1].kind.is_arc() =>
+                self.arc_geometry(path).is_none() && self.linear_three_point_arc(path).is_none(),
             _ => false,
         }
     }
 
     pub(super) fn plotted_arc_position(&self, path: usize, value: f64) -> Option<Point> {
-        if !value.is_finite() || !(0.0..=1.0).contains(&value)
-            || !self.plot_arc_host_available(path) || self.undefined_arc_plot(path, value) {
+        if !value.is_finite()
+            || !(0.0..=1.0).contains(&value)
+            || !self.plot_arc_host_available(path)
+            || self.undefined_arc_plot(path, value)
+        {
             return None;
         }
         if let Some((start, end)) = self.linear_three_point_arc(path) {
@@ -327,7 +417,9 @@ impl Document {
             });
         }
         let geometry = self.arc_geometry(path)?;
-        if geometry.3 == 0.0 { return None; }
+        if geometry.3 == 0.0 {
+            return None;
+        }
         let point = Self::sample_arc(geometry, value);
         (point.x.is_finite() && point.y.is_finite()).then_some(point)
     }
@@ -337,17 +429,30 @@ impl Document {
     }
 
     pub(super) fn undefined_three_point_arc(&self, path: usize) -> bool {
-        self.objects.get(path.saturating_sub(1)).is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
+        self.objects
+            .get(path.saturating_sub(1))
+            .is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
             && self.undefined_arc_plot(path, 0.5)
     }
 
     pub(super) fn undefined_center_arc(&self, path: usize) -> bool {
-        self.objects.get(path.saturating_sub(1)).is_some_and(|host| matches!(host.kind, Kind::CenterArc(..)))
+        self.objects
+            .get(path.saturating_sub(1))
+            .is_some_and(|host| matches!(host.kind, Kind::CenterArc(..)))
+            && self.undefined_arc_plot(path, 0.5)
+    }
+
+    pub(super) fn undefined_transformed_arc(&self, path: usize) -> bool {
+        self.objects.get(path.saturating_sub(1)).is_some_and(|host|
+            host.kind.is_arc() && host.kind.transform_definition().is_some())
             && self.undefined_arc_plot(path, 0.5)
     }
 
     pub fn position(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
+            if let Some(value) = d.evaluation_point(id) {
+                return value;
+            }
             fn on_path(
                 d: &Document,
                 path: usize,
@@ -363,7 +468,10 @@ impl Document {
                 }
                 if is_transformed_plot_path_kind(kind) {
                     let (start, end, _) = d.line_points(path)?;
-                    let point = Point { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t };
+                    let point = Point {
+                        x: start.x + (end.x - start.x) * t,
+                        y: start.y + (end.y - start.y) * t,
+                    };
                     return (point.x.is_finite() && point.y.is_finite()).then_some(point);
                 }
                 if kind.is_circle() {
@@ -393,8 +501,12 @@ impl Document {
                     | Kind::Ray(a, b) => (*a, *b),
                     _ => return None,
                 };
-                let start = go(d, start, seen)?;
-                let end = go(d, end, seen)?;
+                let (start, end) = if d.evaluation_context.is_some() {
+                    let (start, end, _) = d.line_points(path)?;
+                    (start, end)
+                } else {
+                    (go(d, start, seen)?, go(d, end, seen)?)
+                };
                 let point = Point {
                     x: start.x + (end.x - start.x) * t,
                     y: start.y + (end.y - start.y) * t,
@@ -410,7 +522,8 @@ impl Document {
             }
             if object.kind.transform_definition().is_some() {
                 let point = match d.evaluate_transform(id).ok()? {
-                    TransformGeometry::Point(point) => Some(point), _ => None,
+                    TransformGeometry::Point(point) => Some(point),
+                    _ => None,
                 };
                 seen.remove(&id);
                 return point;
@@ -425,12 +538,29 @@ impl Document {
                     })
                 }
                 Kind::GraphVerticalUnit(horizontal_unit, step) => {
-                    let Kind::GraphHorizontalUnit(origin, _) =
+                    let Kind::GraphHorizontalUnit(origin, horizontal_step) =
                         d.objects.get(horizontal_unit.checked_sub(1)?)?.kind
                     else {
                         return None;
                     };
-                    let origin = go(d, origin, seen)?;
+                    let origin = if d.evaluation_context.is_some() {
+                        let unit = go(d, *horizontal_unit, seen)?;
+                        Point {
+                            x: unit.x - horizontal_step,
+                            y: unit.y,
+                        }
+                    } else {
+                        go(d, origin, seen)?
+                    };
+                    let form = d
+                        .coordinate_system_for_object(id)
+                        .and_then(|frame| d.frame_styles.get(&frame).map(|style| style.0))
+                        .unwrap_or(d.grid_form[object.page]);
+                    let step = if form == crate::graph::GridForm::Rectangular {
+                        *step
+                    } else {
+                        horizontal_step
+                    };
                     Some(Point {
                         x: origin.x,
                         y: origin.y - step,
@@ -442,9 +572,16 @@ impl Document {
                     else {
                         return None;
                     };
-                    let origin = go(d, origin, seen)?;
+                    let (origin, axis_length) = if d.evaluation_context.is_some() {
+                        let (origin, unit, _) = d.line_points(*x_axis)?;
+                        (origin, Some(origin.distance(unit)))
+                    } else {
+                        (go(d, origin, seen)?, None)
+                    };
                     let length = if *independent {
                         *step
+                    } else if let Some(length) = axis_length {
+                        length
                     } else {
                         d.defining_distance_pixels(distance)?
                     };
@@ -459,7 +596,7 @@ impl Document {
                     } else {
                         on_path(d, *path, *t, seen)
                     }
-                },
+                }
                 Kind::PathValuePoint(source, path) => {
                     let value = d.numeric_value(*source)?;
                     if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
@@ -473,9 +610,12 @@ impl Document {
                     let x = d.numeric_value(*x)?;
                     let y = d.numeric_value(*y)?;
                     let point = frame.world(x, y)?;
-                    Some(Point { x: point.x, y: point.y })
+                    Some(Point {
+                        x: point.x,
+                        y: point.y,
+                    })
                 }
-                Kind::PlottedPoint(_, frame, mode, stored) => {
+                Kind::PlottedPoint(frame, mode, stored) => {
                     let frame = d.graph_frame(*frame)?;
                     let [x, y] = match mode {
                         PlotPointsMode::Cartesian => *stored,
@@ -508,8 +648,15 @@ impl Document {
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
                 Kind::Midpoint(a, b) => {
-                    let a = go(d, *a, seen)?;
-                    let b = go(d, *b, seen)?;
+                    let (a, b) = if let Some(host) = object.midpoint_host {
+                        let (a, b, mode) = d.line_points(host)?;
+                        if mode != LineMode::Segment {
+                            return None;
+                        }
+                        (a, b)
+                    } else {
+                        (go(d, *a, seen)?, go(d, *b, seen)?)
+                    };
                     Some(Point {
                         x: (a.x + b.x) / 2.,
                         y: (a.y + b.y) / 2.,
@@ -541,13 +688,17 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
+        if let Some(value) = self.evaluation_polygon(id) {
+            return value;
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
             return None;
         }
         if object.kind.transform_definition().is_some() {
             return match self.evaluate_transform(id).ok()? {
-                TransformGeometry::Polygon(vertices) => Some(vertices), _ => None,
+                TransformGeometry::Polygon(vertices) => Some(vertices),
+                _ => None,
             };
         }
         match &object.kind {
@@ -561,26 +712,53 @@ impl Document {
     pub(super) fn straight_transform_has_suppressed_ancestor(&self, mut id: usize) -> bool {
         let mut seen = BTreeSet::new();
         while seen.insert(id) {
-            let Some(definition) = self.objects.get(id.saturating_sub(1))
-                .and_then(|object| object.kind.transform_definition()) else { return false; };
+            let Some(definition) = self
+                .objects
+                .get(id.saturating_sub(1))
+                .and_then(|object| object.kind.transform_definition())
+            else {
+                return false;
+            };
             if !matches!(definition.element(), ElementType::Ray | ElementType::Line) {
                 return false;
             }
             match (definition.wire_flavor(), definition.transform()) {
-                (NativeTransformFlavor::FixedDilation, Transform::Dilate {
-                    ratio: NumericExpr::Literal { magnitude, .. }, ..
-                }) if *magnitude == 0. => return true,
-                (NativeTransformFlavor::NumericDilation, Transform::Dilate {
-                    ratio: NumericExpr::ObjectValue { id: ratio, .. }, ..
-                }) => {
-                    if self.unitless_numeric_value(*ratio).is_none_or(|value| value == 0.) { return true; }
+                (
+                    NativeTransformFlavor::FixedDilation,
+                    Transform::Dilate {
+                        ratio: NumericExpr::Literal { magnitude, .. },
+                        ..
+                    },
+                ) if *magnitude == 0. => return true,
+                (
+                    NativeTransformFlavor::NumericDilation,
+                    Transform::Dilate {
+                        ratio: NumericExpr::ObjectValue { id: ratio, .. },
+                        ..
+                    },
+                ) => {
+                    if self
+                        .unitless_numeric_value(*ratio)
+                        .is_none_or(|value| value == 0.)
+                    {
+                        return true;
+                    }
                 }
-                (NativeTransformFlavor::NumericRotation, Transform::Rotate {
-                    angle: NumericExpr::ObjectValue { id: angle, .. }, ..
-                }) => {
-                    if self.numeric_value(*angle).is_none() { return true; }
+                (
+                    NativeTransformFlavor::NumericRotation,
+                    Transform::Rotate {
+                        angle: NumericExpr::ObjectValue { id: angle, .. },
+                        ..
+                    },
+                ) => {
+                    if self.numeric_value(*angle).is_none() {
+                        return true;
+                    }
                 }
-                (NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation, _) => {}
+                (
+                    NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation,
+                    _,
+                ) => {}
                 _ => return false,
             }
             id = definition.source();
@@ -594,6 +772,9 @@ impl Document {
             id: usize,
             seen: &mut BTreeSet<usize>,
         ) -> Option<(Point, Point, LineMode)> {
+            if let Some(value) = d.evaluation_straight(id) {
+                return value;
+            }
             if !seen.insert(id) {
                 return None;
             }
@@ -602,8 +783,10 @@ impl Document {
                 return None;
             }
             if object.kind.transform_definition().is_some() {
+                if object.kind.is_arc() { return None; }
                 let straight = match d.evaluate_transform(id).ok()? {
-                    TransformGeometry::Straight { start, end, mode } => Some((start, end, mode)), _ => None,
+                    TransformGeometry::Straight { start, end, mode } => Some((start, end, mode)),
+                    _ => None,
                 };
                 seen.remove(&id);
                 return straight;
@@ -713,11 +896,17 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        if let Some(value) = self.evaluation_circle(id) {
+            return value;
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted { return None; }
+        if object.deleted {
+            return None;
+        }
         if object.kind.transform_definition().is_some() {
             return match self.evaluate_transform(id).ok()? {
-                TransformGeometry::Circle { center, radius } => Some((center, radius)), _ => None,
+                TransformGeometry::Circle { center, radius } => Some((center, radius)),
+                _ => None,
             };
         }
         let (center_id, radius) = match self.objects.get(id.checked_sub(1)?)?.kind {
@@ -728,11 +917,15 @@ impl Document {
                     center_position.distance(self.position(radius_point)?),
                 )
             }
-            Kind::CircleBySegment(center, segment) => {
-                let Kind::Segment(a, b) = self.objects.get(segment.checked_sub(1)?)?.kind else {
-                    return None;
+            Kind::CircleBySegment(center, radius_source) => {
+                let source = &self.objects.get(radius_source.checked_sub(1)?)?.kind;
+                let radius = if source.is_segment() {
+                    let (a, b, LineMode::Segment) = self.line_points(radius_source)? else { return None; };
+                    a.distance(b)
+                } else {
+                    self.distance_value_pixels(radius_source)?
                 };
-                (center, self.position(a)?.distance(self.position(b)?))
+                (center, radius)
             }
             _ => return None,
         };
@@ -740,11 +933,25 @@ impl Document {
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
     pub(super) fn arc_geometry(&self, id: usize) -> Option<(Point, f64, f64, f64, bool)> {
-        if self.objects.get(id.checked_sub(1)?).is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
-            && !self.plot_arc_host_available(id) {
+        if let Some(value) = self.evaluation_arc(id) {
+            return value;
+        }
+        if self
+            .objects
+            .get(id.checked_sub(1)?)
+            .is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
+            && !self.plot_arc_host_available(id)
+        {
             return None;
         }
         let geometry = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Transformed(_) if is_arc_kind(&self.objects[id - 1].kind) => {
+                match self.evaluate_transform(id).ok()? {
+                    TransformGeometry::Arc { center, radius, start, sweep, clockwise_y } =>
+                        (center, radius, start, sweep, clockwise_y),
+                    _ => return None,
+                }
+            }
             Kind::ThreePointArc(a, b, c) => {
                 let (center, radius, start, sweep) = three_point_arc_geometry(
                     self.position(a)?,
@@ -759,13 +966,19 @@ impl Document {
                 let end_point = self.position(end)?;
                 let radius = center.distance(start_point);
                 let end_radius = center.distance(end_point);
-                if !radius.is_finite() || radius <= 0. || !end_radius.is_finite() || end_radius <= 0. {
+                if !radius.is_finite()
+                    || radius <= 0.
+                    || !end_radius.is_finite()
+                    || end_radius <= 0.
+                {
                     return None;
                 }
                 let a = (center.y - start_point.y).atan2(start_point.x - center.x);
                 let b = (center.y - end_point.y).atan2(end_point.x - center.x);
                 let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
-                if !sweep.is_finite() || sweep == 0. { return None; }
+                if !sweep.is_finite() || sweep == 0. {
+                    return None;
+                }
                 (center, radius, a, sweep, true)
             }
             Kind::ArcOnCircle(circle, start, end) => {
@@ -787,8 +1000,10 @@ impl Document {
         }
         if let Some((start, end)) = self.linear_three_point_arc(id) {
             let t = t.clamp(0., 1.);
-            return Some(Point { x: start.x + (end.x - start.x) * t,
-                y: start.y + (end.y - start.y) * t });
+            return Some(Point {
+                x: start.x + (end.x - start.x) * t,
+                y: start.y + (end.y - start.y) * t,
+            });
         }
         Some(Self::sample_arc(self.arc_geometry(id)?, t))
     }
@@ -841,8 +1056,12 @@ impl Document {
         }
     }
     pub fn arc_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Point>> {
-        if self.objects.get(id.saturating_sub(1)).is_some_and(|object| matches!(object.kind, Kind::ArcOnCircle(..)))
-            && self.undefined_arc_plot(id, 0.5) {
+        if self
+            .objects
+            .get(id.saturating_sub(1))
+            .is_some_and(|object| matches!(object.kind, Kind::ArcOnCircle(..)))
+            && self.undefined_arc_plot(id, 0.5)
+        {
             return None;
         }
         if let Some((start, end)) = self.linear_three_point_arc(id) {
@@ -1059,7 +1278,7 @@ impl Document {
             ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),
-            Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => self
+            ref kind if kind.is_arc() => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
             _ => None,

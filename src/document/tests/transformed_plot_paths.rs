@@ -113,8 +113,8 @@ fn native_value_and_literal_points_use_affine_transformed_straights_and_undefine
 }
 
 #[test]
-fn transformed_straight_plot_creation_preserves_negative_values_and_rejects_invalid_inputs_atomically(
-) {
+fn transformed_straight_plot_creation_preserves_negative_values_and_rejects_invalid_inputs_atomically()
+ {
     for bytes in [
         include_bytes!("../../../tests/fixtures/fixed_rotation_ray_original.gsp").as_slice(),
         include_bytes!("../../../tests/fixtures/fixed_rotation_line_original.gsp").as_slice(),

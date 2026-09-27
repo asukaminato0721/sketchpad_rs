@@ -1,5 +1,5 @@
-use super::embedded_tools::{document_record_indices, document_records};
 use super::calculations::calculation_source_ids;
+use super::embedded_tools::{document_record_indices, document_records};
 use super::kind::is_point_kind;
 use super::records::{put_record, records};
 use super::{Document, Kind, Object};
@@ -44,7 +44,9 @@ impl Document {
             return Ok(out);
         }
         let rs = records(&out)?;
-        let styles: Vec<_> = document_records(&rs).filter(|record| record.kind == 0x04b3).collect();
+        let styles: Vec<_> = document_records(&rs)
+            .filter(|record| record.kind == 0x04b3)
+            .collect();
         if styles.iter().any(|record| {
             record.data.len() >= 4 && out[record.data.start + 2..record.data.start + 4] == [14, 0]
         }) {
@@ -110,7 +112,11 @@ impl Document {
         let mut current = None;
         for record in document_records(&rs) {
             if record.kind == 0x07d0 {
-                current = Some(objects.next().ok_or("Object group count mismatch in patch_measurement_precisions")?);
+                current = Some(
+                    objects
+                        .next()
+                        .ok_or("Object group count mismatch in patch_measurement_precisions")?,
+                );
             } else if record.kind == 0x0903 {
                 if let Some(object) = current {
                     // Unsupported groups retain their source records. Their
@@ -153,9 +159,12 @@ impl Document {
             return Ok(bytes);
         };
         if !self.objects.iter().any(|object| {
-            object.kind.transform_definition().is_some_and(|definition| {
-                definition.element() == super::transform_model::ElementType::Polygon
-            })
+            object
+                .kind
+                .transform_definition()
+                .is_some_and(|definition| {
+                    definition.element() == super::transform_model::ElementType::Polygon
+                })
         }) {
             return Ok(bytes);
         }
@@ -174,20 +183,28 @@ impl Document {
         style: &text_style_records::FontState,
     ) -> Result<u16, String> {
         let entries = records(&self.original)?;
-        let count = document_records(&entries).filter(|record| record.kind == 0x04b3).count();
+        let count = document_records(&entries)
+            .filter(|record| record.kind == 0x04b3)
+            .count();
         let mut known = (0..count)
             .map(|index| text_style_records::decode_font_state_at(&self.original, index).ok())
             .collect::<Vec<_>>();
         if !known.iter().any(Option::is_some) {
             return Err("No supported font style template".into());
         }
-        for pending in self.objects.iter().filter(|object| !object.deleted)
-            .filter_map(|object| object.text_style_override.as_ref()) {
+        for pending in self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .filter_map(|object| object.text_style_override.as_ref())
+        {
             if !known.iter().any(|entry| entry.as_ref() == Some(pending)) {
                 known.push(Some(pending.clone()));
             }
         }
-        let index = known.iter().position(|entry| entry.as_ref() == Some(style))
+        let index = known
+            .iter()
+            .position(|entry| entry.as_ref() == Some(style))
             .unwrap_or(known.len());
         u16::try_from(index).map_err(|_| "Too many text styles".into())
     }
@@ -214,7 +231,10 @@ impl Document {
                 && object.kind.numeric_unit().is_none()
                 && !matches!(
                     object.kind,
-                    Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _) | Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                    Kind::ValueTable(_, _)
+                        | Kind::ValueTablePair(_, _, _)
+                        | Kind::ValueEquation { .. }
+                        | Kind::CoordinateMeasurement { .. }
                 )
         }) {
             return Err("Object has no supported caption font style".into());
@@ -329,7 +349,9 @@ impl Document {
         let entries = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
         for record in document_records(&entries).filter(|r| r.kind == 0x07d0) {
-            let object = objects.next().ok_or("Object group count mismatch in patch_trace_flags")?;
+            let object = objects
+                .next()
+                .ok_or("Object group count mismatch in patch_trace_flags")?;
             if record.data.len() < 5 {
                 return Err("Short object header".into());
             }
@@ -341,23 +363,35 @@ impl Document {
         }
         Ok(bytes)
     }
-    pub(super) fn patch_mapped_iteration_image_levels(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    pub(super) fn patch_mapped_iteration_image_levels(
+        &self,
+        mut bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
         let mut current = None;
         for record in document_records(&rs) {
             if record.kind == 0x07d0 {
-                current = Some(objects.next().ok_or("Object group count mismatch in patch_mapped_iteration_image_levels")?);
+                current =
+                    Some(objects.next().ok_or(
+                        "Object group count mismatch in patch_mapped_iteration_image_levels",
+                    )?);
             } else if record.kind == 0x090a
                 && let Some(object) = current
                 && let Kind::MappedPointIteration { final_only, .. } = object.kind
             {
-                if record.data.len() != 24 { return Err("Invalid mapped iteration definition".into()); }
+                if record.data.len() != 24 {
+                    return Err("Invalid mapped iteration definition".into());
+                }
                 bytes[record.data.start + 4..record.data.start + 6]
                     .copy_from_slice(&u16::from(final_only).to_le_bytes());
             }
         }
-        if objects.next().is_some() { return Err("Object group count mismatch in patch_mapped_iteration_image_levels".into()); }
+        if objects.next().is_some() {
+            return Err(
+                "Object group count mismatch in patch_mapped_iteration_image_levels".into(),
+            );
+        }
         Ok(bytes)
     }
 
@@ -375,39 +409,26 @@ impl Document {
                 .ok_or("Object group count mismatch in patch_visual_styles")?;
             ordinal += 1;
             if object.kind.is_polygon() {
-                let payload = bytes.get_mut(record.data.clone())
+                let payload = bytes
+                    .get_mut(record.data.clone())
                     .filter(|payload| matches!(payload.len(), 16 | 28) && payload[6..8] == [4, 0])
                     .ok_or("Invalid polygon drawing-order header")?;
                 match (payload.len(), object.interior_order) {
                     (28, Some(order)) => payload[20..24].copy_from_slice(&order.to_le_bytes()),
-                    (16, None) => {},
+                    (16, None) => {}
                     _ => return Err("Polygon drawing order is unavailable in this header".into()),
                 }
             } else if let Some(order) = object.interior_order {
                 let payload = &bytes[record.data.clone()];
-                if payload.len() != 28 || payload[6..8] != [4, 0]
-                    || payload[20..24] != order.to_le_bytes() {
+                if payload.len() != 28
+                    || payload[6..8] != [4, 0]
+                    || payload[20..24] != order.to_le_bytes()
+                {
                     return Err("Cannot change drawing order of an unsupported interior".into());
                 }
             }
             if let Some(style) = object.visual_style {
-                let styled_binding = match object.kind {
-                    Kind::IterationBinding(source, parent) => {
-                        self.objects.get(parent - 1).is_some_and(|p| {
-                            matches!(
-                                p.kind,
-                                Kind::BranchingPolygonIteration { .. }
-                                    | Kind::MappedPointIteration { .. }
-                                    | Kind::CircleIteration(..)
-                            )
-                        }) && self
-                            .objects
-                            .get(source - 1)
-                            .is_some_and(|o| !is_point_kind(&o.kind)
-                                || self.objects.get(parent - 1).is_some_and(|p| matches!(p.kind, Kind::MappedPointIteration { .. })))
-                    }
-                    _ => false,
-                };
+                let styled_binding = matches!(object.kind, Kind::IterationBinding(..));
                 let result = if styled_binding {
                     style_records::set_iteration_binding_visual_style(
                         &mut bytes[record.data.clone()],
@@ -507,19 +528,27 @@ impl Document {
                 }
                 continue;
             }
-            if let Kind::FunctionDefinition(expression) | Kind::DerivativeFunction(_, expression) =
-                object.kind
+            if let Kind::FunctionDefinition(expression)
+            | Kind::ReferencedFunction(_, expression)
+            | Kind::DerivativeFunction(_, expression) = object.kind
             {
                 let record = group
                     .iter()
                     .find(|record| record.kind == 0x0907)
                     .ok_or("Missing saved function expression")?;
                 let original = &bytes[record.data.clone()];
-                if function_records::decode_simple_expression(original)? != expression {
+                let count = self
+                    .function_sources(object.id)
+                    .ok_or("Invalid function sources")?
+                    .len();
+                if function_records::decode_expression_with_sources(original, count)? != expression
+                {
                     edits.push((
                         record.start,
                         record.data.end + original.len() % 2,
-                        function_records::encode_expression_record(original, expression)?,
+                        function_records::encode_expression_record_with_sources(
+                            original, expression, count,
+                        )?,
                     ));
                 }
                 continue;
@@ -598,17 +627,33 @@ impl Document {
                         edits.push((old.start, old.data.end + old.data.len() % 2, replacement));
                     }
                 } else {
-                    let insertion = if matches!(
-                        object.kind,
-                        Kind::NumericCoordinatePoint(..) | Kind::PathValuePoint(..) | Kind::PathLiteralPoint(..) | Kind::PointOnArc(..)
-                    ) {
-                        group
-                            .iter()
-                            .find(|record| record.kind == 0x07d8)
-                            .map_or(record.start, |font| font.start)
-                    } else {
-                        group[0].data.end + group[0].data.len() % 2
-                    };
+                    let insertion =
+                        if object
+                            .kind
+                            .transform_definition()
+                            .is_some_and(|definition| {
+                                definition.element() == super::transform_model::ElementType::Point
+                            })
+                        {
+                            group
+                                .iter()
+                                .find(|item| matches!(item.kind, 0x07d8 | 0x232e))
+                                .map_or(record.start, |item| item.start)
+                        } else if matches!(
+                            object.kind,
+                            Kind::NumericCoordinatePoint(..)
+                                | Kind::PathValuePoint(..)
+                                | Kind::PathLiteralPoint(..)
+                                | Kind::PointOnArc(..)
+                                | Kind::CircleCircleIntersection(..)
+                        ) {
+                            group
+                                .iter()
+                                .find(|record| record.kind == 0x07d8)
+                                .map_or(record.start, |font| font.start)
+                        } else {
+                            group[0].data.end + group[0].data.len() % 2
+                        };
                     edits.push((
                         insertion,
                         insertion,
@@ -641,7 +686,8 @@ mod caption_font_namespace_tests {
 
     #[test]
     fn imported_numeric_caption_font_uses_drawing_table_and_preserves_tool_bytes() {
-        let original = include_bytes!("../../tests/fixtures/embedded_tool_scalar_created_native_verified.gsp");
+        let original =
+            include_bytes!("../../tests/fixtures/embedded_tool_scalar_created_native_verified.gsp");
         let mut document = Document::from_bytes(original, None).unwrap();
         let prototype = document.embedded_tool_document(0).unwrap();
         let style = prototype.text_font_state(2).unwrap();
@@ -651,17 +697,28 @@ mod caption_font_namespace_tests {
         assert_eq!(index, 1);
         document.objects[1].text_style_override = Some(style.clone());
         assert_eq!(document.imported_caption_font_index(&style).unwrap(), index);
-        let output = document.patch_text_font_overrides(original.to_vec()).unwrap();
-        assert_eq!(text_style_records::decode_font_state_at(&output, index as usize).unwrap(), style);
+        let output = document
+            .patch_text_font_overrides(original.to_vec())
+            .unwrap();
+        assert_eq!(
+            text_style_records::decode_font_state_at(&output, index as usize).unwrap(),
+            style
+        );
         assert!(text_style_records::decode_font_state_at(&output, 2).is_err());
         let tools = |bytes: &[u8]| {
             let entries = records(bytes).unwrap();
             let drawing = document_record_indices(&entries);
-            entries.iter().enumerate().filter(|(index, _)| !drawing.contains(index))
+            entries
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !drawing.contains(index))
                 .flat_map(|(index, record)| {
-                    let end = entries.get(index + 1).map_or(bytes.len(), |next| next.start);
+                    let end = entries
+                        .get(index + 1)
+                        .map_or(bytes.len(), |next| next.start);
                     bytes[record.start..end].to_vec()
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
         };
         assert_eq!(tools(original), tools(&output));
         let reopened = Document::from_bytes(&output, None).unwrap();

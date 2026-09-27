@@ -1,4 +1,4 @@
-use super::kind::{is_defining_distance_kind, is_point_kind};
+use super::kind::{is_coordinate_unit_kind, is_point_kind};
 use super::{Document, Kind, Point};
 use crate::graph::{CoordinateFrame, GraphPoint, GridForm};
 
@@ -181,7 +181,7 @@ impl Document {
                     id == 0
                         || object.deleted
                         || object.page != self.active_page
-                        || !is_defining_distance_kind(&object.kind)
+                        || !is_coordinate_unit_kind(&object.kind)
                 }) || self.defining_distance_pixels(id).is_none()
             })
         {
@@ -415,80 +415,105 @@ impl Document {
         Ok(())
     }
     pub fn graph_frame(&self, id: usize) -> Option<CoordinateFrame> {
+        if let Some(value) = self.evaluation_frame(id) {
+            return value;
+        }
         let Kind::CoordinateSystem(x_axis, y_axis) = self.objects.get(id.checked_sub(1)?)?.kind
         else {
             return None;
         };
-        let map = |p: Point| GraphPoint { x: p.x, y: p.y };
-        match (
-            self.objects.get(x_axis.checked_sub(1)?)?.kind.clone(),
-            self.objects.get(y_axis.checked_sub(1)?)?.kind.clone(),
+        let valid = match (
+            &self.objects.get(x_axis.checked_sub(1)?)?.kind,
+            &self.objects.get(y_axis.checked_sub(1)?)?.kind,
         ) {
-            (
-                Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001),
-                Kind::GraphAxis(y_origin, y_unit, 0),
-            ) if origin == y_origin => Some(CoordinateFrame {
-                origin: map(self.position(origin)?),
-                x_unit: map(self.position(x_unit)?),
-                y_unit: map(self.position(y_unit)?),
-            }),
-            (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) if circle == other => {
-                let (origin, radius) = self.circle_points(circle)?;
-                (radius.is_finite() && radius > 0.0).then_some(CoordinateFrame {
-                    origin: map(origin),
-                    x_unit: GraphPoint {
-                        x: origin.x + radius,
-                        y: origin.y,
-                    },
-                    y_unit: GraphPoint {
-                        x: origin.x,
-                        y: origin.y - radius,
-                    },
-                })
+            (Kind::GraphAxis(origin, _, 1 | 0x1_0001), Kind::GraphAxis(other, _, 0)) => {
+                origin == other
             }
-            (Kind::DistanceAxis(origin, first, 1), Kind::DistanceAxis(other, second, 0))
-                if origin == other =>
-            {
-                let origin = self.position(origin)?;
-                let x = self.defining_distance_pixels(first)?;
-                let y = self.defining_distance_pixels(second)?;
-                Some(CoordinateFrame {
-                    origin: map(origin),
-                    x_unit: GraphPoint {
-                        x: origin.x + x,
-                        y: origin.y,
-                    },
-                    y_unit: GraphPoint {
-                        x: origin.x,
-                        y: origin.y - y,
-                    },
-                })
+            (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) => circle == other,
+            (Kind::DistanceAxis(origin, _, 1), Kind::DistanceAxis(other, _, 0)) => origin == other,
+            (Kind::DistanceAxis(origin, _, 1), Kind::GraphAxis(other, unit, 0)) => {
+                origin == other
+                    && matches!(self.objects.get(unit.checked_sub(1)?)?.kind,
+                    Kind::DistanceVerticalUnit(host, _, _) if host == x_axis)
             }
-            (Kind::DistanceAxis(origin, _, 1), Kind::GraphAxis(other, unit, 0))
-                if origin == other
-                    && matches!(
-                        self.objects.get(unit.checked_sub(1)?)?.kind,
-                        Kind::DistanceVerticalUnit(host, _, _) if host == x_axis
-                    ) =>
-            {
-                let origin = self.position(origin)?;
-                let x = self.line_points(x_axis)?.1;
-                Some(CoordinateFrame {
-                    origin: map(origin),
-                    x_unit: map(x),
-                    y_unit: map(self.position(unit)?),
-                })
+            _ => false,
+        };
+        if !valid {
+            return None;
+        }
+        let (origin, x_unit, _) = self.line_points(x_axis)?;
+        let (_, y_unit, _) = self.line_points(y_axis)?;
+        let map = |p: Point| GraphPoint { x: p.x, y: p.y };
+        Some(CoordinateFrame {
+            origin: map(origin),
+            x_unit: map(x_unit),
+            y_unit: map(y_unit),
+        })
+    }
+
+    /// A stored distance frame remains valid when a live unit magnitude is
+    /// zero, negative or undefined. Native hides its grid and dependent plots.
+    pub(super) fn coordinate_geometry_undefined(&self, id: usize) -> bool {
+        let Some(object) = id.checked_sub(1).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if object.deleted {
+            return false;
+        }
+        let parent = |source: usize| {
+            source
+                .checked_sub(1)
+                .and_then(|i| self.objects.get(i))
+                .filter(|o| source < id && !o.deleted && o.page == object.page)
+        };
+        match object.kind {
+            Kind::DistanceAxis(origin, distance, 0 | 1) => {
+                parent(origin).is_some_and(|o| is_point_kind(&o.kind))
+                    && parent(distance).is_some_and(|o| is_coordinate_unit_kind(&o.kind))
+                    && self.defining_distance_pixels(distance).is_none()
             }
-            _ => None,
+            Kind::DistanceVerticalUnit(axis, step, false) => {
+                step.is_finite()
+                    && step > 0.
+                    && parent(axis).is_some_and(|o| matches!(o.kind, Kind::DistanceAxis(_, _, 1)))
+                    && self.coordinate_geometry_undefined(axis)
+            }
+            Kind::GraphAxis(origin, unit, 0) => {
+                parent(origin).is_some_and(|o| is_point_kind(&o.kind))
+                    && parent(unit).is_some_and(|o| match o.kind {
+                        Kind::DistanceVerticalUnit(axis, _, false) => {
+                            self.objects.get(axis.saturating_sub(1)).is_some_and(
+                                |o| matches!(o.kind, Kind::DistanceAxis(a, _, 1) if a == origin),
+                            ) && self.coordinate_geometry_undefined(unit)
+                        }
+                        _ => false,
+                    })
+            }
+            Kind::CoordinateSystem(x, y) => {
+                match (parent(x).map(|o| &o.kind), parent(y).map(|o| &o.kind)) {
+                    (Some(Kind::DistanceAxis(a, _, 1)), Some(Kind::DistanceAxis(b, _, 0))) if a == b =>
+                        self.coordinate_geometry_undefined(x) || self.coordinate_geometry_undefined(y),
+                    (Some(Kind::DistanceAxis(origin, _, 1)), Some(Kind::GraphAxis(other, unit, 0)))
+                        if origin == other && self.objects.get(unit.saturating_sub(1)).is_some_and(|o|
+                            matches!(o.kind, Kind::DistanceVerticalUnit(axis, _, false) if axis == x)) =>
+                        self.coordinate_geometry_undefined(x),
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
     pub(super) fn defining_distance_pixels(&self, id: usize) -> Option<f64> {
         let kind = &self.objects.get(id.checked_sub(1)?)?.kind;
-        let value = match *kind {
-            Kind::Segment(a, b) => self.position(a)?.distance(self.position(b)?),
-            Kind::SegmentLength(_) => self.segment_length_cm(id)? * 37.79527559055118,
-            Kind::PointDistance(_, _) => self.point_distance_cm(id)? * 37.79527559055118,
-            _ => return None,
+        let value = if kind.is_segment() {
+            let (start, end, _) = self.line_points(id)?;
+            start.distance(end)
+        } else if is_coordinate_unit_kind(kind) {
+            // Stored axes use the numeric magnitude as centimeters, including
+            // angular and higher dimensional sources; units do not rescale it.
+            self.numeric_value(id)? * 37.79527559055118
+        } else {
+            return None;
         };
         (value.is_finite() && value > 0.).then_some(value)
     }

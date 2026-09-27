@@ -333,43 +333,56 @@ impl Editor {
         }
         self.capture_traces();
         let mut tracks = std::mem::take(&mut self.movements);
+        let numeric_targets = tracks
+            .iter()
+            .filter_map(|track| {
+                let target = self.doc.movement_target_value(track.destination)?;
+                matches!(
+                    target,
+                    sketchpad_rs::document::MovementValue::Numeric { .. }
+                )
+                .then_some(((track.button, track.source), target))
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        tracks.reverse();
         tracks.retain(|track| {
-            let Some(current) = self.doc.position(track.source) else {
+            let Some(current) = self.doc.movement_source_value(track.source) else {
                 return false;
             };
             let Some(target) = track
                 .initial_destination
-                .or_else(|| self.doc.position(track.destination))
+                .or_else(|| numeric_targets.get(&(track.button, track.source)).copied())
+                .or_else(|| self.doc.movement_target_value(track.destination))
             else {
                 return false;
             };
-            let delta_x = target.x - current.x;
-            let delta_y = target.y - current.y;
-            let distance = delta_x.hypot(delta_y);
-            if !distance.is_finite() {
+            let Some(distance) = current.distance(target).filter(|d| d.is_finite()) else {
                 return false;
-            }
-            let pixels_per_second = match track.speed {
+            };
+            let rate = match track.speed {
                 MovementSpeed::Slow => 60.,
                 MovementSpeed::Medium => 150.,
                 MovementSpeed::Fast => 360.,
                 MovementSpeed::Instant => f64::INFINITY,
             };
-            let step = pixels_per_second * elapsed_seconds.clamp(0., 0.1) / f64::from(self.scale);
+            let units = match current {
+                sketchpad_rs::document::MovementValue::Point(_) => f64::from(self.scale),
+                sketchpad_rs::document::MovementValue::Numeric { .. } => 60.,
+            };
+            let step = rate * elapsed_seconds.clamp(0., 0.1) / units;
             let fraction = if distance <= step || distance < 1e-9 {
                 1.
             } else {
                 step / distance
             };
-            let moved = self.doc.move_point(
-                track.source,
-                Point {
-                    x: current.x + delta_x * fraction,
-                    y: current.y + delta_y * fraction,
-                },
-            );
-            moved && fraction < 1.
+            let Some(next) = current.interpolate(target, fraction) else {
+                return false;
+            };
+            let moved = self.doc.set_movement_value(track.source, next);
+            let progressed = self.doc.movement_source_value(track.source) != Some(current);
+            moved && progressed && fraction < 1.
         });
+        tracks.reverse();
         self.movements = tracks;
     }
     pub(super) fn stop_animation(&mut self) {

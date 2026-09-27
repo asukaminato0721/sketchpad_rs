@@ -200,3 +200,157 @@ fn page_two_movement_button_runs_and_saves() {
     assert_eq!(clicked.position(2), clicked.position(3));
     assert_eq!(clicked.position(1), Some(first_page));
 }
+
+#[test]
+fn multiple_movement_pairs_match_native_order_and_undo_together() {
+    for (follow, reversed, expected_x) in [
+        (false, false, 240.),
+        (true, false, 340.),
+        (true, true, 240.),
+    ] {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 140., y: 200. }));
+        let b = doc.add(Kind::Free(Point { x: 240., y: 240. }));
+        let c = doc.add(Kind::Free(Point { x: 340., y: 300. }));
+        let pairs = if reversed {
+            vec![(b, c), (a, b)]
+        } else {
+            vec![(a, b), (b, c)]
+        };
+        let button = doc
+            .add_movement_button_for_pairs(&pairs, MovementSpeed::Instant, follow)
+            .unwrap();
+        let before = doc.encode().unwrap();
+        let mut editor = Editor::new(doc);
+        editor.activate_movement_button(button);
+        assert_eq!(editor.doc.position(a).unwrap().x, expected_x);
+        assert_eq!(editor.doc.position(b), editor.doc.position(c));
+        let saved = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.position(a), editor.doc.position(a));
+        editor.doc.undo();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}
+
+#[test]
+fn constrained_movement_finishes_with_one_undo() {
+    let mut doc = Document::new();
+    let a = doc.add(Kind::Free(Point { x: 120., y: 200. }));
+    let b = doc.add(Kind::Free(Point { x: 320., y: 200. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let source = doc.add(Kind::PointOnSegment(segment, 0.25));
+    let target = doc.add(Kind::Free(Point { x: 280., y: 300. }));
+    let button = doc
+        .add_movement_button(source, target, MovementSpeed::Fast, false)
+        .unwrap();
+    let before = doc.encode().unwrap();
+    let mut editor = Editor::new(doc);
+    editor.scale = 1.;
+    editor.activate_movement_button(button);
+    for _ in 0..200 {
+        editor.tick_movement(0.1);
+    }
+    assert!(editor.movements.is_empty());
+    assert!((editor.doc.position(source).unwrap().x - 280.).abs() < 1e-7);
+    assert_eq!(editor.doc.position(source).unwrap().y, 200.);
+    assert!(
+        matches!(editor.doc.objects[source-1].kind, Kind::PointOnSegment(host, _) if host == segment)
+    );
+    editor.doc.undo();
+    assert_eq!(editor.doc.encode().unwrap(), before);
+}
+
+#[test]
+fn numeric_movement_snapshots_follow_targets_and_preserves_source_units() {
+    for reversed in [false, true] {
+        let mut doc = Document::new();
+        let a = doc.add_named_parameter("a", 1., (150, 160)).unwrap();
+        let b = doc.add_named_parameter("b", 3.25, (150, 200)).unwrap();
+        let c = doc
+            .add_calculation_expression("7.125 cm", (150, 240))
+            .unwrap();
+        let pairs = if reversed {
+            vec![(b, c), (a, b)]
+        } else {
+            vec![(a, b), (b, c)]
+        };
+        let button = doc
+            .add_movement_button_for_pairs(&pairs, MovementSpeed::Instant, true)
+            .unwrap();
+        let before = doc.encode().unwrap();
+        let mut editor = Editor::new(doc);
+        editor.activate_movement_button(button);
+        assert_eq!(editor.doc.numeric_value(a), Some(3.25));
+        assert_eq!(editor.doc.numeric_value(b), Some(7.125));
+        assert_eq!(
+            editor.doc.objects[b - 1].kind.numeric_unit(),
+            Some(sketchpad_rs::table_records::NumericUnit::Scalar)
+        );
+        let saved = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+        assert_eq!(saved.numeric_value(b), Some(7.125));
+        editor.doc.undo();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}
+
+#[test]
+fn public_numeric_button_click_matches_native_saved_parameters() {
+    let mut editor = Editor::new(
+        Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/movement46_api_parameter_input.gsp"),
+            None,
+        )
+        .unwrap(),
+    );
+    let button = editor
+        .doc
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, Kind::MovementButton { .. }))
+        .unwrap()
+        .id;
+    editor.activate_movement_button(button);
+    let native = Document::from_bytes(
+        include_bytes!(
+            "../../../tests/fixtures/movement46_api_parameter_clicked_native_verified.gsp"
+        ),
+        None,
+    )
+    .unwrap();
+    for id in 1..=3 {
+        assert_eq!(editor.doc.numeric_value(id), native.numeric_value(id));
+    }
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    for id in 1..=3 {
+        assert_eq!(reopened.numeric_value(id), native.numeric_value(id));
+    }
+}
+
+#[test]
+fn animated_numeric_pairs_finish_and_undo_as_one_action() {
+    for follow in [false, true] {
+        let mut doc = Document::new();
+        let a = doc.add_named_parameter("a", 1., (20, 20)).unwrap();
+        let b = doc.add_named_parameter("b", 3.25, (20, 50)).unwrap();
+        let c = doc.add_named_parameter("c", 7.125, (20, 80)).unwrap();
+        let button = doc
+            .add_movement_button_for_pairs(&[(a, b), (b, c)], MovementSpeed::Slow, follow)
+            .unwrap();
+        let before = doc.encode().unwrap();
+        let mut editor = Editor::new(doc);
+        editor.activate_movement_button(button);
+        assert_eq!(editor.movements.len(), 2);
+        for _ in 0..200 {
+            editor.tick_movement(0.1);
+        }
+        assert!(editor.movements.is_empty());
+        assert_eq!(
+            editor.doc.numeric_value(a),
+            Some(if follow { 7.125 } else { 3.25 })
+        );
+        assert_eq!(editor.doc.numeric_value(b), Some(7.125));
+        editor.doc.verify_roundtrip().unwrap();
+        editor.doc.undo();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+    }
+}

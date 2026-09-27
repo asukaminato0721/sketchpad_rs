@@ -2,6 +2,21 @@ use super::{Editor, MarkedAngle, TranslationMode};
 use sketchpad_rs::document::{Kind, LineMode};
 
 impl Editor {
+    fn append_transformed_selection(&mut self, source: usize, kind: Kind) {
+        let kind = if self.doc.objects.get(source.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
+            let definition = kind.transform_definition().expect("Transform command creates a transform");
+            match sketchpad_rs::document::transform_model::TransformDefinition::new(
+                source, sketchpad_rs::document::transform_model::ElementType::Arc,
+                definition.transform().clone(), definition.wire_flavor(),
+            ) {
+                Ok(definition) => Kind::Transformed(definition),
+                Err(error) => { self.status = error; return; }
+            }
+        } else { kind };
+        let id = self.doc.add(kind);
+        self.select_only(id);
+    }
+
     pub(super) fn translate_selected(&mut self) {
         if self.doc.partial_view {
             self.status = "Translation on this document cannot be saved safely".into();
@@ -12,6 +27,7 @@ impl Editor {
             return;
         }
         let source = self.selection_order[0];
+        let source_is_arc = self.doc.objects[source - 1].kind.is_arc();
         let source_is_segment = matches!(
             self.doc
                 .objects
@@ -35,6 +51,7 @@ impl Editor {
                 || (self.translation_mode == TranslationMode::MarkedVector && kind.is_polygon())
         );
         if self.doc.position(source).is_none()
+            && !source_is_arc
             && !source_is_segment
             && !source_is_circle
             && !(source_is_polygon
@@ -265,8 +282,7 @@ impl Editor {
                 }
             }
         };
-        let id = self.doc.add(kind);
-        self.select_only(id);
+        self.append_transformed_selection(source, kind);
     }
     pub(super) fn reflect_selected(&mut self) {
         if self.doc.partial_view {
@@ -305,7 +321,7 @@ impl Editor {
         }
         let kind = if self.doc.position(source).is_some() {
             Kind::ReflectedPoint(source, mirror)
-        } else if self.doc.circle_points(source).is_some() {
+        } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
             Kind::ReflectedCircle(source, mirror)
         } else if matches!(
             self.doc
@@ -327,8 +343,7 @@ impl Editor {
             self.status = "Select a point, segment, circle, or interior, then a mirror line".into();
             return;
         };
-        let id = self.doc.add(kind);
-        self.select_only(id);
+        self.append_transformed_selection(source, kind);
     }
     pub(super) fn mark_center_selected(&mut self) {
         let [id] = self.selection_order.as_slice() else {
@@ -521,8 +536,7 @@ impl Editor {
         if !self.dilation_use_marked
             && (!self.dilation_factor.is_finite() || self.dilation_factor == 0.)
         {
-            self.status =
-                "Use a finite nonzero dilation ratio".into();
+            self.status = "Use a finite nonzero dilation ratio".into();
             return;
         }
         let (source, center) = match self.selection_order.as_slice() {
@@ -535,7 +549,9 @@ impl Editor {
                 }
             },
             _ => {
-                self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
+                self.status =
+                    "Select a point, segment, ray, line, circle, or interior, then a center point"
+                        .into();
                 return;
             }
         };
@@ -549,7 +565,9 @@ impl Editor {
             return;
         }
         if self.doc.position(center).is_none() {
-            self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
+            self.status =
+                "Select a point, segment, ray, line, circle, or interior, then a center point"
+                    .into();
             return;
         }
         if self.dilation_use_marked
@@ -585,7 +603,7 @@ impl Editor {
             }
             if self.doc.position(source).is_some() {
                 Kind::RatioScaledPoint(source, center, origin, base, target)
-            } else if self.doc.circle_points(source).is_some() {
+            } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
                 Kind::RatioScaledCircle(source, center, origin, base, target)
             } else if matches!(
                 self.doc
@@ -610,7 +628,7 @@ impl Editor {
             }
         } else if self.doc.position(source).is_some() {
             Kind::ScaledPoint(source, center, self.dilation_factor)
-        } else if self.doc.circle_points(source).is_some() {
+        } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
             Kind::ScaledCircle(source, center, self.dilation_factor)
         } else if matches!(
             self.doc
@@ -639,11 +657,12 @@ impl Editor {
         ) {
             Kind::ScaledPolygon(source, center, self.dilation_factor)
         } else {
-            self.status = "Select a point, segment, ray, line, circle, or interior, then a center point".into();
+            self.status =
+                "Select a point, segment, ray, line, circle, or interior, then a center point"
+                    .into();
             return;
         };
-        let id = self.doc.add(kind);
-        self.select_only(id);
+        self.append_transformed_selection(source, kind);
     }
     pub(super) fn rotate_selected(&mut self) {
         if self.doc.partial_view {
@@ -682,31 +701,45 @@ impl Editor {
             .objects
             .get(source.saturating_sub(1))
             .map(|o| &o.kind);
+        let source_arc = source_kind.is_some_and(|kind| kind.is_arc()) && self.doc.arc_points(source, 1).is_some();
         let source_point = self.doc.position(source).is_some();
-        let source_segment = source_kind.is_some_and(|kind| matches!(kind, Kind::Segment(_, _))
-            || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
-                && kind.is_segment()))
-            && self.doc.line_points(source).is_some();
-        let source_circle = source_kind.is_some_and(|kind| matches!(kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
-            || ((!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
-                && kind.is_circle()))
-            && self.doc.circle_points(source).is_some();
-        let source_ray = source_kind.is_some_and(|kind|
+        let source_segment = source_kind.is_some_and(|kind| {
+            matches!(kind, Kind::Segment(_, _))
+                || ((!self.rotation_use_marked
+                    || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                    && kind.is_segment())
+        }) && self.doc.line_points(source).is_some();
+        let source_circle = source_kind.is_some_and(|kind| {
+            matches!(kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _))
+                || ((!self.rotation_use_marked
+                    || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
+                    && kind.is_circle())
+        }) && self.doc.circle_points(source).is_some();
+        let source_ray = source_kind.is_some_and(|kind| {
             (!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
-                && kind.fixed_transform_straight_mode() == Some(LineMode::Ray))
-            && self.doc.line_points(source).is_some();
-        let source_line = source_kind.is_some_and(|kind|
+                && kind.fixed_transform_straight_mode() == Some(LineMode::Ray)
+        }) && self.doc.line_points(source).is_some();
+        let source_line = source_kind.is_some_and(|kind| {
             (!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
-                && kind.fixed_transform_straight_mode() == Some(LineMode::Line))
-            && self.doc.line_points(source).is_some();
-        let source_polygon = source_kind.is_some_and(|kind| matches!(kind, Kind::Polygon(_))
-            || (self.rotation_use_marked && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
-                && kind.is_polygon()))
-            && self.doc.polygon_points(source).is_some();
-        if !(source_point || source_segment || source_circle || source_polygon || source_ray || source_line)
+                && kind.fixed_transform_straight_mode() == Some(LineMode::Line)
+        }) && self.doc.line_points(source).is_some();
+        let source_polygon = source_kind.is_some_and(|kind| {
+            matches!(kind, Kind::Polygon(_))
+                || (self.rotation_use_marked
+                    && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
+                    && kind.is_polygon())
+        }) && self.doc.polygon_points(source).is_some();
+        if !(source_point
+            || source_segment
+            || source_circle
+            || source_polygon
+            || source_ray
+            || source_line
+            || source_arc)
             || self.doc.position(center).is_none()
         {
-            self.status = "Select a point, segment, ray, line, circle, or interior and a center point".into();
+            self.status =
+                "Select a point, segment, ray, line, circle, or interior and a center point".into();
             return;
         }
         if self.rotation_use_marked
@@ -764,7 +797,6 @@ impl Editor {
                 Kind::RotatedCircle(source, center, self.rotation_angle)
             }
         };
-        let id = self.doc.add(kind);
-        self.select_only(id);
+        self.append_transformed_selection(source, kind);
     }
 }

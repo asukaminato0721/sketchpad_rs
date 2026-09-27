@@ -1,7 +1,7 @@
 use super::embedded_tools::document_record_indices;
 use super::kind::{
     is_arc_kind, is_multi_page_addition_kind, is_multi_page_deletion_kind, is_point_kind,
-    is_segment_kind, is_straight_kind, straight_kind_mode, polygon_vertex_count_for_encoding,
+    is_segment_kind, is_straight_kind, polygon_vertex_count_for_encoding, straight_kind_mode,
 };
 use super::records::{header, page_title_slots, polygon_subtype, put_record, records, u32_at};
 use super::{Document, Kind, LineMode, Object};
@@ -368,8 +368,12 @@ impl Document {
                     .ok_or("Polygon has too many vertices")?
                     .to_le_bytes(),
             );
-            object_header[20..24].copy_from_slice(&object.interior_order
-                .ok_or("Missing polygon drawing order")?.to_le_bytes());
+            object_header[20..24].copy_from_slice(
+                &object
+                    .interior_order
+                    .ok_or("Missing polygon drawing order")?
+                    .to_le_bytes(),
+            );
         }
         put_record(groups, 0x07d0, &object_header);
         if is_point_kind(&object.kind) {
@@ -409,8 +413,15 @@ impl Document {
         {
             return Err("Multi-page edit contains unsupported additions".into());
         }
-        let rs = records(&self.original)?;
         let mut out = self.encode_multi_page_source_state()?;
+        let rs = records(&out)?;
+        let source_headers: Vec<_> = document_record_indices(&rs)
+            .into_iter()
+            .filter(|index| rs[*index].kind == 0x07d0)
+            .collect();
+        if source_headers.len() != self.source_count {
+            return Err("Source object group count mismatch".into());
+        }
         let preambles: Vec<_> = rs.iter().filter(|record| record.kind == 0x3e8).collect();
         if preambles.len() != self.page_count {
             return Err("Page preamble count mismatch".into());
@@ -435,7 +446,7 @@ impl Document {
                 .iter()
                 .filter(|object| object.page == page)
                 .count();
-            if u32_at(&self.original, preamble.data.start + 24) as usize != existing {
+            if u32_at(&out, preamble.data.start + 24) as usize != existing {
                 return Err("Page object count differs from its preamble".into());
             }
             let new_objects: Vec<_> = self.objects[self.source_count..]
@@ -696,8 +707,11 @@ impl Document {
                         let host = match object.kind {
                             Kind::SegmentMidpoint(host) => host,
                             Kind::Midpoint(a, b) => {
-                                let host = object.midpoint_host.ok_or("Midpoint needs a segment host")?;
-                                if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == a && *second == b) || (*first == b && *second == a)) {
+                                let host = object
+                                    .midpoint_host
+                                    .ok_or("Midpoint needs a segment host")?;
+                                if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == a && *second == b) || (*first == b && *second == a))
+                                {
                                     return Err("Midpoint host has different endpoints".into());
                                 }
                                 host
@@ -838,7 +852,9 @@ impl Document {
                             &[local_a, local_b],
                         )?;
                     }
-                    Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => {
+                    Kind::Bisector(a, b, c)
+                    | Kind::ThreePointArc(a, b, c)
+                    | Kind::CenterArc(a, b, c) => {
                         if [*a, *b, *c].iter().any(|id| {
                             !self
                                 .objects
@@ -856,7 +872,11 @@ impl Document {
                             if self.arc_geometry(object.id).is_none() {
                                 return Err("Three-point arc has no finite geometry".into());
                             }
-                            if matches!(object.kind, Kind::CenterArc(..)) { 80 } else { 81 }
+                            if matches!(object.kind, Kind::CenterArc(..)) {
+                                80
+                            } else {
+                                81
+                            }
                         };
                         let refs = [
                             self.multi_page_local_reference(page, object.id, *a)?,
@@ -1043,14 +1063,8 @@ impl Document {
                         if let Some(ordinal) = target_button_ordinal {
                             let destination = &self.objects[destination_buttons[ordinal - 1] - 1];
                             if destination.id <= self.source_count {
-                                let header = destination
-                                    .header_offset
-                                    .ok_or("Missing destination button header")?;
-                                let header_index = rs
-                                    .iter()
-                                    .position(|record| {
-                                        record.kind == 0x07d0 && record.data.start == header
-                                    })
+                                let header_index = *source_headers
+                                    .get(destination.id - 1)
                                     .ok_or("Missing destination button group")?;
                                 let action = rs[header_index + 1..]
                                     .iter()
@@ -1072,6 +1086,8 @@ impl Document {
                     Kind::HideShowButton {
                         targets,
                         action,
+                        options,
+                        caption_flags,
                         label,
                         anchor,
                     } => {
@@ -1096,6 +1112,8 @@ impl Document {
                             &ids, label, *anchor,
                         )?;
                         group.set_action(*action);
+                        group.set_options(*options);
+                        group.set_caption_flags(*caption_flags)?;
                         group.set_hidden(!object.visible);
                         let destination_buttons = self.link_destination_buttons(page);
                         let linked = self.objects.iter().any(|source| {
@@ -1135,29 +1153,28 @@ impl Document {
                         groups.extend_from_slice(&group.encode());
                     }
                     Kind::MovementButton {
-                        source,
-                        destination,
+                        pairs,
                         speed,
                         follow,
                         label,
                         anchor,
                     } => {
-                        if source == destination
-                            || !self
-                                .objects
-                                .get(source.saturating_sub(1))
-                                .is_some_and(|point| matches!(point.kind, Kind::Free(_)))
-                            || self.position(*destination).is_none()
+                        if pairs.is_empty()
+                            || pairs.iter().any(|&(s, d)| !self.movement_pair_valid(s, d))
                         {
-                            return Err("Invalid Movement points on this page".into());
+                            return Err("Invalid Movement pairs on this page".into());
                         }
-                        let local_source =
-                            self.multi_page_local_reference(page, object.id, *source)?;
-                        let local_destination =
-                            self.multi_page_local_reference(page, object.id, *destination)?;
-                        let mut group = MovementButtonGroup::from_original_template(
-                            local_source,
-                            local_destination,
+                        let local_pairs = pairs
+                            .iter()
+                            .map(|&(s, d)| {
+                                Ok((
+                                    self.multi_page_local_reference(page, object.id, s)?,
+                                    self.multi_page_local_reference(page, object.id, d)?,
+                                ))
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
+                        let mut group = MovementButtonGroup::from_original_template_pairs(
+                            &local_pairs,
                             label,
                             *anchor,
                         )?;
@@ -1329,12 +1346,18 @@ impl Document {
         let rs = records(&self.original)?;
         let mut out = self.original.clone();
         let mut numeric_edits = Vec::new();
-        let changed_parameters = original.objects.iter().zip(&self.objects[..self.source_count])
+        let changed_parameters = original
+            .objects
+            .iter()
+            .zip(&self.objects[..self.source_count])
             .filter_map(|(saved, current)| match (&saved.kind, &current.kind) {
-                (Kind::Parameter(before), Kind::Parameter(after)) if before != after =>
-                    Some((current.id, (current.page, after.name().to_owned(), after.value()))),
+                (Kind::Parameter(before), Kind::Parameter(after)) if before != after => Some((
+                    current.id,
+                    (current.page, after.name().to_owned(), after.value()),
+                )),
                 _ => None,
-            }).collect::<std::collections::BTreeMap<_, _>>();
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
         for (saved, current) in original
             .objects
             .iter()
@@ -1370,10 +1393,13 @@ impl Document {
                     Some(after.as_bytes().to_vec())
                 }
                 (Kind::ValueTable(old_source, before), Kind::ValueTable(source, after))
-                    if old_source == source && before != after => {
-                    let (page, name, value) = changed_parameters.get(source)
+                    if old_source == source && before != after =>
+                {
+                    let (page, name, value) = changed_parameters
+                        .get(source)
                         .ok_or("Multi-page table edit requires its parameter value change")?;
-                    if *page != current.page || name != "t[1]" || before.default_values().is_none() {
+                    if *page != current.page || name != "t[1]" || before.default_values().is_none()
+                    {
                         return Err("Unsupported multi-page parameter table edit".into());
                     }
                     let mut changed = before.clone();
@@ -1384,8 +1410,10 @@ impl Document {
                     expected.kind = current.kind.clone();
                     Some(after.as_bytes().to_vec())
                 }
-                (Kind::ValueTablePair(old_first, old_second, before), Kind::ValueTablePair(first, second, after))
-                    if old_first == first && old_second == second && before != after => {
+                (
+                    Kind::ValueTablePair(old_first, old_second, before),
+                    Kind::ValueTablePair(first, second, after),
+                ) if old_first == first && old_second == second && before != after => {
                     let mut changed = before.clone();
                     let mut updated = false;
                     for (axis, source) in [first, second].iter().enumerate() {
@@ -1504,12 +1532,17 @@ impl Document {
                 if !saved.kind.is_polygon() {
                     return Err("Cannot change drawing order of an unsupported interior".into());
                 }
-                if !rs.iter().any(|record| record.kind == 0x07d0
-                    && record.data.start == header && record.data.len() == 28) {
+                if !rs.iter().any(|record| {
+                    record.kind == 0x07d0 && record.data.start == header && record.data.len() == 28
+                }) {
                     return Err("Polygon drawing order is unavailable in this header".into());
                 }
-                out[header + 20..header + 24].copy_from_slice(&current.interior_order
-                    .ok_or("Missing polygon drawing order")?.to_le_bytes());
+                out[header + 20..header + 24].copy_from_slice(
+                    &current
+                        .interior_order
+                        .ok_or("Missing polygon drawing order")?
+                        .to_le_bytes(),
+                );
             }
             if saved.tracing != current.tracing {
                 let record = rs
@@ -1608,28 +1641,7 @@ impl Document {
                     _ => {}
                 }
             }
-            if let Kind::HideShowButton { action, label, .. } = &current.kind {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
-                    .ok_or("Missing saved Hide/Show button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x07d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved Hide/Show button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = HideShowButtonGroup::parse(&out[start..end])?;
-                group.set_action(*action);
-                group.set_label(label)?;
-                group.set_hidden(!current.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err("Editing a saved button label cannot change its byte length".into());
-                }
-                out[start..end].copy_from_slice(&encoded);
-            } else if saved.visible != current.visible {
+            if saved.visible != current.visible {
                 let mut class = u32_at(&out, header);
                 if current.visible {
                     class &= !0x1_0000;
@@ -1639,9 +1651,13 @@ impl Document {
                 out[header..header + 4].copy_from_slice(&class.to_le_bytes());
             }
             if let Some(mut replacement) = numeric_replacement {
-                let start_index = rs.iter().position(|record| record.kind == 0x07d0 && record.data.start == header)
+                let start_index = rs
+                    .iter()
+                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
                     .ok_or("Missing saved numeric group header")?;
-                let end_record = rs[start_index..].iter().find(|record| record.kind == 0x07d7)
+                let end_record = rs[start_index..]
+                    .iter()
+                    .find(|record| record.kind == 0x07d7)
                     .ok_or("Missing saved numeric group terminator")?;
                 let start = rs[start_index].start;
                 let end = end_record.data.end + end_record.data.len() % 2;
@@ -1655,8 +1671,7 @@ impl Document {
         for (start, end, replacement) in numeric_edits.into_iter().rev() {
             out.splice(start..end, replacement);
         }
-        records(&out)?;
-        Ok(out)
+        self.patch_hide_show_source_groups(out)
     }
     pub(super) fn encode_page_names(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;

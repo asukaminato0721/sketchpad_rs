@@ -60,7 +60,16 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
         assert_eq!(doc.encode().unwrap(), bytes);
-        assert!(transform_is(&expected, NativeTransformFlavor::NumericDilation, &[ElementType::Point, ElementType::Segment, ElementType::Circle, ElementType::Polygon]));
+        assert!(transform_is(
+            &expected,
+            NativeTransformFlavor::NumericDilation,
+            &[
+                ElementType::Point,
+                ElementType::Segment,
+                ElementType::Circle,
+                ElementType::Polygon
+            ]
+        ));
         match expected.transform_definition().unwrap().element() {
             ElementType::Point => {
                 assert_eq!(doc.position(image), Some(Point { x: 160., y: 180. }));
@@ -110,7 +119,16 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
         let copied = *pasted
             .iter()
             .find(|id| {
-                transform_is(&doc.objects[**id - 1].kind, NativeTransformFlavor::NumericDilation, &[ElementType::Point, ElementType::Segment, ElementType::Circle, ElementType::Polygon])
+                transform_is(
+                    &doc.objects[**id - 1].kind,
+                    NativeTransformFlavor::NumericDilation,
+                    &[
+                        ElementType::Point,
+                        ElementType::Segment,
+                        ElementType::Circle,
+                        ElementType::Polygon,
+                    ],
+                )
             })
             .unwrap();
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
@@ -292,7 +310,15 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
         assert!(!doc.partial_view);
         assert_eq!(doc.objects[9].kind, expected);
         assert_eq!(doc.encode().unwrap(), bytes);
-        assert!(transform_is(&expected, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle, ElementType::Polygon]));
+        assert!(transform_is(
+            &expected,
+            NativeTransformFlavor::NumericRotation,
+            &[
+                ElementType::Segment,
+                ElementType::Circle,
+                ElementType::Polygon
+            ]
+        ));
         match expected.transform_definition().unwrap().element() {
             ElementType::Segment => {
                 let (a, b, mode) = doc.line_points(10).unwrap();
@@ -330,7 +356,15 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
         let copied = *pasted
             .iter()
             .find(|id| {
-                transform_is(&doc.objects[**id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle, ElementType::Polygon])
+                transform_is(
+                    &doc.objects[**id - 1].kind,
+                    NativeTransformFlavor::NumericRotation,
+                    &[
+                        ElementType::Segment,
+                        ElementType::Circle,
+                        ElementType::Polygon,
+                    ],
+                )
             })
             .unwrap();
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
@@ -556,7 +590,11 @@ fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
             .objects
             .iter()
             .find(|o| {
-                transform_is(&o.kind, NativeTransformFlavor::Vector, &[ElementType::Segment, ElementType::Circle])
+                transform_is(
+                    &o.kind,
+                    NativeTransformFlavor::Vector,
+                    &[ElementType::Segment, ElementType::Circle],
+                )
             })
             .unwrap()
             .id;
@@ -629,7 +667,11 @@ fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
         let copy = pasted
             .iter()
             .find(|&&id| {
-                transform_is(&reopened.objects[id - 1].kind, NativeTransformFlavor::NumericRotation, &[ElementType::Segment, ElementType::Circle])
+                transform_is(
+                    &reopened.objects[id - 1].kind,
+                    NativeTransformFlavor::NumericRotation,
+                    &[ElementType::Segment, ElementType::Circle],
+                )
             })
             .copied()
             .unwrap();

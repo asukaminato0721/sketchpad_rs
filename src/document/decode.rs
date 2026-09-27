@@ -1,17 +1,20 @@
-use super::embedded_tools::{document_record_indices, document_records};
 use super::calculations::parse_numeric_calculation;
+use super::embedded_tools::{document_record_indices, document_records};
 use super::iteration::{
-    mapped_segment_binding,
-    supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
-    supported_point_parameter_iteration,
+    mapped_binding_kind, supported_branch_polygon_mapping, supported_mapped_point_iteration,
+    supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_defining_distance_kind, is_locus_polygon_kind,
-    is_locus_straight_kind, is_literal_plot_path_kind, is_value_plot_path_kind, is_point_kind, is_segment_kind, is_straight_kind,
-    polygon_vertex_count, straight_kind_mode,
+    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_coordinate_unit_kind,
+    is_literal_plot_path_kind, is_locus_polygon_kind, is_locus_straight_kind, is_point_kind,
+    is_segment_kind, is_straight_kind, is_value_plot_path_kind, polygon_vertex_count,
+    straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
-use super::{Document, EmbeddedToolInput, EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object, Point};
+use super::{
+    Document, EmbeddedToolInput, EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object,
+    Point,
+};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
     MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
@@ -37,7 +40,7 @@ use std::path::{Path, PathBuf};
 /// Native transform literals use radians (0) or either observed degree form
 /// (1/2). Check the direction cache in its declared unit before normalizing
 /// to the shared model's degrees; preserving saves retain the original record.
-fn transform_angle_degrees(payload: &[u8]) -> Option<f64> {
+pub(super) fn transform_angle_degrees(payload: &[u8]) -> Option<f64> {
     if payload.len() < 32 {
         return None;
     }
@@ -60,7 +63,7 @@ fn transform_angle_degrees(payload: &[u8]) -> Option<f64> {
 
 /// The polar distance cache stores magnitude * pixels-per-unit, as in the
 /// Cartesian translation record. Preserve nonstandard imported scales too.
-fn polar_distance_scale(payload: &[u8]) -> Option<f64> {
+pub(super) fn polar_distance_scale(payload: &[u8]) -> Option<f64> {
     let declared = match u32_at(payload, 48) {
         1 => 37.79527559055118_f64,
         2 => 96.,
@@ -89,18 +92,26 @@ fn polar_distance_scale(payload: &[u8]) -> Option<f64> {
 /// Structural saves may retain complete registered tool canvases unchanged.
 /// Their local object IDs and opaque auxiliary records are never drawing IDs.
 pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Record]) -> bool {
-    if !entries.iter().any(|record| matches!(record.kind, 0x03ea | 0x03eb)) {
+    if !entries
+        .iter()
+        .any(|record| matches!(record.kind, 0x03ea | 0x03eb))
+    {
         return true;
     }
     for (index, record) in entries.iter().enumerate() {
         if record.kind == 0x03ea
-            && !index.checked_sub(1).and_then(|previous| entries.get(previous))
-                .is_some_and(|previous| previous.kind == 0x0386) {
+            && !index
+                .checked_sub(1)
+                .and_then(|previous| entries.get(previous))
+                .is_some_and(|previous| previous.kind == 0x0386)
+        {
             return false;
         }
         if record.kind == 0x03eb
-            && !entries.get(index + 1).is_some_and(|next|
-                next.kind == 0x0387 && next.data.is_empty()) {
+            && !entries
+                .get(index + 1)
+                .is_some_and(|next| next.kind == 0x0387 && next.data.is_empty())
+        {
             return false;
         }
     }
@@ -114,16 +125,21 @@ pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Rec
     for record in entries {
         match record.kind {
             0x03e8 => {
-                if drawing_open || group_open || tool_expected.is_some() { return false; }
+                if drawing_open || group_open || tool_expected.is_some() {
+                    return false;
+                }
                 drawing_open = true;
                 pages += 1;
             }
             0x03e9 => {
-                if !drawing_open || group_open || tool_expected.is_some() { return false; }
+                if !drawing_open || group_open || tool_expected.is_some() {
+                    return false;
+                }
                 drawing_open = false;
             }
             0x03ea => {
-                if drawing_open || group_open || tool_expected.is_some() || record.data.len() != 36 {
+                if drawing_open || group_open || tool_expected.is_some() || record.data.len() != 36
+                {
                     return false;
                 }
                 tool_expected = Some(u32_at(bytes, record.data.start + 24) as usize);
@@ -131,58 +147,86 @@ pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Rec
                 tool_inputs = false;
             }
             0x03eb => {
-                if group_open || !tool_inputs || record.data.len() != 0 || tool_expected != Some(tool_objects) {
+                if group_open
+                    || !tool_inputs
+                    || record.data.len() != 0
+                    || tool_expected != Some(tool_objects)
+                {
                     return false;
                 }
                 tool_expected = None;
                 tools += 1;
             }
             0x07d0 => {
-                if group_open || (!drawing_open && tool_expected.is_none())
-                    || (tool_expected.is_some() && !matches!(record.data.len(), 16 | 28)) {
+                if group_open
+                    || (!drawing_open && tool_expected.is_none())
+                    || (tool_expected.is_some() && !matches!(record.data.len(), 16 | 28))
+                {
                     return false;
                 }
                 group_open = true;
-                if tool_expected.is_some() { tool_objects += 1; }
+                if tool_expected.is_some() {
+                    tool_objects += 1;
+                }
             }
             0x07d7 => {
-                if !group_open || !record.data.is_empty() { return false; }
+                if !group_open || !record.data.is_empty() {
+                    return false;
+                }
                 group_open = false;
             }
             0x04b4 if tool_expected.is_some() => {
                 let payload = &bytes[record.data.clone()];
-                if group_open || tool_inputs || payload.len() < 4 || (payload.len() - 4) % 4 != 0
-                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4 {
+                if group_open
+                    || tool_inputs
+                    || payload.len() < 4
+                    || (payload.len() - 4) % 4 != 0
+                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                {
                     return false;
                 }
                 let mut unique = BTreeSet::new();
                 let limit = tool_expected.unwrap();
                 for reference in payload[4..].chunks_exact(4) {
                     let id = u32::from_le_bytes(reference.try_into().unwrap()) as usize;
-                    if id == 0 || id > limit || !unique.insert(id) { return false; }
+                    if id == 0 || id > limit || !unique.insert(id) {
+                        return false;
+                    }
                 }
                 tool_inputs = true;
             }
             0x07d2 if tool_expected.is_some() => {
                 let payload = &bytes[record.data.clone()];
-                if !group_open || payload.len() < 4 || (payload.len() - 4) % 4 != 0
-                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4 {
+                if !group_open
+                    || payload.len() < 4
+                    || (payload.len() - 4) % 4 != 0
+                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
+                {
                     return false;
                 }
                 let limit = tool_expected.unwrap();
                 if payload[4..].chunks_exact(4).any(|reference| {
                     let id = u32::from_le_bytes(reference.try_into().unwrap()) as usize;
                     id == 0 || id > limit
-                }) { return false; }
+                }) {
+                    return false;
+                }
             }
             _ => {}
         }
     }
-    if drawing_open || group_open || tool_expected.is_some() { return false; }
-    if tools == 0 { return true; }
+    if drawing_open || group_open || tool_expected.is_some() {
+        return false;
+    }
+    if tools == 0 {
+        return true;
+    }
     let mut headers = entries.iter().filter(|record| record.kind == 0x0384);
-    let Some(header) = headers.next() else { return false; };
-    header.data.len() == 28 && headers.next().is_none()
+    let Some(header) = headers.next() else {
+        return false;
+    };
+    header.data.len() == 28
+        && headers.next().is_none()
         && u32_at(bytes, header.data.start + 4) as usize == tools
         && u32_at(bytes, header.data.start + 24) as usize == pages + tools + 1
 }
@@ -207,19 +251,26 @@ impl Document {
     ) -> Result<Self, String> {
         let rs = records(b)?;
         if !tool_inputs.is_empty() {
-            if rs.iter().any(|record| matches!(record.kind, 0x03ea | 0x03eb))
+            if rs
+                .iter()
+                .any(|record| matches!(record.kind, 0x03ea | 0x03eb))
                 || rs.iter().filter(|record| record.kind == 0x03e8).count() != 1
             {
                 return Err("Tool input context requires one isolated canvas".into());
             }
             let headers: Vec<_> = rs.iter().filter(|record| record.kind == 0x07d0).collect();
             for (&id, input) in tool_inputs {
-                let header = id.checked_sub(1).and_then(|index| headers.get(index))
+                let header = id
+                    .checked_sub(1)
+                    .and_then(|index| headers.get(index))
                     .ok_or("Invalid contextual tool input ID")?;
                 let payload = &b[header.data.clone()];
-                if input.local_id != id || payload.len() != 28 || payload[..2] != [0, 0]
+                if input.local_id != id
+                    || payload.len() != 28
+                    || payload[..2] != [0, 0]
                     || u16::from_le_bytes(payload[6..8].try_into().unwrap()) != input.native_class
-                    || u16::from_le_bytes(payload[8..10].try_into().unwrap()) != input.native_subtype
+                    || u16::from_le_bytes(payload[8..10].try_into().unwrap())
+                        != input.native_subtype
                 {
                     return Err("Tool input descriptor does not match its native header".into());
                 }
@@ -249,10 +300,16 @@ impl Document {
             .map(|record| record.kind)
             .chain([0x2328, 0x232d])
             .collect();
-        let text_style_count = document_records(&rs).filter(|record| record.kind == 0x04b3).count();
-        let font_family_count = document_records(&rs).filter(|record| record.kind == 0x04b1).count();
+        let text_style_count = document_records(&rs)
+            .filter(|record| record.kind == 0x04b3)
+            .count();
+        let font_family_count = document_records(&rs)
+            .filter(|record| record.kind == 0x04b1)
+            .count();
         let mut objects: Vec<Object> = Vec::new();
-        let total_pages = document_records(&rs).filter(|record| record.kind == 0x3e8).count();
+        let total_pages = document_records(&rs)
+            .filter(|record| record.kind == 0x3e8)
+            .count();
         let mut i = 0;
         let mut safe = registered_tool_structure_safe(b, &rs);
         let mut snap_points = Vec::new();
@@ -326,6 +383,8 @@ impl Document {
                         | 9
                         | 11
                         | 12
+                        | 13
+                        | 14
                         | 16
                         | 17
                         | 18
@@ -340,11 +399,34 @@ impl Document {
                         | 32
                         | 33
                         | 34
+                        | 67
+                        | 68
                         | 69
                         | 95
                         | 123
                 );
-            let numeric_label = matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 48 | 49 | 50 | 51 | 65 | 66 | 86 | 87 | 94);
+            let numeric_label = matches!(
+                code,
+                36 | 37
+                    | 38
+                    | 39
+                    | 40
+                    | 41
+                    | 42
+                    | 43
+                    | 44
+                    | 46
+                    | 47
+                    | 48
+                    | 49
+                    | 50
+                    | 51
+                    | 65
+                    | 66
+                    | 86
+                    | 87
+                    | 94
+            );
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
             let mut text_style = false;
@@ -355,7 +437,7 @@ impl Document {
                 if matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87) {
                     graph_records.push((r.kind, d.to_vec()));
                 }
-                if matches!(code, 0 | 78) && r.kind == 0x0907 {
+                if matches!(code, 0 | 71 | 78) && r.kind == 0x0907 {
                     function_expression = Some(d.to_vec());
                 }
                 if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
@@ -368,17 +450,39 @@ impl Document {
                     iteration_definition = Some(d.to_vec());
                 }
                 match r.kind {
-                    0x07d5 if matches!(code, 0 | 15) || labeled_shape || numeric_label => match LabelAux::parse(d) {
-                        Ok(value) if matches!(code, 0 | 15) || numeric_label || h[6..8] == [1, 0] => label = Some(value),
-                        Ok(_) => {}
-                        Err(_) => safe = false,
-                    },
+                    0x07d5
+                        if matches!(code, 0 | 15)
+                            || (code == 71 && h[6..10] == [11, 0, 57, 0])
+                            || labeled_shape
+                            || numeric_label =>
+                    {
+                        match LabelAux::parse(d) {
+                            Ok(value)
+                                if matches!(code, 0 | 15)
+                                    || (code == 71 && h[6..10] == [11, 0, 57, 0])
+                                    || numeric_label
+                                    || h[6..8] == [1, 0] =>
+                            {
+                                label = Some(value)
+                            }
+                            Ok(_) => {}
+                            Err(_) => safe = false,
+                        }
+                    }
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
-                    0x07d8 if matches!(code, 0 | 15) || labeled_shape => {
+                    0x07d8
+                        if matches!(code, 0 | 15)
+                            || (code == 71 && h[6..10] == [11, 0, 57, 0])
+                            || labeled_shape =>
+                    {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
-                        if (labeled_shape || code == 15) && !text_style {
+                        if (labeled_shape
+                            || code == 15
+                            || (code == 71 && h[6..10] == [11, 0, 57, 0]))
+                            && !text_style
+                        {
                             safe = false;
                         }
                     }
@@ -426,7 +530,10 @@ impl Document {
                         };
                         measurement_format = d.len() == sample.len()
                             && u16::from_le_bytes(d[28..30].try_into().unwrap()) <= 5
-                            && matches!(u16::from_le_bytes(d[26..28].try_into().unwrap()), 0 | 1 | 3)
+                            && matches!(
+                                u16::from_le_bytes(d[26..28].try_into().unwrap()),
+                                0 | 1 | 3
+                            )
                             && d.iter()
                                 .zip(sample)
                                 .enumerate()
@@ -448,7 +555,12 @@ impl Document {
                     0x07d8 if numeric_label => {
                         measurement_style = d.len() == 2
                             && (usize::from(u16::from_le_bytes([d[0], d[1]])) < text_style_count
-                                || u16::from_le_bytes([d[0], d[1]]) == if matches!(code, 49 | 50 | 51 | 65 | 66 | 86 | 87) { 2 } else { 1 });
+                                || u16::from_le_bytes([d[0], d[1]])
+                                    == if matches!(code, 49 | 50 | 51 | 65 | 66 | 86 | 87) {
+                                        2
+                                    } else {
+                                        1
+                                    });
                         if !measurement_style {
                             safe = false;
                         }
@@ -456,22 +568,10 @@ impl Document {
                     0x7d3
                         if matches!(
                             code,
-                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 54 | 55 | 56 | 57
+                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57
                         ) =>
                     {
                         constraint_payload = Some((d.to_vec(), r.data.start));
-                    }
-                    0x7d2 if matches!(code, 67 | 68) && d.len() == 8 => {
-                        refs = [u32_at(d, 0), u32_at(d, 4)]
-                            .into_iter()
-                            .map(|raw| {
-                                if raw == 0 {
-                                    0
-                                } else {
-                                    page_base + raw as usize
-                                }
-                            })
-                            .collect();
                     }
                     0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
                         let n = u32_at(d, 0) as usize;
@@ -495,7 +595,8 @@ impl Document {
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
-                    && !(code == 15 && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !((code == 15 || (code == 71 && h[6..10] == [11, 0, 57, 0]))
+                        && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !((labeled_shape || numeric_label) && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
                         && matches!(r.kind, 0x0903 | 0x07d8))
@@ -505,11 +606,13 @@ impl Document {
                         && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
-                    && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(matches!(code, 48 | 94) && r.kind == 0x232e && d.is_empty())
-                    && !(code == 0 && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
-                        && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 48 | 67 | 68 | 94) && r.kind == 0x232e && d.is_empty())
+                    && !(code == 0
+                        && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
+                        && r.kind == 0x232e
+                        && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(code == 90 && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
@@ -602,45 +705,85 @@ impl Document {
                 .collect::<Vec<_>>();
             let graph_kind = graph::decode_graph_object(code, &refs, &graph_borrowed);
             let mapped_iteration = (|| {
-                if !matches!(code, 76 | 89) || h[6..10] != [14, 0, 64, 0] { return None; }
+                if !matches!(code, 76 | 89) || h[6..10] != [14, 0, 64, 0] {
+                    return None;
+                }
                 let data = iteration_definition.as_ref()?;
-                if data.len() != 24 || data[..4] != [0; 4] || !matches!(&data[4..6], [0, 0] | [1, 0]) || data[20..24] != [0; 4] { return None; }
+                if data.len() != 24
+                    || data[..4] != [0; 4]
+                    || !matches!(&data[4..6], [0, 0] | [1, 0])
+                    || data[20..24] != [0; 4]
+                {
+                    return None;
+                }
                 let count = usize::from(u16::from_le_bytes(data[6..8].try_into().ok()?));
                 let branches_count = u32_at(data, 8) as usize;
-                if !(2..=16).contains(&count) || !(1..=8).contains(&branches_count) { return None; }
+                if !(1..=16).contains(&count) || !(1..=8).contains(&branches_count) {
+                    return None;
+                }
                 let start = usize::from(code == 89);
-                if refs.len() <= start + count * (branches_count + 1) { return None; }
+                if refs.len() <= start + count * (branches_count + 1) {
+                    return None;
+                }
                 let seeds = refs[start..start + count].to_vec();
                 let branch_end = start + count * (branches_count + 1);
-                let branches = refs[start + count..branch_end].chunks_exact(count).map(<[usize]>::to_vec).collect::<Vec<_>>();
+                let branches = refs[start + count..branch_end]
+                    .chunks_exact(count)
+                    .map(<[usize]>::to_vec)
+                    .collect::<Vec<_>>();
                 let carried = refs[branch_end..].to_vec();
-                if !supported_mapped_point_iteration(&objects, &seeds, &branches, &carried) { return None; }
+                if !supported_mapped_point_iteration(&objects, &seeds, &branches, &carried) {
+                    return None;
+                }
                 let depth = if code == 89 {
                     let id = refs[0];
-                    if !objects.get(id.checked_sub(1)?).is_some_and(|o| o.kind.is_iteration_depth_value()) { return None; }
+                    if !objects
+                        .get(id.checked_sub(1)?)
+                        .is_some_and(|o| o.kind.is_iteration_depth_value())
+                    {
+                        return None;
+                    }
                     IterationDepth::Value(id)
                 } else {
                     let value = u32_at(data, 16);
-                    if !(1..=128).contains(&value) { return None; }
+                    if !(1..=128).contains(&value) {
+                        return None;
+                    }
                     IterationDepth::Fixed(value)
                 };
-                Some(Kind::MappedPointIteration { seeds, branches, carried, depth, final_only: data[4..6] == [1, 0] })
+                Some(Kind::MappedPointIteration {
+                    seeds,
+                    branches,
+                    carried,
+                    depth,
+                    final_only: data[4..6] == [1, 0],
+                })
             })();
             let kind = if let Some(input) = tool_input {
-                if !refs.is_empty() || constraint_payload.is_some()
-                    || rs.iter().any(|record| record.start > group_start
-                        && record.start < rs[i].start && record.kind == 0x07d2)
+                if !refs.is_empty()
+                    || constraint_payload.is_some()
+                    || rs.iter().any(|record| {
+                        record.start > group_start
+                            && record.start < rs[i].start
+                            && record.kind == 0x07d2
+                    })
                 {
                     return Err("Tool input placeholder must not have dependencies".into());
                 }
                 if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
                     super::tool_inputs::numeric_given_layout(&b[group_start..rs[i].data.end])?;
                 } else if input.kind().is_some() {
-                    let body: Vec<_> = rs.iter().filter(|record| record.start > group_start
-                        && record.start < rs[i].start).collect();
-                    if body.iter().any(|record| !matches!(record.kind, 0x0899 | 0x07d5 | 0x07d8))
+                    let body: Vec<_> = rs
+                        .iter()
+                        .filter(|record| record.start > group_start && record.start < rs[i].start)
+                        .collect();
+                    if body
+                        .iter()
+                        .any(|record| !matches!(record.kind, 0x0899 | 0x07d5 | 0x07d8))
                         || body.iter().filter(|record| record.kind == 0x0899).count() != 1
-                        || body.iter().any(|record| record.kind == 0x0899 && record.data.len() != 16)
+                        || body
+                            .iter()
+                            .any(|record| record.kind == 0x0899 && record.data.len() != 16)
                         || body.iter().filter(|record| record.kind == 0x07d5).count() > 1
                         || body.iter().filter(|record| record.kind == 0x07d8).count() > 1
                     {
@@ -649,7 +792,11 @@ impl Document {
                 }
                 match input.kind() {
                     Some(EmbeddedToolInputKind::Point) => Kind::Free(Point { x: 0.0, y: 0.0 }),
-                    Some(category @ (EmbeddedToolInputKind::Path | EmbeddedToolInputKind::Segment | EmbeddedToolInputKind::Numeric)) => {
+                    Some(
+                        category @ (EmbeddedToolInputKind::Path
+                        | EmbeddedToolInputKind::Segment
+                        | EmbeddedToolInputKind::Numeric),
+                    ) => {
                         point_offset = None;
                         Kind::ToolInput(category)
                     }
@@ -666,11 +813,23 @@ impl Document {
                 let mut normalized = b[group_start..rs[i].data.end].to_vec();
                 normalized[16..18].copy_from_slice(&51_u16.to_le_bytes());
                 match ParameterCalculationGroup::parse(&normalized) {
-                    Ok(group) if !refs.is_empty() && group.sources()
-                        == refs.iter().map(|id| (*id - page_base) as u32).collect::<Vec<_>>()
-                        && refs.iter().all(|id| objects.get(id - 1).is_some_and(|object|
-                            object.kind.numeric_unit().is_some()
-                                || matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric)))) => {
+                    Ok(group)
+                        if !refs.is_empty()
+                            && group.sources()
+                                == refs
+                                    .iter()
+                                    .map(|id| (*id - page_base) as u32)
+                                    .collect::<Vec<_>>()
+                            && refs.iter().all(|id| {
+                                objects.get(id - 1).is_some_and(|object| {
+                                    object.kind.numeric_unit().is_some()
+                                        || matches!(
+                                            object.kind,
+                                            Kind::ToolInput(EmbeddedToolInputKind::Numeric)
+                                        )
+                                })
+                            }) =>
+                    {
                         Kind::ParameterCalculation(refs[0], group)
                     }
                     _ => Kind::Unsupported(code),
@@ -715,7 +874,7 @@ impl Document {
                         .is_some_and(|o| is_point_kind(&o.kind))
                         && objects
                             .get(distance - 1)
-                            .is_some_and(|o| is_defining_distance_kind(&o.kind)) =>
+                            .is_some_and(|o| is_coordinate_unit_kind(&o.kind)) =>
                     {
                         Kind::DistanceAxis(origin, distance, axis)
                     }
@@ -774,9 +933,14 @@ impl Document {
                     }
                     _ => Kind::Unsupported(code),
                 }
+            } else if let Some(definition) = super::transform_arc_decode::decode_arc_transform(
+                &objects, page, objects.len() + 1, h, &refs,
+                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+            ) {
+                Kind::Transformed(definition)
             } else {
                 match (code, point, refs.as_slice()) {
-                    (76 | 89, None, _) if mapped_iteration.is_some() => mapped_iteration.unwrap(),
+                    (76 | 89, None, _) if mapped_iteration.as_ref().is_some_and(|kind| matches!(kind, Kind::MappedPointIteration { seeds,.. } if seeds.len() > 1)) => mapped_iteration.unwrap(),
                     (89, None, [parameter, seed, first, second, carried_second, carried_first, polygon, segments @ ..])
                         if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
                             && objects.get(parameter.saturating_sub(1)).is_some_and(|o| o.kind.is_iteration_depth_value())
@@ -890,12 +1054,13 @@ impl Document {
                             && supported_point_iteration_mapping(&objects,*seed,*image) => {
                         Kind::PointIteration(*seed, *image, IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(), 16)))
                     }
+                    (76 | 89, None, _) if mapped_iteration.is_some() => mapped_iteration.unwrap(),
                     (77, None, [image, iteration])
                         if h[6..10] == [15, 0, 65, 0]
                             && objects.get(iteration - 1).is_some_and(|o| match o.kind {
-                                Kind::BranchingPolygonIteration { ref segments, polygon, .. } => polygon == *image || segments.contains(image),
+                                Kind::BranchingPolygonIteration { ref segments, polygon, first, second, .. } => polygon == *image || first == *image || second == *image || segments.contains(image),
                                 Kind::PointIteration(_, mapped, _) => mapped == *image,
-                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| is_point_kind(&source.kind) || mapped_segment_binding(&source.kind)),
+                                Kind::MappedPointIteration { ref carried, .. } => carried.contains(image) && objects.get(image.saturating_sub(1)).is_some_and(|source| mapped_binding_kind(&source.kind)),
                                 Kind::SegmentIteration(_, mapped, segment, _) | Kind::CircleIteration(_,mapped,segment,_) => mapped == *image || segment == *image,
                                 Kind::RayIteration(_, mapped, ray, _) => mapped == *image || ray == *image,
                                 Kind::PointParameterIteration(_,_,mapped,_,label,_) => mapped==*image || label==*image,
@@ -967,14 +1132,13 @@ impl Document {
                             && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         Kind::NumericCoordinatePoint(*x, *y, *frame)
                     }
-                    (67 | 68, _, [source, frame])
+                    (67 | 68, _, [frame])
                         if plotted_point.as_ref().is_some_and(|plot| {
-                            plot.references == [(*source - page_base) as u32, (*frame - page_base) as u32]
+                            plot.coordinate_system == (*frame - page_base) as u32
                         })
-                        && objects.get(source - 1).is_some_and(|o| o.page == page)
-                        && objects.get(frame - 1).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         let plot = plotted_point.unwrap();
-                        Kind::PlottedPoint(*source, *frame, plot.mode, plot.stored)
+                        Kind::PlottedPoint(*frame, plot.mode, plot.stored)
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
@@ -1025,6 +1189,13 @@ impl Document {
                             }
                         }
                     }
+                    (71, None, sources) if !sources.is_empty() && h[6..10] == [11, 0, 57, 0] && function_expression.is_some() => {
+                        match function_records::decode_expression_with_sources(function_expression.as_ref().unwrap(), sources.len()) {
+                            Ok(expression) if super::functions::function_sources_valid(expression, sources, &objects, page)
+                                && sources.iter().all(|&id| id > 0 && id <= objects.len()) => Kind::ReferencedFunction(sources.to_vec(), expression),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
                     (48, None, [first, second]) if *first > 0 && *second > 0
                         && objects.get(first - 1).is_some_and(|o| o.kind.is_distance_value())
                         && objects.get(second - 1).is_some_and(|o| o.kind.is_distance_value()) => {
@@ -1043,7 +1214,7 @@ impl Document {
                     }
                     (48, None, [source]) if *source > 0
                         && objects.get(source - 1).is_some_and(|object| object.kind.numeric_unit().is_some()
-                            || matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))) => {
+                            || matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _))) => {
                         parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code))
                     }
                     (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
@@ -1073,7 +1244,7 @@ impl Document {
                         }
                     }
                     (72, None, [definition, frame]) if function_range.is_some()
-                        && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                        && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
                         match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
                             Ok((min,max,samples)) => Kind::FunctionPlot(*definition,*frame,min,max,samples),
@@ -1081,7 +1252,7 @@ impl Document {
                         }
                     }
                     (78, None, [source]) if *source > 0 && function_expression.is_some()
-                        && matches!(objects.get(source - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))) => {
+                        && matches!(objects.get(source - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _))) => {
                         match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
                             Ok(expression) => Kind::DerivativeFunction(*source, expression),
                             Err(_) => Kind::Unsupported(code),
@@ -1089,8 +1260,8 @@ impl Document {
                     }
                     (126 | 127, None, [x, y, frame]) if function_range.is_some()
                         && *x > 0 && *y > 0 && *frame > 0 && x != y
-                        && matches!(objects.get(x - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
-                        && matches!(objects.get(y - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                        && matches!(objects.get(x - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
+                        && matches!(objects.get(y - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
                         match function_records::decode_parametric_range(function_range.as_ref().unwrap(), code == 127) {
                             Ok((min,max,samples)) => Kind::ParametricPlot(*x,*y,*frame,min,max,samples,if code == 127 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian }),
@@ -1105,6 +1276,8 @@ impl Document {
                             Ok(label) => Kind::HideShowButton {
                                 targets: targets.to_vec(),
                                 action: group.action(),
+                                options: group.options(),
+                                caption_flags: group.caption_flags(),
                                 label: label.to_owned(),
                                 anchor: group.screen_anchor(),
                             },
@@ -1125,14 +1298,13 @@ impl Document {
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
-                    (62, _, [source, destination]) if movement_group.as_ref().is_some_and(|group| {
-                        group.target_ids() == [(*source - page_base) as u32, (*destination - page_base) as u32]
+                    (62, _, targets) if movement_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == targets.iter().map(|target| (*target-page_base) as u32).collect::<Vec<_>>()
                     }) => {
                         let group = movement_group.as_ref().unwrap();
                         match group.label_utf8() {
                             Ok(label) => Kind::MovementButton {
-                                source: *source,
-                                destination: *destination,
+                                pairs: targets.chunks_exact(2).map(|pair| (pair[0],pair[1])).collect(),
                                 speed: group.speed(),
                                 follow: group.follows_destination(),
                                 label: label.to_owned(),
@@ -1260,13 +1432,13 @@ impl Document {
                     }
                     (43, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind)) =>
                     {
                         Kind::ArcAngle(*host)
                     }
                     (44, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind)) =>
                     {
                         Kind::ArcLength(*host)
                     }
@@ -1324,9 +1496,9 @@ impl Document {
                                 Kind::PointOnCircle(*host, f64_at(payload, 4), f64_at(payload, 12))
                             }
                             (
-                                Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)),
+                                Some(kind),
                                 Some((payload, _)),
-                            ) if payload.len() == 12
+                            ) if is_arc_kind(kind) && payload.len() == 12
                                 && payload[..4] == [15, 0, 67, 0]
                                 && f64_at(payload, 4).is_finite() =>
                             {
@@ -1587,7 +1759,8 @@ impl Document {
                             && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
                             && h[6..8] == [2, 0] && h[8..10] == [14, 0] => Kind::ReflectedSegment(*source, *mirror),
                     (34, _, [source, mirror])
-                        if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
+                        if objects.get(source.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon())
+                            && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]]))
                             && objects.get(mirror.saturating_sub(1)).is_some_and(|o| is_straight_kind(&o.kind))
                             && h.len() == 28 && h[6..8] == [4, 0] => Kind::ReflectedPolygon(*source, *mirror),
                     (30, _, [source, center])
@@ -1697,7 +1870,10 @@ impl Document {
             {
                 safe = false;
             }
-            let function_name = if matches!(kind, Kind::FunctionDefinition(_)) {
+            let function_name = if matches!(
+                kind,
+                Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _)
+            ) {
                 label
                     .as_ref()
                     .and_then(|value| value.name_utf8().ok())
@@ -1708,21 +1884,30 @@ impl Document {
             if matches!(
                 kind,
                 Kind::FunctionDefinition(_)
+                    | Kind::ReferencedFunction(_, _)
                     | Kind::Parameter(_)
                     | Kind::LinkUrlButton { .. }
                     | Kind::LinkPageButton { .. }
             ) {
                 label = None;
             }
-            if label.is_some() && !is_point_kind(&kind) && kind.numeric_unit().is_none()
-                && !matches!(kind, Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. })
-                && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_))) {
+            if label.is_some()
+                && !is_point_kind(&kind)
+                && kind.numeric_unit().is_none()
+                && !matches!(
+                    kind,
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                )
+                && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_)))
+            {
                 safe = false;
                 label = None;
             }
             let function_anchor = if matches!(
                 kind,
-                Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                Kind::FunctionDefinition(_)
+                    | Kind::ReferencedFunction(_, _)
+                    | Kind::DerivativeFunction(_, _)
             ) {
                 function_expression
                     .as_deref()
@@ -1731,26 +1916,27 @@ impl Document {
                 None
             };
             let visual_style = if let Kind::IterationBinding(source, iteration) = &kind
-                && objects.get(iteration.saturating_sub(1)).is_some_and(|o| matches!(o.kind, Kind::MappedPointIteration { .. }))
-                && objects.get(source.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
-            {
-                style_records::iteration_point_binding_visual_style(h)
-            } else if let Kind::IterationBinding(source, iteration) = &kind
-                && objects.get(iteration.saturating_sub(1)).is_some_and(|o| {
-                    matches!(
-                        o.kind,
-                        Kind::BranchingPolygonIteration { .. } | Kind::MappedPointIteration { .. } | Kind::CircleIteration(..)
-                    )
-                })
-                && !objects
+                && objects
+                    .get(iteration.saturating_sub(1))
+                    .is_some_and(|o| !matches!(o.kind, Kind::Unsupported(_)))
+                && objects
                     .get(source.saturating_sub(1))
                     .is_some_and(|o| is_point_kind(&o.kind))
+            {
+                style_records::iteration_point_binding_visual_style(h)
+            } else if let Kind::IterationBinding(source, _) = &kind
+                && objects.get(source.saturating_sub(1)).is_some_and(|o| {
+                    is_straight_kind(&o.kind)
+                        || o.kind.is_circle()
+                        || o.kind.is_polygon()
+                        || is_arc_kind(&o.kind)
+                })
             {
                 style_records::iteration_binding_visual_style(
                     h,
                     objects
                         .get(source.saturating_sub(1))
-                        .is_some_and(|o| matches!(o.kind, Kind::Polygon(_))),
+                        .is_some_and(|o| o.kind.is_polygon()),
                 )
             } else {
                 style_records::visual_style(h)
@@ -1769,8 +1955,8 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style,
-                interior_order: (h.len() == 28 && h[6..8] == [4, 0]).then(||
-                    i32::from_le_bytes(h[20..24].try_into().unwrap())),
+                interior_order: (h.len() == 28 && h[6..8] == [4, 0])
+                    .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,
                 function_anchor,
@@ -1872,6 +2058,7 @@ impl Document {
             angle_unit_radians,
             marked_coordinate_system,
             frame_styles,
+            evaluation_context: None,
             original: b.to_vec(),
             run_font_families: Vec::new(),
             source_count,

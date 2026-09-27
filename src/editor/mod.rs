@@ -119,13 +119,12 @@ struct MovementTrack {
     button: usize,
     source: usize,
     destination: usize,
-    initial_destination: Option<Point>,
+    initial_destination: Option<sketchpad_rs::document::MovementValue>,
     speed: MovementSpeed,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct MovementButtonDraft {
-    source: usize,
-    destination: usize,
+    pairs: Vec<(usize, usize)>,
     speed: MovementSpeed,
     follow: bool,
 }
@@ -225,6 +224,7 @@ struct Editor {
     function_dialog: Option<bool>,
     function_edit_id: Option<usize>,
     function_draft: String,
+    function_draft_sources: Vec<usize>,
     function_angle_dialog: Option<(SimpleFunction, bool, Option<usize>)>,
     derivative_angle_dialog: Option<usize>,
     parametric_dialog: bool,
@@ -327,6 +327,7 @@ impl Editor {
             function_dialog: None,
             function_edit_id: None,
             function_draft: "x".into(),
+            function_draft_sources: Vec::new(),
             function_angle_dialog: None,
             derivative_angle_dialog: None,
             parametric_dialog: false,

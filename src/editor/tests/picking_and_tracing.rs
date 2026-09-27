@@ -226,36 +226,225 @@ fn traced_ray_and_line_capture_modes_and_motion() {
 #[test]
 fn native_linear_three_point_arc_is_pickable_on_its_segment() {
     let mut doc = Document::from_bytes(
-        include_bytes!("../../../tests/fixtures/arc_three_point_collapsed_plot_native_verified.gsp"), None).unwrap();
-    for object in &mut doc.objects { object.visible = object.id == 5; }
+        include_bytes!(
+            "../../../tests/fixtures/arc_three_point_collapsed_plot_native_verified.gsp"
+        ),
+        None,
+    )
+    .unwrap();
+    for object in &mut doc.objects {
+        object.visible = object.id == 5;
+    }
     let editor = Editor::new(doc);
     let viewport = Viewport {
         rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 300.)),
-        scale: 1., center: Point { x: 150., y: 150. },
+        scale: 1.,
+        center: Point { x: 150., y: 150. },
     };
-    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 225., y: 180. })), Some(5));
-    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 190., y: 180. })), None);
-    assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 225., y: 190. })), None);
+    assert_eq!(
+        editor.hit(&viewport, viewport.screen(Point { x: 225., y: 180. })),
+        Some(5)
+    );
+    assert_eq!(
+        editor.hit(&viewport, viewport.screen(Point { x: 190., y: 180. })),
+        None
+    );
+    assert_eq!(
+        editor.hit(&viewport, viewport.screen(Point { x: 225., y: 190. })),
+        None
+    );
 }
 
 #[test]
 fn centered_arc_construct_measure_and_constrained_point_commands_share_geometry() {
-    let mut doc=Document::new();
-    let center=doc.add(Kind::Free(Point{x:200.,y:180.}));
-    let start=doc.add(Kind::Free(Point{x:260.,y:180.}));
-    let end=doc.add(Kind::Free(Point{x:200.,y:60.}));
-    let mut editor=Editor::new(doc);
-    editor.selection_order=vec![center,start,end];
-    editor.doc.selected=[center,start,end].into_iter().collect();
-    editor.center_arc();let arc=editor.doc.objects.len();
-    assert_eq!(editor.doc.objects[arc-1].kind,Kind::CenterArc(center,start,end));
-    editor.select_only(arc);editor.measure_arc_angle();
-    assert_eq!(editor.doc.numeric_value(editor.doc.objects.len()),Some(90.));
-    editor.select_only(arc);editor.measure_arc_length();
-    assert!((editor.doc.numeric_value(editor.doc.objects.len()).unwrap()-std::f64::consts::FRAC_PI_2*60./37.79527559055118).abs()<1e-12);
-    editor.select_only(arc);editor.point_on_object();
-    let point=editor.doc.objects.len();
+    let mut doc = Document::new();
+    let center = doc.add(Kind::Free(Point { x: 200., y: 180. }));
+    let start = doc.add(Kind::Free(Point { x: 260., y: 180. }));
+    let end = doc.add(Kind::Free(Point { x: 200., y: 60. }));
+    let mut editor = Editor::new(doc);
+    editor.selection_order = vec![center, start, end];
+    editor.doc.selected = [center, start, end].into_iter().collect();
+    editor.center_arc();
+    let arc = editor.doc.objects.len();
+    assert_eq!(
+        editor.doc.objects[arc - 1].kind,
+        Kind::CenterArc(center, start, end)
+    );
+    editor.select_only(arc);
+    editor.measure_arc_angle();
+    assert_eq!(
+        editor.doc.numeric_value(editor.doc.objects.len()),
+        Some(90.)
+    );
+    editor.select_only(arc);
+    editor.measure_arc_length();
+    assert!(
+        (editor.doc.numeric_value(editor.doc.objects.len()).unwrap()
+            - std::f64::consts::FRAC_PI_2 * 60. / 37.79527559055118)
+            .abs()
+            < 1e-12
+    );
+    editor.select_only(arc);
+    editor.point_on_object();
+    let point = editor.doc.objects.len();
     assert!(matches!(editor.doc.objects[point-1].kind,Kind::PointOnArc(host,_) if host==arc));
     assert!(editor.doc.position(point).is_some());
     editor.doc.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn defining_coordinate_units_uses_ordered_length_calculation_and_parameter() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"),
+        None,
+    )
+    .unwrap();
+    doc.set_parameter_value(2, 1.).unwrap();
+    doc.set_parameter_value(3, 2.).unwrap();
+    let calculated = doc
+        .add_multi_calculation(&[2, 3], "v1*v2", (10, 130))
+        .unwrap();
+    let origin = doc.add(Kind::Free(Point { x: 250., y: 220. }));
+    let mut editor = Editor::new(doc);
+    editor.selection_order = vec![calculated, origin, 2];
+    editor.doc.selected.extend([2, origin, calculated]);
+    let before = editor.doc.encode().unwrap();
+    let count = editor.doc.objects.len();
+    assert_eq!(
+        editor.define_coordinate_system_label(),
+        "Define Unit Distances"
+    );
+    editor.define_coordinate_system();
+    let frame = editor.doc.active_coordinate_system().unwrap();
+    assert_eq!(frame, count + 3, "{}", editor.status);
+    assert_eq!(
+        editor.doc.objects[count].kind,
+        Kind::DistanceAxis(origin, calculated, 1)
+    );
+    assert_eq!(
+        editor.doc.objects[count + 1].kind,
+        Kind::DistanceAxis(origin, 2, 0)
+    );
+    assert_eq!(editor.doc.grid_form[0], GridForm::Rectangular);
+    let step = 37.79527559055118;
+    let axes = editor.doc.graph_frame(frame).unwrap();
+    assert!((axes.x_unit.x - axes.origin.x - 2. * step).abs() < 1e-9);
+    assert!((axes.origin.y - axes.y_unit.y - step).abs() < 1e-9);
+    editor.doc.verify_roundtrip().unwrap();
+    let created = editor.doc.encode().unwrap();
+    editor.doc.undo();
+    assert_eq!(editor.doc.encode().unwrap(), before);
+    editor.doc.redo();
+    assert_eq!(editor.doc.encode().unwrap(), created);
+
+    editor.doc.set_parameter_value(2, 3.).unwrap();
+    let axes = editor.doc.graph_frame(frame).unwrap();
+    assert!((axes.x_unit.x - axes.origin.x - 6. * step).abs() < 1e-9);
+    assert!((axes.origin.y - axes.y_unit.y - 3. * step).abs() < 1e-9);
+    editor.doc.verify_roundtrip().unwrap();
+    let changed = editor.doc.encode().unwrap();
+    editor.doc.undo();
+    assert_eq!(editor.doc.encode().unwrap(), created);
+    editor.doc.redo();
+    assert_eq!(editor.doc.encode().unwrap(), changed);
+}
+
+#[test]
+fn defining_one_length_coordinate_unit_creates_origin_and_live_square_axes() {
+    let doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"),
+        None,
+    )
+    .unwrap();
+    let mut editor = Editor::new(doc);
+    editor.center = Point { x: 250., y: 220. };
+    editor.select_only(2);
+    let count = editor.doc.objects.len();
+    assert_eq!(
+        editor.define_coordinate_system_label(),
+        "Define Unit Distance"
+    );
+    editor.define_coordinate_system();
+    let frame = editor.doc.active_coordinate_system().unwrap();
+    let origin = count + 1;
+    let x_axis = count + 2;
+    let y_unit = count + 3;
+    assert_eq!(frame, count + 5, "{}", editor.status);
+    assert_eq!(editor.doc.objects[count].kind, Kind::Free(editor.center));
+    assert_eq!(
+        editor.doc.objects[count + 1].kind,
+        Kind::DistanceAxis(origin, 2, 1)
+    );
+    assert_eq!(
+        editor.doc.objects[count + 2].kind,
+        Kind::DistanceVerticalUnit(x_axis, 37.79527559055118, false)
+    );
+    assert_eq!(
+        editor.doc.objects[count + 3].kind,
+        Kind::GraphAxis(origin, y_unit, 0)
+    );
+    assert_eq!(editor.doc.grid_form[0], GridForm::Square);
+    let original = editor.doc.graph_frame(frame).unwrap();
+    editor.doc.set_parameter_value(2, 2.).unwrap();
+    let changed = editor.doc.graph_frame(frame).unwrap();
+    assert_eq!(changed.origin, original.origin);
+    assert!(
+        (changed.x_unit.x - changed.origin.x - 2. * (original.x_unit.x - original.origin.x)).abs()
+            < 1e-9
+    );
+    assert!(
+        (changed.origin.y - changed.y_unit.y - 2. * (original.origin.y - original.y_unit.y)).abs()
+            < 1e-9
+    );
+    editor.doc.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn scalar_and_degree_coordinate_selections_create_native_default_axes() {
+    for selected in [3, 1] {
+        let doc = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        editor.center = Point { x: 250., y: 220. };
+        editor.select_only(selected);
+        assert_eq!(
+            editor.define_coordinate_system_label(),
+            "Define Coordinate System"
+        );
+        let count = editor.doc.objects.len();
+        let before = editor.doc.encode().unwrap();
+        editor.define_coordinate_system();
+        let origin = count + 1;
+        let x_unit = count + 2;
+        let y_unit = count + 4;
+        let frame = editor.doc.active_coordinate_system().unwrap();
+        assert_eq!(frame, count + 6, "{}", editor.status);
+        assert_eq!(editor.doc.objects[count].kind, Kind::Free(editor.center));
+        assert_eq!(
+            editor.doc.objects[count + 2].kind,
+            Kind::GraphAxis(origin, x_unit, 1)
+        );
+        assert_eq!(
+            editor.doc.objects[count + 4].kind,
+            Kind::GraphAxis(origin, y_unit, 0)
+        );
+        assert!(
+            !editor.doc.objects[count..]
+                .iter()
+                .any(|object| matches!(object.kind, Kind::DistanceAxis(..)))
+        );
+        editor.doc.verify_roundtrip().unwrap();
+        let created = editor.doc.encode().unwrap();
+        editor.doc.undo();
+        assert_eq!(editor.doc.encode().unwrap(), before);
+        editor.doc.redo();
+        assert_eq!(editor.doc.encode().unwrap(), created);
+        let axes = editor.doc.graph_frame(frame).unwrap();
+        editor.doc.set_parameter_value(selected, 4.).unwrap();
+        assert_eq!(editor.doc.graph_frame(frame).unwrap(), axes);
+        editor.doc.verify_roundtrip().unwrap();
+    }
 }

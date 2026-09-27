@@ -292,10 +292,15 @@ fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLitera
             scientific: false,
         });
     }
-    let at = words.iter().position(|word| matches!(word, 0x0100..=0x0102 | 0x0201))
+    let at = words
+        .iter()
+        .position(|word| matches!(word, 0x0100..=0x0102 | 0x0201))
         .ok_or("Parameter value units disagree with its header")?;
     let suffix = words[at];
-    if !matches!((unit, suffix), (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)) {
+    if !matches!(
+        (unit, suffix),
+        (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)
+    ) {
         return Err("Parameter value units disagree with its header".into());
     }
     // Actual native parameter words [13, 0x0100] encode pi radians,
@@ -315,7 +320,9 @@ fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLitera
         _ => return Err("Unsupported parameter scientific literal".into()),
     };
     if scientific {
-        value = format!("{value}e-5").parse().map_err(|_| "Invalid scientific parameter value")?;
+        value = format!("{value}e-5")
+            .parse()
+            .map_err(|_| "Invalid scientific parameter value")?;
     }
     Ok(ParameterLiteral {
         value,
@@ -327,8 +334,15 @@ fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLitera
 fn shift_decimal_words(words: &[u16], places: usize) -> Vec<u16> {
     let negative = words.first() == Some(&4097);
     let words = &words[usize::from(negative)..];
-    let decimal = words.iter().position(|word| *word == 10).unwrap_or(words.len());
-    let mut digits = words.iter().copied().filter(|word| *word != 10).collect::<Vec<_>>();
+    let decimal = words
+        .iter()
+        .position(|word| *word == 10)
+        .unwrap_or(words.len());
+    let mut digits = words
+        .iter()
+        .copied()
+        .filter(|word| *word != 10)
+        .collect::<Vec<_>>();
     let split = decimal + places;
     digits.resize(digits.len().max(split), 0);
     let mut whole = digits[..split].to_vec();
@@ -403,7 +417,8 @@ impl ParameterGroup {
             .sum::<i16>();
         let whole_digits = value.abs().to_string().split('.').next().unwrap().len();
         let value_extra = 4 * (whole_digits.saturating_sub(1) as i16 + i16::from(value < 0.));
-        let width = 80 + letter_width + 10 * group.precision().saturating_sub(1) as i16 + value_extra;
+        let width =
+            80 + letter_width + 10 * group.precision().saturating_sub(1) as i16 + value_extra;
         updated[bbox + 4..bbox + 6].copy_from_slice(&(left + width).to_le_bytes());
         Self::parse(&updated)
     }
@@ -411,11 +426,12 @@ impl ParameterGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let rs = records(bytes, 0)?;
         let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
-        if !matches!(kinds.as_slice(),
+        if !matches!(
+            kinds.as_slice(),
             [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
-            | [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
-            | [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x232e, 0x07d7])
-            || rs.iter().any(|r| r.kind == 0x232e && r.end != r.payload)
+                | [0x07d0, 0x0907, 0x07d8, 0x08a3, 0x07d7]
+                | [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x232e, 0x07d7]
+        ) || rs.iter().any(|r| r.kind == 0x232e && r.end != r.payload)
         {
             return Err("Unsupported parameter record sequence".into());
         }
@@ -448,16 +464,23 @@ impl ParameterGroup {
         // stored name. Only an ordinary, labeled centimeter literal has been
         // established in this mode; do not infer other combinations.
         let display_mode_supported = matches!(display_mode, 1 | 3)
-            || display_mode == 0 && unit == NumericUnit::Length
-                && !literal.scientific && label_record.is_some() && kinds.len() == 6;
+            || display_mode == 0
+                && unit == NumericUnit::Length
+                && !literal.scientific
+                && label_record.is_some()
+                && kinds.len() == 6;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
         let domain = (
             f64::from_le_bytes(payload[60..68].try_into().unwrap()),
             f64::from_le_bytes(payload[68..76].try_into().unwrap()),
         );
-        if precision > 5 || !step.is_finite() || step <= 0.
-            || !domain.0.is_finite() || !domain.1.is_finite() || domain.0 > domain.1
+        if precision > 5
+            || !step.is_finite()
+            || step <= 0.
+            || !domain.0.is_finite()
+            || !domain.1.is_finite()
+            || domain.0 > domain.1
         {
             return Err("Unsupported parameter precision or animation domain".into());
         }
@@ -467,11 +490,22 @@ impl ParameterGroup {
         let base = records(&template, 0)?;
         let expected = &template[base[1].payload..base[1].end];
         let immutable = [0..12, 16..22, 24..26, 32..36, 40..44, 46..48];
-        if immutable.iter().any(|range| payload[range.clone()] != expected[range.clone()])
+        if immutable
+            .iter()
+            .any(|range| payload[range.clone()] != expected[range.clone()])
             || !display_mode_supported
             || rs[0].end - rs[0].payload != 28
-            || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap()) & 0xffff != 0
-            || !matches!(u16::from_le_bytes(bytes[rs[0].payload + 8..rs[0].payload + 10].try_into().unwrap()), 79..=81)
+            || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap())
+                & 0xffff
+                != 0
+            || !matches!(
+                u16::from_le_bytes(
+                    bytes[rs[0].payload + 8..rs[0].payload + 10]
+                        .try_into()
+                        .unwrap()
+                ),
+                79..=81
+            )
             || font.end - font.payload != 2
             || bbox_record.end - bbox_record.payload != 8
             || rs.last().unwrap().end != rs.last().unwrap().payload
@@ -480,7 +514,9 @@ impl ParameterGroup {
         }
         if let Some(record) = label_record {
             let label = crate::text_records::LabelAux::parse(&bytes[record.payload..record.end])?;
-            let name = label.name_utf8().map_err(|_| "Parameter name is not UTF-8")?;
+            let name = label
+                .name_utf8()
+                .map_err(|_| "Parameter name is not UTF-8")?;
             if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
                 return Err("Unsupported parameter name".into());
             }
@@ -503,19 +539,33 @@ impl ParameterGroup {
     /// Native generated names require the containing page's naming counter.
     pub fn name(&self) -> &str {
         let rs = records(&self.bytes, 0).unwrap();
-        let Some(label) = rs.iter().find(|r| r.kind == 0x07d5) else { return ""; };
+        let Some(label) = rs.iter().find(|r| r.kind == 0x07d5) else {
+            return "";
+        };
         let payload = label.payload;
         let len =
             u16::from_le_bytes(self.bytes[payload + 22..payload + 24].try_into().unwrap()) as usize;
         std::str::from_utf8(&self.bytes[payload + 24..payload + 24 + len]).unwrap()
     }
 
-    pub(crate) fn with_generated_name(&self, number: u32, font: &crate::text_style_records::FontState) -> Result<Self, String> {
+    pub(crate) fn with_generated_name(
+        &self,
+        number: u32,
+        font: &crate::text_style_records::FontState,
+    ) -> Result<Self, String> {
         if number == 0 || !self.name().is_empty() || self.display_mode() == 0 {
             return Err("Parameter cannot receive a generated name".into());
         }
-        if font.family != "Tahoma" || font.size_code != 18 || font.bold || font.italic || font.underline || self.literal().scientific {
-            return Err("Generated parameter captions need a verified font and literal layout".into());
+        if font.family != "Tahoma"
+            || font.size_code != 18
+            || font.bold
+            || font.italic
+            || font.underline
+            || self.literal().scientific
+        {
+            return Err(
+                "Generated parameter captions need a verified font and literal layout".into(),
+            );
         }
         // Native controls establish the normal-18 caption metrics, including
         // two-digit subscripts. Restore short caches left by missing names.
@@ -528,7 +578,12 @@ impl ParameterGroup {
                 _ => return Err("Generated parameter caption needs verified glyph metrics".into()),
             };
         }
-        width += match self.unit() { NumericUnit::Scalar => 0, NumericUnit::Degrees => 9, NumericUnit::Length => 42, _ => return Err("Unsupported generated parameter units".into()) };
+        width += match self.unit() {
+            NumericUnit::Scalar => 0,
+            NumericUnit::Degrees => 9,
+            NumericUnit::Length => 42,
+            _ => return Err("Unsupported generated parameter units".into()),
+        };
         let name = format!("t[{number}]");
         let named = object_group(NAMED_PARAMETER, 1);
         let named_records = records(&named, 0)?;
@@ -537,19 +592,33 @@ impl ParameterGroup {
         label.extend_from_slice(&(name.len() as u16).to_le_bytes());
         label.extend_from_slice(name.as_bytes());
         label.push(0);
-        if name.len() % 2 == 0 { label.push(0); }
+        if name.len() % 2 == 0 {
+            label.push(0);
+        }
         let rs = records(&self.bytes, 0)?;
         let mut bytes = Vec::new();
         for record in rs {
-            if record.kind == 0x07d5 { continue; }
-            if record.kind == 0x07d8 { put_record(&mut bytes, 0x07d5, &label); }
+            if record.kind == 0x07d5 {
+                continue;
+            }
+            if record.kind == 0x07d8 {
+                put_record(&mut bytes, 0x07d5, &label);
+            }
             bytes.extend_from_slice(&self.bytes[record.start..record.end]);
         }
         let updated = records(&bytes, 0)?;
-        let bbox = updated.iter().find(|record| record.kind == 0x08a3).ok_or("Missing parameter caption box")?.payload;
+        let bbox = updated
+            .iter()
+            .find(|record| record.kind == 0x08a3)
+            .ok_or("Missing parameter caption box")?
+            .payload;
         let anchor = self.anchor();
-        let right = i16::try_from(i32::from(anchor.0) + width).map_err(|_| "Parameter caption box overflow")?;
-        let bottom = anchor.1.checked_add(32).ok_or("Parameter caption box overflow")?;
+        let right = i16::try_from(i32::from(anchor.0) + width)
+            .map_err(|_| "Parameter caption box overflow")?;
+        let bottom = anchor
+            .1
+            .checked_add(32)
+            .ok_or("Parameter caption box overflow")?;
         bytes[bbox + 4..bbox + 6].copy_from_slice(&right.to_le_bytes());
         bytes[bbox + 6..bbox + 8].copy_from_slice(&bottom.to_le_bytes());
         let mut result = Self::parse(&bytes)?;
@@ -559,7 +628,11 @@ impl ParameterGroup {
 
     pub fn display_mode(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
-        u16::from_le_bytes(self.bytes[rs[1].payload + 26..rs[1].payload + 28].try_into().unwrap())
+        u16::from_le_bytes(
+            self.bytes[rs[1].payload + 26..rs[1].payload + 28]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// A canonical numeric definition before display rounding. Its use as a
@@ -602,8 +675,10 @@ impl ParameterGroup {
     }
     fn literal(&self) -> ParameterLiteral {
         let rs = records(&self.bytes, 0).unwrap();
-        let words = self.bytes[rs[1].payload + 92..rs[1].end].chunks_exact(2)
-            .map(|word| u16::from_le_bytes(word.try_into().unwrap())).collect::<Vec<_>>();
+        let words = self.bytes[rs[1].payload + 92..rs[1].end]
+            .chunks_exact(2)
+            .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
+            .collect::<Vec<_>>();
         parameter_literal(&words, self.unit()).unwrap()
     }
     pub fn value(&self) -> f64 {
@@ -619,7 +694,11 @@ impl ParameterGroup {
     }
 
     pub fn value_text(&self) -> String {
-        format!("{}{}", format_numeric_value(self.value(), self.precision()), self.unit().suffix())
+        format!(
+            "{}{}",
+            format_numeric_value(self.value(), self.precision()),
+            self.unit().suffix()
+        )
     }
     pub fn animation_domain(&self) -> (f64, f64) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -656,8 +735,8 @@ impl ParameterGroup {
             let digits = text.split('.').next().unwrap().len();
             (digits.saturating_sub(1)) as i32 + i32::from(value < 0.)
         };
-        let width_delta =
-            4 * (extra(value) - extra(old_value)) + 10 * (precision as i32 - self.precision() as i32);
+        let width_delta = 4 * (extra(value) - extra(old_value))
+            + 10 * (precision as i32 - self.precision() as i32);
         let rs = records(&self.bytes, 0)?;
         let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
@@ -665,7 +744,9 @@ impl ParameterGroup {
         let precision_steps = [1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001];
         let step = f64::from_le_bytes(payload[52..60].try_into().unwrap());
         if step == precision_steps[self.precision()] * self.native_unit_scale() {
-            payload[52..60].copy_from_slice(&(precision_steps[precision] * self.native_unit_scale()).to_le_bytes());
+            payload[52..60].copy_from_slice(
+                &(precision_steps[precision] * self.native_unit_scale()).to_le_bytes(),
+            );
         }
         match self.unit() {
             NumericUnit::Length => words.push(0x0201),
@@ -696,7 +777,9 @@ impl ParameterGroup {
         Ok(())
     }
     pub(crate) fn set_evaluation_value(&mut self, value: f64) -> bool {
-        if !value.is_finite() { return false; }
+        if !value.is_finite() {
+            return false;
+        }
         self.evaluation_value = Some(value.to_le_bytes());
         true
     }
@@ -1000,9 +1083,9 @@ pub enum CalculationSourceKind {
 }
 
 // Native calculator degree conversion, verified with tan(90).
-const CALCULATOR_PI: f64 = 3.1415926535898;
+pub(crate) const CALCULATOR_PI: f64 = 3.1415926535898;
 
-const CALCULATION_FUNCTIONS: &[(&str, u16)] = &[
+pub(crate) const CALCULATION_FUNCTIONS: &[(&str, u16)] = &[
     ("sin", 0x2000),
     ("cos", 0x2001),
     ("tan", 0x2002),
@@ -1040,16 +1123,29 @@ impl ParameterExpr {
         use CalculationSourceKind::{Function, Numeric};
         match self {
             Self::Source(index) | Self::FunctionSource(index, _) => {
-                let kind = if matches!(self, Self::Source(_)) { Numeric } else { Function };
-                let slot = kinds.get_mut(*index).ok_or("Invalid calculation source token")?;
+                let kind = if matches!(self, Self::Source(_)) {
+                    Numeric
+                } else {
+                    Function
+                };
+                let slot = kinds
+                    .get_mut(*index)
+                    .ok_or("Invalid calculation source token")?;
                 if slot.is_some_and(|previous| previous != kind) {
                     return Err("Calculation source is used as both numeric and function".into());
                 }
                 *slot = Some(kind);
-                if let Self::FunctionSource(_, argument) = self { argument.source_kinds(kinds)?; }
+                if let Self::FunctionSource(_, argument) = self {
+                    argument.source_kinds(kinds)?;
+                }
             }
-            Self::Binary(_, left, right) => { left.source_kinds(kinds)?; right.source_kinds(kinds)?; }
-            Self::Neg(argument) | Self::Group(argument) | Self::Call(_, argument) => argument.source_kinds(kinds)?,
+            Self::Binary(_, left, right) => {
+                left.source_kinds(kinds)?;
+                right.source_kinds(kinds)?;
+            }
+            Self::Neg(argument) | Self::Group(argument) | Self::Call(_, argument) => {
+                argument.source_kinds(kinds)?
+            }
             Self::Literal(_, _) => {}
         }
         Ok(())
@@ -1064,10 +1160,19 @@ impl ParameterExpr {
     fn eval_raw_values(&self, sources: &[f64]) -> Option<f64> {
         self.eval_raw_context(sources, &[], &|_, _, _| None)
     }
-    fn eval_raw_context(&self, sources: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
+    fn eval_raw_context(
+        &self,
+        sources: &[f64],
+        units: &[NumericUnit],
+        functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
+    ) -> Option<f64> {
         let value = match self {
             Self::Source(index) => *sources.get(*index)?,
-            Self::FunctionSource(index, argument) => functions(*index, argument.eval_raw_context(sources, units, functions)?, argument.units(units).ok()?)?,
+            Self::FunctionSource(index, argument) => functions(
+                *index,
+                argument.eval_raw_context(sources, units, functions)?,
+                argument.units(units).ok()?,
+            )?,
             Self::Neg(argument) => -argument.eval_raw_context(sources, units, functions)?,
             Self::Group(argument) => argument.eval_raw_context(sources, units, functions)?,
             Self::Literal(value, _) => *value,
@@ -1121,7 +1226,9 @@ impl ParameterExpr {
         use NumericUnit::{Degrees, Length, Scalar};
         match self {
             Self::FunctionSource(index, argument) => {
-                sources.get(*index).ok_or("Missing calculation function source")?;
+                sources
+                    .get(*index)
+                    .ok_or("Missing calculation function source")?;
                 argument.units(sources)?;
                 Ok(Scalar)
             }
@@ -1213,11 +1320,15 @@ impl ParameterExpr {
         }
     }
 
-    fn caption_layout(&self, base: NumericCaptionLayout, sources: &[NumericCaptionLayout])
-        -> Result<NumericCaptionLayout, String>
-    {
+    fn caption_layout(
+        &self,
+        base: NumericCaptionLayout,
+        sources: &[NumericCaptionLayout],
+    ) -> Result<NumericCaptionLayout, String> {
         match self {
-            Self::Source(index) => sources.get(*index).copied()
+            Self::Source(index) => sources
+                .get(*index)
+                .copied()
                 .ok_or_else(|| "Missing numeric caption source layout".into()),
             Self::Literal(_, text) if !text.contains('/') && !text.contains('÷') => Ok(base),
             Self::Neg(argument) | Self::Group(argument) => argument.caption_layout(base, sources),
@@ -1226,14 +1337,20 @@ impl ParameterExpr {
                 let right = right.caption_layout(base, sources)?;
                 if *op == 0x1003 {
                     Ok(NumericCaptionLayout {
-                        above: left.height()?.checked_add(1)
+                        above: left
+                            .height()?
+                            .checked_add(1)
                             .ok_or("Numeric caption layout overflow")?,
-                        below: right.height()?.checked_add(2)
+                        below: right
+                            .height()?
+                            .checked_add(2)
                             .ok_or("Numeric caption layout overflow")?,
                     })
                 } else {
-                    Ok(NumericCaptionLayout { above: left.above.max(right.above),
-                        below: left.below.max(right.below) })
+                    Ok(NumericCaptionLayout {
+                        above: left.above.max(right.above),
+                        below: left.below.max(right.below),
+                    })
                 }
             }
             _ => Err("Numeric caption expression layout needs a native control".into()),
@@ -1244,8 +1361,9 @@ impl ParameterExpr {
         match self {
             Self::Source(_) | Self::Literal(_, _) => true,
             Self::Neg(argument) | Self::Group(argument) => argument.caption_is_flat(),
-            Self::Binary(op, left, right) => matches!(*op, 0x1000..=0x1002)
-                && left.caption_is_flat() && right.caption_is_flat(),
+            Self::Binary(op, left, right) => {
+                matches!(*op, 0x1000..=0x1002) && left.caption_is_flat() && right.caption_is_flat()
+            }
             Self::Call(_, _) | Self::FunctionSource(_, _) => false,
         }
     }
@@ -1255,8 +1373,11 @@ impl ParameterExpr {
     }
     fn display_names(&self, source_names: &[&str]) -> String {
         match self {
-            Self::FunctionSource(index, argument) => format!("{}({})",
-                source_names.get(*index).copied().unwrap_or("?"), argument.display_names(source_names)),
+            Self::FunctionSource(index, argument) => format!(
+                "{}({})",
+                source_names.get(*index).copied().unwrap_or("?"),
+                argument.display_names(source_names)
+            ),
             Self::Source(index) => source_names.get(*index).copied().unwrap_or("?").into(),
             Self::Neg(argument) => format!("−{}", argument.display_names(source_names)),
             Self::Group(argument) => argument.display_names(source_names),
@@ -1346,7 +1467,9 @@ impl<'a> ParameterExprParser<'a> {
             };
             return Ok(if word >= 0x7000 {
                 ParameterExpr::FunctionSource((word - 0x7000) as usize, Box::new(argument))
-            } else { ParameterExpr::Call(word, Box::new(argument)) });
+            } else {
+                ParameterExpr::Call(word, Box::new(argument))
+            });
         }
         if word == 13 || word == 14 {
             self.at += 1;
@@ -1507,17 +1630,26 @@ fn calculation_words_for_sources(
                 input = rest;
             }
         } else if input.strip_prefix("rad").is_some_and(|rest| {
-            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            !rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }) {
             words.push(0x0100);
             input = &input[3..];
         } else if input.strip_prefix("cm").is_some_and(|rest| {
-            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            !rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }) {
             words.push(0x0201);
             input = &input[2..];
         } else if input.strip_prefix("px").is_some_and(|rest| {
-            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            !rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }) {
             words.push(0x0200);
             input = &input[2..];
@@ -1640,8 +1772,15 @@ impl ParameterCalculationGroup {
             .map(|(i, name)| (name.as_str(), i))
             .collect::<Vec<_>>();
         aliases.extend([("a", 0), ("b", 1)]);
-        let function_names = (1..=sources.len()).map(|n| format!("f{n}")).collect::<Vec<_>>();
-        aliases.extend(function_names.iter().enumerate().map(|(i, name)| (name.as_str(), i)));
+        let function_names = (1..=sources.len())
+            .map(|n| format!("f{n}"))
+            .collect::<Vec<_>>();
+        aliases.extend(
+            function_names
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.as_str(), i)),
+        );
         let words = calculation_words_for_sources(expression, &aliases)?;
         let tree = calculation_tree(&words)?;
         if sources.len() == 1 {
@@ -1711,17 +1850,17 @@ impl ParameterCalculationGroup {
         let kinds = rs.iter().map(|r| r.kind).collect::<Vec<_>>();
         let font_index = match kinds.as_slice() {
             [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x07d7] => 3,
-            [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x232e, 0x07d7]
-                if rs[4].payload == rs[4].end => 3,
+            [0x07d0, 0x07d2, 0x0907, 0x07d8, 0x232e, 0x07d7] if rs[4].payload == rs[4].end => 3,
             [0x07d0, 0x07d2, 0x0907, 0x07d5, 0x07d8, 0x07d7] => {
                 crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
                 4
             }
             [0x07d0, 0x07d2, 0x0907, 0x07d5, 0x07d8, 0x232e, 0x07d7]
-                if rs[5].payload == rs[5].end => {
-                    crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
-                    4
-                }
+                if rs[5].payload == rs[5].end =>
+            {
+                crate::text_records::LabelAux::parse(&bytes[rs[3].payload..rs[3].end])?;
+                4
+            }
             _ => return Err("Unsupported parameter calculation records".into()),
         };
         let payload = &bytes[rs[2].payload..rs[2].end];
@@ -1733,8 +1872,12 @@ impl ParameterCalculationGroup {
             || rs[font_index].end - rs[font_index].payload != 2
             || rs.last().unwrap().end != rs.last().unwrap().payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 48
-            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 48..=51)
-            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize != payload.len() - 32
+            || !matches!(
+                u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
+                48..=51
+            )
+            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
+                != payload.len() - 32
             || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize != token_count
         {
             return Err("Unsupported parameter calculation header".into());
@@ -1747,7 +1890,10 @@ impl ParameterCalculationGroup {
                 return Err("Unsupported calculation numeric representation".into());
             }
         }
-        if !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 0 | 1 | 3) {
+        if !matches!(
+            u16::from_le_bytes(payload[26..28].try_into().unwrap()),
+            0 | 1 | 3
+        ) {
             return Err("Unsupported calculation display mode".into());
         }
         Ok(())
@@ -1759,10 +1905,13 @@ impl ParameterCalculationGroup {
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
         let count = self.sources().len();
-        if !words.iter().any(|w| (0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w))
-            || words
-                .iter()
-                .any(|w| ((0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w)) && (*w & 0xff) as usize >= count)
+        if !words
+            .iter()
+            .any(|w| (0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w))
+            || words.iter().any(|w| {
+                ((0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w))
+                    && (*w & 0xff) as usize >= count
+            })
         {
             return Err("Invalid calculation source token".into());
         }
@@ -1774,7 +1923,10 @@ impl ParameterCalculationGroup {
         let mut kinds = vec![None; self.sources().len()];
         self.expression_tree()?.source_kinds(&mut kinds)?;
         // Retained unused references are still concrete numeric dependencies.
-        Ok(kinds.into_iter().map(|kind| kind.unwrap_or(CalculationSourceKind::Numeric)).collect())
+        Ok(kinds
+            .into_iter()
+            .map(|kind| kind.unwrap_or(CalculationSourceKind::Numeric))
+            .collect())
     }
     pub fn value(&self, source: f64) -> Option<f64> {
         self.expression_tree().ok()?.eval(source)
@@ -1804,13 +1956,31 @@ impl ParameterCalculationGroup {
     /// Function indexes share the native reference list with numeric indexes.
     /// Their value slots are placeholders; the callback evaluates each call at
     /// its argument's current magnitude. Undefined calls suppress the result.
-    pub fn value_for_sources_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
-        self.display_value_with_functions(values, units, functions).filter(|value| value.is_finite())
+    pub fn value_for_sources_with_functions(
+        &self,
+        values: &[f64],
+        units: &[NumericUnit],
+        functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
+    ) -> Option<f64> {
+        self.display_value_with_functions(values, units, functions)
+            .filter(|value| value.is_finite())
     }
-    pub(crate) fn display_value_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
-        if values.len() != self.sources().len() || units.len() != values.len() || values.iter().any(|value| !value.is_finite()) { return None; }
+    pub(crate) fn display_value_with_functions(
+        &self,
+        values: &[f64],
+        units: &[NumericUnit],
+        functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
+    ) -> Option<f64> {
+        if values.len() != self.sources().len()
+            || units.len() != values.len()
+            || values.iter().any(|value| !value.is_finite())
+        {
+            return None;
+        }
         let tree = self.expression_tree().ok()?;
-        if tree.units(units).ok()? != self.unit() { return None; }
+        if tree.units(units).ok()? != self.unit() {
+            return None;
+        }
         tree.eval_raw_context(values, units, functions)
     }
     /// Caption evaluation retains an infinite result from finite inputs.
@@ -1874,8 +2044,10 @@ impl ParameterCalculationGroup {
         // Native can retain an older physical category after a formula becomes
         // unitless (the retained length-minus-decimal control has subtype48 but
         // no native result suffix). Expression units govern its live value.
-        if subtype == 51 || (inferred == NumericUnit::Scalar && units.contains(&self.unit()))
-            || (subtype == 50 && inferred.dimensions() == (0, 2)) {
+        if subtype == 51
+            || (inferred == NumericUnit::Scalar && units.contains(&self.unit()))
+            || (subtype == 50 && inferred.dimensions() == (0, 2))
+        {
             self.inferred_unit = (inferred != self.unit()).then_some(inferred);
         } else if inferred != self.unit() {
             return Err("Calculation result units disagree with its header".into());
@@ -1911,7 +2083,11 @@ impl ParameterCalculationGroup {
     }
     pub fn display_mode(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
-        u16::from_le_bytes(self.bytes[rs[2].payload + 26..rs[2].payload + 28].try_into().unwrap())
+        u16::from_le_bytes(
+            self.bytes[rs[2].payload + 26..rs[2].payload + 28]
+                .try_into()
+                .unwrap(),
+        )
     }
     /// Native flag2 suppresses the caption in the supported display modes.
     /// It is separate from visibility's flag1 bit.
@@ -1948,17 +2124,22 @@ impl ParameterCalculationGroup {
     pub fn with_caption_font(&self, index: u16) -> Result<Self, String> {
         let mut bytes = self.bytes.clone();
         let rs = records(&bytes, 0)?;
-        let at = rs.iter().find(|record| record.kind == 0x07d8)
-            .ok_or("Missing numeric caption font")?.payload;
+        let at = rs
+            .iter()
+            .find(|record| record.kind == 0x07d8)
+            .ok_or("Missing numeric caption font")?
+            .payload;
         bytes[at..at + 2].copy_from_slice(&index.to_le_bytes());
         let mut group = Self::parse(&bytes)?;
         group.inferred_unit = self.inferred_unit;
         Ok(group)
     }
 
-    pub(crate) fn expression_caption_layout(&self, base: NumericCaptionLayout,
-        sources: &[NumericCaptionLayout]) -> Result<NumericCaptionLayout, String>
-    {
+    pub(crate) fn expression_caption_layout(
+        &self,
+        base: NumericCaptionLayout,
+        sources: &[NumericCaptionLayout],
+    ) -> Result<NumericCaptionLayout, String> {
         if sources.len() != self.sources().len() {
             return Err("Invalid numeric caption source layouts".into());
         }
@@ -1966,7 +2147,8 @@ impl ParameterCalculationGroup {
     }
 
     pub(crate) fn caption_is_flat(&self) -> bool {
-        self.expression_tree().is_ok_and(|tree| tree.caption_is_flat())
+        self.expression_tree()
+            .is_ok_and(|tree| tree.caption_is_flat())
     }
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
@@ -2125,15 +2307,24 @@ impl MeasuredCalculationGroup {
 impl CalculationGroup {
     pub fn display_mode(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
-        u16::from_le_bytes(self.bytes[rs[1].payload + 26..rs[1].payload + 28].try_into().unwrap())
+        u16::from_le_bytes(
+            self.bytes[rs[1].payload + 26..rs[1].payload + 28]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// The explicitly stored calculation name, without inventing a caption.
     pub fn name(&self) -> Option<&str> {
         let rs = records(&self.bytes, 0).ok()?;
         let label = rs.iter().find(|record| record.kind == 0x07d5)?;
-        let len = u16::from_le_bytes(self.bytes[label.payload + 22..label.payload + 24].try_into().ok()?) as usize;
-        std::str::from_utf8(&self.bytes[label.payload + 24..label.payload + 24 + len]).ok()
+        let len = u16::from_le_bytes(
+            self.bytes[label.payload + 22..label.payload + 24]
+                .try_into()
+                .ok()?,
+        ) as usize;
+        std::str::from_utf8(&self.bytes[label.payload + 24..label.payload + 24 + len])
+            .ok()
             .filter(|name| !name.is_empty())
     }
 
@@ -2337,15 +2528,20 @@ impl CalculationGroup {
             || rs[font_index + 1].end - rs[font_index + 1].payload != 8
             || rs.last().unwrap().end != rs.last().unwrap().payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 0
-            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 48..=51)
+            || !matches!(
+                u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
+                48..=51
+            )
         {
             return Err("Unsupported calculation record lengths or subtype".into());
         }
         let payload = &bytes[rs[1].payload..rs[1].end];
         if !(94..=604).contains(&payload.len())
             || payload.len() % 2 != 0
-            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize != payload.len() - 32
-            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize != (payload.len() - 92) / 2
+            || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
+                != payload.len() - 32
+            || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize
+                != (payload.len() - 92) / 2
         {
             return Err("Unsupported calculation byte length".into());
         }
@@ -2357,14 +2553,21 @@ impl CalculationGroup {
                 return Err("Unsupported calculation numeric representation".into());
             }
         }
-        if !matches!(u16::from_le_bytes(payload[26..28].try_into().unwrap()), 0 | 1 | 3) {
+        if !matches!(
+            u16::from_le_bytes(payload[26..28].try_into().unwrap()),
+            0 | 1 | 3
+        ) {
             return Err("Unsupported calculation display mode".into());
         }
-        let result = Self { bytes: bytes.to_vec() };
+        let result = Self {
+            bytes: bytes.to_vec(),
+        };
         result.expression_tree()?;
         let anchor = result.anchor();
         let bbox = rs[font_index + 1].payload;
-        let word = |offset| i16::from_le_bytes(bytes[bbox + offset..bbox + offset + 2].try_into().unwrap());
+        let word = |offset| {
+            i16::from_le_bytes(bytes[bbox + offset..bbox + offset + 2].try_into().unwrap())
+        };
         if (word(0), word(2)) != anchor
             || !(1..=2048).contains(&(i32::from(word(4)) - i32::from(word(0))))
             || !(1..=2048).contains(&(i32::from(word(6)) - i32::from(word(2))))
@@ -2440,24 +2643,35 @@ impl CalculationGroup {
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
         )
     }
-    pub(crate) fn expression_caption_layout(&self, base: NumericCaptionLayout)
-        -> Result<NumericCaptionLayout, String>
-    {
+    pub(crate) fn expression_caption_layout(
+        &self,
+        base: NumericCaptionLayout,
+    ) -> Result<NumericCaptionLayout, String> {
         self.expression_tree()?.caption_layout(base, &[])
     }
 
     /// Persisted native caption bounds, including the original layout cache.
     pub fn bbox(&self) -> ((i16, i16), (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs.iter().find(|record| record.kind == 0x08a3).unwrap().payload;
-        let word = |offset| i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap());
+        let at = rs
+            .iter()
+            .find(|record| record.kind == 0x08a3)
+            .unwrap()
+            .payload;
+        let word = |offset| {
+            i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap())
+        };
         ((word(0), word(2)), (word(4), word(6)))
     }
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
-        let bbox = rs.iter().find(|record| record.kind == 0x08a3).unwrap().payload;
+        let bbox = rs
+            .iter()
+            .find(|record| record.kind == 0x08a3)
+            .unwrap()
+            .payload;
         let delta = (
             i32::from(anchor.0) - i32::from(before.0),
             i32::from(anchor.1) - i32::from(before.1),
@@ -2739,11 +2953,14 @@ fn table_decimal_rows(mut rest: &str, allow_ascii_minus: bool) -> Option<Vec<Str
         }
         let value = after.get(..length)?;
         rest = after.get(length..)?.strip_prefix(">>")?;
-        let decimals = value.split_once('.').map_or(0, |(_, fraction)| fraction.len());
+        let decimals = value
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
         if decimals > 2 {
             return None;
         }
-        let decimal = value.strip_prefix('–')
+        let decimal = value
+            .strip_prefix('–')
             .map_or_else(|| value.to_owned(), |absolute| format!("-{absolute}"));
         if !decimal.is_ascii() {
             return None;
@@ -2751,7 +2968,8 @@ fn table_decimal_rows(mut rest: &str, allow_ascii_minus: bool) -> Option<Vec<Str
         let numeric = decimal.parse::<f64>().ok()?;
         table_value_text(numeric).ok()?;
         if named_table_value_text(numeric, decimals).ok()? != value
-            && !(allow_ascii_minus && value.starts_with('-')
+            && !(allow_ascii_minus
+                && value.starts_with('-')
                 && format_fixed_numeric_value(numeric, decimals) == value)
         {
             return None;
@@ -2763,7 +2981,9 @@ fn table_decimal_rows(mut rest: &str, allow_ascii_minus: bool) -> Option<Vec<Str
 
 pub(crate) fn named_table_value_text(value: f64, precision: usize) -> Result<String, String> {
     table_value_text(value)?;
-    if precision > 2 { return Err("Named tables support up to two decimal places".into()); }
+    if precision > 2 {
+        return Err("Named tables support up to two decimal places".into());
+    }
     Ok(format_fixed_numeric_value(value, precision).replacen('-', "–", 1))
 }
 
@@ -2886,7 +3106,9 @@ fn canonical_named_table(
 impl TableGroup {
     pub(crate) fn with_font_reference(mut self, font: u16) -> Result<Self, String> {
         let rs = records(&self.bytes, 0)?;
-        let record = rs.iter().find(|record| record.kind == 0x07d8)
+        let record = rs
+            .iter()
+            .find(|record| record.kind == 0x07d8)
             .filter(|record| record.end - record.payload == 2)
             .ok_or("Invalid table font reference")?;
         self.bytes[record.payload..record.end].copy_from_slice(&font.to_le_bytes());
@@ -2899,12 +3121,23 @@ impl TableGroup {
         }
     }
 
-    pub(crate) fn indexed_snapshot(source: u32, parameter: &ParameterGroup, anchor: (i16, i16), font: u16) -> Result<Self, String> {
+    pub(crate) fn indexed_snapshot(
+        source: u32,
+        parameter: &ParameterGroup,
+        anchor: (i16, i16),
+        font: u16,
+    ) -> Result<Self, String> {
         if parameter.unit() != NumericUnit::Scalar || parameter.display_mode() == 0 {
             return Err("Indexed tables require a named scalar parameter".into());
         }
         let value = named_table_value_text(parameter.value(), parameter.precision())?;
-        Self::parse(&canonical_indexed_table(source, parameter.name(), &[value], anchor, font)?)
+        Self::parse(&canonical_indexed_table(
+            source,
+            parameter.name(),
+            &[value],
+            anchor,
+            font,
+        )?)
     }
 
     pub fn named_snapshot(
@@ -3128,7 +3361,18 @@ impl TableGroup {
         if u32::from_le_bytes(layout[4..8].try_into().unwrap()) as usize == layout.len()
             && let Some((name, values)) = named_table_parts(layout)
             && rows == values.len()
-            && normalized == canonical_named_table(source, &name, &values, anchor, u16::from_le_bytes(bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+            && normalized
+                == canonical_named_table(
+                    source,
+                    &name,
+                    &values,
+                    anchor,
+                    u16::from_le_bytes(
+                        bytes[rs[3].payload..rs[3].end]
+                            .try_into()
+                            .map_err(|_| "Invalid table font reference")?,
+                    ),
+                )?
         {
             return Ok(Self {
                 bytes: bytes.to_vec(),
@@ -3137,9 +3381,22 @@ impl TableGroup {
         if u32::from_le_bytes(layout[4..8].try_into().unwrap()) as usize == layout.len()
             && let Some((name, values)) = indexed_table_parts(layout)
             && rows == values.len()
-            && normalized == canonical_indexed_table(source, &name, &values, anchor, u16::from_le_bytes(bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+            && normalized
+                == canonical_indexed_table(
+                    source,
+                    &name,
+                    &values,
+                    anchor,
+                    u16::from_le_bytes(
+                        bytes[rs[3].payload..rs[3].end]
+                            .try_into()
+                            .map_err(|_| "Invalid table font reference")?,
+                    ),
+                )?
         {
-            return Ok(Self { bytes: bytes.to_vec() });
+            return Ok(Self {
+                bytes: bytes.to_vec(),
+            });
         }
         // A two-row table saved after Plot Points has an observed `t` in
         // the penultimate padding byte of 0x090d. It is outside the row text.
@@ -3167,7 +3424,9 @@ impl TableGroup {
             if self.rows() == 2 && normalized[rs[2].end - 2..rs[2].end] == [b't', 0] {
                 normalized[rs[2].end - 2] = 0;
             }
-            if canonical_table_values(self.source_id(), self.anchor(), &values).ok().as_deref()
+            if canonical_table_values(self.source_id(), self.anchor(), &values)
+                .ok()
+                .as_deref()
                 == Some(normalized.as_slice())
             {
                 return None;
@@ -3195,8 +3454,8 @@ impl TableGroup {
             .ok_or("Not a default parameter table")?;
         *values.last_mut().ok_or("Table has no rows")? = value;
         let old_records = records(&self.bytes, 0)?;
-        let marker = self.rows() == 2
-            && self.bytes[old_records[2].end - 2..old_records[2].end] == [b't', 0];
+        let marker =
+            self.rows() == 2 && self.bytes[old_records[2].end - 2..old_records[2].end] == [b't', 0];
         let mut changed = canonical_table_values(self.source_id(), self.anchor(), &values)?;
         changed[10] = self.bytes[10];
         if marker {
@@ -3223,9 +3482,29 @@ impl TableGroup {
         let rs = records(&self.bytes, 0)?;
         let indexed = indexed_table_parts(&self.bytes[rs[2].payload..rs[2].end]).is_some();
         let mut bytes = if indexed {
-            canonical_indexed_table(self.source_id(), name, values, self.anchor(), u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+            canonical_indexed_table(
+                self.source_id(),
+                name,
+                values,
+                self.anchor(),
+                u16::from_le_bytes(
+                    self.bytes[rs[3].payload..rs[3].end]
+                        .try_into()
+                        .map_err(|_| "Invalid table font reference")?,
+                ),
+            )?
         } else {
-            canonical_named_table(self.source_id(), name, values, self.anchor(), u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+            canonical_named_table(
+                self.source_id(),
+                name,
+                values,
+                self.anchor(),
+                u16::from_le_bytes(
+                    self.bytes[rs[3].payload..rs[3].end]
+                        .try_into()
+                        .map_err(|_| "Invalid table font reference")?,
+                ),
+            )?
         };
         bytes[10] = self.bytes[10];
         *self = Self::parse(&bytes)?;
@@ -3409,10 +3688,19 @@ pub fn append_default_parameter_table(
 mod tests {
     #[test]
     fn indexed_table_text_requires_valid_byte_lengths_and_matching_native_metadata() {
-        let bytes = object_group(include_bytes!("../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"), 15);
+        let bytes = object_group(
+            include_bytes!(
+                "../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"
+            ),
+            15,
+        );
         assert!(TableGroup::parse(&bytes).is_ok());
         let rs = records(&bytes, 0).unwrap();
-        for (offset, value) in [(rs[1].payload, 2), (rs[2].payload + 16, 4), (rs[2].end - 1, b'!')] {
+        for (offset, value) in [
+            (rs[1].payload, 2),
+            (rs[2].payload + 16, 4),
+            (rs[2].end - 1, b'!'),
+        ] {
             let mut invalid = bytes.clone();
             invalid[offset] = value;
             assert!(TableGroup::parse(&invalid).is_err());
@@ -3498,11 +3786,17 @@ mod tests {
             Some(45.)
         );
         let mixed = ParameterCalculationGroup::from_sources(
-            &[2, 4], "v1+v2", (10, 30),
+            &[2, 4],
+            "v1+v2",
+            (10, 30),
             &[NumericUnit::Degrees, NumericUnit::Scalar],
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(mixed.unit(), NumericUnit::Scalar);
-        assert_eq!(mixed.value_for_sources(&[90.,2.], &[NumericUnit::Degrees,NumericUnit::Scalar]),Some(92.));
+        assert_eq!(
+            mixed.value_for_sources(&[90., 2.], &[NumericUnit::Degrees, NumericUnit::Scalar]),
+            Some(92.)
+        );
         assert!(
             ParameterCalculationGroup::from_sources(
                 &[2, 4],
@@ -3543,12 +3837,25 @@ mod tests {
         invalid_index[last..last + 2].copy_from_slice(&0x6033_u16.to_le_bytes());
         assert!(ParameterCalculationGroup::parse(&invalid_index).is_err());
         let boundary = ParameterCalculationGroup::from_sources(
-            &[1; 256], "v256", (10, 30), &[NumericUnit::Scalar; 256],
-        ).unwrap();
-        assert_eq!(boundary.value_for_sources(&[2.; 256], &[NumericUnit::Scalar; 256]), Some(2.));
-        assert!(ParameterCalculationGroup::from_sources(
-            &[1; 256], "v257", (10, 30), &[NumericUnit::Scalar; 256],
-        ).is_err());
+            &[1; 256],
+            "v256",
+            (10, 30),
+            &[NumericUnit::Scalar; 256],
+        )
+        .unwrap();
+        assert_eq!(
+            boundary.value_for_sources(&[2.; 256], &[NumericUnit::Scalar; 256]),
+            Some(2.)
+        );
+        assert!(
+            ParameterCalculationGroup::from_sources(
+                &[1; 256],
+                "v257",
+                (10, 30),
+                &[NumericUnit::Scalar; 256],
+            )
+            .is_err()
+        );
         let mut broken = group.as_bytes().to_vec();
         broken[44..48].copy_from_slice(&2_u32.to_le_bytes());
         assert!(ParameterCalculationGroup::parse(&broken).is_err());
@@ -3595,13 +3902,7 @@ mod tests {
             assert!(group.evaluated_value().is_none());
             assert_eq!(group.value_text(), text);
         }
-        for expression in [
-            "v+2",
-            "sin()",
-            "(2+3",
-            "2)3",
-            "1".repeat(257).as_str(),
-        ] {
+        for expression in ["v+2", "sin()", "(2+3", "2)3", "1".repeat(257).as_str()] {
             assert!(
                 CalculationGroup::from_expression(expression).is_err(),
                 "{expression}"
@@ -3633,7 +3934,10 @@ mod tests {
         ] {
             let group = CalculationGroup::from_expression(expression).unwrap();
             assert_eq!(group.unit(), unit, "{expression}");
-            assert!((group.evaluated_value().unwrap() - value).abs() < 1e-12, "{expression}");
+            assert!(
+                (group.evaluated_value().unwrap() - value).abs() < 1e-12,
+                "{expression}"
+            );
             assert_eq!(CalculationGroup::parse(group.as_bytes()).unwrap(), group);
         }
         let mut length = CalculationGroup::from_expression("0.3 cm").unwrap();
@@ -3704,9 +4008,10 @@ mod tests {
             ParameterCalculationGroup::from_expression(1, "e", "e+1", (10, 30)).unwrap();
         assert_eq!(e_parameter.value(2.), Some(3.));
         assert!(ParameterCalculationGroup::from_expression(1, "n", "pi+e", (10, 30)).is_err());
-        let mixed = ParameterCalculationGroup::from_expression(1, "n", "asin(n)+n", (10, 30)).unwrap();
+        let mixed =
+            ParameterCalculationGroup::from_expression(1, "n", "asin(n)+n", (10, 30)).unwrap();
         assert_eq!(mixed.unit(), NumericUnit::Scalar);
-        assert!((mixed.value(0.5).unwrap()-30.5).abs()<1e-12);
+        assert!((mixed.value(0.5).unwrap() - 30.5).abs() < 1e-12);
     }
 
     #[test]
@@ -4324,7 +4629,9 @@ mod tests {
 /// Read a supported group's local numeric caption font index.
 pub(crate) fn numeric_caption_font_index(bytes: &[u8]) -> Result<usize, String> {
     let rs = records(bytes, 0)?;
-    let record = rs.iter().find(|record| record.kind == 0x07d8)
+    let record = rs
+        .iter()
+        .find(|record| record.kind == 0x07d8)
         .ok_or("Missing numeric caption font")?;
     if record.end - record.payload != 2 {
         return Err("Unsupported numeric caption font record".into());
@@ -4351,26 +4658,45 @@ pub(crate) struct NumericCaptionLayout {
 
 impl NumericCaptionLayout {
     pub fn flat(height: i32) -> Result<Self, String> {
-        if height <= 0 { return Err("Invalid numeric caption height".into()); }
-        Ok(Self { above: height / 2, below: height - height / 2 })
+        if height <= 0 {
+            return Err("Invalid numeric caption height".into());
+        }
+        Ok(Self {
+            above: height / 2,
+            below: height - height / 2,
+        })
     }
     pub fn height(self) -> Result<i32, String> {
-        self.above.checked_add(self.below).ok_or_else(|| "Numeric caption layout overflow".into())
+        self.above
+            .checked_add(self.below)
+            .ok_or_else(|| "Numeric caption layout overflow".into())
     }
 }
 
 /// Proven Native caption shapes use the same row metrics in ordinary captions
 /// and expanded math sources. Unit decorations belong to the displayed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NumericCaptionShape { Flat, SquareUnit }
+pub(crate) enum NumericCaptionShape {
+    Flat,
+    SquareUnit,
+}
 impl NumericCaptionShape {
-    pub(crate) fn layout(self, mut base: NumericCaptionLayout) -> Result<NumericCaptionLayout, String> {
+    pub(crate) fn layout(
+        self,
+        mut base: NumericCaptionLayout,
+    ) -> Result<NumericCaptionLayout, String> {
         if self == Self::SquareUnit {
-            base.above = base.above.checked_add(2).ok_or("Numeric caption layout overflow")?;
+            base.above = base
+                .above
+                .checked_add(2)
+                .ok_or("Numeric caption layout overflow")?;
         }
         Ok(base)
     }
-    pub(crate) fn source_layout(self, base: NumericCaptionLayout) -> Result<NumericCaptionLayout, String> {
+    pub(crate) fn source_layout(
+        self,
+        base: NumericCaptionLayout,
+    ) -> Result<NumericCaptionLayout, String> {
         Ok(base)
     }
 }

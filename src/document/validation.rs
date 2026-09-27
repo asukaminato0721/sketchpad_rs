@@ -1,12 +1,12 @@
 use super::calculations::{calculation_source_ids, calculation_source_units};
 use super::iteration::{
-    mapped_segment_binding,
-    supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
-    supported_point_parameter_iteration,
+    mapped_binding_kind, supported_branch_polygon_mapping, supported_mapped_point_iteration,
+    supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    is_segment_kind,
-    is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_straight_kind, literal_plot_path_accepts, value_plot_path_accepts, polygon_vertex_count, straight_kind_mode,
+    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_point_kind,
+    is_segment_kind, is_straight_kind, literal_plot_path_accepts, polygon_vertex_count,
+    straight_kind_mode, value_plot_path_accepts,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -22,7 +22,11 @@ use std::collections::BTreeSet;
 
 impl Document {
     pub fn can_save(&self) -> Result<(), String> {
-        if self.objects.iter().any(|object| matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))) {
+        if self
+            .objects
+            .iter()
+            .any(|object| matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_)))
+        {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
         // An untouched source document can be copied byte for byte even when
@@ -72,12 +76,13 @@ impl Document {
                 && matches!(
                     o.kind,
                     Kind::FunctionDefinition(_)
+                        | Kind::ReferencedFunction(_, _)
                         | Kind::DerivativeFunction(_, _)
                         | Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::PathLiteralPoint(_, _)
                         | Kind::PathValuePoint(_, _)
-                        | Kind::PlottedPoint(_, _, _, _)
+                        | Kind::PlottedPoint(_, _, _)
                         | Kind::NumericCoordinatePoint(_, _, _)
                         | Kind::ParameterLocus(_, _, _, _)
                 )
@@ -157,7 +162,7 @@ impl Document {
                     if *image == 0 || *image >= *iteration || *iteration >= o.id || parent.deleted || parent.page != o.page
                         || !carried.contains(image)
                         || !self.objects.get(image.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == o.page
-                            && (is_point_kind(&source.kind) || mapped_segment_binding(&source.kind))) {
+                            && (mapped_binding_kind(&source.kind))) {
                         return Err("Invalid mapped iteration binding".into());
                     }
                 }
@@ -300,14 +305,20 @@ impl Document {
                     }
                 }
             }
-            if o.label.is_some() && !is_point_kind(&o.kind) && o.kind.numeric_unit().is_none() && !matches!(o.kind, Kind::ValueEquation {..} | Kind::CoordinateMeasurement {..}) {
+            if o.label.is_some()
+                && !is_point_kind(&o.kind)
+                && o.kind.numeric_unit().is_none()
+                && !matches!(
+                    o.kind,
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                )
+            {
                 return Err(format!("Invalid object label in object {}", o.id));
             }
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) | Kind::PointOnPolygon(_, _, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnRay(_, t) if !t.is_finite() || t < 0.)
                 || matches!(o.kind, Kind::PointOnLine(_, t) if !t.is_finite())
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
-
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
@@ -322,14 +333,22 @@ impl Document {
             if i >= self.source_count {
                 let point = |id: usize| is_point_kind(&self.objects[id - 1].kind);
                 let valid = match &o.kind {
-                    Kind::Segment(a, b) | Kind::Circle(a, b) | Kind::Ray(a, b)
-                    | Kind::Line(a, b) | Kind::Midpoint(a, b) => point(*a) && point(*b),
-                    Kind::CircleBySegment(center, segment) => point(*center) && self.objects[*segment - 1].kind.is_segment(),
+                    Kind::Segment(a, b)
+                    | Kind::Circle(a, b)
+                    | Kind::Ray(a, b)
+                    | Kind::Line(a, b)
+                    | Kind::Midpoint(a, b) => point(*a) && point(*b),
+                    Kind::CircleBySegment(center, segment) => {
+                        point(*center) && self.objects[*segment - 1].kind.is_defining_distance()
+                    }
                     Kind::Polygon(vertices) => vertices.iter().all(|&id| point(id)),
                     _ => true,
                 };
                 if !valid {
-                    return Err(format!("Invalid construction input types in object {}", o.id));
+                    return Err(format!(
+                        "Invalid construction input types in object {}",
+                        o.id
+                    ));
                 }
             }
             if let Kind::HideShowButton { targets, label, .. } = &o.kind {
@@ -368,24 +387,13 @@ impl Document {
                         .map_err(|error| format!("Invalid Animation button {}: {error}", o.id))?;
                 }
             }
-            if let Kind::MovementButton {
-                source,
-                destination,
-                label,
-                ..
-            } = &o.kind
-            {
-                if self.page_count != 1
-                    || *source == *destination
-                    || *source == 0
-                    || *destination == 0
-                    || *source > self.objects.len()
-                    || *destination > self.objects.len()
-                    || self.objects[*source - 1].page != o.page
-                    || self.objects[*destination - 1].page != o.page
-                    || !matches!(self.objects[*source - 1].kind, Kind::Free(_))
-                    || self.position(*destination).is_none()
+            if let Kind::MovementButton { pairs, label, .. } = &o.kind {
+                if pairs.is_empty()
                     || label.len() > u16::MAX as usize
+                    || pairs.iter().any(|&(source, destination)| {
+                        !self.movement_pair_valid(source, destination)
+                            || self.objects[source - 1].page != o.page
+                    })
                 {
                     return Err(format!("Invalid Movement button {}", o.id));
                 }
@@ -441,7 +449,8 @@ impl Document {
                 }
             }
             if let Kind::SegmentMidpoint(host) = o.kind {
-                if host == 0 || host >= o.id
+                if host == 0
+                    || host >= o.id
                     || !self.objects.get(host - 1).is_some_and(|parent| {
                         !parent.deleted && parent.page == o.page && is_segment_kind(&parent.kind)
                     })
@@ -450,9 +459,18 @@ impl Document {
                 }
             }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
-                if !min.is_finite() || !max.is_finite() || min >= max
+                if !min.is_finite()
+                    || !max.is_finite()
+                    || min >= max
                     || !(2..=4096).contains(&samples)
-                    || refs.first().zip(refs.get(1)).and_then(|(&target, &driver)| expected_parameter_locus_refs(&self.objects, driver, target)).as_ref() != Some(refs)
+                    || refs
+                        .first()
+                        .zip(refs.get(1))
+                        .and_then(|(&target, &driver)| {
+                            expected_parameter_locus_refs(&self.objects, driver, target)
+                        })
+                        .as_ref()
+                        != Some(refs)
                 {
                     return Err(format!("Invalid parameter locus {}", o.id));
                 }
@@ -523,6 +541,7 @@ impl Document {
             ) && self
                 .position(o.id)
                 .is_none_or(|p| !p.x.is_finite() || !p.y.is_finite())
+                && !self.coordinate_geometry_undefined(o.id)
             {
                 return Err(format!("Undefined graph point {}", o.id));
             }
@@ -530,11 +549,30 @@ impl Document {
                 o.kind,
                 Kind::GraphAxis(_, _, _) | Kind::CircleAxis(_, _) | Kind::DistanceAxis(_, _, _)
             ) && self.line_points(o.id).is_none()
+                && !self.coordinate_geometry_undefined(o.id)
             {
                 return Err(format!("Undefined graph axis {}", o.id));
             }
-            if matches!(o.kind, Kind::CoordinateSystem(_, _)) && self.graph_frame(o.id).is_none() {
+            if matches!(o.kind, Kind::CoordinateSystem(_, _))
+                && self.graph_frame(o.id).is_none()
+                && !self.coordinate_geometry_undefined(o.id)
+            {
                 return Err(format!("Invalid coordinate system {}", o.id));
+            }
+            if let Kind::ReferencedFunction(sources, expression) = &o.kind {
+                if sources.is_empty()
+                    || !super::functions::function_sources_valid(
+                        *expression,
+                        sources,
+                        &self.objects,
+                        o.page,
+                    )
+                {
+                    return Err(format!(
+                        "Invalid referenced function sources in object {}",
+                        o.id
+                    ));
+                }
             }
             if let Kind::DerivativeFunction(source, _) = o.kind
                 && (source >= o.id || self.function_expression(source).is_none())
@@ -546,7 +584,11 @@ impl Document {
                     self.objects
                         .get(definition.saturating_sub(1))
                         .map(|o| &o.kind),
-                    Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))
+                    Some(
+                        Kind::FunctionDefinition(_)
+                            | Kind::ReferencedFunction(_, _)
+                            | Kind::DerivativeFunction(_, _)
+                    )
                 ) || self.graph_frame(frame).is_none()
                     || !min.is_finite()
                     || !max.is_finite()
@@ -561,7 +603,11 @@ impl Document {
                     || [x, y].into_iter().any(|id| {
                         !matches!(
                             self.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                            Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))
+                            Some(
+                                Kind::FunctionDefinition(_)
+                                    | Kind::ReferencedFunction(_, _)
+                                    | Kind::DerivativeFunction(_, _)
+                            )
                         )
                     })
                     || self.graph_frame(frame).is_none()
@@ -573,32 +619,46 @@ impl Document {
                     return Err(format!("Invalid parametric plot {}", o.id));
                 }
             }
-            if let Kind::PlottedPoint(source, frame, mode, stored) = o.kind {
-                if self
-                    .objects
-                    .get(source.saturating_sub(1))
-                    .is_none_or(|anchor| anchor.page != o.page)
-                    || self.graph_frame(frame).is_none()
+            if let Kind::PlottedPoint(frame, mode, stored) = o.kind {
+                if (self.graph_frame(frame).is_none() && !self.coordinate_geometry_undefined(frame))
                     || stored.iter().any(|value| !value.is_finite())
-                    || self.position(o.id).is_none()
+                    || (self.position(o.id).is_none() && !self.coordinate_geometry_undefined(frame))
                 {
                     return Err(format!("Invalid plotted point {}", o.id));
                 }
                 if o.id > self.source_count {
-                    let group = plot_points_records::encode_group(
-                        mode,
-                        [source as u32, frame as u32],
-                        stored,
-                    )?;
+                    let group =
+                        plot_points_records::encode_frame_point_group(frame as u32, mode, stored)?;
                     if plot_points_records::decode_group(&group)?.stored != stored {
                         return Err("Cannot encode this Plot Points value".into());
                     }
                 }
             }
             if let Kind::PathValuePoint(source, path) = o.kind {
-                if !self.objects.get(source.saturating_sub(1)).is_some_and(|parent| !parent.deleted && parent.page == o.page && source < o.id && parent.kind.numeric_unit() == Some(NumericUnit::Scalar))
-                    || !self.objects.get(path.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
-                    || (self.position(o.id).is_none() && !self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)))
+                if !self
+                    .objects
+                    .get(source.saturating_sub(1))
+                    .is_some_and(|parent| {
+                        !parent.deleted
+                            && parent.page == o.page
+                            && source < o.id
+                            && parent.kind.numeric_unit() == Some(NumericUnit::Scalar)
+                    })
+                    || !self
+                        .objects
+                        .get(path.saturating_sub(1))
+                        .is_some_and(|host| {
+                            !host.deleted
+                                && host.page == o.page
+                                && path < o.id
+                                && self
+                                    .numeric_value(source)
+                                    .is_some_and(|value| value_plot_path_accepts(&host.kind, value))
+                        })
+                    || (self.position(o.id).is_none()
+                        && !self
+                            .numeric_value(source)
+                            .is_some_and(|value| self.undefined_native_path_plot(path, value)))
                 {
                     return Err(format!("Invalid path value point {}", o.id));
                 }
@@ -607,16 +667,39 @@ impl Document {
                 if !self
                     .objects
                     .get(path.saturating_sub(1))
-                    .is_some_and(|host| !host.deleted && host.page == o.page && path < o.id && literal_plot_path_accepts(&host.kind, value))
-                    || (self.position(o.id).is_none() && !self.undefined_native_path_plot(path, value))
+                    .is_some_and(|host| {
+                        !host.deleted
+                            && host.page == o.page
+                            && path < o.id
+                            && literal_plot_path_accepts(&host.kind, value)
+                    })
+                    || (self.position(o.id).is_none()
+                        && !self.undefined_native_path_plot(path, value))
                 {
                     return Err(format!("Invalid literal path point {}", o.id));
                 }
             }
             if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind {
-                if ![x, y].iter().all(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == o.page && id < o.id && source.kind.numeric_unit().is_some()))
-                    || self.objects.get(frame.saturating_sub(1)).is_none_or(|source| source.deleted || source.page != o.page || frame >= o.id || !matches!(source.kind, Kind::CoordinateSystem(_, _)))
-                    || self.graph_frame(frame).is_none()
+                if ![x, y].iter().all(|&id| {
+                    self.objects
+                        .get(id.saturating_sub(1))
+                        .is_some_and(|source| {
+                            !source.deleted
+                                && source.page == o.page
+                                && id < o.id
+                                && source.kind.numeric_unit().is_some()
+                        })
+                }) || self
+                    .objects
+                    .get(frame.saturating_sub(1))
+                    .is_none_or(|source| {
+                        source.deleted
+                            || source.page != o.page
+                            || frame >= o.id
+                            || !matches!(source.kind, Kind::CoordinateSystem(_, _))
+                    })
+                    || (self.graph_frame(frame).is_none()
+                        && !self.coordinate_geometry_undefined(frame))
                 {
                     return Err(format!("Invalid numeric coordinate point {}", o.id));
                 }
@@ -627,7 +710,8 @@ impl Document {
                     .get(line.saturating_sub(1))
                     .is_some_and(|o| is_straight_kind(&o.kind))
                     || self.line_points(line).is_none()
-                    || self.graph_frame(frame).is_none()
+                    || (self.graph_frame(frame).is_none()
+                        && !self.coordinate_geometry_undefined(frame))
                 {
                     return Err(format!("Invalid slope measurement {}", o.id));
                 }
@@ -655,7 +739,8 @@ impl Document {
                             .map(|object| &object.kind),
                         Some(Kind::CoordinateSystem(_, _))
                     )
-                    || self.coordinate_measure_value(o.id).is_none()
+                    || (self.coordinate_measure_value(o.id).is_none()
+                        && !self.coordinate_geometry_undefined(frame))
                 {
                     return Err(format!("Invalid coordinate measurement {}", o.id));
                 }
@@ -697,12 +782,19 @@ impl Document {
                 };
                 let undefined_center_value = kind == ValueEquationKind::PointValue
                     && self.undefined_center_arc(second)
-                    && self.objects.get(first.saturating_sub(1)).is_some_and(|point| match point.kind {
-                        Kind::PointOnArc(host, _) | Kind::PathLiteralPoint(host, _) => host == second,
-                        Kind::PathValuePoint(_, host) => host == second,
-                        _ => false,
-                    });
-                if !hosts_match || (self.value_equation_value(o.id).is_none() && !undefined_center_value) {
+                    && self
+                        .objects
+                        .get(first.saturating_sub(1))
+                        .is_some_and(|point| match point.kind {
+                            Kind::PointOnArc(host, _) | Kind::PathLiteralPoint(host, _) => {
+                                host == second
+                            }
+                            Kind::PathValuePoint(_, host) => host == second,
+                            _ => false,
+                        });
+                if !hosts_match
+                    || (self.value_equation_value(o.id).is_none() && !undefined_center_value)
+                {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
             }
@@ -748,7 +840,7 @@ impl Document {
                 && self
                     .arc_angle_degrees(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host)))
+                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host)))
             {
                 return Err(format!("Invalid arc in angle measurement {}", o.id));
             }
@@ -756,7 +848,7 @@ impl Document {
                 && self
                     .arc_length_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host)))
+                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host)))
             {
                 return Err(format!("Invalid arc in length measurement {}", o.id));
             }
@@ -768,8 +860,12 @@ impl Document {
                 return Err(format!("Invalid points in angle measurement {}", o.id));
             }
             if let Kind::PointOnPolygon(host, edge, _) = o.kind {
-                if !self.objects.get(host.saturating_sub(1)).is_some_and(|object| !object.deleted && object.page == o.page && host < o.id)
-                    || !polygon_vertex_count(&self.objects, host).is_some_and(|count| edge < count) {
+                if !self
+                    .objects
+                    .get(host.saturating_sub(1))
+                    .is_some_and(|object| !object.deleted && object.page == o.page && host < o.id)
+                    || !polygon_vertex_count(&self.objects, host).is_some_and(|count| edge < count)
+                {
                     return Err(format!("Invalid polygon boundary constraint {}", o.id));
                 }
             }
@@ -796,7 +892,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none()
                     && !(self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page)
-                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host) || self.undefined_center_arc(host))))
+                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host))))
             {
                 return Err(format!("Invalid arc host in point {}", o.id));
             }
@@ -835,7 +931,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind,Kind::CircleBySegment(center,segment)
                     if self.position(center).is_none()
-                    || !matches!(self.objects.get(segment.saturating_sub(1)).map(|o| &o.kind),Some(Kind::Segment(_, _))))
+                    || !self.objects.get(segment.saturating_sub(1)).is_some_and(|object| object.kind.is_defining_distance()))
             {
                 return Err(format!(
                     "Invalid center or radius segment in circle {}",
@@ -906,13 +1002,69 @@ impl Document {
         for (index, object) in survivors.iter().enumerate() {
             ids[object.id] = index + 1;
         }
+        let mut page_local_ids = vec![Vec::new(); self.page_count];
+        for (page, local_ids) in page_local_ids.iter_mut().enumerate() {
+            let Some(original_first) = self.objects.iter().find(|object| object.page == page)
+            else {
+                continue;
+            };
+            let original_base = original_first.id - 1;
+            let output_base = survivors
+                .iter()
+                .position(|object| object.page == page)
+                .unwrap_or(survivors.len());
+            local_ids.resize(self.objects.len() + 1, 0);
+            for object in self.objects.iter().filter(|object| object.page == page) {
+                local_ids[object.id - original_base] = ids[object.id].saturating_sub(output_base);
+            }
+        }
         let expected_kinds = survivors
             .iter()
             .map(|object| {
-                let kind = object.kind.remap_checked(&ids)?;
+                // Embedded numeric groups retain page-local wire references, while
+                // Kind fields use document-wide IDs. Compare in the decoder's space.
+                let local_ids = &page_local_ids[object.page];
+                let kind = match &object.kind {
+                    Kind::ParameterCalculation(source, group) => {
+                        let sources = group
+                            .sources()
+                            .into_iter()
+                            .map(|source| {
+                                u32::try_from(local_ids[source as usize])
+                                    .map_err(|_| "Invalid calculation source ID")
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Kind::ParameterCalculation(ids[*source], group.remap_sources(&sources)?)
+                    }
+                    Kind::MeasuredCalculation(source, group) => Kind::MeasuredCalculation(
+                        ids[*source],
+                        group.remap_source(local_ids[group.source_id() as usize] as u32)?,
+                    ),
+                    Kind::LengthPairCalculation(first, second, group) => {
+                        let sources = group.sources();
+                        Kind::LengthPairCalculation(
+                            ids[*first],
+                            ids[*second],
+                            group.remap_sources(
+                                local_ids[sources[0] as usize] as u32,
+                                local_ids[sources[1] as usize] as u32,
+                            )?,
+                        )
+                    }
+                    Kind::ValueTable(source, group) => {
+                        Kind::ValueTable(ids[*source], group.remap_sources(&local_ids)?)
+                    }
+                    Kind::ValueTablePair(first, second, group) => Kind::ValueTablePair(
+                        ids[*first],
+                        ids[*second],
+                        group.remap_sources(&local_ids)?,
+                    ),
+                    _ => object.kind.remap_checked(&ids)?,
+                };
                 let visibility = |bytes: &[u8]| {
                     let mut bytes = bytes.to_vec();
-                    bytes[10] = (bytes[10] & !3) | u8::from(!object.visible)
+                    bytes[10] = (bytes[10] & !3)
+                        | u8::from(!object.visible)
                         | (u8::from(object.presentation_suppressed) << 1);
                     bytes
                 };
@@ -923,9 +1075,10 @@ impl Document {
                     Kind::Calculation(group) => {
                         Kind::Calculation(CalculationGroup::parse(&visibility(group.as_bytes()))?)
                     }
-                    Kind::ParameterCalculation(source, group) => {
-                        Kind::ParameterCalculation(source, group.with_presentation(object.visible, object.presentation_suppressed)?)
-                    }
+                    Kind::ParameterCalculation(source, group) => Kind::ParameterCalculation(
+                        source,
+                        group.with_presentation(object.visible, object.presentation_suppressed)?,
+                    ),
                     Kind::MeasuredCalculation(source, group) => Kind::MeasuredCalculation(
                         source,
                         MeasuredCalculationGroup::parse(&visibility(group.as_bytes()))?,

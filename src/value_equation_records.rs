@@ -246,7 +246,10 @@ pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
                 || aux[..12] != [0xfc, 0x08, 0, 0, 0x16, 0, 0, 0, 4, 0, 0, 0]
                 || aux[18..22] != [0x3c, 0x30, 0x3e, 0]
                 || u16::from_le_bytes(aux[24..26].try_into().unwrap()) != 6
-                || !matches!(u16::from_le_bytes(aux[26..28].try_into().unwrap()), 0 | 1 | 3)
+                || !matches!(
+                    u16::from_le_bytes(aux[26..28].try_into().unwrap()),
+                    0 | 1 | 3
+                )
                 || u16::from_le_bytes(aux[28..30].try_into().unwrap()) > 5
             {
                 return Err("Unsupported Value of Point format".into());
@@ -330,7 +333,8 @@ fn encode_group_from_template(source: &[u8], references: [u32; 2]) -> Result<Vec
 /// Their live value may therefore become undefined without changing this layout.
 pub fn encode_circle_arc_point_value_group(references: [u32; 2]) -> Result<Vec<u8>, String> {
     let group = encode_group_from_template(
-        include_bytes!("../tests/fixtures/point_on_circle_arc_value_native.gsp"), references,
+        include_bytes!("../tests/fixtures/point_on_circle_arc_value_native.gsp"),
+        references,
     )?;
     decode_group(&group)?;
     Ok(group)
@@ -456,8 +460,15 @@ mod tests {
     #[test]
     fn corpus_point_value_groups_accept_names_and_caption_positions() {
         for (group, refs) in [
-            (include_bytes!("../tests/fixtures/point_value_labeled_ray_group.bin").as_slice(), [17, 16]),
-            (include_bytes!("../tests/fixtures/point_value_labeled_projection_group.bin").as_slice(), [9, 17]),
+            (
+                include_bytes!("../tests/fixtures/point_value_labeled_ray_group.bin").as_slice(),
+                [17, 16],
+            ),
+            (
+                include_bytes!("../tests/fixtures/point_value_labeled_projection_group.bin")
+                    .as_slice(),
+                [9, 17],
+            ),
         ] {
             let value = decode_group(group).unwrap();
             assert_eq!(value.kind, ValueEquationKind::PointValue);
@@ -468,7 +479,8 @@ mod tests {
                 .copy_from_slice(&[0x38, 0xff, 0x39, 0x30]);
             assert_eq!(decode_group(&moved).unwrap(), value);
             let mut broken = group.to_vec();
-            broken[rs[3].payload.start + 22..rs[3].payload.start + 24].copy_from_slice(&u16::MAX.to_le_bytes());
+            broken[rs[3].payload.start + 22..rs[3].payload.start + 24]
+                .copy_from_slice(&u16::MAX.to_le_bytes());
             assert!(decode_group(&broken).is_err());
         }
     }

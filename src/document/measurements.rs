@@ -33,6 +33,9 @@ impl Document {
         self.numeric_value(id)
     }
     pub fn numeric_value(&self, id: usize) -> Option<f64> {
+        if let Some(value) = self.evaluation_numeric(id) {
+            return value;
+        }
         let o = self.objects.get(id.checked_sub(1)?)?;
         if o.deleted {
             return None;
@@ -390,7 +393,9 @@ impl Document {
                         }
                         value_equation_records::circle_point_value(dx / length, dy / length)
                     }
-                    Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => {
+                    Kind::ThreePointArc(_, _, _)
+                    | Kind::ArcOnCircle(_, _, _)
+                    | Kind::CenterArc(_, _, _) => {
                         if let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind {
                             if host == second {
                                 return t.is_finite().then_some(EquationValue::PointValue(t));
@@ -539,7 +544,12 @@ impl Document {
         pixels.is_finite().then_some(pixels)
     }
     pub fn distance_value_pixels(&self, id: usize) -> Option<f64> {
-        if !self.objects.get(id.checked_sub(1)?)?.kind.is_distance_value() {
+        if !self
+            .objects
+            .get(id.checked_sub(1)?)?
+            .kind
+            .is_distance_value()
+        {
             return None;
         }
         let cm = self.numeric_value(id)?;
@@ -679,7 +689,9 @@ impl Document {
         let Kind::ArcAngle(arc) = object.kind else {
             return None;
         };
-        if self.linear_three_point_arc(arc).is_some() { return Some(0.); }
+        if self.linear_three_point_arc(arc).is_some() {
+            return Some(0.);
+        }
         Some(self.arc_geometry(arc)?.3.abs().to_degrees())
     }
     pub fn arc_length_cm(&self, id: usize) -> Option<f64> {

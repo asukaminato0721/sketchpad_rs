@@ -4,6 +4,101 @@ use sketchpad_rs::function_records::SimpleFunction;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 
 impl Editor {
+    pub(super) fn begin_function_dialog(&mut self, plot: bool, edit_id: Option<usize>) {
+        self.function_edit_id = edit_id;
+        self.function_dialog = Some(plot);
+        self.function_angle_dialog = None;
+        self.function_draft_sources = if let Some(id) = edit_id {
+            self.doc.function_sources(id).unwrap_or_default().to_vec()
+        } else {
+            let mut selected = self
+                .selection_order
+                .iter()
+                .copied()
+                .filter(|id| self.doc.selected.contains(id))
+                .collect::<Vec<_>>();
+            for &id in &self.doc.selected {
+                if !selected.contains(&id) {
+                    selected.push(id);
+                }
+            }
+            selected
+                .into_iter()
+                .filter(|&id| {
+                    self.doc
+                        .objects
+                        .get(id.saturating_sub(1))
+                        .is_some_and(|object| {
+                            !object.deleted
+                                && object.page == self.doc.active_page
+                                && (object.kind.numeric_unit().is_some()
+                                    || self.doc.function_sources(id).is_some())
+                        })
+                })
+                .collect()
+        };
+        if let Some(id) = edit_id {
+            self.function_draft = match &self.doc.objects[id - 1].kind {
+                Kind::FunctionDefinition(expression) | Kind::ReferencedFunction(_, expression) => {
+                    expression
+                        .display()
+                        .strip_prefix("f(x) = ")
+                        .unwrap_or("x")
+                        .into()
+                }
+                _ => "x".into(),
+            };
+        } else {
+            self.function_draft = "x".into();
+        }
+    }
+
+    pub(super) fn apply_function_expression(
+        &mut self,
+        expression: SimpleFunction,
+        plot: bool,
+        edit_id: Option<usize>,
+        radians: Option<bool>,
+    ) -> Result<usize, String> {
+        if let Some(id) = edit_id {
+            if let Some(radians) = radians {
+                self.doc
+                    .set_function_expression_with_angle_unit(id, expression, radians)?;
+            } else {
+                self.doc.set_function_expression(id, expression)?;
+            }
+            return Ok(id);
+        }
+        let sources = &self.function_draft_sources;
+        match (sources.is_empty(), plot, radians) {
+            (true, false, None) => self.doc.add_function_definition(expression),
+            (true, false, Some(radians)) => self
+                .doc
+                .add_function_definition_with_angle_unit(expression, radians),
+            (true, true, None) => self.doc.plot_new_function(expression, self.center),
+            (true, true, Some(radians)) => {
+                self.doc
+                    .plot_new_function_with_angle_unit(expression, self.center, radians)
+            }
+            (false, false, None) => self
+                .doc
+                .add_referenced_function_definition(sources, expression),
+            (false, false, Some(radians)) => self
+                .doc
+                .add_referenced_function_definition_with_angle_unit(sources, expression, radians),
+            (false, true, None) => {
+                self.doc
+                    .plot_new_referenced_function(sources, expression, self.center)
+            }
+            (false, true, Some(radians)) => self.doc.plot_new_referenced_function_with_angle_unit(
+                sources,
+                expression,
+                self.center,
+                radians,
+            ),
+        }
+    }
+
     pub(super) fn function_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if let Some(plot) = self.function_dialog {
             let edit_id = self.function_edit_id;
@@ -19,7 +114,20 @@ impl Editor {
                 });
                 ui.label("f(x) =");
                 ui.text_edit_singleline(&mut self.function_draft);
-                ui.label("Supported: arithmetic in x, sin, cos, tan, abs, sqrt, ln, log");
+                ui.label("Arithmetic in x; sin, cos, tan, asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants pi/π and e");
+                for (index, &source) in self.function_draft_sources.iter().enumerate() {
+                    let object = &self.doc.objects[source - 1];
+                    let alias = if self.doc.function_sources(source).is_some() {
+                        format!("f{}(…)", index + 1)
+                    } else {
+                        format!("v{}", index + 1)
+                    };
+                    let caption = self.doc.function_display_text(source)
+                        .or_else(|| self.doc.measurement_text(source))
+                        .or_else(|| self.doc.numeric_value(source).map(|value| format!("{} = {value}", self.doc.parameter_display_name(source).unwrap_or_else(|| format!("Object {source}")))))
+                        .unwrap_or_else(|| format!("Object {}", object.id));
+                    ui.label(format!("{alias}: {caption}"));
+                }
                 ui.horizontal(|ui| {
                     apply = ui
                         .button(if edit_id.is_some() {
@@ -38,21 +146,18 @@ impl Editor {
                 self.function_edit_id = None;
             }
             if apply {
-                let result = SimpleFunction::parse(&self.function_draft).and_then(|expr| {
+                let result = SimpleFunction::parse_with_sources(
+                    &self.function_draft,
+                    self.function_draft_sources.len(),
+                )
+                .and_then(|expr| {
                     if expr.uses_trigonometry() && !self.doc.angle_unit_radians {
                         self.function_dialog = None;
                         self.function_angle_dialog = Some((expr, plot, edit_id));
                         return Ok(None);
                     }
-                    let id = if let Some(id) = edit_id {
-                        self.doc.set_function_expression(id, expr)?;
-                        id
-                    } else if plot {
-                        self.doc.plot_new_function(expr, self.center)?
-                    } else {
-                        self.doc.add_function_definition(expr)?
-                    };
-                    Ok(Some(id))
+                    self.apply_function_expression(expr, plot, edit_id, None)
+                        .map(Some)
                 });
                 match result {
                     Ok(None) => {}
@@ -91,17 +196,8 @@ impl Editor {
                 self.function_edit_id = None;
             }
             if let Some(radians) = choice {
-                let result = if let Some(id) = edit_id {
-                    self.doc
-                        .set_function_expression_with_angle_unit(id, expression, radians)
-                        .map(|()| id)
-                } else if plot {
-                    self.doc
-                        .plot_new_function_with_angle_unit(expression, self.center, radians)
-                } else {
-                    self.doc
-                        .add_function_definition_with_angle_unit(expression, radians)
-                };
+                let result =
+                    self.apply_function_expression(expression, plot, edit_id, Some(radians));
                 match result {
                     Ok(id) => {
                         self.function_angle_dialog = None;

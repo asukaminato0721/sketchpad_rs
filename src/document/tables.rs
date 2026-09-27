@@ -10,7 +10,12 @@ impl Document {
         if self.partial_view || !self.safe_structure || self.page_count != 1 || source == 0 {
             return Err("Cannot tabulate a parameter in this sketch".into());
         }
-        let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).filter(|o| !o.deleted && o.page == self.active_page).map(|o| &o.kind) else {
+        let Some(Kind::Parameter(parameter)) = self
+            .objects
+            .get(source - 1)
+            .filter(|o| !o.deleted && o.page == self.active_page)
+            .map(|o| &o.kind)
+        else {
             return Err("Select a supported parameter".into());
         };
         // Definition captions need their separate typed unit grammar.
@@ -63,10 +68,18 @@ impl Document {
             .objects
             .iter()
             .filter_map(|object| match &object.kind {
-                Kind::Parameter(group) if !object.deleted && group.name() == "t[1]" && group.unit() == crate::table_records::NumericUnit::Scalar => {
+                Kind::Parameter(group)
+                    if !object.deleted
+                        && group.name() == "t[1]"
+                        && group.unit() == crate::table_records::NumericUnit::Scalar =>
+                {
                     Some((object.id, 1, group.value()))
                 }
-                Kind::Parameter(group) if !object.deleted && group.name() == "t[2]" && group.unit() == crate::table_records::NumericUnit::Scalar => {
+                Kind::Parameter(group)
+                    if !object.deleted
+                        && group.name() == "t[2]"
+                        && group.unit() == crate::table_records::NumericUnit::Scalar =>
+                {
                     Some((object.id, 2, group.value()))
                 }
                 _ => None,
@@ -127,7 +140,8 @@ impl Document {
                         };
                         crate::table_records::table_value_text(parameter.value())?;
                         let value = crate::table_records::named_table_value_text(
-                            parameter.value(), parameter.precision(),
+                            parameter.value(),
+                            parameter.precision(),
                         )?;
                         group.add_named_snapshot(&value)?;
                     } else {

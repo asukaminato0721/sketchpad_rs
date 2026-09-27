@@ -33,6 +33,7 @@ pub(super) fn encode_group(
         E::Ray => 64,
         E::Line => 63,
         E::Circle => 3,
+        E::Arc => 80,
         E::Polygon => 8,
     });
     h[..2].copy_from_slice(&code.to_le_bytes());
@@ -55,6 +56,7 @@ pub(super) fn encode_group(
             h[18..20].copy_from_slice(&[0, 0]);
         }
         E::Circle if modern_stroke => h[18..20].copy_from_slice(&[0x51, 0x5c]),
+        E::Arc if modern_stroke => h[18..20].copy_from_slice(&[0x51, 0x5c]),
         E::Polygon => {
             let polygon = presentation
                 .polygon
@@ -80,7 +82,9 @@ pub(super) fn encode_group(
     }
     let mut group = Vec::new();
     put_record(&mut group, 0x07d0, &h);
-    if let Some(label) = presentation.label {
+    if element != E::Point
+        && let Some(label) = presentation.label
+    {
         group.extend_from_slice(&crate::text_records::encode_point_label_records(label));
     }
     let references = definition.native_references();
@@ -95,6 +99,11 @@ pub(super) fn encode_group(
     put_record(&mut group, 0x07d2, &payload);
     if let Some(payload) = literal_payload(definition)? {
         put_record(&mut group, 0x07d3, &payload);
+    }
+    if element == E::Point
+        && let Some(label) = presentation.label
+    {
+        group.extend_from_slice(&crate::text_records::encode_point_label_records(label));
     }
     put_record(&mut group, 0x07d7, &[]);
     Ok(group)

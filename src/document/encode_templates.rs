@@ -1,6 +1,6 @@
 use super::{Document, Kind, Object};
 use crate::graph;
-use crate::graph::{GraphPoint, GridForm};
+use crate::graph::GraphPoint;
 
 impl Document {
     pub(super) fn place_measurement(
@@ -223,7 +223,6 @@ impl Document {
                 self.objects.get(x_unit_id - 1).map(|o| &o.kind)
             && !(*origin_id > self.source_count && origin_id.checked_add(1) == Some(x_unit_id))
         {
-            let step: f64 = 37.79527559055118;
             let [
                 Some(x_unit),
                 Some(x_axis),
@@ -259,7 +258,7 @@ impl Document {
                 .frame_styles
                 .get(&frame.id)
                 .map_or(self.grid_form[object.page], |style| style.0);
-            if !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == origin_id && value == step)
+            if !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == origin_id && value.is_finite() && value > 0.0)
                 || !matches!(x_axis.kind, Kind::GraphAxis(a,b,1 | 0x1_0001) if a == origin_id && b == x_unit_id)
                 || !matches!(y_axis.kind, Kind::GraphAxis(a,b,0) if a == origin_id && b == x_unit_id+2)
                 || !matches!(frame.kind, Kind::CoordinateSystem(a,b) if a == x_unit_id+1 && b == x_unit_id+3)
@@ -296,6 +295,9 @@ impl Document {
                     .copied()
                     .unwrap_or((self.grid_form[object.page], self.grid_dotted[object.page]));
                 graph::set_coordinate_system_style(&mut group, form, dotted)?;
+            }
+            if let Kind::GraphHorizontalUnit(_, step) = object.kind {
+                graph::set_horizontal_unit_step(&mut group, step)?;
             }
             if matches!(object.kind, Kind::GraphVerticalUnit(_, _)) {
                 graph::set_vertical_unit_form(&mut group, form, y_step)?;
@@ -344,24 +346,20 @@ impl Document {
         else {
             return Err("Incomplete coordinate-system group".into());
         };
-        let step: f64 = 37.79527559055118;
         let form = self
             .frame_styles
             .get(&frame.id)
             .map_or(self.grid_form[object.page], |style| style.0);
         let y_step = match y_unit.kind {
             Kind::GraphVerticalUnit(host, value)
-                if host == first + 1
-                    && value.is_finite()
-                    && value > 0.0
-                    && (form == GridForm::Rectangular || value == step) =>
+                if host == first + 1 && value.is_finite() && value > 0.0 =>
             {
                 value
             }
             _ => return Err("Unsupported vertical unit".into()),
         };
         if !matches!(origin.kind, Kind::Free(_))
-            || !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == first && value == step)
+            || !matches!(x_unit.kind, Kind::GraphHorizontalUnit(host, value) if host == first && value.is_finite() && value > 0.0)
             || !matches!(x_axis.kind, Kind::GraphAxis(a,b,1 | 0x1_0001) if a == first && b == first+1)
             || !matches!(y_axis.kind, Kind::GraphAxis(a,b,0) if a == first && b == first+3)
             || !matches!(frame.kind, Kind::CoordinateSystem(a,b) if a == first+2 && b == first+4)
@@ -397,6 +395,9 @@ impl Document {
                 .copied()
                 .unwrap_or((form, self.grid_dotted[object.page]));
             graph::set_coordinate_system_style(&mut group, form, dotted)?;
+        }
+        if let Kind::GraphHorizontalUnit(_, step) = object.kind {
+            graph::set_horizontal_unit_step(&mut group, step)?;
         }
         if matches!(object.kind, Kind::GraphVerticalUnit(_, _)) {
             graph::set_vertical_unit_form(&mut group, form, y_step)?;

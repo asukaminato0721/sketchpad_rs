@@ -480,15 +480,40 @@ fn constructed_and_transformed_slope_measurements_feed_live_calculated_depth() {
 #[test]
 fn native_point_values_project_independent_anchors_onto_supported_hosts() {
     for (source, point, measurement, expected, moved, after) in [
-        (include_bytes!("../../../tests/fixtures/point_value_free_segment_native.gsp").as_slice(), 4, 5, 0.5,
-            Point { x: 275., y: 150. }, 1.25),
-        (include_bytes!("../../../tests/fixtures/point_value_free_circle_native.gsp").as_slice(), 4, 5,
+        (
+            include_bytes!("../../../tests/fixtures/point_value_free_segment_native.gsp")
+                .as_slice(),
+            4,
+            5,
+            0.5,
+            Point { x: 275., y: 150. },
+            1.25,
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/point_value_free_circle_native.gsp").as_slice(),
+            4,
+            5,
             197f64.atan2(-73.) / std::f64::consts::TAU,
-            Point { x: 323., y: 17. }, 0.25),
-        (include_bytes!("../../../tests/fixtures/point_value_free_arc_native.gsp").as_slice(), 5, 6,
-            0.077340094557163, Point { x: 323., y: 150. }, 0.0),
-        (include_bytes!("../../../tests/fixtures/point_value_free_arc_outside_native.gsp").as_slice(), 5, 6,
-            0.0, Point { x: 497., y: 311. }, 1.0),
+            Point { x: 323., y: 17. },
+            0.25,
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/point_value_free_arc_native.gsp").as_slice(),
+            5,
+            6,
+            0.077340094557163,
+            Point { x: 323., y: 150. },
+            0.0,
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/point_value_free_arc_outside_native.gsp")
+                .as_slice(),
+            5,
+            6,
+            0.0,
+            Point { x: 497., y: 311. },
+            1.0,
+        ),
     ] {
         let mut doc = Document::from_bytes(source, None).unwrap();
         assert!(!doc.partial_view);
@@ -503,34 +528,79 @@ fn native_point_values_project_independent_anchors_onto_supported_hosts() {
         let reopened = Document::from_bytes(&edited, None).unwrap();
         assert!(!reopened.partial_view);
         assert_eq!(reopened.encode().unwrap(), edited);
-        assert_eq!(reopened.value_equation_value(measurement), doc.value_equation_value(measurement));
+        assert_eq!(
+            reopened.value_equation_value(measurement),
+            doc.value_equation_value(measurement)
+        );
         doc.selected.insert(measurement);
         let clipboard = doc.copy_selected().unwrap();
         let pasted = doc.paste(&clipboard).unwrap();
         let copy = *pasted.last().unwrap();
-        assert_eq!(doc.value_equation_value(copy), doc.value_equation_value(measurement));
+        assert_eq!(
+            doc.value_equation_value(copy),
+            doc.value_equation_value(measurement)
+        );
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
-        assert_eq!(reopened.value_equation_value(copy), doc.value_equation_value(measurement));
+        assert_eq!(
+            reopened.value_equation_value(copy),
+            doc.value_equation_value(measurement)
+        );
     }
 }
 
 #[test]
 fn corpus_named_point_values_import_matching_and_independent_points() {
     for (source, measurement, first, host, caption) in [
-        (include_bytes!("../../../tests/fixtures/refraction_labeled_point_value_original.gsp").as_slice(), 18, 17, 16, "折射率n"),
-        (include_bytes!("../../../tests/fixtures/ningde_labeled_point_value_original.gsp").as_slice(), 20, 10, 18, "M"),
+        (
+            include_bytes!("../../../tests/fixtures/refraction_labeled_point_value_original.gsp")
+                .as_slice(),
+            18,
+            17,
+            16,
+            "折射率n",
+        ),
+        (
+            include_bytes!("../../../tests/fixtures/ningde_labeled_point_value_original.gsp")
+                .as_slice(),
+            20,
+            10,
+            18,
+            "M",
+        ),
     ] {
         let doc = Document::from_bytes(source, None).unwrap();
-        assert_eq!(doc.objects[measurement - 1].kind, Kind::ValueEquation {
-            kind: ValueEquationKind::PointValue, first, second: host,
-        }, "Anchor {:?}, host {:?}", doc.objects[first - 1].kind, doc.objects[host - 1].kind);
-        assert_eq!(doc.objects[measurement - 1].label.as_ref().unwrap().name_utf8().unwrap(), caption);
-        assert!(matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if value.is_finite()));
+        assert_eq!(
+            doc.objects[measurement - 1].kind,
+            Kind::ValueEquation {
+                kind: ValueEquationKind::PointValue,
+                first,
+                second: host,
+            },
+            "Anchor {:?}, host {:?}",
+            doc.objects[first - 1].kind,
+            doc.objects[host - 1].kind
+        );
+        assert_eq!(
+            doc.objects[measurement - 1]
+                .label
+                .as_ref()
+                .unwrap()
+                .name_utf8()
+                .unwrap(),
+            caption
+        );
+        assert!(
+            matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if value.is_finite())
+        );
         if measurement == 20 {
-            assert!(matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (0.345..0.355).contains(&value)),
-                "Native Sketchpad caption M = 0.35");
+            assert!(
+                matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (0.345..0.355).contains(&value)),
+                "Native Sketchpad caption M = 0.35"
+            );
         } else {
-            assert!(matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (value - 1.640416666666667).abs() < 1e-12));
+            assert!(
+                matches!(doc.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (value - 1.640416666666667).abs() < 1e-12)
+            );
         }
         assert_eq!(doc.encode().unwrap(), source);
     }
@@ -540,7 +610,14 @@ fn corpus_named_point_values_import_matching_and_independent_points() {
 fn corpus_point_value_empty_attribute_preserves_dependencies_and_bytes() {
     let bytes = include_bytes!("../../../tests/fixtures/point_value_empty_attribute_corpus.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();
-    assert_eq!(doc.objects[12].kind, Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: 12, second: 7 });
+    assert_eq!(
+        doc.objects[12].kind,
+        Kind::ValueEquation {
+            kind: ValueEquationKind::PointValue,
+            first: 12,
+            second: 7
+        }
+    );
     assert!(doc.numeric_value(13).unwrap().is_finite());
     assert!(doc.numeric_value(14).unwrap().is_finite());
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -548,9 +625,14 @@ fn corpus_point_value_empty_attribute_preserves_dependencies_and_bytes() {
 
 #[test]
 fn point_value_empty_attribute_survives_live_edit_save_and_undo() {
-    let mut bytes = include_bytes!("../../../tests/fixtures/point_value_free_segment_native.gsp").to_vec();
+    let mut bytes =
+        include_bytes!("../../../tests/fixtures/point_value_free_segment_native.gsp").to_vec();
     let rs = records(&bytes).unwrap();
-    let end = rs.iter().rfind(|record| record.kind == 0x07d7).unwrap().start;
+    let end = rs
+        .iter()
+        .rfind(|record| record.kind == 0x07d7)
+        .unwrap()
+        .start;
     bytes.splice(end..end, [0, 0, 0, 0, 0x2e, 0x23, 0, 0]);
     let mut doc = Document::from_bytes(&bytes, None).unwrap();
     assert!(!doc.partial_view);

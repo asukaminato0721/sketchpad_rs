@@ -148,23 +148,13 @@ impl Editor {
                             self.animation_button_dialog = animation_draft;
                             ui.close();
                         }
-                        let movement_pair = match self.selection_order.as_slice() {
-                            [source, destination]
-                                if self
-                                    .doc
-                                    .can_add_movement_button(*source, *destination)
-                                    .is_ok() =>
-                            {
-                                Some((*source, *destination))
-                            }
-                            _ => None,
-                        };
-                        if ui.add_enabled(movement_pair.is_some(),
-                            egui::Button::new("Movement")).clicked()
-                        {
-                            let (source, destination) = movement_pair.unwrap();
+                        let movement_pairs = self.selection_order.chunks_exact(2)
+                            .map(|pair| (pair[0], pair[1])).collect::<Vec<_>>();
+                        let movement_enabled = self.selection_order.len() % 2 == 0
+                            && self.doc.can_add_movement_button_for_pairs(&movement_pairs).is_ok();
+                        if ui.add_enabled(movement_enabled, egui::Button::new("Movement")).clicked() {
                             self.movement_button_dialog = Some(MovementButtonDraft {
-                                source, destination, speed: MovementSpeed::Medium, follow: true,
+                                pairs: movement_pairs, speed: MovementSpeed::Medium, follow: true,
                             });
                             ui.close();
                         }
@@ -469,12 +459,12 @@ impl Editor {
                             let ids = self.selection_order.iter().copied().filter(|id| self.doc.selected.contains(id)).collect::<Vec<_>>();
                             let argument = ids.iter().position(|id| self.doc.objects[*id - 1].kind.numeric_unit().is_some())
                                 .map(|index| format!("v{}", index+1)).unwrap_or_else(|| "2".into());
-                            let calls = ids.iter().enumerate().filter(|(_, id)| matches!(self.doc.objects[**id - 1].kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                            let calls = ids.iter().enumerate().filter(|(_, id)| matches!(self.doc.objects[**id - 1].kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                                 .map(|(index, _)| format!("f{}({argument})", index+1)).collect::<Vec<_>>();
                             if calls.is_empty() { "a + b".into() } else { calls.join(" + ") }
                         } else if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
-                                Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => "f1(2)".into(),
+                                Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)) => "f1(2)".into(),
                                 Some(Kind::Parameter(group)) => {
                                     let source = *self.doc.selected.iter().next().unwrap();
                                     let name = self.doc.parameter_display_name(source).unwrap_or_else(|| "v1".into());
@@ -541,7 +531,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("New Function…").clicked() {
-                        self.function_dialog = Some(false);
+                        self.begin_function_dialog(false, None);
                         ui.close();
                     }
                     let selected_function = if self.doc.selected.len() == 1 {
@@ -551,6 +541,7 @@ impl Editor {
                                     && matches!(
                                         object.kind,
                                         Kind::FunctionDefinition(_)
+                                            | Kind::ReferencedFunction(_, _)
                                             | Kind::DerivativeFunction(_, _)
                                     )
                             })
@@ -568,6 +559,7 @@ impl Editor {
                         let source = selected_function.unwrap();
                         let uses_trigonometry = match self.doc.objects[source - 1].kind {
                             Kind::FunctionDefinition(expression)
+                            | Kind::ReferencedFunction(_, expression)
                             | Kind::DerivativeFunction(_, expression) => {
                                 expression.uses_trigonometry()
                             }
@@ -642,7 +634,7 @@ impl Editor {
                             !o.deleted
                                 && matches!(
                                     o.kind,
-                                    Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                                    Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)
                                 )
                         })
                     });
@@ -663,7 +655,7 @@ impl Editor {
                                 Err(error) => self.status = error,
                             }
                         } else {
-                            self.function_dialog = Some(true);
+                            self.begin_function_dialog(true, None);
                         }
                         ui.close();
                     }
@@ -677,7 +669,7 @@ impl Editor {
                                     && !object.deleted
                                     && matches!(
                                         object.kind,
-                                        Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)
+                                        Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)
                                     )
                             })
                             .map(|object| object.id)
@@ -822,7 +814,7 @@ impl Editor {
                         self.rotate_dialog = true;
                         ui.close();
                     }
-                    if ui.button("Iterate Points…").clicked() {
+                    if ui.button("Iterate…").clicked() {
                         self.iterate_dialog = true;
                         ui.close();
                     }

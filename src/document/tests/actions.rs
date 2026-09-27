@@ -316,12 +316,11 @@ fn movement_button_imports_and_generates_editable_file() {
         let document = Document::from_bytes(bytes, None).unwrap();
         assert!(!document.partial_view);
         assert!(matches!(
-            document.objects[3].kind,
+            &document.objects[3].kind,
             Kind::MovementButton {
-                source: 1,
-                destination: 2,
+                pairs,
                 ..
-            }
+            } if pairs == &vec![(1, 2)]
         ));
         assert_eq!(document.encode().unwrap(), bytes);
     }
@@ -335,14 +334,13 @@ fn movement_button_imports_and_generates_editable_file() {
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
     assert!(matches!(
-        reopened.objects[id - 1].kind,
+        &reopened.objects[id - 1].kind,
         Kind::MovementButton {
-            source: 1,
-            destination: 2,
+            pairs,
             speed: MovementSpeed::Fast,
             follow: false,
             ..
-        }
+        } if pairs == &vec![(1, 2)]
     ));
     assert_eq!(reopened.encode().unwrap(), bytes);
 }
@@ -783,4 +781,26 @@ fn link_url_buttons_import_and_generate_editable_files() {
         if url == "https://example.org/" && label == url
     ));
     assert_eq!(reopened.encode().unwrap(), bytes);
+}
+
+#[test]
+fn original_multi_pair_and_optional_movement_layouts_remain_lossless() {
+    let bytes =
+        include_bytes!("../../../tests/fixtures/movement46_cube_missing_label_native_verified.gsp");
+    let doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(
+        matches!(&doc.objects[41].kind, Kind::MovementButton { pairs, .. } if pairs.len() == 3)
+    );
+    assert!(
+        matches!(&doc.objects[61].kind, Kind::MovementButton { pairs, label, .. } if pairs.len() == 1 && label.is_empty())
+    );
+    assert_eq!(doc.encode().unwrap(), bytes);
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/movement46_course_empty_metadata_native_verified.gsp"
+    );
+    let doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(
+        matches!(&doc.objects[366].kind, Kind::MovementButton { pairs, .. } if pairs.len() == 1)
+    );
+    assert_eq!(doc.encode().unwrap(), bytes);
 }

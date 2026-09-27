@@ -127,8 +127,13 @@ mod tests {
         assert!(group.specialize_tool_sources(&[7], &[]).is_err());
         // The separately created multiplication template retains the bound
         // quantity, as independently saved Native length and angle controls do.
-        let multiplied = Document::from_bytes(include_bytes!(
-            "../../tests/fixtures/embedded_tool_numeric_multiply_length_native_verified.gsp"), None).unwrap();
+        let multiplied = Document::from_bytes(
+            include_bytes!(
+                "../../tests/fixtures/embedded_tool_numeric_multiply_length_native_verified.gsp"
+            ),
+            None,
+        )
+        .unwrap();
         let product = multiplied.embedded_tool_document(0).unwrap();
         let Kind::ParameterCalculation(_, formula) = &product.objects[1].kind else {
             panic!("Expected the native multiplication template");
@@ -143,7 +148,6 @@ mod tests {
             assert_eq!(&bound.as_bytes()[16..18], &subtype.to_le_bytes());
             assert_eq!(bound.value_for_sources(&[value], &[unit]), Some(value * 2.));
         }
-
     }
 
     #[test]

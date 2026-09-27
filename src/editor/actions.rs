@@ -13,37 +13,58 @@ impl Editor {
             return;
         }
         let Kind::MovementButton {
-            source,
-            destination,
+            pairs,
             speed,
             follow,
             ..
-        } = self.doc.objects[id - 1].kind
+        } = self.doc.objects[id - 1].kind.clone()
         else {
             return;
         };
-        let Some(target) = self.doc.position(destination) else {
-            self.status = "Movement destination is unavailable".into();
-            return;
-        };
-        if !matches!(self.doc.objects[source - 1].kind, Kind::Free(_)) {
-            self.status = "Movement source is unavailable".into();
+        if pairs.is_empty()
+            || pairs
+                .iter()
+                .any(|&(s, d)| !self.doc.movement_pair_supported(s, d))
+        {
+            self.status = "Movement source or destination is unavailable".into();
             return;
         }
+        let targets = pairs
+            .iter()
+            .map(|&(_, d)| self.doc.movement_target_value(d).unwrap())
+            .collect::<Vec<_>>();
         self.doc.checkpoint();
         if speed == MovementSpeed::Instant {
-            self.doc.move_point(source, target);
-            self.status = "Moved point to destination".into();
+            // Native applies pairs from last to first. Initial mode freezes
+            // all destinations before any source changes. Numeric destinations
+            // are sampled together even in Follow mode.
+            for (index, &(source, destination)) in pairs.iter().enumerate().rev() {
+                let target = if follow
+                    && matches!(
+                        targets[index],
+                        sketchpad_rs::document::MovementValue::Point(_)
+                    ) {
+                    self.doc.movement_target_value(destination)
+                } else {
+                    Some(targets[index])
+                };
+                if let Some(target) = target {
+                    self.doc.set_movement_value(source, target);
+                }
+            }
+            self.status = "Moved objects to destinations".into();
         } else {
-            self.movements.push(MovementTrack {
-                button: id,
-                source,
-                destination,
-                initial_destination: (!follow).then_some(target),
-                speed,
-            });
+            for (index, &(source, destination)) in pairs.iter().enumerate() {
+                self.movements.push(MovementTrack {
+                    button: id,
+                    source,
+                    destination,
+                    initial_destination: (!follow).then_some(targets[index]),
+                    speed,
+                });
+            }
             self.animation_last_tick = Instant::now();
-            self.status = "Moving point to destination".into();
+            self.status = "Moving objects to destinations".into();
         }
     }
     pub(super) fn scroll_to_button_target(
@@ -216,11 +237,14 @@ impl Editor {
             .objects
             .get(id.checked_sub(1).ok_or("Invalid action button ID")?)
             .ok_or("Invalid action button ID")?;
-        if object.deleted || !object.visible || object.page != self.doc.active_page {
+        if object.deleted
+            || (!object.visible && !matches!(object.kind, Kind::HideShowButton { .. }))
+            || object.page != self.doc.active_page
+        {
             return Err("A Presentation parent button is unavailable".into());
         }
         match object.kind.clone() {
-            Kind::HideShowButton { .. } => self.doc.activate_hide_show_button(id),
+            Kind::HideShowButton { .. } => self.doc.activate_hide_show_button_as_child(id),
             Kind::AnimationButton {
                 targets, settings, ..
             } => {

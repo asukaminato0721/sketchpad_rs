@@ -9,9 +9,9 @@ impl Document {
     // presentation. Ordinary hide/show leaves this independent flag intact.
     // Clipboard copies convert suppressed prerequisites to ordinary hidden.
     fn is_presentation_suppressed(&self, id: usize) -> bool {
-        id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|object| {
-            object.presentation_suppressed
-        })
+        id.checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .is_some_and(|object| object.presentation_suppressed)
     }
 
     pub fn is_displayed(&self, id: usize) -> bool {
@@ -105,8 +105,12 @@ impl Document {
         Some(dependencies)
     }
     fn copy_has_selected_ancestor(&self, root: usize) -> Result<bool, String> {
-        let mut stack = self.dependencies_of(root).ok_or("Invalid selection")?
-            .into_iter().map(|parent| (root, parent)).collect::<Vec<_>>();
+        let mut stack = self
+            .dependencies_of(root)
+            .ok_or("Invalid selection")?
+            .into_iter()
+            .map(|parent| (root, parent))
+            .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         while let Some((child, parent)) = stack.pop() {
             if parent == 0 || parent >= child {
@@ -116,15 +120,21 @@ impl Document {
                 continue;
             }
             let object = self.objects.get(parent - 1).ok_or("Invalid selection")?;
-            if object.deleted || object.page != self.active_page
-                || matches!(object.kind, Kind::Unsupported(_)) {
+            if object.deleted
+                || object.page != self.active_page
+                || matches!(object.kind, Kind::Unsupported(_))
+            {
                 return Err(format!("Object {parent} cannot be copied safely"));
             }
             if self.selected.contains(&parent) {
                 return Ok(true);
             }
-            stack.extend(self.dependencies_of(parent).ok_or("Invalid selection")?
-                .into_iter().map(|ancestor| (parent, ancestor)));
+            stack.extend(
+                self.dependencies_of(parent)
+                    .ok_or("Invalid selection")?
+                    .into_iter()
+                    .map(|ancestor| (parent, ancestor)),
+            );
         }
         Ok(false)
     }
@@ -139,16 +149,19 @@ impl Document {
         // includes an ancestor; isolated selected points become free snapshots.
         let mut frozen_points = std::collections::BTreeMap::new();
         for &id in &self.selected {
-            let object = self.objects.get(id.checked_sub(1).ok_or("Invalid selection")?)
+            let object = self
+                .objects
+                .get(id.checked_sub(1).ok_or("Invalid selection")?)
                 .ok_or("Invalid selection")?;
             if object.deleted || object.page != self.active_page {
                 return Err(format!("Object {id} cannot be copied safely"));
             }
-            if matches!(object.kind, Kind::NumericCoordinatePoint(..)
-                | Kind::Midpoint(..) | Kind::SegmentMidpoint(_))
-                && !self.copy_has_selected_ancestor(id)? {
-                frozen_points.insert(id, self.position(id)
-                    .ok_or("Selected point is undefined")?);
+            if matches!(
+                object.kind,
+                Kind::NumericCoordinatePoint(..) | Kind::Midpoint(..) | Kind::SegmentMidpoint(_)
+            ) && !self.copy_has_selected_ancestor(id)?
+            {
+                frozen_points.insert(id, self.position(id).ok_or("Selected point is undefined")?);
             }
         }
         for object in self
@@ -293,7 +306,8 @@ impl Document {
                     };
                     Ok(ClipboardObject {
                         old_id: id,
-                        kind: frozen_points.get(&id)
+                        kind: frozen_points
+                            .get(&id)
                             .map_or_else(|| object.kind.clone(), |point| Kind::Free(*point)),
                         visible: object.visible && !self.is_presentation_suppressed(id),
                         tracing: object.tracing,
@@ -418,8 +432,15 @@ impl Document {
                 function_name = Some(next);
             }
             let id = candidate.objects.len() + 1;
-            let interior_order = interior_order.or_else(|| remapped.is_polygon().then(||
-                if matches!(remapped, Kind::Polygon(_)) { 0 } else { 1 }));
+            let interior_order = interior_order.or_else(|| {
+                remapped.is_polygon().then(|| {
+                    if matches!(remapped, Kind::Polygon(_)) {
+                        0
+                    } else {
+                        1
+                    }
+                })
+            });
             candidate.objects.push(Object {
                 id,
                 page: candidate.active_page,
@@ -543,10 +564,14 @@ impl Document {
         Ok(removed.into_iter().collect())
     }
     pub fn set_selected_visibility(&mut self, visible: bool) {
-        let ids: Vec<_> = self.objects.iter()
+        let ids: Vec<_> = self
+            .objects
+            .iter()
             .filter(|object| {
-                !object.deleted && self.selected.contains(&object.id)
-                    && object.visible != visible && !self.is_presentation_suppressed(object.id)
+                !object.deleted
+                    && self.selected.contains(&object.id)
+                    && object.visible != visible
+                    && !self.is_presentation_suppressed(object.id)
             })
             .map(|object| object.id)
             .collect();
@@ -591,10 +616,14 @@ impl Document {
         Ok(ids.len())
     }
     pub fn show_all_hidden(&mut self) {
-        let ids: Vec<_> = self.objects.iter()
+        let ids: Vec<_> = self
+            .objects
+            .iter()
             .filter(|object| {
-                !object.deleted && object.page == self.active_page
-                    && !object.visible && !self.is_presentation_suppressed(object.id)
+                !object.deleted
+                    && object.page == self.active_page
+                    && !object.visible
+                    && !self.is_presentation_suppressed(object.id)
             })
             .map(|object| object.id)
             .collect();

@@ -57,7 +57,13 @@ fn inspect(path: &str) -> Result<(), String> {
         );
     }
     for tool in document.embedded_tools()? {
-        println!("embedded tool {:?}: {} prototype object(s), inputs={:?}, complete={}", tool.name, tool.object_codes.len(), tool.input_ids, tool.complete);
+        println!(
+            "embedded tool {:?}: {} prototype object(s), inputs={:?}, complete={}",
+            tool.name,
+            tool.object_codes.len(),
+            tool.input_ids,
+            tool.complete
+        );
     }
 
     Ok(())
@@ -255,9 +261,17 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                 for (index, summary) in tools.iter().enumerate() {
                     let unknown_codes = match document.embedded_tool_document(index) {
                         Ok(prototype) => {
-                            let codes: Vec<_> = prototype.objects.iter().filter_map(|object| {
-                                if let Kind::Unsupported(code) = object.kind { Some(code) } else { None }
-                            }).collect();
+                            let codes: Vec<_> = prototype
+                                .objects
+                                .iter()
+                                .filter_map(|object| {
+                                    if let Kind::Unsupported(code) = object.kind {
+                                        Some(code)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
                             tool_known += prototype.objects.len() - codes.len();
                             if prototype.partial_view || !codes.is_empty() {
                                 tool_partial += 1;
@@ -280,7 +294,9 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                         examples.insert(path.clone());
                     }
                 }
-                let has_unsupported_scene = document.objects.iter()
+                let has_unsupported_scene = document
+                    .objects
+                    .iter()
                     .any(|object| matches!(object.kind, Kind::Unsupported(_)));
                 scene_full += usize::from(!has_unsupported_scene);
                 if has_unsupported_scene || has_unsupported_tools {
@@ -315,12 +331,22 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         "Partial views: {partial_views}/{} (includes multi-page structural edit restrictions)",
         files.len()
     );
-    println!("Drawing objects: {} slots; {scene_full} documents with all drawing kinds decoded", objects - tool_slots);
+    println!(
+        "Drawing objects: {} slots; {scene_full} documents with all drawing kinds decoded",
+        objects - tool_slots
+    );
     let tool_unknown = tool_slots - tool_known;
-    println!("Embedded tool prototypes: {tool_definitions} definitions in {tool_documents} documents; {tool_slots} slots, {tool_known} decoded, {tool_unknown} undecoded");
-    println!("Isolated tool views: {tool_complete} complete, {tool_partial} partial, {tool_failed} failed (separate object and font namespaces)");
+    println!(
+        "Embedded tool prototypes: {tool_definitions} definitions in {tool_documents} documents; {tool_slots} slots, {tool_known} decoded, {tool_unknown} undecoded"
+    );
+    println!(
+        "Isolated tool views: {tool_complete} complete, {tool_partial} partial, {tool_failed} failed (separate object and font namespaces)"
+    );
     let scene_unsupported: usize = unsupported.values().map(|(count, _)| count).sum();
-    println!("Unsupported object slots including tool prototypes: {}", scene_unsupported + tool_unknown);
+    println!(
+        "Unsupported object slots including tool prototypes: {}",
+        scene_unsupported + tool_unknown
+    );
     for (heading, counts) in [
         ("Unsupported drawing object codes", unsupported),
         ("Unsupported tool prototype codes", prototype_unsupported),
@@ -1552,9 +1578,9 @@ fn replay(path: &str) -> Result<(), String> {
                     let host = parts[0].parse().map_err(|_| "invalid host ID")?;
                     let x = parts[1].parse().map_err(|_| "invalid x coordinate")?;
                     let y = parts[2].parse().map_err(|_| "invalid y coordinate")?;
-                    let kind = document
-                        .constrained_point(host, Point { x, y })
-                        .ok_or("host must be a nondegenerate straight path, circle, arc, or polygon")?;
+                    let kind = document.constrained_point(host, Point { x, y }).ok_or(
+                        "host must be a nondegenerate straight path, circle, arc, or polygon",
+                    )?;
                     let id = document.add(kind);
                     println!("line {}: point_on -> object {id}", index + 1);
                 }
@@ -1627,17 +1653,43 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "iterate_mapped" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
-                    if !(4..=5).contains(&parts.len()) { return Err("expected SEED_IDS BRANCH_IDS[;BRANCH_IDS...] CARRIED_IDS DEPTH_OR_value:PARAMETER [VISIBLE_BINDING_IDS]".into()); }
-                    let ids = |part: &str| part.split(',').map(|v| v.parse::<usize>().map_err(|_| "invalid mapped iteration ID")).collect::<Result<Vec<_>, _>>();
+                    if !(4..=5).contains(&parts.len()) {
+                        return Err("expected SEED_IDS BRANCH_IDS[;BRANCH_IDS...] CARRIED_IDS DEPTH_OR_value:PARAMETER [VISIBLE_BINDING_IDS]".into());
+                    }
+                    let ids = |part: &str| {
+                        part.split(',')
+                            .map(|v| {
+                                v.parse::<usize>()
+                                    .map_err(|_| "invalid mapped iteration ID")
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    };
                     let seeds = ids(parts[0])?;
-                    let branches = parts[1].split(';').map(ids).collect::<Result<Vec<_>, _>>()?;
+                    let branches = parts[1]
+                        .split(';')
+                        .map(ids)
+                        .collect::<Result<Vec<_>, _>>()?;
                     let carried = ids(parts[2])?;
                     let depth = if let Some(id) = parts[3].strip_prefix("value:") {
                         IterationDepth::Value(id.parse().map_err(|_| "invalid depth parameter")?)
-                    } else { IterationDepth::Fixed(parts[3].parse().map_err(|_| "invalid mapped iteration depth")?) };
+                    } else {
+                        IterationDepth::Fixed(
+                            parts[3]
+                                .parse()
+                                .map_err(|_| "invalid mapped iteration depth")?,
+                        )
+                    };
                     let id = if let Some(bindings) = parts.get(4) {
-                        document.add_mapped_point_iteration_with_bindings(&seeds, &branches, &carried, &ids(bindings)?, depth)?
-                    } else { document.add_mapped_point_iteration(&seeds, &branches, &carried, depth)? };
+                        document.add_mapped_point_iteration_with_bindings(
+                            &seeds,
+                            &branches,
+                            &carried,
+                            &ids(bindings)?,
+                            depth,
+                        )?
+                    } else {
+                        document.add_mapped_point_iteration(&seeds, &branches, &carried, depth)?
+                    };
                     println!("line {}: iterate_mapped -> object {id}", index + 1);
                 }
                 "iterate_polygon_branch" | "iterate_polygon_branch_live" => {
@@ -2087,9 +2139,11 @@ fn replay(path: &str) -> Result<(), String> {
                         Some(Kind::Segment(_, _))
                     ) {
                         Kind::ScaledSegment(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray)) {
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray))
+                    {
                         Kind::ScaledRay(source, center, factor)
-                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line)) {
+                    } else if matches!(document.objects.get(source.saturating_sub(1)).map(|o| &o.kind), Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line))
+                    {
                         Kind::ScaledLine(source, center, factor)
                     } else if document.circle_points(source).is_some() {
                         Kind::ScaledCircle(source, center, factor)
@@ -2166,8 +2220,18 @@ fn replay(path: &str) -> Result<(), String> {
                         .map(|o| &o.kind)
                     {
                         Some(Kind::Segment(_, _)) => Kind::RotatedSegment(source, center, angle),
-                        Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Ray) => Kind::RotatedRay(source, center, angle),
-                        Some(kind) if kind.fixed_transform_straight_mode() == Some(sketchpad_rs::document::LineMode::Line) => Kind::RotatedLine(source, center, angle),
+                        Some(kind)
+                            if kind.fixed_transform_straight_mode()
+                                == Some(sketchpad_rs::document::LineMode::Ray) =>
+                        {
+                            Kind::RotatedRay(source, center, angle)
+                        }
+                        Some(kind)
+                            if kind.fixed_transform_straight_mode()
+                                == Some(sketchpad_rs::document::LineMode::Line) =>
+                        {
+                            Kind::RotatedLine(source, center, angle)
+                        }
                         Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) => {
                             Kind::RotatedCircle(source, center, angle)
                         }

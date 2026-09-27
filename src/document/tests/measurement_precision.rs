@@ -59,11 +59,17 @@ fn scalar_measurement_precision_native_values_copy_and_undefined_slope() {
     let numeric_value = doc.numeric_value(copied);
     doc.move_measurement_caption(copied, (-120, 245)).unwrap();
     assert_eq!(doc.numeric_value(copied), numeric_value);
-    assert_eq!(doc.objects[copied - 1].measurement_anchor, Some((-120, 245)));
+    assert_eq!(
+        doc.objects[copied - 1].measurement_anchor,
+        Some((-120, 245))
+    );
     let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
     assert_eq!(reopened.objects[copied - 1].measurement_precision, Some(0));
-    assert_eq!(reopened.objects[copied - 1].measurement_anchor, Some((-120, 245)));
+    assert_eq!(
+        reopened.objects[copied - 1].measurement_anchor,
+        Some((-120, 245))
+    );
     assert_eq!(reopened.numeric_value(copied), numeric_value);
     assert!(doc.set_measurement_precision(&[10], 3).is_err());
     doc.move_point(2, Point { x: 150., y: 175. });

@@ -455,7 +455,7 @@ fn decimal_parameters_roundtrip_and_drive_path_points() {
     );
     assert_eq!(
         table.objects[9].kind,
-        Kind::PlottedPoint(1, 9, PlotPointsMode::Cartesian, [2.5, 1.])
+        Kind::PlottedPoint(9, PlotPointsMode::Cartesian, [2.5, 1.])
     );
     assert!((table.position(10).unwrap().x - (199. + 2.5 * 37.79527559055118)).abs() < 1e-9);
     assert_eq!(

@@ -24,3 +24,9 @@ mod polygons;
 mod precision_and_clipboard;
 mod transforms;
 mod translations;
+
+mod iteration_bindings;
+
+mod transformed_arcs;
+
+mod visibility_actions;

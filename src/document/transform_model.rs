@@ -13,6 +13,7 @@ pub enum ElementType {
     Ray,
     Line,
     Circle,
+    Arc,
     Polygon,
 }
 
@@ -26,10 +27,7 @@ pub enum NumericExpr {
     },
     /// Expected operation unit. Length operands in marked translations also
     /// accept unitless values interpreted as signed centimeters by Native.
-    ObjectValue {
-        id: usize,
-        unit: NumericUnit,
-    },
+    ObjectValue { id: usize, unit: NumericUnit },
     DirectedAngle {
         first: usize,
         vertex: usize,

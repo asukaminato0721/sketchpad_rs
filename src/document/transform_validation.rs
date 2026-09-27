@@ -1,6 +1,6 @@
 //! Save policies for shared transform definitions. Geometry and serialization
 //! share definitions, while authoring capabilities retain their native proofs.
-use super::kind::{is_point_kind, is_segment_kind, polygon_vertex_count};
+use super::kind::{is_arc_kind, is_point_kind, is_segment_kind, polygon_vertex_count};
 use super::transform_model::{
     DisplacementExpr, ElementType, NativeLiteralRole, NativeTransformFlavor, NumericExpr,
     Transform, TransformDefinition,
@@ -66,8 +66,17 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
                 matches!(source.kind, Kind::Circle(..) | Kind::CircleBySegment(..))
             }
         }
+        E::Arc => is_arc_kind(&source.kind),
         E::Polygon => {
-            if matches!(flavor, F::Vector | F::MarkedPolar | F::FixedPolar | F::NumericRotation | F::NumericDilation) {
+            if matches!(
+                flavor,
+                F::Vector
+                    | F::MarkedPolar
+                    | F::FixedPolar
+                    | F::Reflection
+                    | F::NumericRotation
+                    | F::NumericDilation
+            ) {
                 source.kind.is_polygon()
                     && polygon_vertex_count(&document.objects, definition.source()).is_some()
             } else {
@@ -267,7 +276,7 @@ pub(super) fn validate_transform(
                 }
                 // Existing numeric dilation permits collapsed or undefined
                 // segment/circle/interior targets; point targets remain defined.
-                if matches!(definition.element(), E::Segment | E::Circle | E::Polygon) {
+                if matches!(definition.element(), E::Segment | E::Circle | E::Arc | E::Polygon) {
                     return Ok(());
                 }
             }

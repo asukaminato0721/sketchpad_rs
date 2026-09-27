@@ -211,13 +211,25 @@ fn multi_page_parameter_tables_keep_local_refs_rows_and_other_page_bytes() {
     let bytes = include_bytes!("../../../tests/fixtures/two_page_parameter_tables_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert_eq!(doc.objects.len(), 8);
-    assert!(doc.objects.iter().all(|object| !matches!(object.kind, Kind::Unsupported(_))));
+    assert!(
+        doc.objects
+            .iter()
+            .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
+    );
     doc.active_page = 0;
     let other_page = |bytes: &[u8]| {
         let rs = records(bytes).unwrap();
-        let start = rs.iter().filter(|record| record.kind == 0x0386 && record.data.len() == 216)
-            .nth(1).unwrap().start;
-        let end = rs.iter().find(|record| record.kind == 0x0385).unwrap().start;
+        let start = rs
+            .iter()
+            .filter(|record| record.kind == 0x0386 && record.data.len() == 216)
+            .nth(1)
+            .unwrap()
+            .start;
+        let end = rs
+            .iter()
+            .find(|record| record.kind == 0x0385)
+            .unwrap()
+            .start;
         bytes[start..end].to_vec()
     };
     let untouched = other_page(bytes);
@@ -247,19 +259,23 @@ fn multi_page_parameter_tables_keep_local_refs_rows_and_other_page_bytes() {
     doc.set_parameter_value(1, -12.34).unwrap();
     doc.set_parameter_value(2, 7.5).unwrap();
     if let Kind::ValueTablePair(first, second, group) = &doc.objects[2].kind {
-        assert_eq!((*first, *second), (2,1));
-        assert_eq!(group.pair_source_ids(), Some([2,1]));
+        assert_eq!((*first, *second), (2, 1));
+        assert_eq!(group.pair_source_ids(), Some([2, 1]));
         let rows = group.pair_values().unwrap();
-        assert_eq!(&rows[..rows.len()-1], &old_pair[..old_pair.len()-1]);
-        assert_eq!(*rows.last().unwrap(), [7.5,-12.34]);
-    } else { panic!("Lost paired table"); }
+        assert_eq!(&rows[..rows.len() - 1], &old_pair[..old_pair.len() - 1]);
+        assert_eq!(*rows.last().unwrap(), [7.5, -12.34]);
+    } else {
+        panic!("Lost paired table");
+    }
     if let Kind::ValueTable(source, group) = &doc.objects[3].kind {
         assert_eq!(*source, 1);
         assert_eq!(group.source_id(), 1);
         let rows = group.default_values().unwrap();
-        assert_eq!(&rows[..rows.len()-1], &old_single[..old_single.len()-1]);
+        assert_eq!(&rows[..rows.len() - 1], &old_single[..old_single.len() - 1]);
         assert_eq!(*rows.last().unwrap(), -12.34);
-    } else { panic!("Lost single table"); }
+    } else {
+        panic!("Lost single table");
+    }
     let edited = doc.encode().unwrap();
     assert_eq!(other_page(&edited), untouched);
     let reopened = Document::from_bytes(&edited, None).unwrap();
@@ -267,14 +283,18 @@ fn multi_page_parameter_tables_keep_local_refs_rows_and_other_page_bytes() {
     assert_eq!(reopened.numeric_value(2), Some(7.5));
     assert_eq!(reopened.numeric_value(5), Some(1.));
     assert_eq!(reopened.numeric_value(6), Some(1.));
-    assert!(matches!(&reopened.objects[6].kind, Kind::ValueTablePair(6,5,group) if group.pair_source_ids()==Some([2,1])));
+    assert!(
+        matches!(&reopened.objects[6].kind, Kind::ValueTablePair(6,5,group) if group.pair_source_ids()==Some([2,1]))
+    );
     let state = doc.objects.clone();
     let history = doc.undo.len();
     assert!(doc.set_parameter_value(1, 100.).is_err());
     assert_eq!(doc.objects, state);
     assert_eq!(doc.undo.len(), history);
     doc.set_parameter_value(1, 8.).unwrap();
-    assert!(matches!(&doc.objects[0].kind, Kind::Parameter(group) if group.precision()==2 && group.value_text()=="8.00"));
+    assert!(
+        matches!(&doc.objects[0].kind, Kind::Parameter(group) if group.precision()==2 && group.value_text()=="8.00")
+    );
     assert_eq!(other_page(&doc.encode().unwrap()), untouched);
     doc.undo();
     assert_eq!(doc.numeric_value(1), Some(-12.34));

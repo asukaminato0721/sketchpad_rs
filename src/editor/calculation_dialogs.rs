@@ -10,7 +10,7 @@ impl Editor {
                 ui.heading("Calculate");
                 ui.text_edit_singleline(&mut self.calculation_draft);
                 ui.label(
-                    if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))) {
+                    if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
                         "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order"
                     } else if self.doc.selected.len() >= 2 {
                         "Use v1, v2, … in selection order; a and b also name the first two values"
@@ -129,8 +129,23 @@ impl Editor {
                         })
                 } else if let Some(source) = selected_parameter {
                     self.doc.add_parameter_calculation(source, draft, (10, y))
-                } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))) {
-                    self.doc.add_multi_calculation(&[*self.doc.selected.iter().next().unwrap()], draft, (10, y))
+                } else if self.doc.selected.len() == 1
+                    && self.doc.selected.iter().next().is_some_and(|&id| {
+                        self.doc.objects.get(id - 1).is_some_and(|object| {
+                            matches!(
+                                object.kind,
+                                Kind::FunctionDefinition(_)
+                                    | Kind::ReferencedFunction(_, _)
+                                    | Kind::DerivativeFunction(_, _)
+                            )
+                        })
+                    })
+                {
+                    self.doc.add_multi_calculation(
+                        &[*self.doc.selected.iter().next().unwrap()],
+                        draft,
+                        (10, y),
+                    )
                 } else {
                     self.doc.add_calculation_expression(draft, (10, y))
                 };
@@ -149,6 +164,7 @@ impl Editor {
             egui::Modal::new(egui::Id::new("point_iteration")).show(root.ctx(), |ui| {
                 ui.heading("Iterate");
                 ui.label("Select a free seed point and its translated, rotated, dilated, or reflected image. Add a scalar parameter or calculation for live point depth, or their segment or circle with an optional depth value. Rays also accept a scalar parameter or calculation for live depth.");
+                ui.label("For other carried shapes, select a seed point, its transformed image, and the circles, polygons, arcs, rays or lines to repeat. Derived seed points are supported. An optional scalar depth value updates the number of images live.");
                 ui.label("For numeric mappings, also select the parameter, calculation, and attached label, with an optional separate depth value. For a branching triangle, select its seed, two translated images, interior, optional sides, and optional depth parameter.");
                 ui.horizontal(|ui| {
                     ui.label("Depth");

@@ -232,9 +232,11 @@ fn is_legacy_stroke_header(payload: &[u8]) -> bool {
         && payload[11] == 0
         && payload[10] <= 2
         && matches!(
-            (u16::from_le_bytes([payload[0], payload[1]]),
-             u16::from_le_bytes([payload[6], payload[7]]),
-             u16::from_le_bytes([payload[8], payload[9]])),
+            (
+                u16::from_le_bytes([payload[0], payload[1]]),
+                u16::from_le_bytes([payload[6], payload[7]]),
+                u16::from_le_bytes([payload[8], payload[9]])
+            ),
             (2, 2, 14) | (3, 3, 28) | (64, 2, 13) | (5, 2, 47)
         )
 }
@@ -242,9 +244,18 @@ fn is_legacy_stroke_header(payload: &[u8]) -> bool {
 fn stroke_header_style(payload: &[u8]) -> Option<SegmentLineStyle> {
     if is_legacy_stroke_header(payload) {
         return Some(match payload[10] {
-            0 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dashed },
-            1 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
-            2 => SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid },
+            0 => SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Dashed,
+            },
+            1 => SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Solid,
+            },
+            2 => SegmentLineStyle {
+                width: LineWidth::Medium,
+                pattern: LinePattern::Solid,
+            },
             _ => unreachable!(),
         });
     }
@@ -286,7 +297,12 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)
-        || (payload.len() == 28 && matches!(code, 27 | 29 | 30 | 33) && payload[6..8] == [2, 0]
+        || (payload.len() == 28
+            && payload[6..10] == [12, 0, 67, 0]
+            && matches!(code, 16..=21 | 24 | 27..=30 | 32..=34))
+        || (payload.len() == 28
+            && matches!(code, 27 | 29 | 30 | 33)
+            && payload[6..8] == [2, 0]
             && matches!(u16::from_le_bytes([payload[8], payload[9]]), 12 | 13))
         || (payload[6..8] == [6, 0]
             && matches!(
@@ -444,8 +460,12 @@ pub fn iteration_binding_visual_style(payload: &[u8], polygon: bool) -> Option<V
 
 /// Point bindings use byte 11 and RGB while retaining their class-15 descriptor.
 pub fn iteration_point_binding_visual_style(payload: &[u8]) -> Option<VisualStyle> {
-    if payload.len() != 28 || payload[..2] != 77u16.to_le_bytes()
-        || payload[6..10] != [15, 0, 65, 0] { return None; }
+    if payload.len() != 28
+        || payload[..2] != 77u16.to_le_bytes()
+        || payload[6..10] != [15, 0, 65, 0]
+    {
+        return None;
+    }
     let mut header = payload.to_vec();
     header[..2].copy_from_slice(&0u16.to_le_bytes());
     header[6..10].copy_from_slice(&[1, 0, 4, 0]);
@@ -1276,8 +1296,10 @@ mod tests {
 
     #[test]
     fn native_legacy_free_points_have_implicit_small_size_independent_of_opaque_byte() {
-        let source = include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_original.gsp");
-        let copied = include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_copied_native.gsp");
+        let source =
+            include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_original.gsp");
+        let copied =
+            include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_copied_native.gsp");
         let old = records_headers(source);
         let modern = records_headers(copied);
         assert_eq!(old.len(), 5);
@@ -1300,7 +1322,9 @@ mod tests {
 
     #[test]
     fn legacy_free_point_size_setter_preserves_fields_or_rejects_atomically() {
-        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_free_point_style_opaque_original.gsp"));
+        let headers = records_headers(include_bytes!(
+            "../tests/fixtures/legacy_free_point_style_opaque_original.gsp"
+        ));
         for original in headers.into_iter().take(4) {
             let mut changed = original.clone();
             set_point_style(&mut changed, PointStyle::Small).unwrap();
@@ -1309,7 +1333,15 @@ mod tests {
                 assert!(set_point_style(&mut changed, style).is_err());
                 assert_eq!(changed, original);
             }
-            set_point_color(&mut changed, RgbColor { red: 0, green: 0, blue: 255 }).unwrap();
+            set_point_color(
+                &mut changed,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255,
+                },
+            )
+            .unwrap();
             assert_eq!(point_style(&changed), Some(PointStyle::Small));
             assert_eq!(changed[15], original[15]);
             changed[12..15].copy_from_slice(&original[12..15]);
@@ -1320,7 +1352,12 @@ mod tests {
     #[test]
     fn modern_short_free_point_headers_keep_the_explicit_style_byte() {
         let native = first_point_header(include_bytes!("../tests/fixtures/point.gsp"));
-        for style in [PointStyle::Dot, PointStyle::Small, PointStyle::Medium, PointStyle::Large] {
+        for style in [
+            PointStyle::Dot,
+            PointStyle::Small,
+            PointStyle::Medium,
+            PointStyle::Large,
+        ] {
             let mut short = native[..16].to_vec();
             assert_eq!(short[10], 0x21);
             short[11] = style as u8;
@@ -1336,9 +1373,22 @@ mod tests {
     #[test]
     fn legacy_stroke_enums_match_native_converted_segment_circle_ray_and_line_styles() {
         for (source, copied) in [
-            (include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_styles_copied_native.gsp").as_slice()),
-            (include_bytes!("../tests/fixtures/legacy_stroke_dashed_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_dashed_copied_native.gsp").as_slice()),
-            (include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_original.gsp").as_slice(), include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_copied_native.gsp").as_slice()),
+            (
+                include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/legacy_stroke_styles_copied_native.gsp")
+                    .as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/legacy_stroke_dashed_original.gsp").as_slice(),
+                include_bytes!("../tests/fixtures/legacy_stroke_dashed_copied_native.gsp")
+                    .as_slice(),
+            ),
+            (
+                include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_original.gsp")
+                    .as_slice(),
+                include_bytes!("../tests/fixtures/legacy_stroke_medium_paths_copied_native.gsp")
+                    .as_slice(),
+            ),
         ] {
             let old = records_headers(source);
             let modern = records_headers(copied);
@@ -1347,9 +1397,18 @@ mod tests {
             for index in 4..10 {
                 assert_eq!(old[index].len(), 16);
                 let expected = match old[index][10] {
-                    0 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dashed },
-                    1 => SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
-                    2 => SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Solid },
+                    0 => SegmentLineStyle {
+                        width: LineWidth::Thin,
+                        pattern: LinePattern::Dashed,
+                    },
+                    1 => SegmentLineStyle {
+                        width: LineWidth::Thin,
+                        pattern: LinePattern::Solid,
+                    },
+                    2 => SegmentLineStyle {
+                        width: LineWidth::Medium,
+                        pattern: LinePattern::Solid,
+                    },
                     value => panic!("Unexpected native pen enum {value}"),
                 };
                 let style = visual_style(&old[index]).unwrap();
@@ -1365,16 +1424,23 @@ mod tests {
 
     #[test]
     fn legacy_stroke_setters_preserve_opaque_fields_and_reject_unrepresented_styles_atomically() {
-        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp"));
+        let headers = records_headers(include_bytes!(
+            "../tests/fixtures/legacy_stroke_styles_original.gsp"
+        ));
         for original in headers.into_iter().skip(4) {
-            let VisualStyle::Stroke { color, .. } = visual_style(&original).unwrap() else { panic!("Expected stroke"); };
+            let VisualStyle::Stroke { color, .. } = visual_style(&original).unwrap() else {
+                panic!("Expected stroke");
+            };
             for (word, width, pattern) in [
                 (0, LineWidth::Thin, LinePattern::Dashed),
                 (1, LineWidth::Thin, LinePattern::Solid),
                 (2, LineWidth::Medium, LinePattern::Solid),
             ] {
                 let mut changed = original.clone();
-                let style = VisualStyle::Stroke { color, line: SegmentLineStyle { width, pattern } };
+                let style = VisualStyle::Stroke {
+                    color,
+                    line: SegmentLineStyle { width, pattern },
+                };
                 set_visual_style(&mut changed, style).unwrap();
                 assert_eq!(changed[10], word);
                 assert_eq!(visual_style(&changed), Some(style));
@@ -1382,13 +1448,27 @@ mod tests {
                 assert_eq!(changed, original);
             }
             for line in [
-                SegmentLineStyle { width: LineWidth::Hairline, pattern: LinePattern::Solid },
-                SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid },
-                SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dotted },
-                SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Dashed },
+                SegmentLineStyle {
+                    width: LineWidth::Hairline,
+                    pattern: LinePattern::Solid,
+                },
+                SegmentLineStyle {
+                    width: LineWidth::Thick,
+                    pattern: LinePattern::Solid,
+                },
+                SegmentLineStyle {
+                    width: LineWidth::Thin,
+                    pattern: LinePattern::Dotted,
+                },
+                SegmentLineStyle {
+                    width: LineWidth::Medium,
+                    pattern: LinePattern::Dashed,
+                },
             ] {
                 let mut changed = original.clone();
-                assert!(set_visual_style(&mut changed, VisualStyle::Stroke { color, line }).is_err());
+                assert!(
+                    set_visual_style(&mut changed, VisualStyle::Stroke { color, line }).is_err()
+                );
                 assert_eq!(changed, original);
             }
         }
@@ -1396,15 +1476,28 @@ mod tests {
 
     #[test]
     fn modern_short_stroke_headers_keep_packed_pattern_and_width_semantics() {
-        let headers = records_headers(include_bytes!("../tests/fixtures/legacy_stroke_styles_copied_native.gsp"));
+        let headers = records_headers(include_bytes!(
+            "../tests/fixtures/legacy_stroke_styles_copied_native.gsp"
+        ));
         for modern in headers.into_iter().skip(4).take(6) {
             let mut short = modern[..16].to_vec();
             assert_eq!(short[11], 1);
-            let VisualStyle::Stroke { color, .. } = visual_style(&short).unwrap() else { panic!("Expected stroke"); };
+            let VisualStyle::Stroke { color, .. } = visual_style(&short).unwrap() else {
+                panic!("Expected stroke");
+            };
             for line in [
-                SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Dotted },
-                SegmentLineStyle { width: LineWidth::Medium, pattern: LinePattern::Dashed },
-                SegmentLineStyle { width: LineWidth::Thick, pattern: LinePattern::Solid },
+                SegmentLineStyle {
+                    width: LineWidth::Thin,
+                    pattern: LinePattern::Dotted,
+                },
+                SegmentLineStyle {
+                    width: LineWidth::Medium,
+                    pattern: LinePattern::Dashed,
+                },
+                SegmentLineStyle {
+                    width: LineWidth::Thick,
+                    pattern: LinePattern::Solid,
+                },
             ] {
                 let style = VisualStyle::Stroke { color, line };
                 set_visual_style(&mut short, style).unwrap();
@@ -1418,20 +1511,36 @@ mod tests {
     #[test]
     fn fitting_legacy_stroke_api_edits_match_native_saved_short_headers() {
         let source = include_bytes!("../tests/fixtures/legacy_stroke_styles_original.gsp");
-        let native = include_bytes!("../tests/fixtures/legacy_stroke_styles_edited_native_verified.gsp");
+        let native =
+            include_bytes!("../tests/fixtures/legacy_stroke_styles_edited_native_verified.gsp");
         let mut document = crate::document::Document::from_bytes(source, None).unwrap();
-        for (id, width) in [(5, LineWidth::Thin), (7, LineWidth::Thin), (10, LineWidth::Medium)] {
+        for (id, width) in [
+            (5, LineWidth::Thin),
+            (7, LineWidth::Thin),
+            (10, LineWidth::Medium),
+        ] {
             document.selected = [id].into_iter().collect();
             assert_eq!(document.set_selected_line_width(width).unwrap(), 1);
         }
         for id in [6, 8, 9] {
             document.selected = [id].into_iter().collect();
-            assert_eq!(document.set_selected_line_pattern(LinePattern::Dashed).unwrap(), 1);
+            assert_eq!(
+                document
+                    .set_selected_line_pattern(LinePattern::Dashed)
+                    .unwrap(),
+                1
+            );
         }
         assert_eq!(document.encode().unwrap(), native);
         let headers = records_headers(native);
         assert!(headers.iter().all(|header| header.len() == 16));
-        assert_eq!(headers[4..].iter().map(|header| header[10]).collect::<Vec<_>>(), [1, 0, 1, 0, 0, 2]);
+        assert_eq!(
+            headers[4..]
+                .iter()
+                .map(|header| header[10])
+                .collect::<Vec<_>>(),
+            [1, 0, 1, 0, 0, 2]
+        );
         document.verify_roundtrip().unwrap();
     }
 }
