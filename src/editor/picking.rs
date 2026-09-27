@@ -338,7 +338,8 @@ impl Editor {
                                         .map(|(start, end)| (start, end, LineMode::Segment))
                                         .collect::<Vec<_>>()
                                 })
-                                .or_else(|| self.doc.locus_strokes(o.id, 256))?;
+                                .or_else(|| self.doc.locus_strokes(o.id, 256))
+                .or_else(|| self.doc.sampled_mapped_strokes(o.id, 256))?;
                             segments
                                 .iter()
                                 .map(|(start, end, mode)| {

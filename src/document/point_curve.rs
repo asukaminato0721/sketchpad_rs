@@ -4,6 +4,7 @@ use super::{Document, Kind, Point};
 use crate::table_records::ParameterGroup;
 
 enum Source {
+    Mapped(super::sampled_mapped::SampledMappedEvaluator),
     Function {
         definition: usize,
         frame: crate::graph::CoordinateFrame,
@@ -42,6 +43,10 @@ impl<'a> PointCurve<'a> {
             return None;
         }
         let (source, intervals) = match &object.kind {
+            Kind::SampledMapped(definition) => (
+                Source::Mapped(doc.sampled_mapped_evaluator(id)?),
+                definition.samples().saturating_sub(1) as usize,
+            ),
             Kind::FunctionPlot(definition, frame, min, max, samples) => {
                 if !min.is_finite() || !max.is_finite() || min >= max || *samples < 2 {
                     return None;
@@ -92,6 +97,7 @@ impl<'a> PointCurve<'a> {
                     || !matches!(
                         kind,
                         Kind::PointOnSegment(..) | Kind::PointOnCircle(..) | Kind::PointOnArc(..)
+                            | Kind::PointOnCurve(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..)
                     )
                 {
                     return None;
@@ -134,7 +140,12 @@ impl<'a> PointCurve<'a> {
                 kind: Kind::PointOnArc(..),
                 ..
             } => (0.0..=1.0).contains(&value).then_some(value),
+            Source::Geometric { kind: Kind::PointOnPolygon(..) | Kind::PointOnSector(..), .. } =>
+                (0.0..=1.0).contains(&value).then_some(value),
+            Source::Geometric { kind: Kind::PointOnCurve(..), path, .. } =>
+                Self::new(self.original, *path)?.literal_fraction(value),
             Source::Parameter { .. } | Source::Function { .. } => Some(value),
+            Source::Mapped(evaluator) => evaluator.literal_fraction(value),
             _ => None,
         }
     }
@@ -144,14 +155,25 @@ impl<'a> PointCurve<'a> {
         }
         let fraction = match &self.source {
             Source::Parameter { min, max, .. } => (value - min) / (max - min),
-            Source::Geometric {
-                kind: Kind::PointOnCircle(..),
-                ..
-            } => return Some(value.rem_euclid(1.)),
-            Source::Geometric { .. } => value,
+            Source::Geometric { .. } => return self.normalized_numeric_fraction(value),
             Source::Function { .. } => return None,
+            Source::Mapped(_) => return self.normalized_numeric_fraction(value),
         };
         (0.0..=1.0).contains(&fraction).then_some(fraction)
+    }
+    /// Numeric points on an outer geometric locus consume a normalized driver fraction,
+    /// even when its driver itself belongs to a raw-parameter locus.
+    pub(super) fn normalized_numeric_fraction(&self, value: f64) -> Option<f64> {
+        if !value.is_finite() { return None; }
+        match &self.source {
+            Source::Geometric { kind: Kind::PointOnCircle(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..), .. } => Some(value.rem_euclid(1.)),
+            Source::Geometric { kind: Kind::PointOnCurve(..), path, .. } =>
+                Self::new(self.original, *path)?.normalized_numeric_fraction(value),
+            Source::Geometric { .. } | Source::Parameter { .. } =>
+                (0.0..=1.0).contains(&value).then_some(value),
+            Source::Function { .. } => None,
+            Source::Mapped(_) => (0.0..=1.0).contains(&value).then_some(value),
+        }
     }
     pub(super) fn at_literal(&mut self, value: f64) -> Option<Point> {
         let fraction = self.literal_fraction(value)?;
@@ -159,6 +181,7 @@ impl<'a> PointCurve<'a> {
     }
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
         let point = match &mut self.source {
+            Source::Mapped(evaluator) => evaluator.at(fraction)?,
             Source::Function {
                 definition,
                 frame,
@@ -192,17 +215,10 @@ impl<'a> PointCurve<'a> {
                 driver,
                 path,
                 target,
-                kind,
+                kind: _,
             } => {
-                sample.objects[*driver - 1].kind = match kind {
-                    Kind::PointOnSegment(..) => Kind::PointOnSegment(*path, fraction),
-                    Kind::PointOnArc(..) => Kind::PointOnArc(*path, fraction),
-                    Kind::PointOnCircle(..) => {
-                        let angle = fraction * std::f64::consts::TAU;
-                        Kind::PointOnCircle(*path, angle.cos(), angle.sin())
-                    }
-                    _ => return None,
-                };
+                // Use the original host geometry, retaining unrelated scoped inputs.
+                sample.objects[*driver - 1].kind = self.original.locus_driver_kind_at(*driver, *path, fraction)?;
                 sample.position(*target)?
             }
         };

@@ -1464,7 +1464,7 @@ impl Document {
             ref kind if kind.is_arc() => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
-            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
+            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SampledMapped(_)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
             _ => None,
         }
     }

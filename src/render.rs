@@ -1072,6 +1072,7 @@ pub fn svg_page_with_button_offset(
                     .collect::<Vec<_>>()
             })
             .or_else(|| doc.locus_strokes(o.id, 384))
+                .or_else(|| doc.sampled_mapped_strokes(o.id, 384))
         {
             if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
                 for path in curve_screen_paths(vp, &segments) {
@@ -2075,6 +2076,7 @@ impl GeometryRenderer {
                         .collect::<Vec<_>>()
                 })
                 .or_else(|| doc.locus_strokes(o.id, 384))
+                .or_else(|| doc.sampled_mapped_strokes(o.id, 384))
             {
                 if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
                     for path in curve_screen_paths(vp, &segments) {

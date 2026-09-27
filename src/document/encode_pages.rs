@@ -955,6 +955,18 @@ impl Document {
                         ];
                         Self::append_multi_page_reference_group(&mut groups, object, 79, &refs)?;
                     }
+                    Kind::SampledMapped(definition) => {
+                        if !definition.supported(&self.objects, page, object.id) {
+                            return Err("Invalid sampled mapped source roles".into());
+                        }
+                        let refs = definition.native_references().into_iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 102, &refs)?;
+                        groups.truncate(groups.len() - 8);
+                        put_record(&mut groups, 0x0902, definition.range_payload());
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
                     Kind::CircleInterior(circle) => {
                         if !super::circle_interior::supported_source(&self.objects, *circle, page, object.id) {
                             return Err("Circle interior needs a live circle on this page".into());

@@ -34,6 +34,8 @@ mod kind;
 mod legacy;
 mod locus;
 pub mod mapped_element;
+mod sampled_mapped;
+pub use sampled_mapped::SampledMappedDefinition;
 mod measurements;
 mod point_numeric_labels;
 mod pages;
@@ -105,6 +107,7 @@ pub enum Kind {
     ToolPointOnPath(usize),
     Transformed(transform_model::TransformDefinition),
     MappedElement(mapped_element::MappedElementDefinition),
+    SampledMapped(SampledMappedDefinition),
     Colorized(colorized::ColorizedDefinition),
     PresentationButton {
         targets: Vec<usize>,

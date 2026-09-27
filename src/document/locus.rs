@@ -2,7 +2,49 @@ use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_polygon_kind,
     is_locus_straight_kind, is_point_kind,
 };
-use super::{Document, Kind, LineMode, Point};
+use super::{Document, Kind, LineMode, Object, Point};
+
+/// Native geometric-driver range and closure flag, independent of current geometry.
+pub(super) fn locus_driver_range_info(objects: &[Object], driver: usize) -> Option<(f64, u32)> {
+    let moving = objects.get(driver.checked_sub(1)?)?;
+    let (path, maximum, flags) = match moving.kind {
+        Kind::PointOnSegment(path, _) | Kind::PointOnArc(path, _) => (path, 1., 1),
+        Kind::PointOnCircle(path, ..) => (path, std::f64::consts::TAU, 0),
+        Kind::PointOnPolygon(path, ..) | Kind::PointOnSector(path, _) => (path, 1., 0),
+        Kind::PointOnCurve(path, _) => {
+            let source = objects.get(path.checked_sub(1)?)?;
+            let flags = match &source.kind {
+                Kind::ParameterLocus(..) => 1,
+                Kind::Locus(refs, _) => {
+                    let inner = *refs.get(2)?;
+                    if inner >= path {
+                        return None;
+                    }
+                    locus_driver_range_info(objects, inner)?.1
+                }
+                _ => return None,
+            };
+            (path, 1., flags)
+        }
+        _ => return None,
+    };
+    let host = objects.get(path.checked_sub(1)?)?;
+    let supported = match moving.kind {
+        Kind::PointOnSegment(..) => matches!(host.kind, Kind::Segment(..)),
+        Kind::PointOnCircle(..) => host.kind.is_circle(),
+        Kind::PointOnArc(..) => is_arc_kind(&host.kind),
+        Kind::PointOnPolygon(..) => host.kind.is_polygon(),
+        Kind::PointOnSector(..) => {
+            super::sector_boundary::supported_host(objects, path, moving.page, driver)
+        }
+        Kind::PointOnCurve(..) => {
+            super::curve_points::supported(objects, path, moving.page, driver)
+        }
+        _ => false,
+    };
+    (supported && !moving.deleted && !host.deleted && path < driver && moving.page == host.page)
+        .then_some((maximum, flags))
+}
 
 impl Document {
     pub fn construct_locus(&mut self, driver: usize, target: usize) -> Result<usize, String> {
@@ -114,31 +156,77 @@ impl Document {
         };
         let (&target, &path, &driver) = (refs.first()?, refs.get(1)?, refs.get(2)?);
         self.objects.get(target.checked_sub(1)?)?;
-        let driver_kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
-        if !matches!(
-            driver_kind,
-            Kind::PointOnSegment(..) | Kind::PointOnCircle(..) | Kind::PointOnArc(..)
-        ) || samples < 2
-        {
+        locus_driver_range_info(&self.objects, driver)?;
+        if samples < 2 {
             return None;
         }
         let steps = subdivisions.clamp(2, 1000).min(samples as usize);
         let mut sample = self.clone();
+        sample.invalidate_evaluation_dependents(driver);
         let mut values = Vec::with_capacity(steps + 1);
         for step in 0..=steps {
             let fraction = step as f64 / steps as f64;
-            sample.objects[driver - 1].kind = match driver_kind {
-                Kind::PointOnSegment(..) => Kind::PointOnSegment(path, fraction),
-                Kind::PointOnCircle(..) => {
-                    let angle = fraction * std::f64::consts::TAU;
-                    Kind::PointOnCircle(path, angle.cos(), angle.sin())
-                }
-                Kind::PointOnArc(..) => Kind::PointOnArc(path, fraction),
-                _ => unreachable!(),
+            let Some(kind) = self.locus_driver_kind_at(driver, path, fraction) else {
+                values.push(None);
+                continue;
             };
+            sample.objects[driver - 1].kind = kind;
             values.push(evaluate(&sample, target));
         }
         Some(values)
+    }
+
+    /// Replay a geometric driver without modifying the original or losing polygon edge phase.
+    pub(super) fn locus_driver_kind_at(
+        &self,
+        driver: usize,
+        path: usize,
+        fraction: f64,
+    ) -> Option<Kind> {
+        if !fraction.is_finite() {
+            return None;
+        }
+        let kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
+        match kind {
+            Kind::PointOnSegment(host, _) if *host == path => {
+                Some(Kind::PointOnSegment(path, fraction))
+            }
+            Kind::PointOnCircle(host, ..) if *host == path => {
+                let angle = fraction * std::f64::consts::TAU;
+                Some(Kind::PointOnCircle(path, angle.cos(), angle.sin()))
+            }
+            Kind::PointOnArc(host, _) if *host == path => Some(Kind::PointOnArc(path, fraction)),
+            Kind::PointOnCurve(host, _) if *host == path => {
+                Some(Kind::PointOnCurve(path, fraction))
+            }
+            Kind::PointOnSector(host, _) if *host == path => {
+                Some(Kind::PointOnSector(path, fraction))
+            }
+            Kind::PointOnPolygon(host, ..) if *host == path => {
+                let vertices = self.polygon_points(path)?;
+                let lengths: Vec<_> = vertices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, point)| point.distance(vertices[(i + 1) % vertices.len()]))
+                    .collect();
+                let perimeter: f64 = lengths.iter().sum();
+                if !perimeter.is_finite() || perimeter <= 1e-9 {
+                    return None;
+                }
+                let mut remaining = fraction.rem_euclid(1.) * perimeter;
+                for (edge, length) in lengths.into_iter().enumerate() {
+                    if length <= 1e-9 {
+                        continue;
+                    }
+                    if remaining <= length {
+                        return Some(Kind::PointOnPolygon(path, edge, remaining / length));
+                    }
+                    remaining -= length;
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     pub fn locus_strokes(

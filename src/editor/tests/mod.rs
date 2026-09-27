@@ -50,3 +50,5 @@ mod arc_circle59;
 mod sector_boundary;
 
 mod shared_geometry60;
+
+mod sampled_mapped61;

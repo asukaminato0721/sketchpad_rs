@@ -311,9 +311,10 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
             && payload[6..8] == [2, 0]
             && matches!(u16::from_le_bytes([payload[8], payload[9]]), 12 | 13))
         || (payload[6..8] == [6, 0]
+            && (code != 102 || payload.len() == 28)
             && matches!(
                 (code, u16::from_le_bytes([payload[8], payload[9]])),
-                (35 | 97, 42) | (72, 58) | (126 | 127, 99)
+                (35 | 97, 42) | (102, 90) | (72, 58) | (126 | 127, 99)
             ))
 }
 

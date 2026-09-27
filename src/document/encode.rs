@@ -1128,6 +1128,18 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
+            if let Kind::SampledMapped(ref definition) = o.kind {
+                let mut h = header(102);
+                if !o.visible { h[2] |= 1; }
+                put_record(&mut added, 0x07d0, &h);
+                let refs = definition.native_references();
+                let mut references = (refs.len() as u32).to_le_bytes().to_vec();
+                for id in refs { references.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &references);
+                put_record(&mut added, 0x0902, definition.range_payload());
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
                 let mut h = [
                     97, 0, 0, 0, 0, 0, 6, 0, 42, 0, 34, 1, 128, 0, 0, 0, 255, 255, 81, 92, 193,
@@ -1224,27 +1236,16 @@ impl Document {
                 }
                 put_record(&mut added, 0x07d2, &references);
                 let driver = *refs.get(2).ok_or("Locus has no moving point")?;
-                let circle_driver = matches!(
-                    self.objects
-                        .get(driver.saturating_sub(1))
-                        .map(|object| &object.kind),
-                    Some(Kind::PointOnCircle(_, _, _))
-                );
+                let (maximum, closure) = super::locus::locus_driver_range_info(&self.objects, driver)
+                    .ok_or("Unsupported locus moving point")?;
                 let mut range = Vec::with_capacity(40);
                 range.extend_from_slice(&0f64.to_le_bytes());
-                range.extend_from_slice(
-                    &if circle_driver {
-                        std::f64::consts::TAU
-                    } else {
-                        1.0
-                    }
-                    .to_le_bytes(),
-                );
+                range.extend_from_slice(&maximum.to_le_bytes());
                 range.extend_from_slice(&samples.to_le_bytes());
                 range.extend_from_slice(&[
                     4,
                     0,
-                    if circle_driver { 0 } else { 1 },
+                    closure as u8,
                     0,
                     0,
                     0,
@@ -1734,6 +1735,7 @@ impl Document {
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
                         | Kind::ParameterLocus(_, _, _, _)
+                        | Kind::SampledMapped(_)
                         | Kind::PlottedPoint(_, _, _)
                         | Kind::NumericCoordinatePoint(_, _, _)
                         | Kind::CoordinateMeasurement { .. }

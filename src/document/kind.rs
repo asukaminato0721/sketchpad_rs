@@ -205,6 +205,9 @@ impl Kind {
         if let Kind::MappedElement(definition) = self {
             return definition.native_references();
         }
+        if let Kind::SampledMapped(definition) = self {
+            return definition.native_references();
+        }
         if let Some(definition) = self.transform_definition() {
             return definition.dependencies();
         }
@@ -418,7 +421,7 @@ impl Kind {
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
-            Kind::CoordinatePoint(..) | Kind::Transformed(..) | Kind::MappedElement(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
+            Kind::CoordinatePoint(..) | Kind::Transformed(..) | Kind::MappedElement(..) | Kind::SampledMapped(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
         }
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
@@ -429,6 +432,9 @@ impl Kind {
         }
         if let Kind::MappedElement(definition) = self {
             return Kind::MappedElement(definition.remap(ids));
+        }
+        if let Kind::SampledMapped(definition) = self {
+            return Kind::SampledMapped(definition.remap(ids));
         }
         if let Kind::MappedPointIteration {
             seeds,
@@ -775,7 +781,7 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
-            Kind::CoordinatePoint(..) | Kind::MappedElement(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
+            Kind::CoordinatePoint(..) | Kind::MappedElement(..) | Kind::SampledMapped(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
         }
     }
     pub(super) fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
@@ -815,6 +821,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::IterationPointAlias(_)
             | Kind::CoordinatePoint(_)
             | Kind::MappedElement(_)
+            | Kind::SampledMapped(_)
             | Kind::Colorized(_)
             | Kind::Free(_)
             | Kind::PointOnSegment(_, _)
@@ -1156,8 +1163,16 @@ pub(super) fn expected_locus_refs(
         {
             path
         }
+        Kind::PointOnCurve(path, _)
+            if super::curve_points::supported(objects, path, moving.page, driver) => path,
+        Kind::PointOnPolygon(path, ..)
+            if objects.get(path.checked_sub(1)?)?.kind.is_polygon() => path,
+        Kind::PointOnSector(path, _)
+            if super::sector_boundary::supported_host(objects, path, moving.page, driver) => path,
         _ => return None,
     };
+    let host = objects.get(path.checked_sub(1)?)?;
+    if path >= driver || host.deleted || host.page != moving.page { return None; }
     let ancestors = ancestry(objects, driver, target, moving.page)?;
     let mut refs = vec![target, path];
     refs.extend(ancestors);
@@ -1383,6 +1398,10 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             },
         }),
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
+        Kind::SampledMapped(_) => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
+            color: RgbColor { red: 255, green: 0, blue: 0 },
+        }),
         Kind::CircleInterior(_) | Kind::SectorBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {

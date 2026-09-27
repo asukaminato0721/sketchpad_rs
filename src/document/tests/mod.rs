@@ -174,3 +174,9 @@ mod value_straight_paths59;
 mod function_points60;
 
 mod circle_interior60;
+
+mod sampled_mapped61;
+
+mod mapped_prefix61;
+
+mod locus_drivers61;

@@ -180,6 +180,9 @@ impl Editor {
             Kind::PointOnSegment(_, _)
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
+                | Kind::PointOnCurve(_, _)
+                | Kind::PointOnPolygon(_, _, _)
+                | Kind::PointOnSector(_, _)
                 | Kind::Parameter(_)
         ) {
             (ids[0], ids[1])
@@ -527,7 +530,7 @@ impl Editor {
                 .objects
                 .get(id.saturating_sub(1))
                 .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind)
-                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SectorBoundary(_)))
+                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SampledMapped(_) | Kind::SectorBoundary(_)))
                 || matches!(
                     self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                     Some(

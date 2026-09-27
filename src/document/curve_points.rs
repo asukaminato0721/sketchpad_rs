@@ -9,6 +9,9 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
     if path >= before || object.deleted || object.page != page {
         return false;
     }
+    if let Kind::SampledMapped(definition) = &object.kind {
+        return definition.supported(objects, page, path);
+    }
     let refs = match &object.kind {
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
         _ => return false,
@@ -43,6 +46,7 @@ pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, befor
 pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option<u8> {
     match &objects.get(path.checked_sub(1)?)?.kind {
         Kind::FunctionPlot(..) => Some(58),
+        Kind::SampledMapped(_) => Some(90),
         Kind::Locus(..) | Kind::ParameterLocus(..) => Some(42),
         _ => None,
     }
@@ -98,6 +102,7 @@ impl Document {
         let t = PointCurve::new(self, path)?.literal_fraction(fraction)?;
         match self.objects.get(path.checked_sub(1)?)?.kind {
             Kind::Locus(..) => Some(t),
+            Kind::SampledMapped(_) => self.sampled_mapped_evaluator(path)?.logical_point_value(fraction),
             Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _) => Some(min + (max - min) * t),
             _ => None,
         }

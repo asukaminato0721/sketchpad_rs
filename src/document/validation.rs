@@ -508,6 +508,11 @@ impl Document {
                     return Err(format!("Invalid parameter locus {}", o.id));
                 }
             }
+            if let Kind::SampledMapped(ref definition) = o.kind {
+                if !definition.supported(&self.objects, o.page, o.id) {
+                    return Err(format!("Invalid sampled mapped construction {}", o.id));
+                }
+            }
             if let Kind::Locus(ref refs, samples) = o.kind {
                 if !(2..=10_000).contains(&samples)
                     || !locus_refs_match(&self.objects, refs)

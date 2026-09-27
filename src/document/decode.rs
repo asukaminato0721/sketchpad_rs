@@ -468,7 +468,7 @@ impl Document {
                 if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
                     function_range = Some(d.to_vec());
                 }
-                if matches!(code, 35 | 97) && r.kind == 0x0902 {
+                if matches!(code, 35 | 97 | 102) && r.kind == 0x0902 {
                     locus_range = Some(d.to_vec());
                 }
                 if matches!(code, 76 | 89) && r.kind == 0x090a {
@@ -662,7 +662,7 @@ impl Document {
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
-                    && !(matches!(code, 35 | 97) && r.kind == 0x0902)
+                    && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                 {
                     safe = false;
@@ -754,7 +754,7 @@ impl Document {
                 }
                 let data = iteration_definition.as_ref()?;
                 if data.len() != 24
-                    || data[..4] != [0; 4]
+                    || !(data[..4] == [0; 4] || (code == 89 && data[..4] == [0, 0, 1, 0]))
                     || !matches!(&data[4..6], [0, 0] | [1, 0])
                     || data[20..24] != [0; 4]
                 {
@@ -1139,6 +1139,20 @@ impl Document {
                             }) => {
                         Kind::IterationBinding(*image, *iteration)
                     }
+                    (102, None, _)
+                        if h.len() == 28 && h[6..10] == [6, 0, 90, 0]
+                            && constraint_payload.is_none()
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x0902).count() == 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| matches!(r.kind, 0x07d0 | 0x07d2 | 0x0902 | 0x07d7)) => {
+                        locus_range.as_ref()
+                            .and_then(|range| super::sampled_mapped::decode_sampled_mapped(
+                                &objects, page, objects.len() + 1, h, &refs, range,
+                                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+                            ))
+                            .map(Kind::SampledMapped)
+                            .unwrap_or(Kind::Unsupported(code))
+                    }
                     (97, None, _)
                         if h[6..10] == [6, 0, 42, 0]
                             && refs.first().zip(refs.get(1)).and_then(|(&target, &driver)| expected_parameter_locus_refs(&objects, driver, target)).as_ref() == Some(&refs)
@@ -1169,12 +1183,8 @@ impl Document {
                                 data.len() == 40
                                     && f64_at(data, 0) == 0.0
                                     && (2..=10_000).contains(&u32_at(data, 16))
-                                    && refs.get(2).and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| match o.kind {
-                                        Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _) => f64_at(data, 8) == 1.0 && data[20..24] == [4, 0, 1, 0],
-                                        Kind::PointOnCircle(_, _, _) => (f64_at(data, 8) - std::f64::consts::TAU).abs() < 1e-12 && data[20..24] == [4, 0, 0, 0],
-                                        _ => false,
-                                    })
-                                    && f64_at(data, 24).is_finite()
+                                    && refs.get(2).and_then(|id| super::locus::locus_driver_range_info(&objects, *id)).is_some_and(|(maximum, flag)|
+                                        (f64_at(data, 8) - maximum).abs() < 1e-12 && u32_at(data, 20) == (4 | (flag << 16)))
                                     && refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
                                         if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
                                             data[32..] == [0; 8]
@@ -1547,7 +1557,7 @@ impl Document {
                         Kind::PointOnSector(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
                     }
                     (15, None, [host]) if point_curve_constraint_count == 1
-                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58, 0]))) =>
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58 | 90, 0]))) =>
                         super::curve_points::decode(&objects, *host, page, objects.len() + 1, h, &constraint_payload.as_ref().unwrap().0).unwrap_or(Kind::Unsupported(code)),
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
