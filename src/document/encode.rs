@@ -173,7 +173,7 @@ impl Document {
                                 || super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnCurve(_, t) if out.get(i..i + 4) == Some(&[15, 0, 42, 0]) => {
+                    Kind::PointOnCurve(host, t) if super::curve_points::free_constraint_subtype(&self.objects, host).is_some_and(|subtype| out.get(i..i + 4) == Some(&[15, 0, subtype, 0])) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnSector(_, t) if out.get(i..i + 4) == Some(&[15, 0, 68, 0]) => {
@@ -1566,6 +1566,7 @@ impl Document {
                 Kind::ArcOnCircle(a, b, c) => (79, vec![a, b, c]),
                 Kind::CenterArc(a, b, c) => (80, vec![a, b, c]),
                 Kind::SectorBoundary(arc) => (82, vec![arc]),
+                Kind::CircleInterior(circle) => (10, vec![circle]),
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
@@ -1582,7 +1583,7 @@ impl Document {
             if o.presentation_suppressed {
                 h[2] |= 2;
             }
-            if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_)) {
+            if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
                 h[20..24].copy_from_slice(
                     &o.interior_order
                         .ok_or("Missing polygon drawing order")?
@@ -1651,8 +1652,9 @@ impl Document {
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::PointOnCurve(_, t) => {
-                        let mut payload = vec![15, 0, 42, 0];
+                    Kind::PointOnCurve(host, t) => {
+                        let subtype = super::curve_points::free_constraint_subtype(&self.objects, host).ok_or("Invalid curve-point host")?;
+                        let mut payload = vec![15, 0, subtype, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }

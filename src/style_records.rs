@@ -151,6 +151,7 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     code == 8
+        || (code == 10 && payload.len() == 28 && payload[6..10] == [5, 0, 16, 0])
         || (code == 82 && payload.len() == 28 && payload[6..10] == [13, 0, 68, 0])
         || (matches!(
             code,

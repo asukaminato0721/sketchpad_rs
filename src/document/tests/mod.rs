@@ -170,3 +170,7 @@ mod arc_circle59;
 mod sector_boundary;
 
 mod value_straight_paths59;
+
+mod function_points60;
+
+mod circle_interior60;

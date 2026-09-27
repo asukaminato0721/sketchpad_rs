@@ -31,6 +31,23 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
         })
 }
 
+/// Interactive function points use15/58; numeric95 admission remains separate.
+pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
+    supported(objects, path, page, before) || path.checked_sub(1).and_then(|i| objects.get(i)).is_some_and(|o| {
+        path < before && !o.deleted && o.page == page
+            && matches!(o.kind, Kind::FunctionPlot(_, _, min, max, samples) if min.is_finite() && max.is_finite() && min < max && samples >= 2)
+            && o.kind.dependencies().iter().all(|id| *id < path && id.checked_sub(1).and_then(|i|objects.get(i)).is_some_and(|p| !p.deleted && p.page == page))
+    })
+}
+
+pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option<u8> {
+    match &objects.get(path.checked_sub(1)?)?.kind {
+        Kind::FunctionPlot(..) => Some(58),
+        Kind::Locus(..) | Kind::ParameterLocus(..) => Some(42),
+        _ => None,
+    }
+}
+
 pub(super) fn decode(
     objects: &[Object],
     path: usize,
@@ -43,8 +60,8 @@ pub(super) fn decode(
         || header[..2] != [15, 0]
         || header[6..10] != [1, 0, 10, 0]
         || payload.len() != 12
-        || payload[..4] != [15, 0, 42, 0]
-        || !supported(objects, path, page, before)
+        || free_constraint_subtype(objects, path).is_none_or(|subtype| payload[..4] != [15, 0, subtype, 0])
+        || !free_supported(objects, path, page, before)
     {
         return None;
     }
@@ -58,7 +75,7 @@ impl Document {
     pub fn point_on_curve(&self, path: usize, fraction: f64) -> Option<Point> {
         let object = self.objects.get(path.checked_sub(1)?)?;
         if !fraction.is_finite()
-            || !supported(&self.objects, path, object.page, self.objects.len() + 1)
+            || !free_supported(&self.objects, path, object.page, self.objects.len() + 1)
         {
             return None;
         }
@@ -81,7 +98,7 @@ impl Document {
         let t = PointCurve::new(self, path)?.literal_fraction(fraction)?;
         match self.objects.get(path.checked_sub(1)?)?.kind {
             Kind::Locus(..) => Some(t),
-            Kind::ParameterLocus(_, min, max, _) => Some(min + (max - min) * t),
+            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _) => Some(min + (max - min) * t),
             _ => None,
         }
     }
@@ -91,7 +108,7 @@ impl Document {
         let object = self.objects.get(path.checked_sub(1)?)?;
         if !point.x.is_finite()
             || !point.y.is_finite()
-            || !supported(&self.objects, path, object.page, self.objects.len() + 1)
+            || !free_supported(&self.objects, path, object.page, self.objects.len() + 1)
         {
             return None;
         }

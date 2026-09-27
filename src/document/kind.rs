@@ -97,6 +97,9 @@ impl Kind {
     pub fn is_sector(&self) -> bool {
         matches!(self, Kind::SectorBoundary(_))
     }
+    pub fn is_circle_interior(&self) -> bool {
+        matches!(self, Kind::CircleInterior(_))
+    }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
             || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Circle)
@@ -337,6 +340,7 @@ impl Kind {
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::SectorBoundary(host)
+            | Kind::CircleInterior(host)
             | Kind::PointOnSector(host, _)
             | Kind::PointOnCurve(host, _)
             | Kind::PointOnPolygon(host, _, _)
@@ -631,6 +635,7 @@ impl Kind {
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::SectorBoundary(a) => Kind::SectorBoundary(m(a)),
+            Kind::CircleInterior(a) => Kind::CircleInterior(m(a)),
             Kind::PointOnSector(a, t) => Kind::PointOnSector(m(a), t),
             Kind::PointOnCurve(a, t) => Kind::PointOnCurve(m(a), t),
             Kind::PointOnPolygon(a, edge, t) => Kind::PointOnPolygon(m(a), edge, t),
@@ -839,6 +844,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::ArcOnCircle(_, _, _)
             | Kind::CenterArc(_, _, _)
             | Kind::SectorBoundary(_)
+            | Kind::CircleInterior(_)
             | Kind::Polygon(_)
             | Kind::SegmentLength(_)
             | Kind::PolygonPerimeter(_)
@@ -1377,7 +1383,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             },
         }),
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
-        Kind::SectorBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
+        Kind::CircleInterior(_) | Kind::SectorBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {
                 red: 255,

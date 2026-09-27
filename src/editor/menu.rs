@@ -311,6 +311,10 @@ impl Editor {
                         self.arc_on_circle();
                         ui.close();
                     }
+                    if ui.button("Circle Interior").clicked() {
+                        self.circle_interior();
+                        ui.close();
+                    }
                     if ui.button("Sector Interior").clicked() {
                         self.sector_boundary();
                         ui.close();

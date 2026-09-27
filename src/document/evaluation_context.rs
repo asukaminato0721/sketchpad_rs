@@ -93,13 +93,20 @@ impl Document {
                     .circles
                     .insert(id, context.original.circle_points(id));
             }
+            if matches!(kind, Kind::CircleInterior(_)) {
+                context
+                    .circles
+                    .insert(id, context.original.circle_interior_geometry(id));
+            }
             if kind.is_polygon() {
                 context
                     .polygons
                     .insert(id, context.original.polygon_points(id));
             }
             if matches!(kind, Kind::SectorBoundary(_)) {
-                context.arcs.insert(id, context.original.sector_arc_geometry(id));
+                context
+                    .arcs
+                    .insert(id, context.original.sector_arc_geometry(id));
             }
             if is_arc_kind(kind) {
                 context.arcs.insert(id, context.original.arc_geometry(id));
@@ -117,8 +124,12 @@ impl Document {
     pub(super) fn inherit_evaluation_seeds(&mut self, original: &Document) -> Option<()> {
         let target = self.evaluation_context.as_mut()?;
         if let Some(parent) = &original.evaluation_context {
-            target.seed_points.extend(parent.seed_points.iter().map(|(&id, &value)| (id, value)));
-            target.seed_numbers.extend(parent.seed_numbers.iter().map(|(&id, &value)| (id, value)));
+            target
+                .seed_points
+                .extend(parent.seed_points.iter().map(|(&id, &value)| (id, value)));
+            target
+                .seed_numbers
+                .extend(parent.seed_numbers.iter().map(|(&id, &value)| (id, value)));
         }
         Some(())
     }
@@ -127,22 +138,37 @@ impl Document {
     pub(super) fn invalidate_evaluation_dependents(&mut self, driver: usize) {
         let mut affected = BTreeSet::from([driver]);
         for object in &self.objects {
-            if object.kind.dependencies().iter().any(|id| affected.contains(id)) { affected.insert(object.id); }
+            if object
+                .kind
+                .dependencies()
+                .iter()
+                .any(|id| affected.contains(id))
+            {
+                affected.insert(object.id);
+            }
         }
         if let Some(context) = &mut self.evaluation_context {
             for id in affected {
-                context.points.remove(&id); context.numbers.remove(&id);
-                context.straights.remove(&id); context.circles.remove(&id);
-                context.polygons.remove(&id); context.arcs.remove(&id); context.frames.remove(&id);
+                context.points.remove(&id);
+                context.numbers.remove(&id);
+                context.straights.remove(&id);
+                context.circles.remove(&id);
+                context.polygons.remove(&id);
+                context.arcs.remove(&id);
+                context.frames.remove(&id);
                 context.frozen.remove(&id);
             }
-            context.seed_points.remove(&driver); context.seed_numbers.remove(&driver);
+            context.seed_points.remove(&driver);
+            context.seed_numbers.remove(&driver);
         }
     }
 
     pub(super) fn clear_evaluation_seed_ids(&mut self, ids: &[usize]) {
         if let Some(context) = &mut self.evaluation_context {
-            for id in ids { context.seed_points.remove(id); context.seed_numbers.remove(id); }
+            for id in ids {
+                context.seed_points.remove(id);
+                context.seed_numbers.remove(id);
+            }
         }
     }
 

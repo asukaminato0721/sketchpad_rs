@@ -183,6 +183,13 @@ impl Document {
         if self
             .objects
             .get(id.checked_sub(1)?)
+            .is_some_and(|o| matches!(o.kind, Kind::CircleInterior(_)))
+        {
+            return self.circle_interior_points(id, 192);
+        }
+        if self
+            .objects
+            .get(id.checked_sub(1)?)
             .is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_)))
         {
             let mut points = self.sector_boundary_points(id, 192)?;

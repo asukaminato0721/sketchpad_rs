@@ -678,7 +678,7 @@ impl Document {
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnSector(host, t) => d.point_on_sector(*host, *t),
                 Kind::PointOnCurve(host, t) => {
-                    if super::curve_points::supported(&d.objects, *host, object.page, object.id) { d.point_on_curve(*host, *t) } else { None }
+                    if super::curve_points::free_supported(&d.objects, *host, object.page, object.id) { d.point_on_curve(*host, *t) } else { None }
                 },
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
                 Kind::IterationPointAlias(_) => d.iteration_endpoint(id),
@@ -1464,7 +1464,7 @@ impl Document {
             ref kind if kind.is_arc() => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
-            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
+            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
             _ => None,
         }
     }

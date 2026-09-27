@@ -359,7 +359,7 @@ fn ordered_region_fills(doc: &Document) -> Vec<&crate::document::Object> {
     let mut polygons: Vec<_> = doc
         .objects
         .iter()
-        .filter(|o| doc.is_displayed(o.id) && (o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))))
+        .filter(|o| doc.is_displayed(o.id) && (o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_))))
         .collect();
     polygons.sort_by_key(|o| o.interior_order.unwrap_or(0));
     polygons
@@ -1132,7 +1132,7 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
-        let polygon_object = if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_)) {
+        let polygon_object = if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
             polygon_fills.next().unwrap()
         } else {
             o
@@ -2125,7 +2125,7 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                ref kind if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) => {
+                ref kind if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) => {
                     let polygon_object = polygon_fills.next().unwrap();
                     if let Some(points) = doc.filled_region_points(polygon_object.id) {
                         let screen = points

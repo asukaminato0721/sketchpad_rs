@@ -389,7 +389,7 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
-            let labeled_shape = matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
+            let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0])) || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                 && matches!(
                     code,
                     1 | 2
@@ -652,7 +652,7 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123) && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 10 | 48 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123) && r.kind == 0x232e && d.is_empty())
                     && !(code == 0
                         && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
                         && r.kind == 0x232e
@@ -1216,7 +1216,7 @@ impl Document {
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
                         && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || o.kind.is_polygon()
                             || (matches!(objects[first - 1].kind, Kind::PointOnCurve(host, _) if host == *second)
-                                && super::curve_points::supported(&objects, *second, page, objects.len() + 1)))) => {
+                                && super::curve_points::free_supported(&objects, *second, page, objects.len() + 1)))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -1547,7 +1547,7 @@ impl Document {
                         Kind::PointOnSector(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
                     }
                     (15, None, [host]) if point_curve_constraint_count == 1
-                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.get(..4) == Some(&[15, 0, 42, 0])) =>
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58, 0]))) =>
                         super::curve_points::decode(&objects, *host, page, objects.len() + 1, h, &constraint_payload.as_ref().unwrap().0).unwrap_or(Kind::Unsupported(code)),
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
@@ -1983,6 +1983,18 @@ impl Document {
                         Kind::CenterArc(*center, *start, *end)
                     }
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
+                    (10, None, [circle])
+                        if h.len() == 28 && h[6..10] == [5, 0, 16, 0]
+                            && constraint_payload.is_none()
+                            && super::circle_interior::supported_source(&objects, *circle, page, objects.len() + 1)
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x232e).count() <= 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
+                                0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
+                                0x07d2 => r.data.len() == 8,
+                                0x232e => r.data.is_empty(),
+                                _ => false,
+                            }) => Kind::CircleInterior(*circle),
                     (82, None, [arc])
                         if h.len() == 28 && h[6..10] == [13, 0, 68, 0]
                             && constraint_payload.is_none()
@@ -2106,7 +2118,7 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style,
-                interior_order: (h.len() == 28 && (h[6..8] == [4, 0] || h[6..10] == [13, 0, 68, 0]))
+                interior_order: (h.len() == 28 && (h[6..8] == [4, 0] || matches!(h[6..10], [13, 0, 68, 0] | [5, 0, 16, 0])))
                     .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,

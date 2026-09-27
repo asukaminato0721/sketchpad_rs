@@ -143,6 +143,19 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Constructed polygon interior {id}");
     }
+    pub(super) fn circle_interior(&mut self) {
+        let [circle] = self.selection_order.as_slice() else {
+            self.status = "Select one circle for the circle interior".into();
+            return;
+        };
+        match self.doc.add_circle_interior(*circle) {
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Constructed circle interior {id}");
+            }
+            Err(error) => self.status = error,
+        }
+    }
     pub(super) fn sector_boundary(&mut self) {
         if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "Construction on this document cannot be saved safely".into();
@@ -514,7 +527,7 @@ impl Editor {
                 .objects
                 .get(id.saturating_sub(1))
                 .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind)
-                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::SectorBoundary(_)))
+                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SectorBoundary(_)))
                 || matches!(
                     self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                     Some(

@@ -134,7 +134,7 @@ impl<'a> PointCurve<'a> {
                 kind: Kind::PointOnArc(..),
                 ..
             } => (0.0..=1.0).contains(&value).then_some(value),
-            Source::Parameter { .. } => Some(value),
+            Source::Parameter { .. } | Source::Function { .. } => Some(value),
             _ => None,
         }
     }

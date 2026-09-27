@@ -48,3 +48,5 @@ mod point_curves58;
 mod arc_circle59;
 
 mod sector_boundary;
+
+mod shared_geometry60;

@@ -410,10 +410,10 @@ impl Document {
                 .get(ordinal)
                 .ok_or("Object group count mismatch in patch_visual_styles")?;
             ordinal += 1;
-            if object.kind.is_polygon() || object.kind.is_sector() {
+            if object.kind.is_polygon() || object.kind.is_sector() || object.kind.is_circle_interior() {
                 let payload = bytes
                     .get_mut(record.data.clone())
-                    .filter(|payload| matches!(payload.len(), 16 | 28) && (payload[6..8] == [4, 0] || (payload.len() == 28 && payload[6..10] == [13, 0, 68, 0])))
+                    .filter(|payload| matches!(payload.len(), 16 | 28) && (payload[6..8] == [4, 0] || payload[6..10] == [5, 0, 16, 0] || (payload.len() == 28 && payload[6..10] == [13, 0, 68, 0])))
                     .ok_or("Invalid polygon drawing-order header")?;
                 match (payload.len(), object.interior_order) {
                     (28, Some(order)) => payload[20..24].copy_from_slice(&order.to_le_bytes()),

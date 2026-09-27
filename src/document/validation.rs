@@ -348,6 +348,9 @@ impl Document {
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
             }
+            if matches!(o.kind, Kind::CircleInterior(source) if !super::circle_interior::supported_source(&self.objects, source, o.page, o.id)) {
+                return Err(format!("Invalid circle interior {}", o.id));
+            }
             if matches!(o.kind, Kind::SectorBoundary(source) if !super::sector_boundary::supported_source(&self.objects, source, o.page, o.id))
                 || matches!(o.kind, Kind::PointOnSector(host, _) if !super::sector_boundary::supported_host(&self.objects, host, o.page, o.id)) {
                 return Err(format!("Invalid sector dependency in object {}", o.id));
@@ -659,7 +662,7 @@ impl Document {
                 }
             }
             if let Kind::PointOnCurve(path, t) = o.kind {
-                if !t.is_finite() || !super::curve_points::supported(&self.objects, path, o.page, o.id) {
+                if !t.is_finite() || !super::curve_points::free_supported(&self.objects, path, o.page, o.id) {
                     return Err(format!("Invalid curve point {}", o.id));
                 }
             }
@@ -784,7 +787,7 @@ impl Document {
                             && self.objects.get(second.saturating_sub(1)).is_some_and(|object| is_straight_kind(&object.kind) || object.kind.is_circle() || is_arc_kind(&object.kind)
                                 || object.kind.is_polygon()
                                 || (matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
-                                    && super::curve_points::supported(&self.objects, second, o.page, first)))
+                                    && super::curve_points::free_supported(&self.objects, second, o.page, first)))
                     }
                     ValueEquationKind::LineEquation => {
                         self.objects
@@ -841,7 +844,7 @@ impl Document {
                         && !undefined_path_value
                         && !(kind == ValueEquationKind::PointValue
                             && matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
-                            && super::curve_points::supported(&self.objects, second, o.page, first)))
+                            && super::curve_points::free_supported(&self.objects, second, o.page, first)))
                 {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
@@ -959,7 +962,7 @@ impl Document {
                                 Kind::BoundaryIntersection(straight, polygon) => super::boundary_intersection::supported(&self.objects, straight, polygon, point.page, point.id),
                                 Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
                                 Kind::PointOnSector(host, t) => t.is_finite() && super::sector_boundary::supported_host(&self.objects, host, point.page, point.id),
-                                Kind::PointOnCurve(path, _) => super::curve_points::supported(&self.objects, path, point.page, point.id),
+                                Kind::PointOnCurve(path, _) => super::curve_points::free_supported(&self.objects, path, point.page, point.id),
                                 Kind::PathValuePoint(source, path) => super::curve_points::supported(&self.objects, path, point.page, point.id)
                                     || self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
