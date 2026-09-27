@@ -91,6 +91,12 @@ impl Kind {
             }
         }
     }
+    pub fn is_point(&self) -> bool {
+        is_point_kind(self)
+    }
+    pub fn is_sector(&self) -> bool {
+        matches!(self, Kind::SectorBoundary(_))
+    }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
             || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Circle)
@@ -330,6 +336,8 @@ impl Kind {
             | Kind::ValueTable(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
+            | Kind::SectorBoundary(host)
+            | Kind::PointOnSector(host, _)
             | Kind::PointOnCurve(host, _)
             | Kind::PointOnPolygon(host, _, _)
             | Kind::PathLiteralPoint(host, _)
@@ -622,6 +630,8 @@ impl Kind {
             Kind::PointOnLine(a, t) => Kind::PointOnLine(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::SectorBoundary(a) => Kind::SectorBoundary(m(a)),
+            Kind::PointOnSector(a, t) => Kind::PointOnSector(m(a), t),
             Kind::PointOnCurve(a, t) => Kind::PointOnCurve(m(a), t),
             Kind::PointOnPolygon(a, edge, t) => Kind::PointOnPolygon(m(a), edge, t),
             Kind::Locus(ref refs, samples) => {
@@ -807,6 +817,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
+            | Kind::PointOnSector(_, _)
             | Kind::PointOnCurve(_, _)
             | Kind::PointOnPolygon(_, _, _)
             | Kind::Segment(_, _)
@@ -827,6 +838,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::ThreePointArc(_, _, _)
             | Kind::ArcOnCircle(_, _, _)
             | Kind::CenterArc(_, _, _)
+            | Kind::SectorBoundary(_)
             | Kind::Polygon(_)
             | Kind::SegmentLength(_)
             | Kind::PolygonPerimeter(_)
@@ -950,6 +962,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PointOnLine(_, _)
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
+            | Kind::PointOnSector(_, _)
             | Kind::PointOnCurve(_, _)
                 | Kind::PointOnPolygon(_, _, _)
                 | Kind::GraphHorizontalUnit(_, _)
@@ -1182,72 +1195,43 @@ pub(super) fn is_coordinate_unit_kind(kind: &Kind) -> bool {
     kind.is_segment() || kind.numeric_unit().is_some()
 }
 
+/// Code 95/123 use the evaluated straight host's affine basis and extent.
+pub(super) fn plot_straight_mode(kind: &Kind) -> Option<LineMode> {
+    match kind {
+        Kind::ToolInput(_) => None,
+        Kind::GraphAxis(_, _, form) if !matches!(form, 0 | 1 | 0x1_0001) => None,
+        Kind::CircleAxis(_, form) | Kind::DistanceAxis(_, _, form) if !matches!(form, 0 | 1) => None,
+        _ => straight_kind_mode(kind),
+    }
+}
+
 pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
-    matches!(
-        kind,
-        Kind::Segment(_, _)
-            | Kind::Ray(_, _)
-            | Kind::Line(_, _)
-            | Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
-            | Kind::CircleAxis(_, 0 | 1)
-            | Kind::DistanceAxis(_, _, 0 | 1)
-    ) || kind.is_circle()
-        || is_arc_kind(kind)
-        || is_transformed_plot_path_kind(kind)
-}
-
-pub(super) fn is_transformed_plot_ray_kind(kind: &Kind) -> bool {
-    kind.transform_definition().is_some_and(|definition| {
-        definition.element() == ElementType::Ray
-            && matches!(
-                definition.wire_flavor(),
-                NativeTransformFlavor::FixedRotation | NativeTransformFlavor::FixedDilation
-            )
-    })
-}
-
-pub(super) fn is_transformed_plot_path_kind(kind: &Kind) -> bool {
-    kind.transform_definition().is_some_and(|definition| {
-        matches!(definition.element(), ElementType::Ray | ElementType::Line)
-            && matches!(
-                definition.wire_flavor(),
-                NativeTransformFlavor::FixedRotation | NativeTransformFlavor::FixedDilation
-            )
-    })
+    plot_straight_mode(kind).is_some() || kind.is_circle() || is_arc_kind(kind)
 }
 
 pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    value.is_finite()
-        && is_plot_path_kind(kind)
-        && if matches!(kind, Kind::Segment(..)) || is_arc_kind(kind) {
-            (0.0..=1.0).contains(&value)
-        } else if matches!(kind, Kind::Ray(..)) || is_transformed_plot_ray_kind(kind) {
-            value >= 0.0
-        } else {
-            true
-        }
+    value.is_finite() && is_plot_path_kind(kind) && match plot_straight_mode(kind) {
+        Some(LineMode::Segment) => (0.0..=1.0).contains(&value),
+        Some(LineMode::Ray) => value >= 0.0,
+        Some(LineMode::Line) => true,
+        None => !is_arc_kind(kind) || (0.0..=1.0).contains(&value),
+    }
 }
 
-/// Code 95 polygon boundaries use independently verified perimeter semantics.
 pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
     is_plot_path_kind(kind) || kind.is_polygon()
 }
 
 pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value)
-        || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind))
-            && value.is_finite())
+    value.is_finite() && is_value_plot_path_kind(kind)
 }
 
-/// Native code 123 also accepts a literal fraction of a polygon perimeter.
 pub(super) fn is_literal_plot_path_kind(kind: &Kind) -> bool {
-    is_plot_path_kind(kind) || kind.is_polygon()
+    is_value_plot_path_kind(kind)
 }
 
 pub(super) fn literal_plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    plot_path_accepts(kind, value)
-        || ((kind.is_polygon() || is_transformed_plot_ray_kind(kind) || is_arc_kind(kind))
-            && value.is_finite())
+    value_plot_path_accepts(kind, value)
 }
 
 /// Supported polygon transforms retain their source's vertex count. Require
@@ -1346,6 +1330,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnLine(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
+            | Kind::PointOnSector(_, _)
             | Kind::PointOnCurve(_, _)
         | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)
@@ -1392,7 +1377,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             },
         }),
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
-        Kind::Polygon(_) => Some(VisualStyle::Polygon {
+        Kind::SectorBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {
                 red: 255,

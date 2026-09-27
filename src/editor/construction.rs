@@ -143,6 +143,19 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Constructed polygon interior {id}");
     }
+    pub(super) fn sector_boundary(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let [arc] = self.selection_order.as_slice() else {
+            self.status = "Select one arc for the sector interior".into(); return;
+        };
+        match self.doc.add_sector_boundary(*arc) {
+            Ok(id) => self.select_only(id),
+            Err(error) => self.status = error,
+        }
+    }
     pub(super) fn construct_locus(&mut self) {
         let ids = self.selection_order.clone();
         if ids.len() != 2 {
@@ -501,7 +514,7 @@ impl Editor {
                 .objects
                 .get(id.saturating_sub(1))
                 .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind)
-                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..)))
+                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::SectorBoundary(_)))
                 || matches!(
                     self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                     Some(
@@ -516,7 +529,7 @@ impl Editor {
                 )
         });
         let Some(host) = host else {
-            self.status = "Select a segment, ray, line, circle, arc, polygon, or point curve".into();
+            self.status = "Select a segment, ray, line, circle, arc, polygon, sector, or point curve".into();
             return;
         };
         if self.doc.objects[host - 1].page != self.doc.active_page {
@@ -550,7 +563,7 @@ impl Editor {
                         y: (vertices[0].y + vertices[1].y) / 2.,
                     })
                 } else {
-                    self.doc.point_on_arc(host, 0.5).or_else(|| self.doc.point_on_curve(host, 0.5))
+                    self.doc.point_on_arc(host, 0.5).or_else(|| self.doc.point_on_curve(host, 0.5)).or_else(|| self.doc.point_on_sector(host, 0.5))
                 }
             });
         let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {
@@ -704,14 +717,17 @@ impl Editor {
         let (circle, start, end) = (ids[0], ids[1], ids[2]);
         if [circle, start, end]
             .iter()
-            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
+            .any(|id| self.doc.objects.get(id.saturating_sub(1)).is_none_or(|object| object.page != self.doc.active_page))
         {
             self.status = "Select objects on the current page".into();
             return;
         }
-        let valid = [start,end].iter().all(|id| matches!(self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle));
-        if !valid || self.doc.circle_points(circle).is_none() {
-            self.status = "Select a circle and two points constrained to it".into();
+        let valid = [start, end].iter().all(|id| self.doc.objects.get(id.saturating_sub(1))
+            .is_some_and(|object| !object.deleted && object.kind.is_point()))
+            && self.doc.objects.get(circle.saturating_sub(1))
+                .is_some_and(|object| !object.deleted && object.kind.is_circle());
+        if !valid {
+            self.status = "Select a circle, a start point for the radius, and an end direction point".into();
             return;
         }
         let id = self.doc.add(Kind::ArcOnCircle(circle, start, end));

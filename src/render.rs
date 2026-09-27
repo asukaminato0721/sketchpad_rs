@@ -354,12 +354,12 @@ pub fn circle_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
     })
 }
 
-// Reorder only polygon fill slots; preserve all other drawing and picking order.
-fn ordered_polygon_fills(doc: &Document) -> Vec<&crate::document::Object> {
+// Reorder filled region slots; preserve all other drawing and picking order.
+fn ordered_region_fills(doc: &Document) -> Vec<&crate::document::Object> {
     let mut polygons: Vec<_> = doc
         .objects
         .iter()
-        .filter(|o| doc.is_displayed(o.id) && o.kind.is_polygon())
+        .filter(|o| doc.is_displayed(o.id) && (o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))))
         .collect();
     polygons.sort_by_key(|o| o.interior_order.unwrap_or(0));
     polygons
@@ -1029,7 +1029,7 @@ pub fn svg_page_with_button_offset(
         )
         .unwrap();
     }
-    let mut polygon_fills = ordered_polygon_fills(doc).into_iter();
+    let mut polygon_fills = ordered_region_fills(doc).into_iter();
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
@@ -1132,12 +1132,12 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
-        let polygon_object = if o.kind.is_polygon() {
+        let polygon_object = if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_)) {
             polygon_fills.next().unwrap()
         } else {
             o
         };
-        if let Some(points) = doc.polygon_points(polygon_object.id) {
+        if let Some(points) = doc.filled_region_points(polygon_object.id) {
             let vertices = points
                 .into_iter()
                 .map(|point| {
@@ -1938,7 +1938,7 @@ impl GeometryRenderer {
             }
         }
         // Draw paths first and points last.
-        let mut polygon_fills = ordered_polygon_fills(doc).into_iter();
+        let mut polygon_fills = ordered_region_fills(doc).into_iter();
         for o in &doc.objects {
             if !doc.is_displayed(o.id) {
                 continue;
@@ -2125,9 +2125,9 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                ref kind if kind.is_polygon() => {
+                ref kind if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) => {
                     let polygon_object = polygon_fills.next().unwrap();
-                    if let Some(points) = doc.polygon_points(polygon_object.id) {
+                    if let Some(points) = doc.filled_region_points(polygon_object.id) {
                         let screen = points
                             .into_iter()
                             .map(|point| vp.screen(point))
@@ -2507,7 +2507,7 @@ mod tests {
             });
         }
         assert_eq!(
-            ordered_polygon_fills(&doc)
+            ordered_region_fills(&doc)
                 .iter()
                 .map(|o| o.id)
                 .collect::<Vec<_>>(),
@@ -2527,7 +2527,7 @@ mod tests {
         assert_eq!(doc.objects[line - 1].kind, Kind::Segment(1, 2));
         doc.objects[green - 1].visible = false;
         assert_eq!(
-            ordered_polygon_fills(&doc)
+            ordered_region_fills(&doc)
                 .iter()
                 .map(|o| o.id)
                 .collect::<Vec<_>>(),
@@ -2537,7 +2537,7 @@ mod tests {
         doc.objects[orange - 1].interior_order = Some(i32::MAX);
         doc.objects[green - 1].interior_order = Some(i32::MIN);
         assert_eq!(
-            ordered_polygon_fills(&doc)
+            ordered_region_fills(&doc)
                 .iter()
                 .map(|o| o.id)
                 .collect::<Vec<_>>(),

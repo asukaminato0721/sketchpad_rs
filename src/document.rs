@@ -23,6 +23,7 @@ mod images;
 mod iteration;
 mod iteration_endpoint;
 mod boundary_intersection;
+mod sector_boundary;
 mod point_curve;
 mod curve_points;
 mod curve_intersection;
@@ -169,6 +170,10 @@ pub enum Kind {
     PointOnLine(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    /// Closed sector boundary retains its live Arc dependency.
+    SectorBoundary(usize),
+    /// Normalized physical perimeter parameter on a closed sector boundary.
+    PointOnSector(usize, f64),
     /// A draggable point constrained to an evaluated point trace.
     PointOnCurve(usize, f64),
     PointOnPolygon(usize, usize, f64),
@@ -492,7 +497,7 @@ impl Document {
             None
         };
         let measurement_precision = kind.has_measurement_precision().then_some(2);
-        let interior_order = if matches!(kind, Kind::Polygon(_)) {
+        let interior_order = if matches!(kind, Kind::Polygon(_) | Kind::SectorBoundary(_)) {
             Some(0)
         } else if kind.is_polygon() {
             Some(1)

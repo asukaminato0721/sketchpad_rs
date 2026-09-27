@@ -44,3 +44,7 @@ mod curve_intersections57;
 mod round_intersections57;
 
 mod point_curves58;
+
+mod arc_circle59;
+
+mod sector_boundary;

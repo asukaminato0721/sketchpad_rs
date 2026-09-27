@@ -176,6 +176,9 @@ impl Document {
                     Kind::PointOnCurve(_, t) if out.get(i..i + 4) == Some(&[15, 0, 42, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
+                    Kind::PointOnSector(_, t) if out.get(i..i + 4) == Some(&[15, 0, 68, 0]) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
@@ -1110,6 +1113,11 @@ impl Document {
             }
             if let Kind::PathLiteralPoint(axis, value) = o.kind {
                 let mut group = plot_axis_records::encode_literal_group(axis as u32, value)?;
+                group[12] = u8::from(o.tracing);
+                if let Some(style) = o.visual_style {
+                    crate::style_records::set_visual_style(&mut group[8..36], style)?;
+                }
+                if o.presentation_suppressed { group[10] |= 2; }
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -1525,6 +1533,7 @@ impl Document {
                 | Kind::PointOnLine(host, _)
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _)
+                | Kind::PointOnSector(host, _)
                 | Kind::PointOnCurve(host, _)
                 | Kind::PointOnPolygon(host, _, _) => (15, vec![host]),
                 Kind::Midpoint(_, _) => (
@@ -1556,6 +1565,7 @@ impl Document {
                 Kind::ThreePointArc(a, b, c) => (81, vec![a, b, c]),
                 Kind::ArcOnCircle(a, b, c) => (79, vec![a, b, c]),
                 Kind::CenterArc(a, b, c) => (80, vec![a, b, c]),
+                Kind::SectorBoundary(arc) => (82, vec![arc]),
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);
@@ -1572,7 +1582,7 @@ impl Document {
             if o.presentation_suppressed {
                 h[2] |= 2;
             }
-            if o.kind.is_polygon() {
+            if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_)) {
                 h[20..24].copy_from_slice(
                     &o.interior_order
                         .ok_or("Missing polygon drawing order")?
@@ -1598,6 +1608,7 @@ impl Document {
                     | Kind::PointOnLine(..)
                     | Kind::PointOnCircle(..)
                     | Kind::PointOnArc(..)
+                    | Kind::PointOnSector(..)
                     | Kind::PointOnCurve(..)
                     | Kind::PointOnPolygon(..)
             );
@@ -1642,6 +1653,11 @@ impl Document {
                     }
                     Kind::PointOnCurve(_, t) => {
                         let mut payload = vec![15, 0, 42, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PointOnSector(_, t) => {
+                        let mut payload = vec![15, 0, 68, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }

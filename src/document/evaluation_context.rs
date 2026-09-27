@@ -98,6 +98,9 @@ impl Document {
                     .polygons
                     .insert(id, context.original.polygon_points(id));
             }
+            if matches!(kind, Kind::SectorBoundary(_)) {
+                context.arcs.insert(id, context.original.sector_arc_geometry(id));
+            }
             if is_arc_kind(kind) {
                 context.arcs.insert(id, context.original.arc_geometry(id));
             }

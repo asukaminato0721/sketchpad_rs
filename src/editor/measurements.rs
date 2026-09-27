@@ -375,21 +375,21 @@ impl Editor {
             return;
         }
         let [polygon] = self.selection_order.as_slice() else {
-            self.status = "Select one polygon interior to measure".into();
+            self.status = "Select one polygon or sector interior to measure".into();
             return;
         };
         let polygon = *polygon;
         if self.doc.polygon_perimeter_cm(polygon).is_none() {
-            self.status = "Select one polygon interior to measure".into();
+            self.status = "Select one polygon or sector interior to measure".into();
             return;
         }
         if self.doc.objects[polygon - 1].page != self.doc.active_page {
-            self.status = "Select a polygon on the current page".into();
+            self.status = "Select an interior on the current page".into();
             return;
         }
         let id = self.doc.add(Kind::PolygonPerimeter(polygon));
         self.select_only(id);
-        self.status = format!("Measured perimeter of polygon {polygon}");
+        self.status = format!("Measured perimeter of interior {polygon}");
     }
     pub(super) fn measure_angle(&mut self) {
         if self.doc.partial_view && self.doc.page_count == 1 {
@@ -422,7 +422,7 @@ impl Editor {
             return;
         }
         let [host] = self.selection_order.as_slice() else {
-            self.status = "Select one circle or polygon interior to measure".into();
+            self.status = "Select one circle, polygon, or sector interior to measure".into();
             return;
         };
         let host = *host;
@@ -447,11 +447,11 @@ impl Editor {
             }
             (CircleMeasure::Radius, Some(_)) if is_circle => (Kind::CircleRadius(host), "radius"),
             (CircleMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
-            (CircleMeasure::Area, Some(kind)) if kind.is_polygon() => {
+            (CircleMeasure::Area, Some(kind)) if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) => {
                 (Kind::PolygonArea(host), "area")
             }
             _ => {
-                self.status = "Select one circle or polygon interior to measure".into();
+                self.status = "Select one circle, polygon, or sector interior to measure".into();
                 return;
             }
         };
@@ -500,7 +500,7 @@ impl Editor {
             .doc
             .objects
             .get(arc.saturating_sub(1))
-            .is_some_and(|o| o.kind.is_arc())
+            .is_some_and(|o| o.kind.is_arc() || matches!(o.kind, Kind::SectorBoundary(_)))
         {
             self.status = "Select one arc to measure".into();
             return;

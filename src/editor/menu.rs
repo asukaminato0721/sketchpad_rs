@@ -311,6 +311,10 @@ impl Editor {
                         self.arc_on_circle();
                         ui.close();
                     }
+                    if ui.button("Sector Interior").clicked() {
+                        self.sector_boundary();
+                        ui.close();
+                    }
                     if ui.button("Polygon Interior").clicked() {
                         self.polygon_interior();
                         ui.close();

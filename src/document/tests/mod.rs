@@ -164,3 +164,9 @@ mod point_curves58;
 mod polygon_identity;
 
 mod plot_value_flags;
+
+mod arc_circle59;
+
+mod sector_boundary;
+
+mod value_straight_paths59;

@@ -93,6 +93,7 @@ impl Document {
             | Kind::PointOnCircle(..)
             | Kind::PointOnArc(..)
             | Kind::PointOnCurve(..)
+            | Kind::PointOnSector(..)
             | Kind::PointOnPolygon(..)
             | Kind::GraphHorizontalUnit(..) => is_point_kind(&target.kind),
             Kind::GraphVerticalUnit(..) => {
@@ -123,6 +124,7 @@ impl Document {
             | Kind::PointOnCircle(..)
             | Kind::PointOnArc(..)
             | Kind::PointOnCurve(..)
+            | Kind::PointOnSector(..)
             | Kind::PointOnPolygon(..)
             | Kind::GraphHorizontalUnit(..) => true,
             Kind::Parameter(_) => {

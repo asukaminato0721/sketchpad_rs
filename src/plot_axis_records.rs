@@ -43,6 +43,9 @@ pub fn decode_group(group: &[u8]) -> Result<[u32; 2], String> {
         }
         end += 10;
     }
+    if group.get(end..end + 8).is_some() && word(group, end) == 0 && word(group, end + 4) == 0x232e {
+        end += 8;
+    }
     if group.len() != end + 8 || word(group, end) != 0 || word(group, end + 4) != 0x07d7 {
         return Err("Unsupported Plot Value on Axis suffix".into());
     }
@@ -100,6 +103,9 @@ pub fn decode_literal_group(group: &[u8]) -> Result<(u32, f64), String> {
         }
         end += 10;
     }
+    if group.get(end..end + 8).is_some() && word(group, end) == 0 && word(group, end + 4) == 0x232e {
+        end += 8;
+    }
     if group.len() != end + 8 || word(group, end) != 0 || word(group, end + 4) != 0x07d7 {
         return Err("Unsupported literal Plot Value on Axis suffix".into());
     }
@@ -122,6 +128,28 @@ pub fn encode_literal_group(axis: u32, value: f64) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn straight_paths59_optional_metadata_is_empty_unique_and_before_terminator() {
+        for (base, literal) in [(TEMPLATE.as_slice(), false), (LITERAL_TEMPLATE.as_slice(), true)] {
+            let decode = |bytes: &[u8]| if literal { decode_literal_group(bytes).map(|_| ()) } else { decode_group(bytes).map(|_| ()) };
+            let mut bytes = base.to_vec();
+            let at = bytes.len() - 8;
+            let metadata = [0, 0, 0, 0, 0x2e, 0x23, 0, 0];
+            bytes.splice(at..at, metadata);
+            assert!(decode(&bytes).is_ok());
+            let mut duplicate = bytes.clone();
+            duplicate.splice(at..at, metadata);
+            assert!(decode(&duplicate).is_err());
+            let mut nonempty = bytes.clone();
+            nonempty[at] = 2;
+            nonempty.splice(at+8..at+8, [0, 0]);
+            assert!(decode(&nonempty).is_err());
+            let mut trailing = base.to_vec();
+            trailing.extend(metadata);
+            assert!(decode(&trailing).is_err());
+        }
+    }
 
     #[test]
     fn plot_header_codes_accept_only_native_proved_flags() {

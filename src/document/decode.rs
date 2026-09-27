@@ -652,7 +652,7 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 90 | 94 | 98) && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123) && r.kind == 0x232e && d.is_empty())
                     && !(code == 0
                         && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
                         && r.kind == 0x232e
@@ -1476,7 +1476,7 @@ impl Document {
                     }
                     (39, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon()) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))) =>
                     {
                         Kind::PolygonPerimeter(*host)
                     }
@@ -1500,7 +1500,7 @@ impl Document {
                     }
                     (42, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon()) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))) =>
                     {
                         Kind::PolygonArea(*host)
                     }
@@ -1512,7 +1512,7 @@ impl Document {
                     }
                     (44, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind)) =>
+                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind) || matches!(o.kind, Kind::SectorBoundary(_))) =>
                     {
                         Kind::ArcLength(*host)
                     }
@@ -1532,6 +1532,19 @@ impl Document {
                                 || object.kind.is_polygon()) =>
                     {
                         Kind::ToolPointOnPath(*host)
+                    }
+                    (15, None, [host]) if point_curve_constraint_count == 1
+                        && h.len() == 28 && h[6..10] == [1, 0, 10, 0]
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && payload[..4] == [15, 0, 68, 0] && f64_at(payload, 4).is_finite())
+                        && super::sector_boundary::supported_host(&objects, *host, page, objects.len() + 1)
+                        && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                        && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
+                            0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
+                            0x07d2 => r.data.len() == 8,
+                            0x07d3 => r.data.len() == 12,
+                            _ => false,
+                        }) => {
+                        Kind::PointOnSector(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
                     }
                     (15, None, [host]) if point_curve_constraint_count == 1
                         && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.get(..4) == Some(&[15, 0, 42, 0])) =>
@@ -1970,10 +1983,32 @@ impl Document {
                         Kind::CenterArc(*center, *start, *end)
                     }
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
-                    (79, _, [circle, start, end])
-                        if objects.get(circle - 1).is_some_and(|o| o.kind.is_circle())
-                            && objects.get(start - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle))
-                            && objects.get(end - 1).is_some_and(|o| matches!(o.kind, Kind::PointOnCircle(host, _, _) if host == *circle)) =>
+                    (82, None, [arc])
+                        if h.len() == 28 && h[6..10] == [13, 0, 68, 0]
+                            && constraint_payload.is_none()
+                            && super::sector_boundary::supported_source(&objects, *arc, page, objects.len() + 1)
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x232e).count() <= 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
+                                0x07d0 | 0x07d7 => true,
+                                0x07d2 => r.data.len() == 8,
+                                0x232e => r.data.is_empty(),
+                                _ => false,
+                            }) => Kind::SectorBoundary(*arc),
+                    (79, None, [circle, start, end])
+                        if h.len() == 28 && h[6..10] == [12, 0, 67, 0]
+                            && constraint_payload.is_none()
+                            && rs.iter().filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                                .filter(|record| record.kind == 0x07d2).count() == 1
+                            && rs.iter().filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                                .all(|record| match record.kind {
+                                    0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
+                                    0x07d2 => record.data.len() == 16,
+                                    0x232e => record.data.is_empty(),
+                                    _ => false,
+                                })
+                            && objects.get(circle - 1).is_some_and(|o| !o.deleted && o.page == page && o.kind.is_circle())
+                            && [start, end].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind))) =>
                     {
                         Kind::ArcOnCircle(*circle, *start, *end)
                     }
@@ -2071,7 +2106,7 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style,
-                interior_order: (h.len() == 28 && h[6..8] == [4, 0])
+                interior_order: (h.len() == 28 && (h[6..8] == [4, 0] || h[6..10] == [13, 0, 68, 0]))
                     .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,

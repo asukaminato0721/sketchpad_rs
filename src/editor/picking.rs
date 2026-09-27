@@ -273,8 +273,8 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
-                        ref kind if kind.is_polygon() => {
-                            let points = self.doc.polygon_points(o.id)?;
+                        ref kind if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) => {
+                            let points = self.doc.filled_region_points(o.id)?;
                             let points: Vec<_> =
                                 points.into_iter().map(|point| v.screen(point)).collect();
                             let inside = points

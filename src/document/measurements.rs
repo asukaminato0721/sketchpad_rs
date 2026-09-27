@@ -628,6 +628,9 @@ impl Document {
         self.ratio_for_points(a, b, c)
     }
     pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
+        if self.objects.get(id.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+            return self.sector_perimeter_pixels(id).map(|value| value / 37.79527559055118);
+        }
         let points = self.polygon_points(id)?;
         if points.len() < 3 {
             return None;
@@ -694,6 +697,9 @@ impl Document {
         let Kind::PolygonArea(polygon) = object.kind else {
             return None;
         };
+        if self.objects.get(polygon.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+            return self.sector_area_pixels2(polygon).map(|value| value / 37.79527559055118_f64.powi(2));
+        }
         let points = self.polygon_points(polygon)?;
         if points.len() < 3 {
             return None;
@@ -729,6 +735,9 @@ impl Document {
         let Kind::ArcLength(arc) = object.kind else {
             return None;
         };
+        if self.objects.get(arc.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+            return self.sector_arc_length_pixels(arc).map(|value| value / 37.79527559055118);
+        }
         if let Some((start, end)) = self.linear_three_point_arc(arc) {
             return Some(start.distance(end) / 37.79527559055118);
         }

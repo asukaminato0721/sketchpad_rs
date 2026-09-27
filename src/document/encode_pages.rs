@@ -376,6 +376,9 @@ impl Document {
                     .to_le_bytes(),
             );
         }
+        if matches!(object.kind, Kind::SectorBoundary(_)) {
+            object_header[20..24].copy_from_slice(&object.interior_order.ok_or("Missing sector drawing order")?.to_le_bytes());
+        }
         put_record(groups, 0x07d0, &object_header);
         if is_point_kind(&object.kind) {
             if let Some(label) = &object.label {
@@ -549,6 +552,7 @@ impl Document {
                     | Kind::PointOnRay(host, t)
                     | Kind::PointOnLine(host, t)
                     | Kind::PointOnArc(host, t)
+                    | Kind::PointOnSector(host, t)
                     | Kind::PointOnCurve(host, t) => {
                         if !t.is_finite()
                             || matches!(
@@ -572,6 +576,8 @@ impl Document {
                                 && straight_kind_mode(&host_object.kind) != Some(LineMode::Line)
                             || matches!(object.kind, Kind::PointOnArc(_, _))
                                 && !is_arc_kind(&host_object.kind)
+                            || matches!(object.kind, Kind::PointOnSector(..))
+                                && !super::sector_boundary::supported_host(&self.objects, *host, page, object.id)
                             || matches!(object.kind, Kind::PointOnCurve(..))
                                 && !super::curve_points::supported(&self.objects, *host, page, object.id)
                         {
@@ -602,6 +608,7 @@ impl Document {
                             Kind::PointOnRay(_, _) => 13,
                             Kind::PointOnSegment(_, _) => 14,
                             Kind::PointOnArc(_, _) => 67,
+                            Kind::PointOnSector(_, _) => 68,
                             Kind::PointOnCurve(_, _) => 42,
                             _ => unreachable!(),
                         };
@@ -937,15 +944,9 @@ impl Document {
                         Self::append_multi_page_reference_group(&mut groups, object, code, &refs)?;
                     }
                     Kind::ArcOnCircle(circle, start, end) => {
-                        if self.arc_geometry(object.id).is_none()
-                            || [*start, *end].iter().any(|id| {
-                                !matches!(
-                                    self.objects.get(id.saturating_sub(1)).map(|parent| &parent.kind),
-                                    Some(Kind::PointOnCircle(host, _, _)) if *host == *circle
-                                )
-                            })
-                        {
-                            return Err("Arc needs a circle and two points on it".into());
+                        if !self.objects.get(circle.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && o.kind.is_circle())
+                            || [*start, *end].iter().any(|id| !self.objects.get(id.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind))) {
+                            return Err("Arc needs a circle and two points on this page".into());
                         }
                         let refs = [
                             self.multi_page_local_reference(page, object.id, *circle)?,
@@ -953,6 +954,13 @@ impl Document {
                             self.multi_page_local_reference(page, object.id, *end)?,
                         ];
                         Self::append_multi_page_reference_group(&mut groups, object, 79, &refs)?;
+                    }
+                    Kind::SectorBoundary(arc) => {
+                        if !super::sector_boundary::supported_source(&self.objects, *arc, page, object.id) {
+                            return Err("Sector needs a live arc on this page".into());
+                        }
+                        let reference = self.multi_page_local_reference(page, object.id, *arc)?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 82, &[reference])?;
                     }
                     Kind::Polygon(vertices) => {
                         if vertices.len() < 3
@@ -990,7 +998,7 @@ impl Document {
                             Kind::SegmentLength(_) if is_segment_kind(host_kind) => {
                                 include_bytes!("../../assets/length_measurement_group.bin")
                             }
-                            Kind::PolygonPerimeter(_) if host_kind.is_polygon() => {
+                            Kind::PolygonPerimeter(_) if host_kind.is_polygon() || matches!(host_kind, Kind::SectorBoundary(_)) => {
                                 include_bytes!("../../assets/perimeter_measurement_group.bin")
                             }
                             Kind::CircleCircumference(_) if host_kind.is_circle() => {
@@ -1002,13 +1010,13 @@ impl Document {
                             Kind::CircleArea(_) if host_kind.is_circle() => {
                                 include_bytes!("../../assets/area_measurement_group.bin")
                             }
-                            Kind::PolygonArea(_) if host_kind.is_polygon() => {
+                            Kind::PolygonArea(_) if host_kind.is_polygon() || matches!(host_kind, Kind::SectorBoundary(_)) => {
                                 include_bytes!("../../assets/area_measurement_group.bin")
                             }
                             Kind::ArcAngle(_) if is_arc_kind(host_kind) => {
                                 include_bytes!("../../assets/arc_angle_measurement_group.bin")
                             }
-                            Kind::ArcLength(_) if is_arc_kind(host_kind) => {
+                            Kind::ArcLength(_) if is_arc_kind(host_kind) || matches!(host_kind, Kind::SectorBoundary(_)) => {
                                 include_bytes!("../../assets/arc_length_measurement_group.bin")
                             }
                             _ => return Err("Measurement needs a compatible host".into()),
@@ -1508,7 +1516,7 @@ impl Document {
             if saved.visual_style.is_some() && current.visual_style.is_some() {
                 expected.visual_style = current.visual_style;
             }
-            if saved.kind.is_polygon() && current.interior_order.is_some() {
+            if (saved.kind.is_polygon() || matches!(saved.kind, Kind::SectorBoundary(_))) && current.interior_order.is_some() {
                 expected.interior_order = current.interior_order;
             }
             if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
@@ -1539,6 +1547,11 @@ impl Document {
                 (Kind::PointOnArc(old_host, _), Kind::PointOnArc(host, t))
                     if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
                 {
+                    expected.kind = current.kind.clone();
+                }
+                (Kind::PointOnSector(old_host, _), Kind::PointOnSector(host, t))
+                    if old_host == host && t.is_finite()
+                        && super::sector_boundary::supported_host(&self.objects, *host, current.page, current.id) => {
                     expected.kind = current.kind.clone();
                 }
                 (Kind::PointOnCurve(old_host, _), Kind::PointOnCurve(host, t))
@@ -1588,7 +1601,7 @@ impl Document {
             }
             let header = current.header_offset.ok_or("Missing object header")?;
             if saved.interior_order != current.interior_order {
-                if !saved.kind.is_polygon() {
+                if !saved.kind.is_polygon() && !matches!(saved.kind, Kind::SectorBoundary(_)) {
                     return Err("Cannot change drawing order of an unsupported interior".into());
                 }
                 if !rs.iter().any(|record| {
@@ -1643,6 +1656,7 @@ impl Document {
                         | Kind::PointOnRay(_, _)
                         | Kind::PointOnLine(_, _)
                         | Kind::PointOnArc(_, _)
+                        | Kind::PointOnSector(_, _)
                         | Kind::PointOnCurve(_, _)
                         | Kind::PointOnPolygon(_, _, _)
                         | Kind::PointOnCircle(_, _, _)
@@ -1678,6 +1692,10 @@ impl Document {
                         out.get_mut(at + 4..at + 12)
                             .ok_or("Short arc-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnSector(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 68, 0]) { return Err("Invalid sector-point constraint".into()); }
+                        out.get_mut(at + 4..at + 12).ok_or("Short sector-point constraint")?.copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnCurve(_, t) => {
                         if out.get(at..at + 4) != Some(&[15, 0, 42, 0]) { return Err("Invalid curve-point constraint".into()); }

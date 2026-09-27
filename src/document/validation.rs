@@ -343,10 +343,14 @@ impl Document {
             }
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) | Kind::PointOnPolygon(_, _, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnRay(_, t) if !t.is_finite() || t < 0.)
-                || matches!(o.kind, Kind::PointOnLine(_, t) if !t.is_finite())
+                || matches!(o.kind, Kind::PointOnLine(_, t) | Kind::PointOnSector(_, t) if !t.is_finite())
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
+            }
+            if matches!(o.kind, Kind::SectorBoundary(source) if !super::sector_boundary::supported_source(&self.objects, source, o.page, o.id))
+                || matches!(o.kind, Kind::PointOnSector(host, _) if !super::sector_boundary::supported_host(&self.objects, host, o.page, o.id)) {
+                return Err(format!("Invalid sector dependency in object {}", o.id));
             }
             super::transform_validation::validate_transform(self, o, i >= self.source_count)?;
             let refs = o.kind.dependencies();
@@ -806,7 +810,7 @@ impl Document {
                     }
                 };
                 let undefined_center_value = kind == ValueEquationKind::PointValue
-                    && self.undefined_center_arc(second)
+                    && (self.undefined_center_arc(second) || self.undefined_arc_on_circle(second))
                     && self
                         .objects
                         .get(first.saturating_sub(1))
@@ -824,10 +828,17 @@ impl Document {
                         is_straight_kind(&host.kind)
                             && self.point_constraint_line_points(second).is_none()
                     });
+                let undefined_path_value = kind == ValueEquationKind::PointValue
+                    && self.objects.get(first.saturating_sub(1)).is_some_and(|point| match point.kind {
+                        Kind::PathLiteralPoint(host, value) => host == second && self.undefined_native_path_plot(host, value),
+                        Kind::PathValuePoint(source, host) => host == second && self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(host, value)),
+                        _ => false,
+                    });
                 if !hosts_match
                     || (self.value_equation_value(o.id).is_none()
                         && !undefined_center_value
                         && !undefined_straight_value
+                        && !undefined_path_value
                         && !(kind == ValueEquationKind::PointValue
                             && matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
                             && super::curve_points::supported(&self.objects, second, o.page, first)))
@@ -839,6 +850,7 @@ impl Document {
                 && self
                     .perimeter_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
+                && !matches!(o.kind, Kind::PolygonPerimeter(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
             {
                 return Err(format!("Invalid polygon in perimeter measurement {}", o.id));
             }
@@ -870,6 +882,7 @@ impl Document {
                 && self
                     .polygon_area_cm2(o.id)
                     .is_none_or(|value| !value.is_finite())
+                && !matches!(o.kind, Kind::PolygonArea(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
             {
                 return Err(format!("Invalid polygon in area measurement {}", o.id));
             }
@@ -877,7 +890,7 @@ impl Document {
                 && self
                     .arc_angle_degrees(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host)))
+                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_arc_on_circle(host) || self.undefined_transformed_arc(host)))
             {
                 return Err(format!("Invalid arc in angle measurement {}", o.id));
             }
@@ -885,7 +898,8 @@ impl Document {
                 && self
                     .arc_length_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host)))
+                && !matches!(o.kind, Kind::ArcLength(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
+                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_arc_on_circle(host) || self.undefined_transformed_arc(host)))
             {
                 return Err(format!("Invalid arc in length measurement {}", o.id));
             }
@@ -929,7 +943,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none()
                     && !(self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page)
-                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_transformed_arc(host))))
+                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_arc_on_circle(host) || self.undefined_transformed_arc(host))))
             {
                 return Err(format!("Invalid arc host in point {}", o.id));
             }
@@ -944,12 +958,13 @@ impl Document {
                                     && [a, b].iter().all(|&id| id < point.id && self.objects.get(id.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == point.page && (host.kind.is_circle() || is_arc_kind(&host.kind)))),
                                 Kind::BoundaryIntersection(straight, polygon) => super::boundary_intersection::supported(&self.objects, straight, polygon, point.page, point.id),
                                 Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
+                                Kind::PointOnSector(host, t) => t.is_finite() && super::sector_boundary::supported_host(&self.objects, host, point.page, point.id),
                                 Kind::PointOnCurve(path, _) => super::curve_points::supported(&self.objects, path, point.page, point.id),
                                 Kind::PathValuePoint(source, path) => super::curve_points::supported(&self.objects, path, point.page, point.id)
                                     || self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
-                                    && (self.undefined_three_point_arc(path) || self.undefined_center_arc(path)),
+                                    && (self.undefined_three_point_arc(path) || self.undefined_center_arc(path) || self.undefined_arc_on_circle(path)),
                                 _ => false,
                             })
                     })
@@ -959,7 +974,11 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::Line(a,b)|Kind::Ray(a,b)|Kind::Circle(a,b)|Kind::Midpoint(a,b)
-                if self.position(a).is_none()||self.position(b).is_none())
+                if (self.position(a).is_none()||self.position(b).is_none())
+                    && !(matches!(o.kind, Kind::Midpoint(..)) && [a,b].into_iter().all(|id| self.position(id).is_some() || self.objects.get(id.saturating_sub(1)).is_some_and(|point| match point.kind {
+                        Kind::PointOnSector(host, t) => t.is_finite() && super::sector_boundary::supported_host(&self.objects, host, point.page, point.id),
+                        _ => false,
+                    }))))
             {
                 return Err(format!("Invalid point dependency in object {}", o.id));
             }
@@ -1002,9 +1021,10 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::ArcOnCircle(circle,start,end)
-                    if self.circle_points(circle).is_none()
-                    || !matches!(self.objects.get(start.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle)
-                    || !matches!(self.objects.get(end.saturating_sub(1)).map(|o| &o.kind), Some(Kind::PointOnCircle(host, _, _)) if *host == circle))
+                    if self.objects.get(circle.saturating_sub(1)).is_none_or(|source|
+                        source.deleted || source.page != o.page || circle >= o.id || !source.kind.is_circle())
+                    || [start,end].into_iter().any(|id| self.objects.get(id.saturating_sub(1)).is_none_or(|point|
+                        point.deleted || point.page != o.page || id >= o.id || !is_point_kind(&point.kind))))
             {
                 return Err(format!("Invalid circle or endpoints in arc {}", o.id));
             }

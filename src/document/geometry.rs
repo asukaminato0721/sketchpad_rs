@@ -1,6 +1,5 @@
 use super::kind::{
-    is_arc_kind, is_point_kind, is_straight_kind, is_transformed_plot_path_kind,
-    is_transformed_plot_ray_kind, plot_path_accepts,
+    is_arc_kind, is_point_kind, is_straight_kind, plot_straight_mode, plot_path_accepts,
 };
 use super::transform_evaluator::TransformGeometry;
 use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
@@ -232,17 +231,17 @@ fn three_point_arc_geometry(
 }
 
 impl Document {
-    /// Native code 95/123 retain negative ray values as undefined points.
+    /// Native code 95/123 retain finite values outside a straight host extent as undefined points.
     pub(super) fn undefined_transformed_ray_plot(&self, path: usize, value: f64) -> bool {
         value.is_finite()
-            && value < 0.0
-            && self
-                .objects
-                .get(path.saturating_sub(1))
-                .is_some_and(|host| !host.deleted && is_transformed_plot_ray_kind(&host.kind))
-            && self
-                .line_points(path)
-                .is_some_and(|(start, end, _)| start != end)
+            && self.objects.get(path.saturating_sub(1)).is_some_and(|host| {
+                !host.deleted && match plot_straight_mode(&host.kind) {
+                    Some(LineMode::Segment) => !(0.0..=1.0).contains(&value),
+                    Some(LineMode::Ray) => value < 0.0,
+                    _ => false,
+                }
+            })
+            && self.line_points(path).is_some_and(|(start, end, _)| start != end)
     }
 
     pub(super) fn plot_arc_host_available(&self, path: usize) -> bool {
@@ -324,11 +323,7 @@ impl Document {
                             && object.kind.is_circle()
                     })
                     && self.circle_points(circle).is_some()
-                    && [start, end].into_iter().all(|id| {
-                        point_available(id)
-                            && matches!(self.objects[id - 1].kind,
-                            Kind::PointOnCircle(source, _, _) if source == circle)
-                    })
+                    && [start, end].into_iter().all(point_available)
             }
             _ => false,
         }
@@ -399,7 +394,7 @@ impl Document {
                     && projection.is_finite()
                     && (projection <= 0.0 || projection >= length_squared)
             }
-            Kind::ArcOnCircle(_, start, end) => self.position(start) == self.position(end),
+            Kind::ArcOnCircle(..) => self.arc_geometry(path).is_none(),
             Kind::CenterArc(..) => self.arc_geometry(path).is_none(),
             Kind::Transformed(_) if self.objects[path - 1].kind.is_arc() =>
                 self.arc_geometry(path).is_none() && self.linear_three_point_arc(path).is_none(),
@@ -453,6 +448,19 @@ impl Document {
             && self.undefined_arc_plot(path, 0.5)
     }
 
+    pub(super) fn undefined_arc_on_circle(&self, path: usize) -> bool {
+        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+            return self.undefined_arc_on_circle(definition.source());
+        }
+        let Some(host) = path.checked_sub(1).and_then(|index| self.objects.get(index)) else { return false; };
+        let Kind::ArcOnCircle(circle, start, end) = host.kind else { return false; };
+        !host.deleted
+            && [circle, start, end].into_iter().all(|id| id < path && self.objects.get(id.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == host.page))
+            && self.objects[circle - 1].kind.is_circle()
+            && [start, end].into_iter().all(|id| is_point_kind(&self.objects[id - 1].kind))
+            && self.arc_geometry(path).is_none()
+    }
+
     pub(super) fn undefined_transformed_arc(&self, path: usize) -> bool {
         if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
             return self.undefined_transformed_arc(definition.source());
@@ -480,7 +488,7 @@ impl Document {
                 if is_arc_kind(kind) {
                     return d.plotted_arc_position(path, t);
                 }
-                if is_transformed_plot_path_kind(kind) {
+                if plot_straight_mode(kind).is_some() {
                     let (start, end, _) = d.line_points(path)?;
                     let point = Point {
                         x: start.x + (end.x - start.x) * t,
@@ -668,6 +676,7 @@ impl Document {
                     })
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
+                Kind::PointOnSector(host, t) => d.point_on_sector(*host, *t),
                 Kind::PointOnCurve(host, t) => {
                     if super::curve_points::supported(&d.objects, *host, object.page, object.id) { d.point_on_curve(*host, *t) } else { None }
                 },
@@ -1123,12 +1132,21 @@ impl Document {
                 (center, radius, a, sweep, true)
             }
             Kind::ArcOnCircle(circle, start, end) => {
-                let (center, radius) = self.circle_points(circle)?;
+                // Native code79 takes only the center from its valid circle host.
+                // The first endpoint sets the radius; the second sets direction.
+                let (center, _) = self.circle_points(circle)?;
                 let start_point = self.position(start)?;
                 let end_point = self.position(end)?;
+                let radius = center.distance(start_point);
+                let end_radius = center.distance(end_point);
+                if !radius.is_finite() || radius <= 0.
+                    || !end_radius.is_finite() || end_radius <= 0. {
+                    return None;
+                }
                 let a = (center.y - start_point.y).atan2(start_point.x - center.x);
                 let b = (center.y - end_point.y).atan2(end_point.x - center.x);
                 let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
+                if !sweep.is_finite() || sweep == 0. { return None; }
                 (center, radius, a, sweep, true)
             }
             _ => return None,
@@ -1305,6 +1323,11 @@ impl Document {
                 let Some(t) = self.curve_parameter(host, p) else { return false; };
                 Kind::PointOnCurve(host, t)
             }
+            Some(Kind::PointOnSector(host, _)) => {
+                let host = *host;
+                let Some(t) = self.sector_boundary_projection(host, p) else { return false; };
+                Kind::PointOnSector(host, t)
+            }
             Some(Kind::PointOnArc(host, _)) => {
                 let host = *host;
                 let Some(t) = self.arc_parameter(host, p) else {
@@ -1434,6 +1457,7 @@ impl Document {
                 let length = dx.hypot(dy);
                 (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
+            Kind::SectorBoundary(_) => self.sector_boundary_projection(host, p).map(|t| Kind::PointOnSector(host, t)),
             ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),

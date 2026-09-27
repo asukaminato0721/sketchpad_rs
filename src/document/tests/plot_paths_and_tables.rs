@@ -180,11 +180,10 @@ fn plotted_values_on_segments_track_their_endpoints() {
             .unwrap(),
         4
     );
-    assert!(
-        generated_literal
-            .plot_literal_on_path(1.2, Some(3))
-            .is_err()
-    );
+    let mut outside = generated_literal.clone();
+    let point = outside.plot_literal_on_path(1.2, Some(3)).unwrap();
+    assert!(outside.position(point).is_none());
+    outside.verify_roundtrip().unwrap();
     assert_eq!(
         generated_literal.encode().unwrap(),
         include_bytes!("../../../tests/fixtures/graph_plot_segment_literal_generated.gsp")
@@ -295,7 +294,9 @@ fn plotted_values_on_circles_lines_and_rays_roundtrip_and_follow_paths() {
     ray.add(Kind::Free(Point { x: 150., y: 120. }));
     ray.add(Kind::Free(Point { x: 250., y: 170. }));
     ray.add(Kind::Ray(1, 2));
-    assert!(ray.plot_literal_on_path(-0.5, Some(3)).is_err());
+    let point = ray.plot_literal_on_path(-0.5, Some(3)).unwrap();
+    assert!(ray.position(point).is_none());
+    ray.verify_roundtrip().unwrap();
 
     let mut live_circle = Document::new();
     live_circle.add_default_parameter((10, 5)).unwrap();

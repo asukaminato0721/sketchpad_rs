@@ -1,5 +1,5 @@
 use super::kind::{
-    is_arc_kind, is_transformed_plot_path_kind, is_transformed_plot_ray_kind,
+    is_arc_kind, plot_straight_mode,
     literal_plot_path_accepts, plot_path_accepts, value_plot_path_accepts,
 };
 use super::{Document, Kind, Point};
@@ -152,9 +152,9 @@ impl Document {
                 .map(Some)
                 .ok_or("Arc geometry is outside the supported range".into());
         }
-        if is_transformed_plot_path_kind(&object.kind) && value.is_finite() {
+        if plot_straight_mode(&object.kind).is_some() && value.is_finite() {
             let (start, end, _) = self.line_points(path).ok_or("Invalid transformed path")?;
-            if is_transformed_plot_ray_kind(&object.kind) && value < 0.0 {
+            if !plot_path_accepts(&object.kind, value) {
                 if start == end {
                     return Err("Invalid transformed path".into());
                 }
