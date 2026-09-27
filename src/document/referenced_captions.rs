@@ -108,7 +108,9 @@ impl Document {
             if let Some(label) = &object.label {
                 return label.name_utf8().ok().map(str::to_owned);
             }
-            if super::kind::is_point_kind(&object.kind) { return self.coordinate_point_name(source); }
+            if super::kind::is_point_kind(&object.kind) {
+                return self.coordinate_point_name(source);
+            }
             match &object.kind {
                 Kind::HideShowButton { label, .. }
                 | Kind::AnimationButton { label, .. }
@@ -183,15 +185,20 @@ impl Document {
 pub(super) fn encode_group(object: &Object, parents: &[u32], text: &ReferencedText) -> Vec<u8> {
     use super::records::put_record;
     // Native class zero/subtype59 referenced-caption header.
-    let mut header = [73,0,0,0,0,0,0,0,59,0,33,1,0,0,1,0,255,255,81,92,193,189,240,255,0,0,0,0];
-    header[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed)<<1);
-    let mut group=Vec::new();
-    put_record(&mut group,0x7d0,&header);
-    let mut refs=(parents.len() as u32).to_le_bytes().to_vec();
-    for parent in parents { refs.extend_from_slice(&parent.to_le_bytes()); }
-    put_record(&mut group,0x7d2,&refs);
-    put_record(&mut group,0x8fc,text.rich_bytes());
-    put_record(&mut group,0x7d8,&0u16.to_le_bytes());
-    put_record(&mut group,0x7d7,&[]);
+    let mut header = [
+        73, 0, 0, 0, 0, 0, 0, 0, 59, 0, 33, 1, 0, 0, 1, 0, 255, 255, 81, 92, 193, 189, 240, 255, 0,
+        0, 0, 0,
+    ];
+    header[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
+    let mut group = Vec::new();
+    put_record(&mut group, 0x7d0, &header);
+    let mut refs = (parents.len() as u32).to_le_bytes().to_vec();
+    for parent in parents {
+        refs.extend_from_slice(&parent.to_le_bytes());
+    }
+    put_record(&mut group, 0x7d2, &refs);
+    put_record(&mut group, 0x8fc, text.rich_bytes());
+    put_record(&mut group, 0x7d8, &0u16.to_le_bytes());
+    put_record(&mut group, 0x7d7, &[]);
     group
 }

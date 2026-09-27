@@ -137,11 +137,6 @@ impl Document {
     }
     pub fn text_font_state(&self, id: usize) -> Option<FontState> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if let Kind::IterationBinding(source, _) = object.kind {
-            if self.objects.get(source.checked_sub(1)?).is_some_and(|object| matches!(object.kind, Kind::PointNumericLabel(..))) {
-                return self.text_font_state(source);
-            }
-        }
         if !matches!(object.kind, Kind::PlainText { .. })
             && !(is_point_kind(&object.kind) && object.label.is_some())
             && object.kind.numeric_unit().is_none()

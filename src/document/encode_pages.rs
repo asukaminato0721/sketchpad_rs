@@ -497,6 +497,10 @@ impl Document {
                         }
                         groups.extend_from_slice(&group);
                     }
+                    Kind::CoordinatePoint(definition) => {
+                        let refs = definition.native_references().into_iter().map(|id| self.multi_page_local_reference(page, object.id, id)).collect::<Result<Vec<_>, _>>()?;
+                        groups.extend(super::coordinate_points::encode_group(object, definition, &refs)?);
+                    }
                     Kind::Colorized(definition) => {
                         put_record(&mut groups, 0x07d0, &self.colorized_object_header(object, definition)?);
                         let ids = definition.native_references();
@@ -1488,6 +1492,9 @@ impl Document {
                 }
                 expected.kind = current.kind.clone();
             }
+            if let (Kind::CoordinatePoint(old), Kind::CoordinatePoint(new)) = (&saved.kind, &current.kind) {
+                if old.frame()==new.frame() && old.wire_flavor()==new.wire_flavor() && old.native_references()==new.native_references() { expected.kind=current.kind.clone(); }
+            }
             match (&saved.kind, &current.kind) {
                 (Kind::PointOnSegment(old_host, _), Kind::PointOnSegment(host, t))
                     if old_host == host && t.is_finite() && (0.0..=1.0).contains(t) =>
@@ -1594,6 +1601,11 @@ impl Document {
                 out[at..at + 8].copy_from_slice(&point.x.to_le_bytes());
                 out[at + 8..at + 16].copy_from_slice(&point.y.to_le_bytes());
             }
+            if let Kind::CoordinatePoint(d)=&current.kind {
+                let at=current.constraint_offset.ok_or("Missing coordinate-point payload")?;
+                if out.get(at..at+4)!=Some(&d.native_payload()[..4]) { return Err("Invalid coordinate-point opcode".into()); }
+                out.get_mut(at..at+12).ok_or("Short coordinate-point payload")?.copy_from_slice(&d.native_payload());
+            }
             if saved.kind != current.kind
                 && matches!(
                     current.kind,
@@ -1617,15 +1629,11 @@ impl Document {
                             .ok_or("Short segment-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnRay(_, t) | Kind::PointOnLine(_, t) => {
-                        let code = if matches!(current.kind, Kind::PointOnRay(_, _)) {
-                            13
-                        } else {
-                            12
-                        };
-                        if out.get(at..at + 4) != Some(&[15, 0, code, 0])
+                    Kind::PointOnRay(host, t) | Kind::PointOnLine(host, t) => {
+                        let payload = out.get(at..at + 4).ok_or("Short straight-point constraint")?;
+                        if !super::kind::straight_point_constraint_matches(&self.objects[*host - 1].kind, payload)
                             && !(matches!(current.kind, Kind::PointOnLine(_, _))
-                                && out.get(at..at + 4) == Some(&[15, 0, 38, 0])) {
+                                && payload == [15, 0, 12, 0]) {
                             return Err("Invalid straight-point constraint".into());
                         }
                         out.get_mut(at + 4..at + 12)
@@ -1647,9 +1655,9 @@ impl Document {
                         out.get_mut(at + 4..at + 12)
                             .ok_or("Short polygon-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
-                        out.get_mut(at + 12..at + 16)
+                        out.get_mut(at + 12..at + 14)
                             .ok_or("Short polygon-point constraint")?
-                            .copy_from_slice(&(*edge as u32).to_le_bytes());
+                            .copy_from_slice(&(*edge as u16).to_le_bytes());
                     }
                     Kind::PointOnCircle(_, x, y) => {
                         if out.get(at..at + 4) != Some(&[15, 0, 28, 0]) {

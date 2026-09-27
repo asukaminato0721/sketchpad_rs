@@ -156,6 +156,9 @@ impl Document {
                         return Err(format!("Invalid colorized geometry {}", o.id));
                     }
                 }
+                Kind::CoordinatePoint(definition) => {
+                    if !definition.supported(&self.objects, o.page, o.id) { return Err(format!("Invalid coordinate point {}", o.id)); }
+                }
                 Kind::MappedElement(definition) => {
                     if !definition.supported(&self.objects, o.page, o.id) {
                         return Err(format!("Invalid mapped element {}", o.id));

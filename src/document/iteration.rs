@@ -412,6 +412,7 @@ fn mapped_iteration_kind(
         && let [image, calculation] = branch.as_slice()
         && let [carried_value, carried_point, label] = carried
         && calculation == carried_value && image == carried_point
+        && !matches!(depth, IterationDepth::Value(id) if id == *parameter)
         && supported_point_parameter_iteration(objects,*seed,*parameter,*image,*calculation,*label)
     {
         return Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,depth);
@@ -713,7 +714,8 @@ impl Document {
             return None;
         }
         match &self.objects.get(iteration.checked_sub(1)?)?.kind {
-            Kind::PointIteration(_, image, _)
+            Kind::PointParameterIteration(_, _, image, _, _, _)
+            | Kind::PointIteration(_, image, _)
             | Kind::SegmentIteration(_, image, _, _)
             | Kind::CircleIteration(_, image, _, _)
             | Kind::RayIteration(_, image, _, _)
@@ -779,6 +781,9 @@ impl Document {
         let object=self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source,iteration)=object.kind else { return None; };
         if object.deleted || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,Kind::PointNumericLabel(..)) { return None; }
+        if matches!(self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::PointParameterIteration(_,_,_,_,label,_) if label==source) {
+            return self.point_parameter_iteration_labels(iteration);
+        }
         self.mapped_iteration_images(source,iteration,|sample,source| {
             sample.frozen_evaluation_document(source).unwrap_or(sample).point_numeric_label(source)
         })

@@ -252,3 +252,40 @@ math macros and nonnumeric anchored text remain opaque. Scalar iteration depth
 accepts all supported Scalar values through the same unit classifier, including
 ratios and path values. See [label evidence](dev/point_numeric_labels50_analysis.md)
 and [depth evidence](dev/scalar_iteration_depth50_analysis.md).
+
+Referenced captions now preserve a strict rich-text tree and resolve ordinary
+slots through live object names, numeric values and action captions. Live Caption
+from Selection creates a bound caption; move, select, font edits, SVG/canvas and
+save/reopen use the shared text paths. Single-click referenced action text runs
+the existing handler even when its source button is hidden. Cached spelling and
+opaque allocation bytes survive saves. Flagged name/expression forms and math
+subtrees retain unsupported status; encoded text colors are preserved without
+pixel parity claims. See [Native caption evidence](dev/referenced_rich51_native_analysis.md).
+
+Generic carried iteration supports PointNumericLabel through existing
+IterationBinding outputs, with live scoped values/anchors, frozen omitted
+sources, undefined numeric text and final-only output. Fonts inherit from the
+source label without creating an editable font record on the binding. Exact
+legacy numeric iteration packets retain their specialized model and value-series
+semantics. Rendering, selection, editing/undo and dependency remapping have
+focused regression and actual API Native writer controls. See
+[Native carried-label evidence](dev/mapped_numeric_labels51_native_analysis.md).
+
+Point on Object also reads host subtype46 for Parallel and47 for Perpendicular,
+using the existing centered line parameterization. Drag/save keeps the original
+subtype on single and multiple pages. Polygon boundary packets contain a u16 edge
+index followed by six opaque bytes; edits preserve those bytes. Actual public
+movement API files reopen and save exactly in Native. Bisector subtype44 remains
+unsupported because its parameter length still needs a shared geometry correction.
+See [host evidence](dev/path_host_subtypes52_native_analysis.md) and
+[polygon API evidence](dev/polygon_constraint52_api_native_analysis.md).
+
+Native109/110 one-literal, one-live-coordinate points share a CoordinatePoint
+definition containing NumericExpr coordinates and a frame reference. Scalar
+values, negative coordinates, independent rectangular frame units, live source
+edits, fixed-coordinate API edits, undo and linked measurements use the common
+dependency graph. The public authoring API and preserving single/multiple-page
+writer are covered; there is no new desktop creation command. Mapped Scalar
+iterations reuse the same point evaluation and freeze omitted source boundaries.
+Actual API Native controls prove both live and frozen iteration results. Other
+numeric units remain guarded. See [coordinate API evidence](dev/coordinate_points52_api_native_analysis.md).

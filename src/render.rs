@@ -337,7 +337,7 @@ pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -
 }
 
 pub fn mapped_numeric_label_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
-    let size = doc.text_font_state(id).map_or(16., |style| f32::from(style.size_code));
+    let size = doc.numeric_label_font_state(id).map_or(16., |style| f32::from(style.size_code));
     doc.mapped_numeric_label_images(id).is_some_and(|labels| labels.into_iter().any(|(point, text)| {
         Rect::from_center_size(vp.screen(point), egui::vec2(text.chars().count() as f32 * size * 0.65, size * 1.1)).contains(at)
     }))
@@ -1438,7 +1438,7 @@ pub fn svg_page_with_button_offset(
         }
         for (point, text) in doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
             let at = vp.screen(point);
-            let style = doc.text_font_state(object.id);
+            let style = doc.numeric_label_font_state(object.id);
             let size = style.as_ref().map_or(16, |style| style.size_code);
             let family = style.as_ref().map_or("sans-serif", |style| style.family.as_str())
                 .replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
@@ -3116,6 +3116,21 @@ mod tests {
             f64::from(32767) / 65535.
         )));
         assert!(svg.contains("r=\"6\" fill=\"#0000ff\""));
+    }
+    #[test]
+    fn referenced_captions_export_current_source_values_and_names() {
+        let mut doc = Document::from_bytes(include_bytes!("../tests/fixtures/referenced_rich51_api_baseline_native_saved.gsp"), None).unwrap();
+        let vp = Viewport { rect: Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.,600.)), scale: 1., center: Point{x:400.,y:300.} };
+        let before=svg_page(&doc,&vp).unwrap();
+        assert!(before.contains("POINT Alpha"));
+        assert!(before.contains("VALUE 2.0"));
+        doc.set_parameter_value(2,4.).unwrap();
+        doc.set_point_label(1,"Beta",false).unwrap();
+        let after=svg_page(&doc,&vp).unwrap();
+        assert!(after.contains("POINT Beta"));
+        assert!(after.contains("VALUE 4.0"));
+        assert!(!after.contains("CACHE"));
+        doc.verify_roundtrip().unwrap();
     }
     #[test]
     fn live_color_wrappers_update_svg_geometry_and_color_after_reopen() {

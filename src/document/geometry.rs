@@ -621,6 +621,7 @@ impl Document {
                         on_path(d, *path, value, seen)
                     }
                 }
+                Kind::CoordinatePoint(definition) => d.evaluate_coordinate_point(definition),
                 Kind::NumericCoordinatePoint(x, y, frame) => {
                     let frame = d.graph_frame(*frame)?;
                     let x = d.numeric_value(*x)?;

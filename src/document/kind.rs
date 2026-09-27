@@ -194,6 +194,7 @@ impl Kind {
         }
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Kind::CoordinatePoint(d) = self { return d.native_references(); }
         if let Kind::ReferencedText { parents, .. } = self {
             return parents.clone();
         }
@@ -409,11 +410,12 @@ impl Kind {
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
-            Kind::Transformed(..) | Kind::MappedElement(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
+            Kind::CoordinatePoint(..) | Kind::Transformed(..) | Kind::MappedElement(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
         }
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::CoordinatePoint(d) = self { return Kind::CoordinatePoint(d.remap(ids)); }
         if let Kind::Colorized(definition) = self {
             return Kind::Colorized(definition.remap(ids));
         }
@@ -758,7 +760,7 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
-            Kind::MappedElement(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
+            Kind::CoordinatePoint(..) | Kind::MappedElement(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
         }
     }
     pub(super) fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
@@ -795,6 +797,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::PlainText { .. }
+            | Kind::CoordinatePoint(_)
             | Kind::MappedElement(_)
             | Kind::Colorized(_)
             | Kind::Free(_)
@@ -877,6 +880,21 @@ pub(super) fn straight_point_constraint_subtype(kind: &Kind) -> Option<u8> {
     }
 }
 
+/// The subtype is a host identity, not a flag word. Native also stores derived
+/// lines with their construction subtype; the ordinary line packet remains a
+/// valid representation of the same parameterization.
+pub(super) fn straight_point_constraint_matches(kind: &Kind, payload: &[u8]) -> bool {
+    let Some(prefix) = payload.get(..4) else {
+        return false;
+    };
+    if prefix[..2] != [15, 0] {
+        return false;
+    }
+    let subtype = u16::from_le_bytes([prefix[2], prefix[3]]);
+    straight_point_constraint_subtype(kind).is_some_and(|expected| subtype == u16::from(expected))
+        || matches!((kind, subtype), (Kind::Parallel(..), 46) | (Kind::Perpendicular(..), 47))
+}
+
 pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
     if let Kind::Colorized(d) = kind {
         return match d.element() {
@@ -931,6 +949,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PathLiteralPoint(_, _)
                 | Kind::PathValuePoint(_, _)
                 | Kind::PlottedPoint(_, _, _)
+                | Kind::CoordinatePoint(_)
                 | Kind::NumericCoordinatePoint(_, _, _)
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
@@ -1295,6 +1314,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
+        | Kind::CoordinatePoint(_)
         | Kind::NumericCoordinatePoint(_, _, _)
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)

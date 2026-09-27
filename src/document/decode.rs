@@ -402,6 +402,8 @@ impl Document {
                         | 67
                         | 68
                         | 69
+                        | 109
+                        | 110
                         | 75
                         | 95
                         | 123
@@ -569,7 +571,7 @@ impl Document {
                     0x7d3
                         if matches!(
                             code,
-                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57 | 75
+                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57 | 75 | 109 | 110
                         ) =>
                     {
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -939,6 +941,11 @@ impl Document {
                 &b[group_start..rs[i].data.end], text_style_count,
             ) {
                 caption
+            } else if let Some(definition) = super::coordinate_points::decode(
+                &objects, page, objects.len() + 1, h, &refs,
+                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+            ) {
+                Kind::CoordinatePoint(definition)
             } else if let Some(definition) = super::colorized::decode_colorized(
                 &objects, page, objects.len() + 1, h, &refs,
                 constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
@@ -956,7 +963,6 @@ impl Document {
                 Kind::Transformed(definition)
             } else {
                 match (code, point, refs.as_slice()) {
-                    (76 | 89, None, _) if mapped_iteration.as_ref().is_some_and(|kind| matches!(kind, Kind::MappedPointIteration { seeds,.. } if seeds.len() > 1)) => mapped_iteration.unwrap(),
                     (89, None, [parameter, seed, first, second, carried_second, carried_first, polygon, segments @ ..])
                         if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
                             && objects.get(parameter.saturating_sub(1)).is_some_and(|o| o.kind.is_iteration_depth_value())
@@ -984,6 +990,7 @@ impl Document {
                             && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,2,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => {
                             Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Value(*depth_parameter))
                         }
+                    (76 | 89, None, _) if mapped_iteration.as_ref().is_some_and(|kind| matches!(kind, Kind::MappedPointIteration { seeds,.. } if seeds.len() > 1)) => mapped_iteration.unwrap(),
                     (92,None,[iteration,calculation]) if *iteration>0 && objects.get(iteration-1).is_some_and(|o|matches!(o.kind,Kind::PointParameterIteration(_,_,_,value,_,_) if value==*calculation))
                         && {
                             let group=&b[group_start..rs[i].data.end];
@@ -1492,8 +1499,7 @@ impl Document {
                                 if straight_kind_mode(kind) == Some(LineMode::Line)
                                     && payload.len() == 12
                                     && (payload[..4] == [15, 0, 12, 0]
-                                        || (super::kind::straight_point_constraint_subtype(kind) == Some(38)
-                                            && payload[..4] == [15, 0, 38, 0]))
+                                        || super::kind::straight_point_constraint_matches(kind, payload))
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnLine(*host, f64_at(payload, 4))
@@ -1523,9 +1529,8 @@ impl Document {
                                     && polygon_vertex_count(&objects, *host).and_then(polygon_subtype).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
-                                    && polygon_vertex_count(&objects, *host).is_some_and(|count| (u32_at(payload, 12) as usize) < count)
-                                    && matches!(&payload[16..20], [255, 255, 0, 0] | [255, 255, 240, 191]) => {
-                                Kind::PointOnPolygon(*host, u32_at(payload, 12) as usize, f64_at(payload, 4))
+                                    && polygon_vertex_count(&objects, *host).is_some_and(|count| (u16::from_le_bytes([payload[12], payload[13]]) as usize) < count) => {
+                                Kind::PointOnPolygon(*host, u16::from_le_bytes([payload[12], payload[13]]) as usize, f64_at(payload, 4))
                             }
                             _ => Kind::Unsupported(code),
                         }

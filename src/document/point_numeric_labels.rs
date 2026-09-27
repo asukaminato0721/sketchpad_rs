@@ -62,7 +62,7 @@ pub(super) fn decode_numeric_label(
     let end = 18usize.checked_add(count)?;
     if inner < end + 1
         || inner > rich.len()
-        || rich.len() - inner > 3
+        || rich.len() - inner > 7
         || *rich.get(end)? != 0
     {
         return None;

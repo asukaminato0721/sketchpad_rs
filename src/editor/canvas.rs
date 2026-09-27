@@ -339,7 +339,7 @@ impl Editor {
                         }
                     }
                     for (point, text) in self.doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| self.doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
-                        let style = self.doc.text_font_state(object.id);
+                        let style = self.doc.numeric_label_font_state(object.id);
                         let size = style.as_ref().map_or(16, |style| style.size_code);
                         let font_id = self.canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size as f32);
                         ui.painter().text(

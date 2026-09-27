@@ -410,6 +410,10 @@ impl Editor {
                     });
                 });
                 ui.menu_button("Number", |ui| {
+                    if ui.button("Live Caption from Selection").clicked() {
+                        self.add_selected_referenced_caption();
+                        ui.close();
+                    }
                     if ui.button("Attach Selected Value to Point").clicked() {
                         self.attach_numeric_label_selected();
                         ui.close();

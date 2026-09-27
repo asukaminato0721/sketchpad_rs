@@ -6,6 +6,7 @@ mod calculations;
 mod button_encoding;
 mod coordinates;
 pub mod colorized;
+pub mod coordinate_points;
 pub mod referenced_text;
 mod referenced_captions;
 mod decode;
@@ -194,6 +195,7 @@ pub enum Kind {
     PathValuePoint(usize, usize),
     PlottedPoint(usize, PlotPointsMode, [f64; 2]),
     NumericCoordinatePoint(usize, usize, usize),
+    CoordinatePoint(coordinate_points::CoordinatePointDefinition),
     // Parameter ranges retain native units (radians for angles). Public range
     // access and editing use the driver's displayed numeric units.
     ParameterLocus(Vec<usize>, f64, f64, u32),

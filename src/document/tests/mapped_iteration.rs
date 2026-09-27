@@ -578,12 +578,12 @@ fn mapped_calculated_angle_native_parameter_updates_and_point_segment_bindings()
         "../../../tests/fixtures/mapped_calculated_angle_iteration_full_native_verified.gsp"
     );
     let full = Document::from_bytes(full_bytes, None).unwrap();
-    assert!(full.partial_view);
+    assert!(!full.partial_view);
     assert!(matches!(
         full.objects[6].kind,
         Kind::MappedPointIteration { .. }
     ));
-    assert_eq!(full.objects[10].kind, Kind::Unsupported(73));
+    assert!(matches!(full.objects[10].kind, Kind::ReferencedText { .. }));
     assert_eq!(full.encode().unwrap(), full_bytes);
     let bytes = include_bytes!(
         "../../../tests/fixtures/mapped_calculated_angle_iteration_native_verified.gsp"
@@ -1306,8 +1306,10 @@ fn mapped_pentagon_corpus_recomputes_rotation_dilation_graph_for_every_branch() 
     }
     assert_eq!(doc.position(1), Some(Point { x: 291., y: 486. }));
     doc.verify_roundtrip().unwrap();
-    // The original has structural restrictions outside this recovered graph;
-    // decoding and exact preservation do not grant unrestricted editing.
-    assert!(doc.set_mapped_iteration_final_only(16, false).is_err());
+    // The referenced caption now completes the original graph, so this verified
+    // iteration edit is available and retains the original presentation bytes.
+    doc.set_mapped_iteration_final_only(16, false).unwrap();
+    doc.verify_roundtrip().unwrap();
+    doc.undo();
     assert_eq!(doc.encode().unwrap().as_slice(), bytes);
 }

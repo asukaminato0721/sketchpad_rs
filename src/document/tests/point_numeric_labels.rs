@@ -126,3 +126,13 @@ fn unknown_reference_and_cached_markup_remain_opaque_and_lossless() {
         assert_eq!(doc.encode().unwrap(), bytes);
     }
 }
+
+#[test]
+fn native_numeric_label_opaque_alignment_bytes_do_not_change_live_values() {
+    let bytes=include_bytes!("../../../tests/fixtures/referenced_rich51_numeric_padding_native_saved.gsp");
+    let doc=Document::from_bytes(bytes,None).unwrap();
+    let label=doc.objects.last().unwrap().id;
+    assert!(matches!(doc.objects[label-1].kind,Kind::PointNumericLabel(..)));
+    assert_eq!(doc.point_numeric_label(label).unwrap().1,"3.00");
+    assert_eq!(doc.encode().unwrap(),bytes);
+}

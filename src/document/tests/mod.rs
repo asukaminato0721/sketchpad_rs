@@ -126,6 +126,8 @@ mod referenced_captions;
 mod mapped_elements;
 
 mod axis_point_constraints;
+mod derived_line_point_constraints;
+mod polygon_constraint_metadata;
 
 mod scalar_iteration_depth;
 
@@ -134,3 +136,5 @@ mod colorized;
 mod point_numeric_labels;
 
 mod mapped_numeric_labels;
+
+mod coordinate_points;

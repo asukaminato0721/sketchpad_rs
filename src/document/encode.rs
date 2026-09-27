@@ -126,6 +126,11 @@ impl Document {
                 out[i..i + 8].copy_from_slice(&p.x.to_le_bytes());
                 out[i + 8..i + 16].copy_from_slice(&p.y.to_le_bytes());
             }
+            if let Kind::CoordinatePoint(d) = &o.kind {
+                let i=o.constraint_offset.ok_or("Missing coordinate-point payload")?;
+                if out.get(i..i+4)!=Some(&d.native_payload()[..4]) { return Err("Invalid coordinate-point opcode".into()); }
+                out.get_mut(i..i+12).ok_or("Short coordinate-point payload")?.copy_from_slice(&d.native_payload());
+            }
             if let Some(i) = o.constraint_offset {
                 match o.kind {
                     Kind::GraphHorizontalUnit(_, step)
@@ -161,8 +166,10 @@ impl Document {
                     Kind::PointOnRay(_, t) if out.get(i..i + 4) == Some(&[15, 0, 13, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnLine(_, t)
-                        if matches!(out.get(i..i + 4), Some([15, 0, 12 | 38, 0])) => {
+                    Kind::PointOnLine(host, t)
+                        if out.get(i..i + 4).is_some_and(|payload|
+                            payload == [15, 0, 12, 0]
+                                || super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
@@ -170,7 +177,7 @@ impl Document {
                     }
                     Kind::PointOnPolygon(_, edge, t) if out.get(i..i + 2) == Some(&[15, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
-                        out[i + 12..i + 16].copy_from_slice(&(edge as u32).to_le_bytes());
+                        out[i + 12..i + 14].copy_from_slice(&(edge as u16).to_le_bytes());
                     }
                     Kind::PointOnCircle(_, x, y) if out.get(i..i + 4) == Some(&[15, 0, 28, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&x.to_le_bytes());
@@ -497,6 +504,11 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::CoordinatePoint(definition) = &o.kind {
+                let refs = definition.native_references().into_iter().map(|id| id as u32).collect::<Vec<_>>();
+                added.extend(super::coordinate_points::encode_group(o, definition, &refs)?);
+                continue;
+            }
             if let Kind::ReferencedText { parents, text } = &o.kind {
                 let refs = parents.iter().map(|id| u32::try_from(*id).map_err(|_| "Caption reference is too large")).collect::<Result<Vec<_>, _>>()?;
                 added.extend(super::referenced_captions::encode_group(o, &refs, text));

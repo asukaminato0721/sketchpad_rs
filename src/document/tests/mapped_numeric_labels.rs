@@ -133,6 +133,9 @@ fn retained_native_general_mapped_numeric_labels_match_values_positions_and_byte
         "spaced_baseline",
         "spaced_edited",
         "spaced_frozen",
+        "api_baseline",
+        "api_edited",
+        "api_frozen",
     ] {
         let bytes = fs::read(format!(
             "tests/fixtures/mapped_numeric_label51_{state}_native_verified.gsp"
@@ -144,7 +147,7 @@ fn retained_native_general_mapped_numeric_labels_match_values_positions_and_byte
             d.objects[9].kind,
             Kind::MappedPointIteration { .. }
         ));
-        let spaced = state.starts_with("spaced_");
+        let spaced = state.starts_with("spaced_") || state.starts_with("api_");
         let (xs, values) = if state.ends_with("edited") {
             (
                 if spaced {
@@ -173,4 +176,38 @@ fn retained_native_general_mapped_numeric_labels_match_values_positions_and_byte
         assert_eq!(d.encode().unwrap(), bytes, "{state}");
         d.verify_roundtrip().unwrap();
     }
+}
+
+#[test]
+fn generic_label_authoring_preserves_exact_legacy_point_parameter_packet_roles() {
+    let mut d = Document::new();
+    for (x, y) in [(100., 180.), (0., 180.), (40., 180.)] {
+        d.add(Kind::Free(Point { x, y }));
+    }
+    d.add(Kind::VectorTranslatedPoint(1, 2, 3));
+    d.add_named_parameter("q", 0.5, (10, 10)).unwrap();
+    d.add_parameter_calculation(5, "q+0.25", (10, 10)).unwrap();
+    d.add_point_numeric_label(4, 6).unwrap();
+    d.add_named_parameter("n", 3., (10, 10)).unwrap();
+    let parent = d
+        .add_mapped_point_iteration_with_bindings(
+            &[1, 5],
+            &[vec![4, 6]],
+            &[6, 4, 7],
+            &[4, 7],
+            IterationDepth::Value(8),
+        )
+        .unwrap();
+    assert!(matches!(
+        d.objects[parent - 1].kind,
+        Kind::PointParameterIteration(1, 5, 4, 6, 7, _)
+    ));
+    check(&d, parent + 2, &[180., 220., 260.], &[1., 1.25, 1.5]);
+    assert_eq!(d.mapped_point_binding_images(parent + 1).unwrap().len(), 3);
+    d.verify_roundtrip().unwrap();
+    let bytes = d.encode().unwrap();
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    check(&reopened, parent + 2, &[180., 220., 260.], &[1., 1.25, 1.5]);
+    assert_eq!(reopened.encode().unwrap(), bytes);
 }

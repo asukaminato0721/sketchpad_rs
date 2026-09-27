@@ -760,3 +760,17 @@ impl Document {
         )
     }
 }
+
+impl Document {
+    /// A repeated numeric label inherits its source font without creating a
+    /// separate editable font record on the generic iteration binding.
+    pub fn numeric_label_font_state(&self, id: usize) -> Option<crate::text_style_records::FontState> {
+        let object=self.objects.get(id.checked_sub(1)?)?;
+        if let Kind::IterationBinding(source, _) = object.kind {
+            if self.objects.get(source.checked_sub(1)?).is_some_and(|object|matches!(object.kind,Kind::PointNumericLabel(..))) {
+                return self.text_font_state(source);
+            }
+        }
+        self.text_font_state(id)
+    }
+}
