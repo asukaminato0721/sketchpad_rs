@@ -36,7 +36,7 @@ fn paste_midpoint_across_documents_preserves_dependencies() {
     let b = source.add(Kind::Free(Point { x: 5., y: 8. }));
     source.add(Kind::Segment(a, b));
     let midpoint = source.add(Kind::Midpoint(a, b));
-    source.selected.insert(midpoint);
+    source.selected.extend(1..=midpoint);
     let clipboard = source.copy_selected().unwrap();
     assert_eq!(clipboard.len(), 4);
     let mut dest = Document::new();

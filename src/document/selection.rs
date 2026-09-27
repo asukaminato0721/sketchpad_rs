@@ -104,11 +104,52 @@ impl Document {
         }
         Some(dependencies)
     }
+    fn copy_has_selected_ancestor(&self, root: usize) -> Result<bool, String> {
+        let mut stack = self.dependencies_of(root).ok_or("Invalid selection")?
+            .into_iter().map(|parent| (root, parent)).collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        while let Some((child, parent)) = stack.pop() {
+            if parent == 0 || parent >= child {
+                return Err("Clipboard has an invalid dependency".into());
+            }
+            if !visited.insert(parent) {
+                continue;
+            }
+            let object = self.objects.get(parent - 1).ok_or("Invalid selection")?;
+            if object.deleted || object.page != self.active_page
+                || matches!(object.kind, Kind::Unsupported(_)) {
+                return Err(format!("Object {parent} cannot be copied safely"));
+            }
+            if self.selected.contains(&parent) {
+                return Ok(true);
+            }
+            stack.extend(self.dependencies_of(parent).ok_or("Invalid selection")?
+                .into_iter().map(|ancestor| (parent, ancestor)));
+        }
+        Ok(false)
+    }
+
     pub fn copy_selected(&self) -> Result<Clipboard, String> {
         let mut included = BTreeSet::new();
         let mut pending: Vec<usize> = self.selected.iter().copied().collect();
         if pending.is_empty() {
             return Err("Select objects to copy".into());
+        }
+        // Ordinary point constructions are retained when the copied selection
+        // includes an ancestor; isolated selected points become free snapshots.
+        let mut frozen_points = std::collections::BTreeMap::new();
+        for &id in &self.selected {
+            let object = self.objects.get(id.checked_sub(1).ok_or("Invalid selection")?)
+                .ok_or("Invalid selection")?;
+            if object.deleted || object.page != self.active_page {
+                return Err(format!("Object {id} cannot be copied safely"));
+            }
+            if matches!(object.kind, Kind::NumericCoordinatePoint(..)
+                | Kind::Midpoint(..) | Kind::SegmentMidpoint(_))
+                && !self.copy_has_selected_ancestor(id)? {
+                frozen_points.insert(id, self.position(id)
+                    .ok_or("Selected point is undefined")?);
+            }
         }
         for object in self
             .objects
@@ -143,7 +184,9 @@ impl Document {
             {
                 return Err(format!("Object {id} cannot be copied safely"));
             }
-            pending.extend(self.dependencies_of(id).ok_or("Invalid selection")?);
+            if !frozen_points.contains_key(&id) {
+                pending.extend(self.dependencies_of(id).ok_or("Invalid selection")?);
+            }
             if matches!(
                 object.kind,
                 Kind::PointParameterIteration(..)
@@ -161,6 +204,22 @@ impl Document {
             }
         }
         let mut hide_on_paste = BTreeSet::new();
+        for &id in &included {
+            if frozen_points.contains_key(&id) {
+                continue;
+            }
+            let object = &self.objects[id - 1];
+            let host = match object.kind {
+                Kind::Midpoint(..) => object.midpoint_host,
+                Kind::SegmentMidpoint(host) => Some(host),
+                _ => None,
+            };
+            if let Some(host) = host {
+                if !self.selected.contains(&host) && included.contains(&host) {
+                    hide_on_paste.insert(host);
+                }
+            }
+        }
         let rename_on_paste = self.objects.iter().find_map(|object| {
             let Kind::ParametricPlot(x, y, _, _, _, _, _) = object.kind else {
                 return None;
@@ -234,10 +293,15 @@ impl Document {
                     };
                     Ok(ClipboardObject {
                         old_id: id,
-                        kind: object.kind.clone(),
+                        kind: frozen_points.get(&id)
+                            .map_or_else(|| object.kind.clone(), |point| Kind::Free(*point)),
                         visible: object.visible && !self.is_presentation_suppressed(id),
                         tracing: object.tracing,
-                        midpoint_host: object.midpoint_host,
+                        midpoint_host: if frozen_points.contains_key(&id) {
+                            None
+                        } else {
+                            object.midpoint_host
+                        },
                         visual_style: object.visual_style,
                         interior_order: object.interior_order,
                         text_style: self.text_font_state(id),

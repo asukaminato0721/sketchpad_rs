@@ -153,3 +153,49 @@ are retained as
 Flag2-only helpers and their independently tested Show All Hidden behavior are
 covered by the endpoint/midpoint controls in
 [`tool_segment_given_analysis.md`](tool_segment_given_analysis.md).
+
+## Numeric layout and current validation gate
+
+The runtime maps numeric output fonts into the drawing font namespace before
+canonical calculation decoding. Tool-local tables remain byte-preserved. Native
+controls independently changed the destination caption to Tahoma24Bold, the
+script output font to24Normal, and the script given font to26Bold; new results
+still used the current application calculation default, Tahoma18Normal. These
+controls establish independence from stored caption/script fonts, not a universal
+font preference across historical files. Preferences remain incomplete.
+
+Numeric results follow the last numeric object by ID on the active page, using
+its current anchor and actual supported caption height. Native retained controls
+establish parameter bounding-box height plus one, flat Tahoma18Normal calculation
+step27, flat Tahoma24Bold step34, default measured-length step21, and measured-area
+step23. Unsupported fraction/font layouts still require implementation and
+independent native controls. Fresh area4204-byte and product3974-byte API writers
+opened and saved byte-identically in Native with positive separated captions;
+the product remains live through measured-source movement. See the retained
+`embedded_tool_numeric_{area,product}_invoked_font_flow_writer_native_verified`
+fixture pairs.
+
+The complete `cargo test --all-targets` gate45 exited0 on2026-09-27:863 tests
+(682 library,127 editor,42 numeric import,7 coverage,2 source preservation,
+3 value-equation integration). Corpus checkpoint20 separately preserves all
+1599 files exactly, with3413 of5356 prototype slots decoded. Neither gate proves
+completion of the broader port; `COMMAND_PARITY.md` retains the command gaps.
+
+All six fresh numeric font/flow writers subsequently passed Native open/save,
+independent exact comparison, and positive caption inspection: scalar3338,
+length3760, degree3762, measurement3972, area4204, product3974 bytes. Their
+`*_invoked_font_flow_writer_native_verified` fixture pairs preserve the older
+writer checkpoints. Generic numeric authoring now also covers selected scalar
+and degree parameters or segment-length measurements with a direct supported
+calculation, using Native script fonts18Normal for the given and16Normal for
+the step. Broader authoring graphs remain incomplete.
+
+The subsequent full gate47 exited0 with867 tests (686 library,127 editor,
+42 numeric import,7 coverage,2 source preservation,3 value-equation integration).
+It includes the actual Native execution regression for the port-authored numeric
+tool, the independent single numeric-point clipboard boundary, and expression-tree
+fraction placement. Single, nested, and24Bold fraction API writers each passed
+Native0, exact independent comparison, and positive caption inspection. Fraction
+source expansion with generated/named non-formula captions, broader measurement
+layouts, broader authoring graphs, and other clipboard boundaries remain active
+work. Corpus checkpoint20 retains1599 exact original-file roundtrips.

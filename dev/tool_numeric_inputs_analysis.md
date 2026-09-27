@@ -86,3 +86,69 @@ units remain guarded pending a separate proof.
 The corpus also contains raw class11/subtypes51,57,79,80,81,48 givens. Their
 category restrictions and placeholder representations are separate work. This
 slice does not infer them from ordinary construction headers.
+
+## Native numeric caption flow and font policy
+
+Invocation places each output after the last live numeric object by drawing ID
+on the active page. It uses that object's current x anchor and current caption
+bottom plus one. It does not choose the spatially lowest object or the selected
+input. Retained controls `embedded_tool_numeric_flow_last_caption_native_verified`
+and `embedded_tool_numeric_flow_moved_last_caption_native_verified` move only
+the last calculation: (20,160) gives (20,187), while (300,300) gives (300,327).
+The earlier numeric object at y=300 does not change this ordering.
+
+Parameter caption bounds are persisted in 08a3: Scalar and Length at y=120
+end at159, while Degrees ends at154. Their next anchors are160 and155.
+The observed default measurement captions give21 pixels for SegmentLength and
+23 for PolygonArea, including its square-unit superscript. Flat Tahoma18Normal
+formula captions give27 pixels. A Tahoma24Bold formula at (20,60) gives its next
+output at (20,94), retained as
+`embedded_tool_numeric_24bold_caption_flow_native_verified`.
+
+Native uses the current application's calculation style for the newly produced
+ordinary caption. In these controlled sessions it is Tahoma18Normal. It does
+not copy the Script View output's Tahoma16Normal font, the given's font, or the
+previous ordinary caption's24Bold font. Independent changes to just the local
+output font (16 to24Normal) and just the given font (18 to26Bold) were ignored;
+`embedded_tool_numeric_local_output_font_ignored_native_verified` and
+`embedded_tool_numeric_local_given_font_ignored_native_verified` retain both
+positive controls. This establishes the tested current preference, not a
+universal historical default for every Native installation.
+
+Fresh runtime writers with this font and flow policy were independently opened,
+saved, compared byte for byte and visually checked in Native:
+`embedded_tool_numeric_{scalar,length,degree,measure,area,product}_invoked_font_flow_writer_native_verified`.
+The visible results are respectively3/4,6/6/7,36/36/37,6/6/7,6/6/7 and20/20/40;
+the captions follow one another without overlap. Each fixture has a matching PNG.
+
+## Fraction expression heights
+
+Three independent Native controls retain positive captures and second successful
+open/save byte comparisons:
+`embedded_tool_numeric_fraction_single_flow_native_verified` places the output
+at y=216 after a Tahoma18Normal u/2 caption at y=160;
+`embedded_tool_numeric_fraction_nested_flow_native_verified` places it at245
+after an expanded (t/2)/2 caption at160; and
+`embedded_tool_numeric_fraction_24bold_flow_native_verified` places it at130
+after a24Bold t/2 caption at60.
+
+The corresponding steps56,85 and70 support expression-tree layout: flat18
+caption height26, flat24Bold height33, and a fraction's height is the numerator
+height plus denominator height plus3, followed by one pixel before the next
+caption. Nested source formulas use the containing calculation's font. In the
+nested control the original source t/2 is24Bold, yet the new18Normal caption
+expands it using height55, giving total84 rather than mixing source font metrics.
+Named fraction source expansion remains guarded until an independent naming
+control. Function calls, powers, unproved math-font profiles and converted
+literal fractions also require separate layout controls; division token count
+alone cannot represent nested fraction height.
+
+The fresh API writer files were also independently opened and saved in Native,
+with exact byte comparisons and positive captures of the values and spacing:
+`embedded_tool_numeric_fraction_single_invoked_writer_native_verified` (3546B,
+u/2=2.50 at216), `embedded_tool_numeric_fraction_nested_invoked_writer_native_verified`
+(3546B, (t/2)/2=0.50 at245), and
+`embedded_tool_numeric_fraction_24bold_invoked_writer_native_verified` (3164B,
+t/2=1.00 at130). The regression checks these complete writer bytes, live runtime
+values, reparsing, moved current anchors and undo. The source24Bold font is kept;
+the materialized output uses the tested current18Normal default.

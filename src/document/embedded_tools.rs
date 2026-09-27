@@ -280,17 +280,36 @@ impl Document {
         index: usize,
         inputs: &[usize],
     ) -> Result<Vec<usize>, String> {
-        let summaries = self.embedded_tools()?;
-        let summary = summaries.get(index).ok_or("Unknown embedded tool")?;
-        let local_inputs = summary
-            .input_ids
-            .as_ref()
-            .ok_or("Invalid embedded tool input declaration")?;
+        let tool = self.embedded_tool_document(index)?;
+        let input_types = self.embedded_tool_inputs(index)?;
+        self.invoke_tool_prototype(tool, input_types, inputs)
+    }
+
+    /// Invoke an immutable tool definition from another document. Only the
+    /// materialized construction becomes part of this drawing; the source
+    /// document and its definition namespace remain independent.
+    pub fn invoke_tool_from_document(
+        &mut self,
+        source: &Document,
+        index: usize,
+        inputs: &[usize],
+    ) -> Result<Vec<usize>, String> {
+        let tool = source.embedded_tool_document(index)?;
+        let input_types = source.embedded_tool_inputs(index)?;
+        self.invoke_tool_prototype(tool, input_types, inputs)
+    }
+
+    fn invoke_tool_prototype(
+        &mut self,
+        tool: Document,
+        input_types: Vec<EmbeddedToolInput>,
+        inputs: &[usize],
+    ) -> Result<Vec<usize>, String> {
+        let local_inputs: Vec<_> = input_types.iter()
+            .map(|input| input.local_id as u32).collect();
         if inputs.len() != local_inputs.len() || inputs.is_empty() {
             return Err("Select the tool's ordered inputs".into());
         }
-        let tool = self.embedded_tool_document(index)?;
-        let input_types = self.embedded_tool_inputs(index)?;
         if tool.partial_view || !tool.safe_structure {
             return Err("Tool prototype contains unsupported records or constructions".into());
         }

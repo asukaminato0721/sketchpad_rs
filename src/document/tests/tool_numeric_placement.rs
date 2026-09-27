@@ -69,3 +69,38 @@ fn tool_numeric_placement_uses_new_literal_bounds_and_checks_overflow() {
     document.move_number(id, (120, i16::MAX - height + 1)).unwrap();
     assert!(document.next_tool_numeric_anchor().is_err());
 }
+
+#[test]
+fn tool_fraction_placement_matches_native_expression_tree_heights() {
+    for (bytes, expected, source, value) in [
+        (include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_single_flow_native_verified.gsp").as_slice(), (20, 216), 3, 2.5),
+        (include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_nested_flow_native_verified.gsp").as_slice(), (20, 245), 2, 0.5),
+        (include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_24bold_flow_native_verified.gsp").as_slice(), (20, 130), 1, 1.0),
+    ] {
+        let mut document = Document::from_bytes(bytes, None).unwrap();
+        assert!(!document.partial_view);
+        assert_eq!(document.encode().unwrap(), bytes);
+        assert_eq!(remove_last_native_output(&mut document), expected);
+        assert_eq!(document.next_tool_numeric_anchor().unwrap(), expected);
+        let output = document.invoke_embedded_tool(0, &[source]).unwrap()[0];
+        assert_eq!(document.numeric_value(output), Some(value));
+        let Kind::ParameterCalculation(_, group) = &document.objects[output - 1].kind else { panic!("Expected fraction calculation") };
+        assert_eq!(group.anchor(), expected);
+        document.verify_roundtrip().unwrap();
+        let native_writer: &[u8] = match expected.1 {
+            216 => include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_single_invoked_writer_native_verified.gsp"),
+            245 => include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_nested_invoked_writer_native_verified.gsp"),
+            130 => include_bytes!("../../../tests/fixtures/embedded_tool_numeric_fraction_24bold_invoked_writer_native_verified.gsp"),
+            _ => unreachable!(),
+        };
+        assert_eq!(document.encode().unwrap(), native_writer);
+        if std::env::var_os("SKETCHPAD_WRITE_TOOL_FRACTION_FIXTURES").is_some() {
+            std::fs::write(format!("/tmp/embedded_tool_numeric_fraction_{}_writer.gsp", expected.1), document.encode().unwrap()).unwrap();
+        }
+        document.move_number(output, (300, 300)).unwrap();
+        let step = if expected.1 == 245 { 85 } else { 56 };
+        assert_eq!(document.next_tool_numeric_anchor().unwrap(), (300, 300 + step));
+        document.undo();
+        assert_eq!(document.next_tool_numeric_anchor().unwrap(), (20, expected.1 + step));
+    }
+}

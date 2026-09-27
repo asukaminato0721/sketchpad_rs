@@ -63,6 +63,13 @@ fn numeric_tool_givens_bind_typed_parameters_measurements_and_calculations_atomi
         assert_eq!(prototype.numeric_value(1), None);
         assert!(prototype.encode().is_err());
         assert!(!document.partial_view);
+        let native_font_control = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/embedded_tool_numeric_24bold_caption_flow_native_verified.gsp"),
+            None,
+        ).unwrap();
+        let native_caption_font = native_font_control
+            .text_font_state(native_font_control.objects.last().unwrap().id)
+            .unwrap();
         let before = document.encode().unwrap();
         let history = document.undo.len();
         let output = document.invoke_embedded_tool(0, &[source])
@@ -72,6 +79,7 @@ fn numeric_tool_givens_bind_typed_parameters_measurements_and_calculations_atomi
             Some(NumericUnit::Scalar)
         );
         assert!((document.numeric_value(output).unwrap() - expected).abs() < 1e-10);
+        assert_eq!(document.text_font_state(output), Some(native_caption_font));
         assert_eq!(document.undo.len(), history + 1);
         let saved = document.encode().unwrap();
         document.verify_roundtrip().unwrap();

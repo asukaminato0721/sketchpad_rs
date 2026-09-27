@@ -1,6 +1,12 @@
 use super::records::{header, put_record, records};
 use super::{Document, EmbeddedToolInputKind, Kind};
+use crate::table_records::ParameterCalculationGroup;
 use std::collections::BTreeSet;
+
+struct NumericToolGraph {
+    inputs: Vec<usize>,
+    calculations: Vec<usize>,
+}
 
 impl Document {
     /// Create a document tool from the selected construction and its prerequisites.
@@ -19,10 +25,17 @@ impl Document {
         }
         let numeric_boundary = self.numeric_tool_boundary()?;
         let (prototype, prototype_bytes, path_groups, input_count, object_count, mapping) =
-            if let Some((given, output)) = numeric_boundary {
+            if let Some(graph) = numeric_boundary.as_ref() {
                 let bytes = self.encode()?;
-                let groups = numeric_template_groups(self, given, output)?;
-                (self.clone(), bytes, Some(groups), 1, 2, Vec::new())
+                let groups = numeric_template_groups(self, graph)?;
+                (
+                    self.clone(),
+                    bytes,
+                    Some(groups),
+                    graph.inputs.len(),
+                    graph.inputs.len() + graph.calculations.len(),
+                    Vec::new(),
+                )
             } else {
                 let path_boundary = self.path_tool_boundary()?;
                 let mut clipboard = self.copy_selected()?;
@@ -138,16 +151,16 @@ impl Document {
         if numeric_boundary.is_some() {
             section.extend_from_slice(include_bytes!("../../assets/native_numeric_tool_fonts.bin"));
         } else {
-        for record in prototype_records
-            .iter()
-            .filter(|record| matches!(record.kind, 0x04b1 | 0x04b3))
-        {
-            put_record(
-                &mut section,
-                record.kind,
-                &prototype_bytes[record.data.clone()],
-            );
-        }
+            for record in prototype_records
+                .iter()
+                .filter(|record| matches!(record.kind, 0x04b1 | 0x04b3))
+            {
+                put_record(
+                    &mut section,
+                    record.kind,
+                    &prototype_bytes[record.data.clone()],
+                );
+            }
         }
         let inputs: BTreeSet<_> = (1..=input_count).collect();
         let selected_local: BTreeSet<_> = self
@@ -258,7 +271,7 @@ impl Document {
 }
 
 impl Document {
-    fn numeric_tool_boundary(&self) -> Result<Option<(usize, usize)>, String> {
+    fn numeric_tool_boundary(&self) -> Result<Option<NumericToolGraph>, String> {
         let numeric: Vec<_> = self
             .selected
             .iter()
@@ -272,38 +285,76 @@ impl Document {
         if numeric.is_empty() {
             return Ok(None);
         }
-        if numeric.len() != 2 || self.selected.len() != 2 {
-            return Err(
-                "Numeric tools currently require a supported input and its calculation".into(),
-            );
+        if numeric.len() != self.selected.len() {
+            return Err("Mixed numeric and geometry tool templates are not supported yet".into());
         }
-        let given = numeric
+        let inputs: BTreeSet<_> = numeric
             .iter()
             .copied()
-            .find(|&id| match &self.objects[id - 1].kind {
-                Kind::Parameter(group) => matches!(
-                    group.unit(),
-                    crate::table_records::NumericUnit::Scalar
-                        | crate::table_records::NumericUnit::Degrees
-                ),
-                Kind::SegmentLength(_) => true,
-                _ => false,
+            .filter(|&id| {
+                matches!(
+                    self.objects[id - 1].kind,
+                    Kind::Parameter(_) | Kind::SegmentLength(_)
+                )
             })
-            .ok_or("This numeric given category has not been established for tool creation")?;
-        let output = numeric.iter().copied().find(|&id| id != given).unwrap();
-        for id in [given, output] {
-            let object = &self.objects[id - 1];
-            if object.deleted || object.page != self.active_page || self.numeric_value(id).is_none()
-            {
-                return Err("Numeric tool objects must be defined on the active page".into());
+            .collect();
+        if inputs.is_empty() || inputs.len() == numeric.len() {
+            return Err("Select supported numeric inputs and constructed calculations".into());
+        }
+        let mut calculations = BTreeSet::new();
+        let mut used_inputs = BTreeSet::new();
+        for id in numeric {
+            if !inputs.contains(&id) {
+                self.collect_numeric_tool_graph(id, &inputs, &mut calculations, &mut used_inputs)?;
             }
         }
-        if !matches!(&self.objects[output - 1].kind, Kind::ParameterCalculation(_, group)
-            if group.sources() == vec![given as u32])
-        {
-            return Err("Numeric tool output must be a calculation of the selected input".into());
+        if used_inputs != inputs {
+            return Err("All selected numeric givens must feed the selected calculations".into());
         }
-        Ok(Some((given, output)))
+        // Native stores u before t, but declares the binding order t then u.
+        Ok(Some(NumericToolGraph {
+            inputs: inputs.into_iter().rev().collect(),
+            calculations: calculations.into_iter().collect(),
+        }))
+    }
+
+    fn collect_numeric_tool_graph(
+        &self,
+        id: usize,
+        inputs: &BTreeSet<usize>,
+        calculations: &mut BTreeSet<usize>,
+        used_inputs: &mut BTreeSet<usize>,
+    ) -> Result<(), String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid numeric tool source")?)
+            .filter(|object| !object.deleted && object.page == self.active_page)
+            .ok_or("Numeric tool sources must be live on the active page")?;
+        if !self.numeric_value(id).is_some_and(f64::is_finite) {
+            return Err("Numeric tool sources must be defined".into());
+        }
+        if inputs.contains(&id) {
+            used_inputs.insert(id);
+            return Ok(());
+        }
+        if calculations.contains(&id) {
+            return Ok(());
+        }
+        let group = numeric_tool_calculation(&object.kind)?;
+        let sources: Vec<_> = group.sources().into_iter().map(|id| id as usize).collect();
+        if self.dependencies_of(id).as_ref() != Some(&sources) {
+            return Err(
+                "Numeric tool calculation references disagree with its semantic graph".into(),
+            );
+        }
+        for source in sources {
+            if source >= id {
+                return Err("Numeric tool calculations require earlier sources".into());
+            }
+            self.collect_numeric_tool_graph(source, inputs, calculations, used_inputs)?;
+        }
+        calculations.insert(id);
+        Ok(())
     }
 
     fn constructible_from_selected_points(
@@ -468,52 +519,84 @@ fn path_template_groups(
     Ok(groups)
 }
 
-/// Project the independently proved scalar-parameter template into Native's
-/// abstract Numeric category. Source IDs are remapped by the calculation parser.
+/// Project supported AST records into Native's abstract Numeric graph. Source
+/// references are remapped through the typed calculation parser, never caches.
 fn numeric_template_groups(
     document: &Document,
-    given: usize,
-    output: usize,
+    graph: &NumericToolGraph,
 ) -> Result<Vec<u8>, String> {
-    let name = match &document.objects[given - 1].kind {
-        Kind::Parameter(parameter) => parameter.name(),
-        Kind::SegmentLength(_) => "m[1]",
-        _ => return Err("Unsupported numeric tool given".into()),
-    };
-    let Kind::ParameterCalculation(_, calculation) = &document.objects[output - 1].kind else {
-        return Err("Unsupported numeric tool output".into());
-    };
     let mut template = b"GSP4".to_vec();
     template.extend_from_slice(include_bytes!("../../assets/native_numeric_tool_given.bin"));
     let mut groups = Vec::new();
-    for record in records(&template)? {
-        if record.kind == 0x07d5 {
-            let mut label = crate::text_records::LabelAux::parse(&template[record.data.clone()])?;
-            label.set_name(name)?;
-            put_record(&mut groups, record.kind, label.payload());
-        } else {
-            put_record(&mut groups, record.kind, &template[record.data]);
+    let mut mapping = vec![0u32; document.objects.len() + 1];
+    for (index, &given) in graph.inputs.iter().enumerate() {
+        mapping[given] = (index + 1) as u32;
+        let name = match &document.objects[given - 1].kind {
+            Kind::Parameter(_) => document
+                .parameter_display_name(given)
+                .ok_or("Numeric given has no available parameter name")?,
+            Kind::SegmentLength(_) => format!("m[{}]", index + 1),
+            _ => return Err("Unsupported numeric tool given".into()),
+        };
+        for record in records(&template)? {
+            if record.kind == 0x07d5 {
+                let mut label =
+                    crate::text_records::LabelAux::parse(&template[record.data.clone()])?;
+                label.set_name(&name)?;
+                put_record(&mut groups, record.kind, label.payload());
+            } else {
+                put_record(&mut groups, record.kind, &template[record.data]);
+            }
         }
     }
-    let remapped = calculation.remap_sources(&[1])?;
-    let mut framed = b"GSP4".to_vec();
-    framed.extend_from_slice(remapped.as_bytes());
-    for record in records(&framed)? {
-        let mut payload = framed[record.data].to_vec();
-        if record.kind == 0x07d0 {
-            if payload.len() != 28
-                || payload[0..2] != 48u16.to_le_bytes()
-                || payload[6..8] != 11u16.to_le_bytes()
-            {
-                return Err("Unsupported numeric calculation tool header".into());
+    for (index, &id) in graph.calculations.iter().enumerate() {
+        mapping[id] = (graph.inputs.len() + index + 1) as u32;
+        let calculation = numeric_tool_calculation(&document.objects[id - 1].kind)?;
+        let sources = calculation
+            .sources()
+            .iter()
+            .map(|&source| {
+                mapping
+                    .get(source as usize)
+                    .copied()
+                    .filter(|&id| id != 0)
+                    .ok_or("Numeric tool source is outside the declared graph")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let remapped = calculation.remap_sources(&sources)?;
+        let mut framed = b"GSP4".to_vec();
+        framed.extend_from_slice(remapped.as_bytes());
+        for record in records(&framed)? {
+            let mut payload = framed[record.data].to_vec();
+            if record.kind == 0x07d0 {
+                if payload.len() != 28
+                    || payload[0..2] != 48u16.to_le_bytes()
+                    || payload[6..8] != 11u16.to_le_bytes()
+                {
+                    return Err("Unsupported numeric calculation tool header".into());
+                }
+                payload[8..10].copy_from_slice(&33u16.to_le_bytes());
+                if !document.selected.contains(&id) {
+                    // Native includes necessary unselected calculations as flag2 helpers.
+                    payload[2] = 2;
+                }
             }
-            payload[8..10].copy_from_slice(&33u16.to_le_bytes());
+            if record.kind == 0x07d8 {
+                if payload.len() != 2 {
+                    return Err("Unsupported numeric template caption font".into());
+                }
+                payload.copy_from_slice(&1u16.to_le_bytes());
+            }
+            put_record(&mut groups, record.kind, &payload);
         }
-        if record.kind == 0x07d8 {
-            if payload.len() != 2 { return Err("Unsupported numeric template caption font".into()); }
-            payload.copy_from_slice(&1u16.to_le_bytes());
-        }
-        put_record(&mut groups, record.kind, &payload);
     }
     Ok(groups)
+}
+
+fn numeric_tool_calculation(kind: &Kind) -> Result<ParameterCalculationGroup, String> {
+    match kind {
+        Kind::ParameterCalculation(_, group) => Ok(group.clone()),
+        Kind::MeasuredCalculation(_, group) => ParameterCalculationGroup::parse(group.as_bytes()),
+        _ => Err("This numeric given or calculation template family is not supported yet".into()),
+    }
 }

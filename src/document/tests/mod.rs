@@ -106,3 +106,5 @@ mod tool_segment_inputs;
 mod tool_creation;
 
 mod tool_numeric_placement;
+
+mod numeric_point_clipboard;

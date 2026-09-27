@@ -265,22 +265,38 @@ impl Document {
         let (anchor, step) = match &object.kind {
             Kind::Parameter(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
             Kind::Calculation(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
-            Kind::ParameterCalculation(_, group) if group.caption_is_flat()
-                && self.tool_numeric_sources_are_flat(object.id) => {
-                (group.anchor(), self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            Kind::ParameterCalculation(_, group) => {
+                let step = self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
+                let layout = if group.display_mode() == 1 { base } else if group.display_mode() == 3 && object.label.as_ref().is_some_and(|label| label.name_utf8().is_ok_and(|name| !name.is_empty())) {
+                    numeric_named_caption_layout(base, object.label.as_ref().unwrap().name_utf8()?)?
+                } else {
+                    self.tool_numeric_expression_layout(object.id, base)?
+                };
+                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
             }
-            Kind::MeasuredCalculation(_, group) if !group.divides()
-                && self.tool_numeric_sources_are_flat(object.id) => {
-                (group.anchor(), self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            Kind::MeasuredCalculation(_, group) => {
+                let step = self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
+                let parsed = ParameterCalculationGroup::parse(group.as_bytes())?;
+                let layout = if parsed.display_mode() == 1 { base } else {
+                    self.tool_numeric_expression_layout(object.id, base)?
+                };
+                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
             }
-            Kind::LengthPairCalculation(_, _, group) if group.operator_text() != "÷"
-                && self.tool_numeric_sources_are_flat(object.id) => {
-                (group.anchor(), self.tool_flat_numeric_caption_step(object,
-                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            Kind::LengthPairCalculation(_, _, group) => {
+                let step = self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?;
+                let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
+                let parsed = ParameterCalculationGroup::parse(group.as_bytes())?;
+                let layout = if parsed.display_mode() == 1 { base } else {
+                    self.tool_numeric_expression_layout(object.id, base)?
+                };
+                (group.anchor(), layout.height()?.checked_add(1).ok_or("Numeric caption layout overflow")?)
             }
-            Kind::SegmentLength(_) | Kind::PolygonArea(_) => {
+            kind if numeric_measurement_caption_shape(kind).is_some() => {
                 let font = if let Some(header) = object.header_offset {
                     let rs = super::records::records(&self.original)?;
                     let start = rs.iter().position(|record| record.kind == 0x07d0
@@ -290,9 +306,10 @@ impl Document {
                         .ok_or("Missing measurement caption font")?;
                     u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
                 } else { 1 };
-                let step = self.tool_flat_numeric_caption_step(object, font, true)?
-                    + if matches!(object.kind, Kind::PolygonArea(_)) { 2 } else { 0 };
-                (object.measurement_anchor.ok_or("Missing measurement caption anchor")?, step)
+                let step = self.tool_flat_numeric_caption_step(object, font, true)?;
+                let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
+                let layout = numeric_measurement_caption_shape(&object.kind).unwrap().layout(base)?;
+                (object.measurement_anchor.ok_or("Missing measurement caption anchor")?, layout.height()? + 1)
             }
             _ => return Err("Tool placement needs a verified numeric caption layout".into()),
         };
@@ -302,20 +319,50 @@ impl Document {
         Ok((anchor.0, next))
     }
 
-    fn tool_numeric_sources_are_flat(&self, id: usize) -> bool {
-        self.dependencies_of(id).is_some_and(|sources| sources.iter().all(|&source| {
-            source < id && self.objects.get(source - 1).is_some_and(|object| match &object.kind {
-                Kind::Parameter(_) => true,
-                Kind::ParameterCalculation(_, group) => group.caption_is_flat()
-                    && self.tool_numeric_sources_are_flat(source),
-                Kind::MeasuredCalculation(_, group) => !group.divides()
-                    && self.tool_numeric_sources_are_flat(source),
-                Kind::LengthPairCalculation(_, _, group) => group.operator_text() != "÷"
-                    && self.tool_numeric_sources_are_flat(source),
-                Kind::SegmentLength(_) | Kind::PolygonArea(_) => true,
-                _ => false,
-            })
-        }))
+    fn tool_numeric_expression_layout(&self, id: usize, base: crate::table_records::NumericCaptionLayout)
+        -> Result<crate::table_records::NumericCaptionLayout, String>
+    {
+        let object = id.checked_sub(1).and_then(|index| self.objects.get(index))
+            .ok_or("Invalid numeric caption source")?;
+        match &object.kind {
+            Kind::Parameter(_) => Ok(base),
+            kind if numeric_measurement_caption_shape(kind).is_some() => {
+                // Square units decorate the measurement's value, not its source symbol.
+                numeric_measurement_caption_shape(kind).unwrap().source_layout(base)
+            },
+            Kind::Calculation(group) => {
+                if group.is_native_radian_angle() && group.display_mode() == 3 {
+                    Ok(base)
+                } else { group.expression_caption_layout(base) }
+            }
+            Kind::ParameterCalculation(first, group) => {
+                if group.display_mode() == 3 {
+                    if let Some(name) = object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty()) {
+                        return numeric_named_caption_layout(base, name);
+                    }
+                }
+                if group.display_mode() != 0 && !group.caption_is_flat() {
+                    return Err("Non-formula fraction source expansion needs a native control".into());
+                }
+                let sources = calculation_source_ids(*first, group);
+                let layouts = sources.into_iter().map(|source| {
+                    if source >= id { return Err("Invalid numeric caption dependency order".into()); }
+                    self.tool_numeric_expression_layout(source, base)
+                }).collect::<Result<Vec<_>, String>>()?;
+                group.expression_caption_layout(base, &layouts)
+            }
+            Kind::MeasuredCalculation(source, group) => {
+                if *source >= id { return Err("Invalid numeric caption dependency order".into()); }
+                ParameterCalculationGroup::parse(group.as_bytes())?
+                    .expression_caption_layout(base, &[self.tool_numeric_expression_layout(*source, base)?])
+            }
+            Kind::LengthPairCalculation(first, second, group) => {
+                if *first >= id || *second >= id { return Err("Invalid numeric caption dependency order".into()); }
+                ParameterCalculationGroup::parse(group.as_bytes())?.expression_caption_layout(base,
+                    &[self.tool_numeric_expression_layout(*first, base)?, self.tool_numeric_expression_layout(*second, base)?])
+            }
+            _ => Err("Numeric caption source layout needs a native control".into()),
+        }
     }
 
     fn tool_flat_numeric_caption_step(&self, object: &Object, index: usize, measurement: bool)
@@ -327,7 +374,7 @@ impl Document {
             {
                 return Ok(27);
             }
-            if font.family == "Tahoma" && font.size_code == 24 && font.bold
+            if font.family == "Tahoma" && font.size_code == 24 && (font.bold || measurement)
                 && !font.italic && !font.underline
             {
                 return Ok(34);
@@ -346,7 +393,7 @@ impl Document {
             .ok_or("Missing numeric caption font family")?;
         let family_name = crate::text_style_records::decode_font_family_payload(
             &self.original[family.data.clone()])?;
-        if measurement && object.text_style_override.is_none() && family_name == "Tahoma"
+        if object.text_style_override.is_none() && family_name == "Tahoma"
             && payload.len() == 20 && payload[2..].iter().all(|byte| *byte == 0)
         {
             return Ok(21);
@@ -360,7 +407,7 @@ impl Document {
         {
             return Ok(27);
         }
-        if font.family == "Tahoma" && font.size_code == 24 && font.bold
+        if font.family == "Tahoma" && font.size_code == 24 && (font.bold || measurement)
             && !font.italic && !font.underline
         {
             return Ok(34);
@@ -678,6 +725,11 @@ impl Document {
                     let name = self.parameter_display_name(*source)?;
                     if parameter.display_mode() == 0 { format!("({name})") } else { name }
                 }
+                Kind::ParameterCalculation(_, g) if g.display_mode() == 3 => {
+                    source_object.label.as_ref().and_then(|label| label.name_utf8().ok())
+                        .filter(|name| !name.is_empty()).map(str::to_owned)
+                        .unwrap_or(self.parameter_calculation_expression(*source)?)
+                }
                 Kind::ParameterCalculation(_, _) => {
                     self.parameter_calculation_expression(*source)?
                 }
@@ -774,4 +826,28 @@ impl Document {
             self.coordinate_point_name(second)?
         ))
     }
+}
+
+fn numeric_measurement_caption_shape(kind: &Kind) -> Option<crate::table_records::NumericCaptionShape> {
+    use crate::table_records::NumericCaptionShape;
+    match kind {
+        Kind::SegmentLength(_) | Kind::PointDistance(_, _) | Kind::AngleMeasurement(_, _, _)
+        | Kind::SlopeMeasurement(_, _) | Kind::CircleRadius(_)
+        | Kind::ValueEquation { kind: ValueEquationKind::PointValue, .. } => Some(NumericCaptionShape::Flat),
+        Kind::PolygonArea(_) | Kind::CircleArea(_) => Some(NumericCaptionShape::SquareUnit),
+        _ => None,
+    }
+}
+
+fn numeric_named_caption_layout(mut base: crate::table_records::NumericCaptionLayout, name: &str)
+    -> Result<crate::table_records::NumericCaptionLayout, String>
+{
+    // Native m[1] has a subscript extending one pixel below the plain math row
+    // in both independently controlled18Normal and24Bold profiles.
+    if name == "m[1]" {
+        base.below = base.below.checked_add(1).ok_or("Numeric caption layout overflow")?;
+    } else if name.contains('[') || name.contains(']') {
+        return Err("Indexed numeric caption name needs a native glyph layout control".into());
+    }
+    Ok(base)
 }

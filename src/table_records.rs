@@ -1136,6 +1136,33 @@ impl ParameterExpr {
         }
     }
 
+    fn caption_layout(&self, base: NumericCaptionLayout, sources: &[NumericCaptionLayout])
+        -> Result<NumericCaptionLayout, String>
+    {
+        match self {
+            Self::Source(index) => sources.get(*index).copied()
+                .ok_or_else(|| "Missing numeric caption source layout".into()),
+            Self::Literal(_, text) if !text.contains('/') && !text.contains('÷') => Ok(base),
+            Self::Neg(argument) | Self::Group(argument) => argument.caption_layout(base, sources),
+            Self::Binary(op, left, right) if matches!(*op, 0x1000..=0x1003) => {
+                let left = left.caption_layout(base, sources)?;
+                let right = right.caption_layout(base, sources)?;
+                if *op == 0x1003 {
+                    Ok(NumericCaptionLayout {
+                        above: left.height()?.checked_add(1)
+                            .ok_or("Numeric caption layout overflow")?,
+                        below: right.height()?.checked_add(2)
+                            .ok_or("Numeric caption layout overflow")?,
+                    })
+                } else {
+                    Ok(NumericCaptionLayout { above: left.above.max(right.above),
+                        below: left.below.max(right.below) })
+                }
+            }
+            _ => Err("Numeric caption expression layout needs a native control".into()),
+        }
+    }
+
     fn caption_is_flat(&self) -> bool {
         match self {
             Self::Source(_) | Self::Literal(_, _) => true,
@@ -1808,6 +1835,15 @@ impl ParameterCalculationGroup {
         Ok(group)
     }
 
+    pub(crate) fn expression_caption_layout(&self, base: NumericCaptionLayout,
+        sources: &[NumericCaptionLayout]) -> Result<NumericCaptionLayout, String>
+    {
+        if sources.len() != self.sources().len() {
+            return Err("Invalid numeric caption source layouts".into());
+        }
+        self.expression_tree()?.caption_layout(base, sources)
+    }
+
     pub(crate) fn caption_is_flat(&self) -> bool {
         self.expression_tree().is_ok_and(|tree| tree.caption_is_flat())
     }
@@ -2302,6 +2338,12 @@ impl CalculationGroup {
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
         )
     }
+    pub(crate) fn expression_caption_layout(&self, base: NumericCaptionLayout)
+        -> Result<NumericCaptionLayout, String>
+    {
+        self.expression_tree()?.caption_layout(base, &[])
+    }
+
     /// Persisted native caption bounds, including the original layout cache.
     pub fn bbox(&self) -> ((i16, i16), (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
@@ -3988,4 +4030,38 @@ pub(crate) fn cached_numeric_caption_step(bbox: ((i16, i16), (i16, i16))) -> Res
         return Err("Unsupported numeric caption bounds".into());
     }
     Ok(height + 1)
+}
+
+/// A mathematical caption's extents on either side of its equation axis.
+/// Fractions compose these extents; counting division tokens loses alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NumericCaptionLayout {
+    pub above: i32,
+    pub below: i32,
+}
+
+impl NumericCaptionLayout {
+    pub fn flat(height: i32) -> Result<Self, String> {
+        if height <= 0 { return Err("Invalid numeric caption height".into()); }
+        Ok(Self { above: height / 2, below: height - height / 2 })
+    }
+    pub fn height(self) -> Result<i32, String> {
+        self.above.checked_add(self.below).ok_or_else(|| "Numeric caption layout overflow".into())
+    }
+}
+
+/// Proven Native caption shapes use the same row metrics in ordinary captions
+/// and expanded math sources. Unit decorations belong to the displayed value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NumericCaptionShape { Flat, SquareUnit }
+impl NumericCaptionShape {
+    pub(crate) fn layout(self, mut base: NumericCaptionLayout) -> Result<NumericCaptionLayout, String> {
+        if self == Self::SquareUnit {
+            base.above = base.above.checked_add(2).ok_or("Numeric caption layout overflow")?;
+        }
+        Ok(base)
+    }
+    pub(crate) fn source_layout(self, base: NumericCaptionLayout) -> Result<NumericCaptionLayout, String> {
+        Ok(base)
+    }
 }
