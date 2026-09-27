@@ -91,8 +91,10 @@ impl Editor {
                     if ui.selectable_label(self.tool == tool, name).clicked() {
                         self.tool = tool;
                         self.pending = None;
+                        self.custom_tool_inputs.clear();
                     }
                 }
+                ui.menu_button("Custom Tools", |ui| self.custom_tools_menu(ui));
                 if self.tool == Tool::Text {
                     ui.label("New text");
                     ui.text_edit_multiline(&mut self.text_draft);

@@ -169,9 +169,9 @@ Length, distance, perimeter, circumference, angle, circle and polygon area, arc 
 
 | Command | Status |
 | --- | --- |
-| Create New Tool | Pending |
-| Use a Custom Tool | Pending |
-| Document tools | Partial import: embedded prototypes have a separate namespace and remain byte-preserved through supported drawing edits; tool creation and execution pending. See [namespace analysis](dev/embedded_tool_scope_analysis.md) |
+| Create New Tool | Partial: selected supported single-page constructions become registered embedded tools with independent point givens or a consumed path/finite-segment boundary, local reference remapping, preserved drawing state, and structural undo/redo. The actual API writer opened and saved byte-identically in Native; the created tool also executed there. Selection must include the actual givens and construction; native-created and API-authored path/segment tools have been invoked in Native. Numeric authoring, other given categories, and definition editing remain pending. See [creation evidence](dev/tool_creation_analysis.md) and [boundary evidence](dev/tool_authoring_boundaries_analysis.md) |
+| Use a Custom Tool | Partial: point, polymorphic path, finite segment, and generic numeric givens execute with ordered bindings, live dependencies, hidden helpers, and undo/redo. Path recipes materialize points on segments, rays, lines, circles, arcs, and polygon boundaries; independent Native controls verify the shared given category. Square and segment/midpoint API outputs opened and saved byte-identically in Native. Segment givens accept ordinary and transformed finite segments. Numeric inputs specialize calculations from actual source units; scalar, length, angle, and measured-length API outputs cross-open byte-identically. Numeric caption font/placement fidelity, native reuse of existing constructions, and other given categories remain pending. See [runtime evidence](dev/tool_runtime_analysis.md) |
+| Document tools | Partial: embedded prototypes have a separate namespace and remain byte-preserved through supported drawing edits; registered complete definitions permit structural drawing edits, supported point/path/segment/numeric-input execution, and bounded creation. Definition editing and other input categories remain pending. See [namespace analysis](dev/embedded_tool_scope_analysis.md) |
 | Tool Folder tools | Pending |
 | Choose Tool Folder | Pending |
 | Forget Tool Folder | Pending |

@@ -5,6 +5,7 @@ use super::iteration::{
     supported_point_parameter_iteration,
 };
 use super::kind::{
+    is_segment_kind,
     is_arc_kind, expected_locus_refs, expected_parameter_locus_refs, is_point_kind, is_straight_kind, literal_plot_path_accepts, value_plot_path_accepts, polygon_vertex_count, straight_kind_mode,
 };
 use super::records::records;
@@ -21,6 +22,9 @@ use std::collections::BTreeSet;
 
 impl Document {
     pub fn can_save(&self) -> Result<(), String> {
+        if self.objects.iter().any(|object| matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))) {
+            return Err("Tool givens must be bound before saving a drawing".into());
+        }
         // An untouched source document can be copied byte for byte even when
         // its geometry cannot yet be evaluated by this port. Revalidate once
         // anything has changed before serializing an edited document.
@@ -314,6 +318,19 @@ impl Document {
             {
                 return Err(format!("Invalid dependency in object {}", o.id));
             }
+            if i >= self.source_count {
+                let point = |id: usize| is_point_kind(&self.objects[id - 1].kind);
+                let valid = match &o.kind {
+                    Kind::Segment(a, b) | Kind::Circle(a, b) | Kind::Ray(a, b)
+                    | Kind::Line(a, b) | Kind::Midpoint(a, b) => point(*a) && point(*b),
+                    Kind::CircleBySegment(center, segment) => point(*center) && self.objects[*segment - 1].kind.is_segment(),
+                    Kind::Polygon(vertices) => vertices.iter().all(|&id| point(id)),
+                    _ => true,
+                };
+                if !valid {
+                    return Err(format!("Invalid construction input types in object {}", o.id));
+                }
+            }
             if let Kind::HideShowButton { targets, label, .. } = &o.kind {
                 if self.page_count != 1
                     || targets.is_empty()
@@ -420,6 +437,15 @@ impl Document {
                     || !matches!(self.objects[host - 1].kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
                 {
                     return Err(format!("Invalid segment host in midpoint {}", o.id));
+                }
+            }
+            if let Kind::SegmentMidpoint(host) = o.kind {
+                if host == 0 || host >= o.id
+                    || !self.objects.get(host - 1).is_some_and(|parent| {
+                        !parent.deleted && parent.page == o.page && is_segment_kind(&parent.kind)
+                    })
+                {
+                    return Err(format!("Invalid finite segment host in midpoint {}", o.id));
                 }
             }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
@@ -878,7 +904,8 @@ impl Document {
                 let kind = object.kind.remap_checked(&ids)?;
                 let visibility = |bytes: &[u8]| {
                     let mut bytes = bytes.to_vec();
-                    bytes[10] = (bytes[10] & !1) | u8::from(!object.visible);
+                    bytes[10] = (bytes[10] & !3) | u8::from(!object.visible)
+                        | (u8::from(object.presentation_suppressed) << 1);
                     bytes
                 };
                 Ok(match kind {
@@ -889,7 +916,7 @@ impl Document {
                         Kind::Calculation(CalculationGroup::parse(&visibility(group.as_bytes()))?)
                     }
                     Kind::ParameterCalculation(source, group) => {
-                        Kind::ParameterCalculation(source, group.with_visibility(object.visible)?)
+                        Kind::ParameterCalculation(source, group.with_presentation(object.visible, object.presentation_suppressed)?)
                     }
                     Kind::MeasuredCalculation(source, group) => Kind::MeasuredCalculation(
                         source,
@@ -949,6 +976,7 @@ impl Document {
                         || saved.page != current.page
                         || saved.kind != *expected_kind
                         || saved.visible != current.visible
+                        || saved.presentation_suppressed != current.presentation_suppressed
                         || saved.label != current.label
                         || saved.visual_style != current.visual_style
                         || saved.interior_order != current.interior_order

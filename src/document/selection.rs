@@ -5,14 +5,12 @@ use crate::graph::GridForm;
 use std::collections::BTreeSet;
 
 impl Document {
-    // Native plot points can have defined geometry while their source header
-    // suppresses presentation. Native hide/show leaves this flag untouched;
-    // clipboard copies convert the suppressed dependency to ordinary hidden.
-    fn native_plot_suppressed(&self, id: usize) -> bool {
+    // Native auxiliary objects have defined geometry while flag 2 suppresses
+    // presentation. Ordinary hide/show leaves this independent flag intact.
+    // Clipboard copies convert suppressed prerequisites to ordinary hidden.
+    fn is_presentation_suppressed(&self, id: usize) -> bool {
         id.checked_sub(1).and_then(|index| self.objects.get(index)).is_some_and(|object| {
-            matches!(object.kind, Kind::PathValuePoint(..) | Kind::PathLiteralPoint(..))
-                && object.header_offset.and_then(|offset| self.original.get(offset + 2))
-                    .is_some_and(|flags| flags & 2 != 0)
+            object.presentation_suppressed
         })
     }
 
@@ -23,7 +21,7 @@ impl Document {
         if !object.visible
             || object.deleted
             || object.page != self.active_page
-            || self.native_plot_suppressed(id)
+            || self.is_presentation_suppressed(id)
         {
             return false;
         }
@@ -237,7 +235,7 @@ impl Document {
                     Ok(ClipboardObject {
                         old_id: id,
                         kind: object.kind.clone(),
-                        visible: object.visible && !self.native_plot_suppressed(id),
+                        visible: object.visible && !self.is_presentation_suppressed(id),
                         tracing: object.tracing,
                         midpoint_host: object.midpoint_host,
                         visual_style: object.visual_style,
@@ -363,6 +361,7 @@ impl Document {
                 page: candidate.active_page,
                 kind: remapped,
                 visible: *visible && !clipboard.hide_on_paste.contains(old_id),
+                presentation_suppressed: false,
                 tracing: *tracing,
                 deleted: false,
                 midpoint_host: midpoint_host.map(|host| ids[host]),
@@ -483,7 +482,7 @@ impl Document {
         let ids: Vec<_> = self.objects.iter()
             .filter(|object| {
                 !object.deleted && self.selected.contains(&object.id)
-                    && object.visible != visible && !self.native_plot_suppressed(object.id)
+                    && object.visible != visible && !self.is_presentation_suppressed(object.id)
             })
             .map(|object| object.id)
             .collect();
@@ -531,7 +530,7 @@ impl Document {
         let ids: Vec<_> = self.objects.iter()
             .filter(|object| {
                 !object.deleted && object.page == self.active_page
-                    && !object.visible && !self.native_plot_suppressed(object.id)
+                    && !object.visible && !self.is_presentation_suppressed(object.id)
             })
             .map(|object| object.id)
             .collect();

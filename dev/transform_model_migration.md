@@ -125,3 +125,27 @@ line-circle branch/extent and derived-line parameter corrections pass together
 with iteration depth and horizontal-slope caption precision regressions.
 Generic storage and removal of the 60 compatibility variants remain pending;
 these passing gates establish the consumer migration baseline.
+
+Generic storage cutover now replaces all 60 product variants with the single
+`Kind::Transformed(TransformDefinition)` variant. Existing named constructors
+remain public compatibility functions, generated from one expression definition
+per native flavor across its supported elements; they create generic storage
+immediately. Decoder acceptance guards remain unchanged and return that generic
+storage before subsequent objects inspect their dependencies. Editor/document
+commands use the same constructors. No post-import normalization pass is needed.
+
+Kind remapping now traverses semantic references instead of a 60-arm product
+match. Its unchecked structural path retains zero-ID behavior; explicit checked
+transform remapping still reports unresolved IDs. Imported and authored
+transforms share storage, classification, evaluation, dependencies, remapping,
+validation and native wire encoding. The 29-native-fixture evaluator regression
+asserts actual generic storage across all 14 native flavors and six elements.
+Product-pattern assertions were migrated to exact flavor/element/source/literal
+checks or full semantic equality; native byte assertions remain intact.
+
+The generic-storage combined gate exits successfully and passes 806 tests:
+642 library, 113 editor, 42 numeric Native import, four coverage, two plotting,
+and three value/equation regressions. Corpus checkpoint 16 independently
+confirms all 1599 byte-identical round trips and the unchanged 108783 unsupported
+object slots. The storage migration does not claim additional native decoding
+families or completion of the remaining command requirements.

@@ -1,46 +1,38 @@
 # Corpus decoding coverage
 
-Snapshot on 2026-09-26, generated with `gsp_probe coverage ../gsp-rs`.
+Checkpoint 20 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
 
 Documents: 1599 total, 85 with all object kinds decoded, 1514 with unsupported objects, 0 failed.
 
 Byte-preserving round trips: 1599/1599; object slots: 285703.
 
-Partial views: 1527/1599 (includes multi-page structural edit restrictions).
+Partial views: 1522/1599 (includes multi-page structural edit restrictions).
 
 Drawing objects: 280347 slots; 86 documents with all drawing kinds decoded.
 
-Embedded tool prototypes: 103 definitions in 65 documents; 5356 undecoded slots.
+Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 3413 decoded, 1943 undecoded.
 
-Unsupported object slots including tool prototypes: 108783. Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Isolated tool views: 31 complete, 72 partial, 0 failed, with separate object and font namespaces.
 
-Embedded tool prototypes now have a separate namespace. They remain counted as undecoded slots; their exclusion from the drawing histogram does not establish tool support. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects.
+Unsupported object slots including tool prototypes: 105274 (103331 drawing slots and 1943 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+
+Embedded tool prototypes are decoded through isolated documents. Declared point placeholders receive neutral coordinates; declared path, finite-segment, and generic-numeric placeholders retain typed abstract inputs. Other unknown prototype constructions remain unsupported. The drawing and prototype histograms retain separate namespaces. Complete isolated decoding does not establish invocation or authoring support for every tool. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects, or to snapshots that counted every prototype slot as undecoded.
 
 The counts include missing variants and failures caused by unsupported parents.
 Inspect complete groups and parent payloads before selecting a target.
 
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
-| 48 | 20272 | 627 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 48 | 20270 | 626 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 77 | 7405 | 797 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
 | 62 | 5540 | 428 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 24 | 5261 | 222 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
-| 16 | 5029 | 502 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 33 | 4197 | 419 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
+| 24 | 5260 | 221 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
+| 16 | 5027 | 500 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 33 | 4203 | 418 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/2024年年历表.gsp` |
 | 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 | 27 | 3126 | 471 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 8 | 2897 | 476 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 8 | 2899 | 474 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
-| 90 | 2712 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 89 | 2538 | 772 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 15 | 2307 | 520 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 34 | 2287 | 188 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
-| 21 | 2262 | 235 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 41 | 2185 | 106 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
-| 30 | 2041 | 358 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 35 | 1978 | 409 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 69 | 1772 | 249 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 80 | 1594 | 406 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
 
 Run the command again for the current full report and all examples.
 
@@ -77,3 +69,32 @@ coverage. Checkpoint 14 independently confirms the same counts after the shared 
 migration. The combined all-targets gate passes 805 tests, including the
 independently verified straight-geometry corrections and slope precision fixes.
 Generic transform storage and the remaining command requirements are pending.
+
+Checkpoint 16 verifies the generic transform storage cutover: all 1599 files
+still round-trip byte-identically, and unsupported slots remain 108783. The
+combined gate now passes 806 tests. Sixty product Kind variants have been
+removed in favor of one generic transform variant; compatibility constructor
+names remain. This representation change does not expand decoding coverage or
+complete the pending command requirements.
+
+Checkpoint 18 retains all 1599 byte-identical round trips and the same 280347
+drawing slots and 285703 total slots. Drawing unsupported kinds remain at
+103427. Coverage now uses the implemented isolated tool decoder rather than
+classifying every prototype as unknown: 1822 of 5356 prototype slots decode,
+leaving 3534 unknown and 106961 unknown slots overall. Eight isolated tool
+definitions have complete views and 95 have partial views; none fails extraction.
+Seven coverage regressions distinguish drawing preservation, unknown prototype
+kinds, extraction failures, and known kinds with unsupported metadata.
+The drawing partial-view count is 1522 after the proved labeled code-12
+prototype support. Native Square and simple-tool invocation and creation controls are documented separately
+in `tool_runtime_analysis.md` and `tool_creation_analysis.md`; these bounded proofs
+do not establish corpus-wide command parity.
+The settled combined all-targets gate passes 825 tests, including both saved
+desktop invocation routes and the Native-verified creation writer.
+
+Checkpoint 20 recognizes declared generic numeric and finite-segment tool inputs,
+including their live dependent calculations and host-based midpoints. Prototype
+known slots increased by 947; drawing known slots increased by 96. Every corpus
+file still preserves its original bytes. Numeric tool authoring, caption font and
+placement fidelity, other given categories, and the command gaps remain work in
+progress. These counts do not prove that every decoded prototype executes.

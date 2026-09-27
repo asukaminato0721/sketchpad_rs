@@ -13,6 +13,7 @@ impl Editor {
     pub(super) fn menu_ui(&mut self, root: &mut egui::Ui) {
         egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Custom Tools", |ui| self.custom_tools_menu(ui));
                 ui.menu_button("File", |ui| {
                     if ui.button("New").clicked() {
                         if self.doc.dirty {
@@ -219,6 +220,7 @@ impl Editor {
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.undo();
+                        self.reset_custom_tool_after_history();
                         self.image_textures.clear();
                         ui.close();
                     }
@@ -230,6 +232,7 @@ impl Editor {
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.redo();
+                        self.reset_custom_tool_after_history();
                         self.image_textures.clear();
                         ui.close();
                     }

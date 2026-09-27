@@ -7,6 +7,7 @@ mod animation;
 mod calculation_dialogs;
 mod canvas;
 mod construction;
+mod custom_tools;
 mod document_dialogs;
 mod files;
 mod fonts;
@@ -54,6 +55,7 @@ enum Tool {
     Segment,
     Circle,
     Text,
+    Custom(usize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MarkedAngle {
@@ -182,6 +184,10 @@ struct Editor {
     remove_page_confirmation: Option<usize>,
     show_motion_controller: bool,
     show_toolbox: bool,
+    create_tool_dialog: bool,
+    tool_name_draft: String,
+    custom_tool_inputs: Vec<usize>,
+    custom_tool_path_start: Option<custom_tools::PathStart>,
     animation_button_dialog: Option<AnimationButtonDraft>,
     movement_button_dialog: Option<MovementButtonDraft>,
     scroll_button_dialog: Option<ScrollButtonDraft>,
@@ -280,6 +286,10 @@ impl Editor {
             remove_page_confirmation: None,
             show_motion_controller: false,
             show_toolbox: true,
+            create_tool_dialog: false,
+            tool_name_draft: String::new(),
+            custom_tool_inputs: Vec::new(),
+            custom_tool_path_start: None,
             animation_button_dialog: None,
             movement_button_dialog: None,
             scroll_button_dialog: None,

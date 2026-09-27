@@ -121,11 +121,14 @@ see `dev/numeric_polygon_path_analysis.md`.
 A focused length threshold probe preserves the source quantity and its native
 scale: AB=2.51cm and the actual Color expression produces0.33. Native Sketchpad
 opens/saves its 14-object file byte-identically, retained as
-`numeric_measured_literal_threshold_native_verified.gsp`. Bare decimal literals
-can adopt Length units in addition/subtraction; scalar source variables and
-computed scalar expressions remain separate quantities. This is deliberately
-limited to the proven centimeter case: degree and area literal promotion await
-native evidence. The original source-free `30°+2` rejection remains intact.
+`numeric_measured_literal_threshold_native_verified.gsp`. The retained native length-difference control keeps Length for subtraction.
+Later independent ordinary calculator and custom-tool controls establish that
+adding a bare decimal to Length, Degrees, or Area produces Scalar; source-free
+`30°+2` likewise evaluates as Scalar32. Scalar source variables and computed
+scalar expressions remain separate quantities. See
+[tool_numeric_inputs_analysis.md](tool_numeric_inputs_analysis.md) for the new
+unit controls; the earlier sign-expression proof alone did not determine the
+units of its intermediate thresholds.
 
 Table value setters also preserve imported visibility and accepted opaque
 padding. The observed two-row default table retains its native `t` padding
@@ -706,3 +709,30 @@ independent of terminal punctuation and needs a focused unit-promotion proof.
 The current dimensional rules remain unchanged, avoiding an unsupported
 inference from this one mixed-unit family. Its exact native file is retained
 and tested as partial with unchanged bytes.
+
+Native clipboard selection and suppression control (cube84)
+----------------------------------------------------------
+
+A direct Native CtrlC/CtrlV of visible plotted point14 copies only a free point,
+with the usual20px displacement:14 objects become15. It does not copy the
+calculation parents. This is retained as
+`numeric_calculation_cube84_point_clipboard_native_verified.gsp/png`.
+The API's dependency-copy behavior therefore differs from this Native
+point-only selection and must not be inferred from an accepted API save.
+
+Selecting the entire original graph with CtrlA, then CtrlC/CtrlV, produces28
+objects. Original suppressed calculation5 retains header flag2; its copied
+calculation20 has ordinary hidden flag1. Original vertical-unit9 flag4 also
+becomes ordinary hidden flag1 on copied23. The copy clears presentation
+suppression rather than adding ordinary hidden to it. The positive selected
+scene and a second successful Native reopen/save preserve all5,436 bytes;
+`numeric_calculation_cube84_full_graph_clipboard_native_verified.gsp/png`
+retains that control. These observations establish the numeric calculation
+copy policy independently of API-generated cross-open fixtures.
+
+The corrected fresh API cube84 writer also independently opens and saves
+byte-identically at5,186 bytes with positive original and copied geometry.
+Only its copied calculation's suppression flag differs from the earlier API
+golden, matching the Native full-graph clipboard control above. The exact
+current writer is retained as
+`numeric_calculation_trailing_decimal_cube84_edited_authored_copied_suppression_writer_native_verified.gsp/png`.

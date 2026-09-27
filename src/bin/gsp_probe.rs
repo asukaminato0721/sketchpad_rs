@@ -227,9 +227,11 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         return Err("No .gsp files found".into());
     }
     let mut unsupported: BTreeMap<u16, (usize, BTreeSet<PathBuf>)> = BTreeMap::new();
+    let mut prototype_unsupported: BTreeMap<u16, (usize, BTreeSet<PathBuf>)> = BTreeMap::new();
     let (mut full, mut partial, mut objects, mut preserved, mut failures, mut partial_views) =
         (0, 0, 0, 0, 0, 0);
     let (mut tool_definitions, mut tool_documents, mut tool_slots, mut scene_full) = (0, 0, 0, 0);
+    let (mut tool_known, mut tool_complete, mut tool_partial, mut tool_failed) = (0, 0, 0, 0);
     for path in &files {
         let result = (|| -> Result<Document, String> {
             let bytes = fs::read(path).map_err(|error| error.to_string())?;
@@ -249,10 +251,39 @@ fn coverage(paths: &[String]) -> Result<(), String> {
                 tool_definitions += tools.len();
                 tool_documents += usize::from(!tools.is_empty());
                 tool_slots += prototype_slots;
+                let mut has_unsupported_tools = false;
+                for (index, summary) in tools.iter().enumerate() {
+                    let unknown_codes = match document.embedded_tool_document(index) {
+                        Ok(prototype) => {
+                            let codes: Vec<_> = prototype.objects.iter().filter_map(|object| {
+                                if let Kind::Unsupported(code) = object.kind { Some(code) } else { None }
+                            }).collect();
+                            tool_known += prototype.objects.len() - codes.len();
+                            if prototype.partial_view || !codes.is_empty() {
+                                tool_partial += 1;
+                            } else {
+                                tool_complete += 1;
+                            }
+                            codes
+                        }
+                        Err(_) => {
+                            // A failed prototype decode does not invalidate the
+                            // independently preserved drawing document.
+                            tool_failed += 1;
+                            summary.object_codes.clone()
+                        }
+                    };
+                    has_unsupported_tools |= !unknown_codes.is_empty();
+                    for code in unknown_codes {
+                        let (count, examples) = prototype_unsupported.entry(code).or_default();
+                        *count += 1;
+                        examples.insert(path.clone());
+                    }
+                }
                 let has_unsupported_scene = document.objects.iter()
                     .any(|object| matches!(object.kind, Kind::Unsupported(_)));
                 scene_full += usize::from(!has_unsupported_scene);
-                if has_unsupported_scene || !tools.is_empty() {
+                if has_unsupported_scene || has_unsupported_tools {
                     partial += 1;
                 } else {
                     full += 1;
@@ -285,18 +316,25 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         files.len()
     );
     println!("Drawing objects: {} slots; {scene_full} documents with all drawing kinds decoded", objects - tool_slots);
-    println!("Embedded tool prototypes: {tool_definitions} definitions in {tool_documents} documents; {tool_slots} undecoded slots");
+    let tool_unknown = tool_slots - tool_known;
+    println!("Embedded tool prototypes: {tool_definitions} definitions in {tool_documents} documents; {tool_slots} slots, {tool_known} decoded, {tool_unknown} undecoded");
+    println!("Isolated tool views: {tool_complete} complete, {tool_partial} partial, {tool_failed} failed (separate object and font namespaces)");
     let scene_unsupported: usize = unsupported.values().map(|(count, _)| count).sum();
-    println!("Unsupported object slots including tool prototypes: {}", scene_unsupported + tool_slots);
-    println!("Unsupported drawing object codes (code, objects, documents, first example):");
-    let mut families: Vec<_> = unsupported.into_iter().collect();
-    families.sort_by_key(|(code, (count, _))| (std::cmp::Reverse(*count), *code));
-    for (code, (count, examples)) in families {
-        println!(
-            "{code:5} {count:7} {:5} {}",
-            examples.len(),
-            examples.first().unwrap().display()
-        );
+    println!("Unsupported object slots including tool prototypes: {}", scene_unsupported + tool_unknown);
+    for (heading, counts) in [
+        ("Unsupported drawing object codes", unsupported),
+        ("Unsupported tool prototype codes", prototype_unsupported),
+    ] {
+        println!("{heading} (code, objects, documents, first example):");
+        let mut families: Vec<_> = counts.into_iter().collect();
+        families.sort_by_key(|(code, (count, _))| (std::cmp::Reverse(*count), *code));
+        for (code, (count, examples)) in families {
+            println!(
+                "{code:5} {count:7} {:5} {}",
+                examples.len(),
+                examples.first().unwrap().display()
+            );
+        }
     }
     println!("Object decoding does not establish editing or command parity.");
     if failures == 0 {

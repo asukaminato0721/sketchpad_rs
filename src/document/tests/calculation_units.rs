@@ -18,7 +18,7 @@ fn dimensional_length_expressions_update_units_and_marked_distance() {
         assert!((doc.numeric_value(id).unwrap() - value).abs() < 1e-10);
     }
     let threshold = doc.add_parameter_calculation(4, "v+1", (10, 250)).unwrap();
-    assert_eq!(doc.objects[threshold - 1].kind.numeric_unit(), Some(NumericUnit::Length));
+    assert_eq!(doc.objects[threshold - 1].kind.numeric_unit(), Some(NumericUnit::Scalar));
     assert_eq!(doc.numeric_value(threshold), Some(length + 1.));
     assert!(doc.add_parameter_calculation(4, "v+1°", (10, 250)).is_err());
     let cube = doc.add_parameter_calculation(4, "v^3", (10, 250)).unwrap();
@@ -252,7 +252,9 @@ fn measured_angle_calculations_follow_geometry_and_remap_dependencies() {
         doc.parameter_calculation_value(10),
         doc.arc_angle_degrees(6).map(|v| v / 2.)
     );
-    assert!(doc.add_parameter_calculation(4, "v+10", (10, 160)).is_err());
+    let angle_magnitude = doc.add_parameter_calculation(4, "v+10", (10, 160)).unwrap();
+    assert_eq!(doc.objects[angle_magnitude - 1].kind.numeric_unit(), Some(NumericUnit::Scalar));
+    assert_eq!(doc.numeric_value(angle_magnitude), doc.numeric_value(4).map(|value| value + 10.));
     let squared = doc.add_parameter_calculation(6, "v*v", (10, 160)).unwrap();
     assert_eq!(
         doc.objects[squared - 1].kind.numeric_unit(),

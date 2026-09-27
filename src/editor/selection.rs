@@ -112,7 +112,7 @@ impl Editor {
     }
     pub(super) fn click(&mut self, v: &Viewport, p: egui::Pos2, multi: bool) {
         if self.doc.partial_view
-            && self.tool != Tool::Select
+            && !matches!(self.tool, Tool::Select | Tool::Custom(_))
             && !(self.doc.page_count > 1
                 && matches!(
                     self.tool,
@@ -125,6 +125,7 @@ impl Editor {
             return;
         }
         match self.tool {
+            Tool::Custom(index) => self.custom_tool_click(index, v, p),
             Tool::Select => {
                 let hit = self.hit(v, p);
                 if !multi

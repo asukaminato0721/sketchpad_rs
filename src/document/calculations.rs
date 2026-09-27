@@ -41,6 +41,26 @@ pub(super) fn parse_numeric_calculation(
         })
         .collect::<Option<Vec<_>>>()?;
     let group = group.with_source_units(&units).ok()?;
+    // Match the ordinary decoder's established concrete representations. A
+    // native abstract template can specialize into either legacy wire family.
+    match refs {
+        [first, second] if objects[*first - 1].kind.is_distance_value()
+            && objects[*second - 1].kind.is_distance_value() => {
+            if let Ok(pair) = LengthPairCalculationGroup::parse(bytes) {
+                if pair.sources() == [(*first - page_base) as u32, (*second - page_base) as u32] {
+                    return Some(Kind::LengthPairCalculation(*first, *second, pair));
+                }
+            }
+        }
+        [source] if objects[*source - 1].kind.is_distance_value() => {
+            if let Ok(measured) = MeasuredCalculationGroup::parse(bytes) {
+                if measured.source_id() as usize == *source - page_base {
+                    return Some(Kind::MeasuredCalculation(*source, measured));
+                }
+            }
+        }
+        _ => {}
+    }
     Some(Kind::ParameterCalculation(refs[0], group))
 }
 
@@ -233,6 +253,121 @@ impl Document {
             _ => 33,
         }
     }
+    /// Native tool outputs follow the last numeric object on the active page,
+    /// using its current anchor rather than the spatially lowest caption.
+    pub(super) fn next_tool_numeric_anchor(&self) -> Result<(i16, i16), String> {
+        use crate::table_records::{cached_numeric_caption_step, numeric_caption_font_index};
+        let object = self.objects.iter()
+            .filter(|object| !object.deleted && object.page == self.active_page
+                && object.kind.numeric_unit().is_some())
+            .max_by_key(|object| object.id)
+            .ok_or("No numeric caption precedes the tool output")?;
+        let (anchor, step) = match &object.kind {
+            Kind::Parameter(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
+            Kind::Calculation(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
+            Kind::ParameterCalculation(_, group) if group.caption_is_flat()
+                && self.tool_numeric_sources_are_flat(object.id) => {
+                (group.anchor(), self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            }
+            Kind::MeasuredCalculation(_, group) if !group.divides()
+                && self.tool_numeric_sources_are_flat(object.id) => {
+                (group.anchor(), self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            }
+            Kind::LengthPairCalculation(_, _, group) if group.operator_text() != "÷"
+                && self.tool_numeric_sources_are_flat(object.id) => {
+                (group.anchor(), self.tool_flat_numeric_caption_step(object,
+                    numeric_caption_font_index(group.as_bytes())?, false)?)
+            }
+            Kind::SegmentLength(_) | Kind::PolygonArea(_) => {
+                let font = if let Some(header) = object.header_offset {
+                    let rs = super::records::records(&self.original)?;
+                    let start = rs.iter().position(|record| record.kind == 0x07d0
+                        && record.data.start == header).ok_or("Missing numeric caption group")?;
+                    let record = rs[start + 1..].iter().take_while(|record| record.kind != 0x07d7)
+                        .find(|record| record.kind == 0x07d8 && record.data.len() == 2)
+                        .ok_or("Missing measurement caption font")?;
+                    u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
+                } else { 1 };
+                let step = self.tool_flat_numeric_caption_step(object, font, true)?
+                    + if matches!(object.kind, Kind::PolygonArea(_)) { 2 } else { 0 };
+                (object.measurement_anchor.ok_or("Missing measurement caption anchor")?, step)
+            }
+            _ => return Err("Tool placement needs a verified numeric caption layout".into()),
+        };
+        let next = i32::from(anchor.1).checked_add(step)
+            .and_then(|value| i16::try_from(value).ok())
+            .ok_or("Numeric caption placement overflow")?;
+        Ok((anchor.0, next))
+    }
+
+    fn tool_numeric_sources_are_flat(&self, id: usize) -> bool {
+        self.dependencies_of(id).is_some_and(|sources| sources.iter().all(|&source| {
+            source < id && self.objects.get(source - 1).is_some_and(|object| match &object.kind {
+                Kind::Parameter(_) => true,
+                Kind::ParameterCalculation(_, group) => group.caption_is_flat()
+                    && self.tool_numeric_sources_are_flat(source),
+                Kind::MeasuredCalculation(_, group) => !group.divides()
+                    && self.tool_numeric_sources_are_flat(source),
+                Kind::LengthPairCalculation(_, _, group) => group.operator_text() != "÷"
+                    && self.tool_numeric_sources_are_flat(source),
+                Kind::SegmentLength(_) | Kind::PolygonArea(_) => true,
+                _ => false,
+            })
+        }))
+    }
+
+    fn tool_flat_numeric_caption_step(&self, object: &Object, index: usize, measurement: bool)
+        -> Result<i32, String>
+    {
+        if let Some(font) = &object.text_style_override {
+            if font.family == "Tahoma" && font.size_code == 18
+                && !font.bold && !font.italic && !font.underline
+            {
+                return Ok(27);
+            }
+            if font.family == "Tahoma" && font.size_code == 24 && font.bold
+                && !font.italic && !font.underline
+            {
+                return Ok(34);
+            }
+            return Err("Tool placement needs a verified numeric caption font layout".into());
+        }
+        let rs = super::records::records(&self.original)?;
+        let styles = super::embedded_tools::document_records(&rs)
+            .filter(|record| record.kind == 0x04b3).collect::<Vec<_>>();
+        let style = styles.get(index).ok_or("Missing numeric caption font style")?;
+        let payload = &self.original[style.data.clone()];
+        let family_index = payload.get(..2).and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_le_bytes).ok_or("Invalid numeric caption font style")? as usize;
+        let family = super::embedded_tools::document_records(&rs)
+            .filter(|record| record.kind == 0x04b1).nth(family_index)
+            .ok_or("Missing numeric caption font family")?;
+        let family_name = crate::text_style_records::decode_font_family_payload(
+            &self.original[family.data.clone()])?;
+        if measurement && object.text_style_override.is_none() && family_name == "Tahoma"
+            && payload.len() == 20 && payload[2..].iter().all(|byte| *byte == 0)
+        {
+            return Ok(21);
+        }
+        let font = object.text_style_override.clone().or_else(||
+            crate::text_style_records::decode_font_payloads(payload,
+                &self.original[family.data.clone()]).ok())
+            .ok_or("Unsupported numeric caption font style")?;
+        if font.family == "Tahoma" && font.size_code == 18
+            && !font.bold && !font.italic && !font.underline
+        {
+            return Ok(27);
+        }
+        if font.family == "Tahoma" && font.size_code == 24 && font.bold
+            && !font.italic && !font.underline
+        {
+            return Ok(34);
+        }
+        Err("Tool placement needs a verified numeric caption font layout".into())
+    }
+
     /// Place a new calculation below the existing measurements and numeric captions.
     pub fn next_calculation_anchor(&self) -> (i16, i16) {
         let objects = self

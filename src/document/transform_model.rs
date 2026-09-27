@@ -560,19 +560,6 @@ impl Kind {
     }
 }
 
-native_transform_constructors!(element_type; (&self) -> Option<TransformDefinition> { match self { Self::Transformed(definition) => Some(definition.clone()), _ => None, } } pub fn PolarTranslatedPoint(source: usize, a: f64, u: f64, d: f64);
-(
-            source,
-            element_type,
-            Transform::Translate(DisplacementExpr::Polar {
-                angle: literal(a, NumericUnit::Degrees, 1.),
-                distance: literal(d, NumericUnit::Length, u),
-            }),
-            NativeTransformFlavor::FixedPolar,
-        );
-    transform_definition => Point
-);
-
 native_transform_constructors!(element_type; (source: usize, a: f64, u: f64, d: f64);
 (
             source,
@@ -583,6 +570,7 @@ native_transform_constructors!(element_type; (source: usize, a: f64, u: f64, d: 
             }),
             NativeTransformFlavor::FixedPolar,
         );
+    PolarTranslatedPoint => Point,
     PolarTranslatedSegment => Segment,
     PolarTranslatedCircle => Circle,
     PolarTranslatedPolygon => Polygon

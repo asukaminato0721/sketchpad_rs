@@ -1,6 +1,6 @@
 use super::calculations::calculation_source_ids;
 use super::transform_model::{ElementType, NativeTransformFlavor};
-use super::{IterationDepth, Kind, LineMode, Object};
+use super::{EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object};
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::style_records::{
     LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
@@ -314,14 +314,17 @@ impl Kind {
             return parents;
         }
         match *self {
-            Kind::Free(_)
+            Kind::ToolInput(_)
+            | Kind::Free(_)
             | Kind::Image { .. }
             | Kind::PlainText { .. }
             | Kind::Parameter(_)
             | Kind::Calculation(_)
             | Kind::FunctionDefinition(_)
             | Kind::Unsupported(_) => vec![],
-            Kind::PointOnSegment(host, _)
+            Kind::ToolPointOnPath(host)
+            | Kind::SegmentMidpoint(host)
+            | Kind::PointOnSegment(host, _)
             | Kind::PointOnRay(host, _)
             | Kind::PointOnLine(host, _)
             | Kind::ValueTable(host, _)
@@ -595,6 +598,8 @@ impl Kind {
             Kind::ValueTablePair(first, second, ref group) => {
                 Kind::ValueTablePair(m(first), m(second), group.clone())
             }
+            Kind::ToolPointOnPath(host) => Kind::ToolPointOnPath(m(host)),
+            Kind::SegmentMidpoint(host) => Kind::SegmentMidpoint(m(host)),
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
             Kind::PointOnRay(a, t) => Kind::PointOnRay(m(a), t),
             Kind::PointOnLine(a, t) => Kind::PointOnLine(m(a), t),
@@ -713,6 +718,7 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
+            Kind::ToolInput(input) => Kind::ToolInput(input),
             Kind::Polygon(_)
             | Kind::BranchingPolygonIteration { .. }
             | Kind::MappedPointIteration { .. } => unreachable!(),
@@ -774,6 +780,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::Line(_, _)
             | Kind::Ray(_, _)
             | Kind::Midpoint(_, _)
+            | Kind::SegmentMidpoint(_)
             | Kind::CircleBySegment(_, _)
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
@@ -813,7 +820,7 @@ pub(super) fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
         )
 }
 pub(super) fn is_segment_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Segment(..))
+    matches!(kind, Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment))
         || kind
             .transform_definition()
             .is_some_and(|definition| definition.element() == ElementType::Segment)
@@ -833,7 +840,7 @@ pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
         };
     }
     match kind {
-        Kind::Segment(..) => Some(LineMode::Segment),
+        Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment) => Some(LineMode::Segment),
         Kind::Ray(..) | Kind::Bisector(..) => Some(LineMode::Ray),
         Kind::Line(..)
         | Kind::Parallel(..)
@@ -851,6 +858,8 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
         || matches!(
             kind,
             Kind::Free(_)
+                | Kind::ToolPointOnPath(_)
+                | Kind::SegmentMidpoint(_)
                 | Kind::PointOnSegment(_, _)
                 | Kind::PointOnRay(_, _)
                 | Kind::PointOnLine(_, _)
@@ -1182,6 +1191,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
     }
     match kind {
         Kind::Free(_)
+        | Kind::ToolPointOnPath(_)
+        | Kind::SegmentMidpoint(_)
         | Kind::PointOnSegment(_, _)
         | Kind::PointOnRay(_, _)
         | Kind::PointOnLine(_, _)

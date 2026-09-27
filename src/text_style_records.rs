@@ -65,6 +65,16 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     Ok(out)
 }
 
+/// Font tables in embedded tool canvases belong to independent namespaces.
+fn drawing_records(records: &[Record]) -> impl Iterator<Item = &Record> {
+    let mut depth = 0usize;
+    records.iter().filter(move |record| match record.kind {
+        0x03ea => { depth += 1; false }
+        0x03eb if depth > 0 => { depth -= 1; false }
+        _ => depth == 0,
+    })
+}
+
 #[cfg(test)]
 fn one<'a>(records: &[Record], bytes: &'a [u8], kind: u32) -> Result<&'a [u8], String> {
     let mut matches = records.iter().filter(|r| r.kind == kind);
@@ -85,8 +95,7 @@ pub fn decode_font_state(bytes: &[u8]) -> Result<FontState, String> {
 /// Resolve the style index stored in a free-text object's 0x07d8 record.
 pub fn decode_font_state_at(bytes: &[u8], index: usize) -> Result<FontState, String> {
     let rs = records(bytes)?;
-    let record = rs
-        .iter()
+    let record = drawing_records(&rs)
         .filter(|record| record.kind == 0x04b3)
         .nth(index)
         .ok_or("Missing indexed font style")?;
@@ -97,8 +106,7 @@ pub fn decode_font_state_at(bytes: &[u8], index: usize) -> Result<FontState, Str
         return Err("Unsupported font style record".into());
     }
     let family_index = u16::from_le_bytes(style[..2].try_into().unwrap()) as usize;
-    let family_record = rs
-        .iter()
+    let family_record = drawing_records(&rs)
         .filter(|record| record.kind == 0x04b1)
         .nth(family_index)
         .ok_or("Missing indexed font family")?;
@@ -151,7 +159,7 @@ pub fn encode_style_payload(template: &[u8], style: &FontState) -> Result<[u8; 2
 
 pub fn font_families(bytes: &[u8]) -> Result<Vec<String>, String> {
     let rs = records(bytes)?;
-    rs.iter()
+    drawing_records(&rs)
         .filter(|record| record.kind == 0x04b1)
         .map(|record| {
             let len = u32::from_le_bytes(bytes[record.start..record.start + 4].try_into().unwrap())
@@ -299,6 +307,29 @@ mod tests {
             one(&before, original, 0x07d5).unwrap(),
             one(&after, styled, 0x07d5).unwrap()
         );
+    }
+
+    #[test]
+    fn tool_local_font_tables_do_not_consume_drawing_indices() {
+        let mut bytes = b"GSP4".to_vec();
+        let mut append = |kind: u32, payload: &[u8]| {
+            bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&kind.to_le_bytes());
+            bytes.extend_from_slice(payload);
+            if payload.len() % 2 != 0 { bytes.push(0); }
+        };
+        append(0x03ea, &[]);
+        let family = encode_font_family_payload("Only in tool").unwrap();
+        append(0x04b1, &family);
+        let local_style = FontState { family: "Only in tool".into(), size_code: 18,
+            bold: false, italic: false, underline: false };
+        let payload = encode_style_payload(&[0; 20], &local_style).unwrap();
+        append(0x04b3, &payload);
+        append(0x03eb, &[]);
+        bytes.extend_from_slice(&HELLO[4..]);
+        assert_eq!(font_families(&bytes).unwrap(), font_families(HELLO).unwrap());
+        assert_eq!(decode_font_state_at(&bytes, 0).unwrap(), decode_font_state(HELLO).unwrap());
+        assert!(decode_font_state_at(&bytes, 1).is_err());
     }
 
     #[test]

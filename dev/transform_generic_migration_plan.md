@@ -95,3 +95,18 @@ moved-marker patch uses the exact transformed-polygon element predicate. The
 primitive families retain their original handling; base polygons do not acquire
 the transformed-polygon marker rule. No decoder or stored-object normalization
 has been enabled by these preparatory edits.
+
+## Implemented storage cutover
+
+The planned storage cutover is implemented: Kind has one Transformed variant,
+and all 60 former constructors are now compatibility functions creating that
+variant directly. The import guard block stays unchanged; earlier objects are
+already generic while the next group decodes. All listed consumer pattern
+matches have migrated to exact shared-definition predicates. Ordered dependency
+and reference remapping use semantic fields, including repeated references.
+Native object metadata remains outside the definition. The compact constructor
+macros share each native flavor expression across its supported elements.
+Named constructor compatibility can be removed in a future public API change;
+it no longer introduces distinct stored variants or operation-specific runtime
+branches. The combined all-targets gate passes 806 tests. The corpus gate preserves all
+1599 documents byte-identically and retains the same decoding coverage.

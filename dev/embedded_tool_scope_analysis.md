@@ -1,5 +1,15 @@
 # Embedded custom-tool namespaces
 
+Current implementation: isolated prototype decoding and point/path-input tool
+execution are available, with Native-verified Square, segment/midpoint, and
+polymorphic constrained-point API outputs. Complete registered tool sections also permit structural drawing edits
+while their raw local records remain unchanged. Point-input tool creation also
+has Native cross-open, menu registration, and execution evidence. The sections below
+record the earlier namespace investigation and independent Native controls;
+their pending statements describe those earlier stages. See
+[runtime evidence](tool_runtime_analysis.md) and
+[creation evidence](tool_creation_analysis.md) for the current scope.
+
 Sketchpad stores each custom-tool prototype in a separate canvas (`03ea` through
 `03eb`) with local object IDs, font tables, and input definitions. These records
 must not be decoded as objects on the last drawing page.

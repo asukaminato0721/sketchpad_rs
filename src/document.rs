@@ -27,6 +27,8 @@ mod save;
 mod selection;
 mod style;
 mod tables;
+mod tool_creation;
+mod tool_inputs;
 mod text;
 pub mod transform_evaluator;
 pub mod transform_model;
@@ -58,6 +60,7 @@ use std::path::PathBuf;
 
 pub use records::{Record, records};
 pub use embedded_tools::EmbeddedToolSummary;
+pub use tool_inputs::{EmbeddedToolInput, EmbeddedToolInputKind};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -78,6 +81,10 @@ pub enum IterationDepth {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
+    /// Abstract input category, valid only in an isolated tool prototype.
+    ToolInput(EmbeddedToolInputKind),
+    /// A prototype operation whose path position is assigned at invocation.
+    ToolPointOnPath(usize),
     Transformed(transform_model::TransformDefinition),
     PresentationButton {
         targets: Vec<usize>,
@@ -144,6 +151,8 @@ pub enum Kind {
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
     PointOnPolygon(usize, usize, f64),
+    /// Native midpoint construction using a finite segment as its dependency.
+    SegmentMidpoint(usize),
     GraphHorizontalUnit(usize, f64),
     GraphVerticalUnit(usize, f64),
     GraphAxis(usize, usize, u32),
@@ -251,6 +260,8 @@ pub struct Object {
     pub page: usize,
     pub kind: Kind,
     pub visible: bool,
+    /// Native flag 2 suppresses presentation independently of ordinary hide/show.
+    pub presentation_suppressed: bool,
     pub tracing: bool,
     pub deleted: bool,
     pub midpoint_host: Option<usize>,
@@ -408,6 +419,7 @@ impl Document {
             interior_order,
             kind,
             visible: true,
+            presentation_suppressed: false,
             tracing: false,
             deleted: false,
             midpoint_host,

@@ -94,3 +94,15 @@ mod transforms;
 mod translations;
 
 mod mixed_straight_chains;
+
+mod tool_structure;
+
+mod tool_execution;
+mod tool_path_decoding;
+mod tool_numeric_units;
+mod tool_numeric_execution;
+mod tool_segment_inputs;
+
+mod tool_creation;
+
+mod tool_numeric_placement;

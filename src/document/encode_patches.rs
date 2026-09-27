@@ -44,7 +44,7 @@ impl Document {
             return Ok(out);
         }
         let rs = records(&out)?;
-        let styles: Vec<_> = rs.iter().filter(|record| record.kind == 0x04b3).collect();
+        let styles: Vec<_> = document_records(&rs).filter(|record| record.kind == 0x04b3).collect();
         if styles.iter().any(|record| {
             record.data.len() >= 4 && out[record.data.start + 2..record.data.start + 4] == [14, 0]
         }) {
@@ -61,7 +61,7 @@ impl Document {
         let anchor = styles
             .last()
             .copied()
-            .or_else(|| rs.iter().find(|record| record.kind == 0x04b1))
+            .or_else(|| document_records(&rs).find(|record| record.kind == 0x04b1))
             .ok_or("Missing page style records")?;
         let at = anchor.data.end + anchor.data.len() % 2;
         out.splice(at..at, style);
@@ -161,6 +161,31 @@ impl Document {
         }
         Ok(bytes)
     }
+    /// Resolve a caption style before storing its font reference in a native group.
+    /// Pending overrides are appended in object order by the font patcher.
+    pub(super) fn imported_caption_font_index(
+        &self,
+        style: &text_style_records::FontState,
+    ) -> Result<u16, String> {
+        let entries = records(&self.original)?;
+        let count = document_records(&entries).filter(|record| record.kind == 0x04b3).count();
+        let mut known = (0..count)
+            .map(|index| text_style_records::decode_font_state_at(&self.original, index).ok())
+            .collect::<Vec<_>>();
+        if !known.iter().any(Option::is_some) {
+            return Err("No supported font style template".into());
+        }
+        for pending in self.objects.iter().filter(|object| !object.deleted)
+            .filter_map(|object| object.text_style_override.as_ref()) {
+            if !known.iter().any(|entry| entry.as_ref() == Some(pending)) {
+                known.push(Some(pending.clone()));
+            }
+        }
+        let index = known.iter().position(|entry| entry.as_ref() == Some(style))
+            .unwrap_or(known.len());
+        u16::try_from(index).map_err(|_| "Too many text styles".into())
+    }
+
     pub(super) fn patch_text_font_overrides(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let overrides = self
             .objects
@@ -177,9 +202,6 @@ impl Document {
         if overrides.is_empty() && self.run_font_families.is_empty() {
             return Ok(bytes);
         }
-        if !self.embedded_tools()?.is_empty() {
-            return Err("Text font changes with embedded tool font tables are not yet supported".into());
-        }
         if overrides.iter().any(|(_, object, _)| {
             !matches!(object.kind, Kind::PlainText { .. })
                 && !(is_point_kind(&object.kind) && object.label.is_some())
@@ -192,13 +214,11 @@ impl Document {
             return Err("Object has no supported caption font style".into());
         }
         let rs = records(&bytes)?;
-        let last_family = rs
-            .iter()
+        let last_family = document_records(&rs)
             .filter(|record| record.kind == 0x04b1)
             .last()
             .ok_or("Missing font family table")?;
-        let style_records = rs
-            .iter()
+        let style_records = document_records(&rs)
             .filter(|record| record.kind == 0x04b3)
             .collect::<Vec<_>>();
         style_records.last().ok_or("Missing font style table")?;
@@ -267,8 +287,7 @@ impl Document {
         }
         if !appended.is_empty() {
             let rs = records(&bytes)?;
-            let last = rs
-                .iter()
+            let last = document_records(&rs)
                 .filter(|record| record.kind == 0x04b3)
                 .last()
                 .ok_or("Missing font style table")?;
@@ -607,5 +626,39 @@ impl Document {
         }
         records(&bytes)?;
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod caption_font_namespace_tests {
+    use super::*;
+
+    #[test]
+    fn imported_numeric_caption_font_uses_drawing_table_and_preserves_tool_bytes() {
+        let original = include_bytes!("../../tests/fixtures/embedded_tool_scalar_created_native_verified.gsp");
+        let mut document = Document::from_bytes(original, None).unwrap();
+        let prototype = document.embedded_tool_document(0).unwrap();
+        let style = prototype.text_font_state(2).unwrap();
+        assert_eq!(style.size_code, 16);
+        assert!(!style.bold);
+        let index = document.imported_caption_font_index(&style).unwrap();
+        assert_eq!(index, 1);
+        document.objects[1].text_style_override = Some(style.clone());
+        assert_eq!(document.imported_caption_font_index(&style).unwrap(), index);
+        let output = document.patch_text_font_overrides(original.to_vec()).unwrap();
+        assert_eq!(text_style_records::decode_font_state_at(&output, index as usize).unwrap(), style);
+        assert!(text_style_records::decode_font_state_at(&output, 2).is_err());
+        let tools = |bytes: &[u8]| {
+            let entries = records(bytes).unwrap();
+            let drawing = document_record_indices(&entries);
+            entries.iter().enumerate().filter(|(index, _)| !drawing.contains(index))
+                .flat_map(|(index, record)| {
+                    let end = entries.get(index + 1).map_or(bytes.len(), |next| next.start);
+                    bytes[record.start..end].to_vec()
+                }).collect::<Vec<_>>()
+        };
+        assert_eq!(tools(original), tools(&output));
+        let reopened = Document::from_bytes(&output, None).unwrap();
+        assert_eq!(reopened.text_font_state(2), Some(style));
     }
 }

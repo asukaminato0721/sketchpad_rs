@@ -502,6 +502,15 @@ impl Editor {
                         ui.painter().galley(rect.min + egui::vec2(0.7, 0.), galley, color);
                     }
                 }
+                if matches!(self.tool, Tool::Custom(_)) {
+                    let start = self.custom_tool_path_start.and_then(|start| match start {
+                        super::custom_tools::PathStart::Existing(id) => self.doc.position(id),
+                        super::custom_tools::PathStart::New(point) => Some(point),
+                    });
+                    if let Some(start) = start {
+                        ui.painter().circle_stroke(vp.screen(start), 5., egui::Stroke::new(1.5, egui::Color32::from_rgb(180, 40, 100)));
+                    }
+                }
             });
         rect
     }

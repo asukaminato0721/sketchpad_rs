@@ -509,6 +509,13 @@ impl Document {
                         y: (a.y + b.y) / 2.,
                     })
                 }
+                Kind::SegmentMidpoint(host) => {
+                    let (a, b, mode) = d.line_points(*host)?;
+                    (mode == LineMode::Segment).then_some(Point {
+                        x: (a.x + b.x) / 2.,
+                        y: (a.y + b.y) / 2.,
+                    })
+                }
                 Kind::Intersection(a, b) => {
                     let first = d.line_points(*a)?;
                     let second = d.line_points(*b)?;

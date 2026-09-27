@@ -21,6 +21,11 @@ use crate::{
 
 impl Document {
     pub fn encode(&self) -> Result<Vec<u8>, String> {
+        if self.objects.iter().any(|object| {
+            matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
+        }) {
+            return Err("Tool givens must be bound before saving a drawing".into());
+        }
         let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
         self.encode_page_names(self.patch_active_page(self.patch_measurement_precisions(bytes)?)?)
     }
@@ -467,25 +472,21 @@ impl Document {
             )?)?;
             return self.patch_last_moved_marker(out);
         }
-        let preamble = rs
-            .iter()
+        let preamble = document_records(&rs)
             .find(|r| r.kind == 0x3e8 && r.data.len() >= 28)
             .ok_or("Missing document preamble")?;
         out[preamble.data.start + 24..preamble.data.start + 28]
             .copy_from_slice(&(self.objects.len() as u32).to_le_bytes());
-        let trailer = rs
-            .iter()
+        let trailer = document_records(&rs)
             .find(|r| r.kind == 0x3e9)
             .ok_or("Missing document trailer")?
             .start;
-        let last_group_end = rs
-            .iter()
+        let last_group_end = document_records(&rs)
             .filter(|r| r.kind == 0x7d7 && r.start < trailer)
             .map(|r| r.data.end)
             .max()
             .unwrap_or(0);
-        let insert_at = rs
-            .iter()
+        let insert_at = document_records(&rs)
             .find(|r| {
                 matches!(r.kind, 0x2328 | 0x232d) && r.start >= last_group_end && r.start < trailer
             })
@@ -1412,10 +1413,14 @@ impl Document {
                 } else {
                     None
                 };
-                added.extend_from_slice(&super::transform_wire::encode_group(
+                let mut group = super::transform_wire::encode_group(
                     &definition,
                     TransformWirePresentation { visible: o.visible, label: o.label.as_ref(), polygon },
-                )?);
+                )?;
+                if o.presentation_suppressed {
+                    group[10] |= 2;
+                }
+                added.extend_from_slice(&group);
                 continue;
             }
             let (code, refs): (u16, Vec<usize>) = match o.kind {
@@ -1433,6 +1438,7 @@ impl Document {
                             .ok_or("Midpoint requires an existing segment")?,
                     ],
                 ),
+                Kind::SegmentMidpoint(host) => (1, vec![host]),
                 Kind::Segment(a, b) => (2, vec![a, b]),
                 Kind::Circle(a, b) => (3, vec![a, b]),
                 Kind::CircleBySegment(a, b) => (4, vec![a, b]),
@@ -1464,12 +1470,21 @@ impl Document {
             if !o.visible {
                 h[2] = 1;
             }
+            if o.presentation_suppressed {
+                h[2] |= 2;
+            }
             if o.kind.is_polygon() {
                 h[20..24].copy_from_slice(&o.interior_order
                     .ok_or("Missing polygon drawing order")?.to_le_bytes());
             }
             put_record(&mut added, 0x7d0, &h);
-            if !matches!(o.kind, Kind::PointOnPolygon(..) | Kind::PointOnArc(..)) && let Some(label) = &o.label {
+            let label_after_references = matches!(o.kind,
+                Kind::Midpoint(..) | Kind::SegmentMidpoint(..) | Kind::Intersection(..) | Kind::LineCircleIntersection(..));
+            let label_after_constraint = matches!(o.kind,
+                Kind::PointOnSegment(..) | Kind::PointOnRay(..) | Kind::PointOnLine(..)
+                | Kind::PointOnCircle(..) | Kind::PointOnArc(..) | Kind::PointOnPolygon(..));
+            if !label_after_constraint
+                && !label_after_references && let Some(label) = &o.label {
                 added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
             }
             if let Kind::Free(p) = o.kind {
@@ -1484,6 +1499,9 @@ impl Document {
                     idx.extend_from_slice(&(r as u32).to_le_bytes());
                 }
                 put_record(&mut added, 0x7d2, &idx);
+                if label_after_references && let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
                 match o.kind {
                     Kind::PointOnSegment(_, t) => {
                         let mut payload = vec![15, 0, 14, 0];
@@ -1504,9 +1522,6 @@ impl Document {
                         let mut payload = vec![15, 0, 67, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
-                        if let Some(label) = &o.label {
-                            added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
-                        }
                     }
                     Kind::PointOnPolygon(host, edge, t) => {
                         let count = polygon_vertex_count_for_encoding(&self.objects, host)
@@ -1519,9 +1534,6 @@ impl Document {
                         payload.extend_from_slice(&(edge as u32).to_le_bytes());
                         payload.extend_from_slice(&[255, 255, 0, 0]);
                         put_record(&mut added, 0x7d3, &payload);
-                        if let Some(label) = &o.label {
-                            added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
-                        }
                     }
                     Kind::PointOnCircle(_, x, y) => {
                         let mut payload = vec![15, 0, 28, 0];
@@ -1531,8 +1543,32 @@ impl Document {
                     }
                     _ => {}
                 }
+                if label_after_constraint && let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
             }
             put_record(&mut added, 0x7d7, &[]);
+        }
+        let mut framed_groups = b"GSP4".to_vec();
+        framed_groups.extend_from_slice(&added);
+        let added_headers: Vec<_> = if added.is_empty() {
+            Vec::new()
+        } else {
+            records(&framed_groups)?
+        }
+        .into_iter()
+        .filter(|record| record.kind == 0x07d0)
+        .collect();
+        // Deleted additions are emitted here and removed by compact_deleted.
+        // Their headers must stay aligned until that later pass remaps IDs.
+        let added_objects: Vec<_> = self.objects.iter().skip(self.source_count).collect();
+        if added_headers.len() != added_objects.len() {
+            return Err("New object group count mismatch".into());
+        }
+        for (record, object) in added_headers.iter().zip(added_objects) {
+            let flags = &mut added[record.data.start - 4 + 2];
+            *flags = (*flags & !3) | u8::from(!object.visible)
+                | (u8::from(object.presentation_suppressed) << 1);
         }
         let added_len = added.len();
         out.splice(insert_at..insert_at, added);
@@ -1559,8 +1595,7 @@ impl Document {
             })
             .map(|o| o.id);
         if let Some(id) = last_marker_object {
-            if let Some(marker) = rs
-                .iter()
+            if let Some(marker) = document_records(&rs)
                 .find(|r| r.kind == 0x2328 && r.start >= insert_at && r.start < trailer)
             {
                 if marker.data.len() == 4 {

@@ -11,7 +11,7 @@ use super::kind::{
     polygon_vertex_count, straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
-use super::{Document, IterationDepth, Kind, LineMode, Object, Point};
+use super::{Document, EmbeddedToolInput, EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object, Point};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
     MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
@@ -22,7 +22,7 @@ use crate::image_records::ImageFile;
 use crate::plot_points_records::PlotPointsMode;
 use crate::table_records::{
     CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
-    ParameterGroup, TableGroup,
+    ParameterCalculationGroup, ParameterGroup, TableGroup,
 };
 use crate::text_records::LabelAux;
 use crate::value_equation_records::ValueEquationKind;
@@ -34,6 +34,107 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Structural saves may retain complete registered tool canvases unchanged.
+/// Their local object IDs and opaque auxiliary records are never drawing IDs.
+pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Record]) -> bool {
+    if !entries.iter().any(|record| matches!(record.kind, 0x03ea | 0x03eb)) {
+        return true;
+    }
+    for (index, record) in entries.iter().enumerate() {
+        if record.kind == 0x03ea
+            && !index.checked_sub(1).and_then(|previous| entries.get(previous))
+                .is_some_and(|previous| previous.kind == 0x0386) {
+            return false;
+        }
+        if record.kind == 0x03eb
+            && !entries.get(index + 1).is_some_and(|next|
+                next.kind == 0x0387 && next.data.is_empty()) {
+            return false;
+        }
+    }
+    let mut drawing_open = false;
+    let mut group_open = false;
+    let mut tool_expected = None;
+    let mut tool_objects = 0usize;
+    let mut tool_inputs = false;
+    let mut tools = 0usize;
+    let mut pages = 0usize;
+    for record in entries {
+        match record.kind {
+            0x03e8 => {
+                if drawing_open || group_open || tool_expected.is_some() { return false; }
+                drawing_open = true;
+                pages += 1;
+            }
+            0x03e9 => {
+                if !drawing_open || group_open || tool_expected.is_some() { return false; }
+                drawing_open = false;
+            }
+            0x03ea => {
+                if drawing_open || group_open || tool_expected.is_some() || record.data.len() != 36 {
+                    return false;
+                }
+                tool_expected = Some(u32_at(bytes, record.data.start + 24) as usize);
+                tool_objects = 0;
+                tool_inputs = false;
+            }
+            0x03eb => {
+                if group_open || !tool_inputs || record.data.len() != 0 || tool_expected != Some(tool_objects) {
+                    return false;
+                }
+                tool_expected = None;
+                tools += 1;
+            }
+            0x07d0 => {
+                if group_open || (!drawing_open && tool_expected.is_none())
+                    || (tool_expected.is_some() && !matches!(record.data.len(), 16 | 28)) {
+                    return false;
+                }
+                group_open = true;
+                if tool_expected.is_some() { tool_objects += 1; }
+            }
+            0x07d7 => {
+                if !group_open || !record.data.is_empty() { return false; }
+                group_open = false;
+            }
+            0x04b4 if tool_expected.is_some() => {
+                let payload = &bytes[record.data.clone()];
+                if group_open || tool_inputs || payload.len() < 4 || (payload.len() - 4) % 4 != 0
+                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4 {
+                    return false;
+                }
+                let mut unique = BTreeSet::new();
+                let limit = tool_expected.unwrap();
+                for reference in payload[4..].chunks_exact(4) {
+                    let id = u32::from_le_bytes(reference.try_into().unwrap()) as usize;
+                    if id == 0 || id > limit || !unique.insert(id) { return false; }
+                }
+                tool_inputs = true;
+            }
+            0x07d2 if tool_expected.is_some() => {
+                let payload = &bytes[record.data.clone()];
+                if !group_open || payload.len() < 4 || (payload.len() - 4) % 4 != 0
+                    || u32_at(payload, 0) as usize != (payload.len() - 4) / 4 {
+                    return false;
+                }
+                let limit = tool_expected.unwrap();
+                if payload[4..].chunks_exact(4).any(|reference| {
+                    let id = u32::from_le_bytes(reference.try_into().unwrap()) as usize;
+                    id == 0 || id > limit
+                }) { return false; }
+            }
+            _ => {}
+        }
+    }
+    if drawing_open || group_open || tool_expected.is_some() { return false; }
+    if tools == 0 { return true; }
+    let mut headers = entries.iter().filter(|record| record.kind == 0x0384);
+    let Some(header) = headers.next() else { return false; };
+    header.data.len() == 28 && headers.next().is_none()
+        && u32_at(bytes, header.data.start + 4) as usize == tools
+        && u32_at(bytes, header.data.start + 24) as usize == pages + tools + 1
+}
+
 impl Document {
     pub fn open(path: &Path) -> Result<Self, String> {
         Self::from_bytes(
@@ -42,7 +143,36 @@ impl Document {
         )
     }
     pub fn from_bytes(b: &[u8], path: Option<PathBuf>) -> Result<Self, String> {
+        Self::from_bytes_with_tool_inputs(b, path, &BTreeMap::new())
+    }
+
+    /// Decode a synthetic, isolated tool canvas with explicit local givens.
+    /// Ordinary documents never infer this context from a code-zero header.
+    pub(super) fn from_bytes_with_tool_inputs(
+        b: &[u8],
+        path: Option<PathBuf>,
+        tool_inputs: &BTreeMap<usize, EmbeddedToolInput>,
+    ) -> Result<Self, String> {
         let rs = records(b)?;
+        if !tool_inputs.is_empty() {
+            if rs.iter().any(|record| matches!(record.kind, 0x03ea | 0x03eb))
+                || rs.iter().filter(|record| record.kind == 0x03e8).count() != 1
+            {
+                return Err("Tool input context requires one isolated canvas".into());
+            }
+            let headers: Vec<_> = rs.iter().filter(|record| record.kind == 0x07d0).collect();
+            for (&id, input) in tool_inputs {
+                let header = id.checked_sub(1).and_then(|index| headers.get(index))
+                    .ok_or("Invalid contextual tool input ID")?;
+                let payload = &b[header.data.clone()];
+                if input.local_id != id || payload.len() != 28 || payload[..2] != [0, 0]
+                    || u16::from_le_bytes(payload[6..8].try_into().unwrap()) != input.native_class
+                    || u16::from_le_bytes(payload[8..10].try_into().unwrap()) != input.native_subtype
+                {
+                    return Err("Tool input descriptor does not match its native header".into());
+                }
+            }
+        }
         let document_indices: BTreeSet<_> = document_record_indices(&rs).into_iter().collect();
         let title_slots = page_title_slots(b, &rs)?;
         let title_offsets: BTreeSet<usize> = title_slots
@@ -72,7 +202,7 @@ impl Document {
         let mut objects: Vec<Object> = Vec::new();
         let total_pages = document_records(&rs).filter(|record| record.kind == 0x3e8).count();
         let mut i = 0;
-        let mut safe = document_indices.len() == rs.len();
+        let mut safe = registered_tool_structure_safe(b, &rs);
         let mut snap_points = Vec::new();
         let mut grid_dotted = Vec::new();
         let mut grid_form = Vec::new();
@@ -116,6 +246,7 @@ impl Document {
                 .is_some_and(|picture| picture.picture_group_offset() == group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
+            let tool_input = tool_inputs.get(&(objects.len() + 1)).copied();
             let mut point = None;
             let mut point_offset = None;
             let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
@@ -140,6 +271,9 @@ impl Document {
                         | 6
                         | 7
                         | 8
+                        | 9
+                        | 11
+                        | 12
                         | 16
                         | 17
                         | 18
@@ -440,11 +574,55 @@ impl Document {
                 };
                 Some(Kind::MappedPointIteration { seeds, branches, carried, depth, final_only: data[4..6] == [1, 0] })
             })();
-            let kind = if refs
+            let kind = if let Some(input) = tool_input {
+                if !refs.is_empty() || constraint_payload.is_some()
+                    || rs.iter().any(|record| record.start > group_start
+                        && record.start < rs[i].start && record.kind == 0x07d2)
+                {
+                    return Err("Tool input placeholder must not have dependencies".into());
+                }
+                if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
+                    super::tool_inputs::numeric_given_layout(&b[group_start..rs[i].data.end])?;
+                } else if input.kind().is_some() {
+                    let body: Vec<_> = rs.iter().filter(|record| record.start > group_start
+                        && record.start < rs[i].start).collect();
+                    if body.iter().any(|record| !matches!(record.kind, 0x0899 | 0x07d5 | 0x07d8))
+                        || body.iter().filter(|record| record.kind == 0x0899).count() != 1
+                        || body.iter().any(|record| record.kind == 0x0899 && record.data.len() != 16)
+                        || body.iter().filter(|record| record.kind == 0x07d5).count() > 1
+                        || body.iter().filter(|record| record.kind == 0x07d8).count() > 1
+                    {
+                        return Err("Unsupported tool input placeholder layout".into());
+                    }
+                }
+                match input.kind() {
+                    Some(EmbeddedToolInputKind::Point) => Kind::Free(Point { x: 0.0, y: 0.0 }),
+                    Some(category @ (EmbeddedToolInputKind::Path | EmbeddedToolInputKind::Segment | EmbeddedToolInputKind::Numeric)) => {
+                        point_offset = None;
+                        Kind::ToolInput(category)
+                    }
+                    None => Kind::Unsupported(0),
+                }
+            } else if refs
                 .iter()
                 .any(|&reference| reference == 0 || reference > objects.len())
             {
                 Kind::Unsupported(code)
+            } else if !tool_inputs.is_empty() && code == 48 && h[6..10] == [11, 0, 33, 0] {
+                // An abstract tool calculation is typed only after binding. Its
+                // native expression and references remain exact in the template.
+                let mut normalized = b[group_start..rs[i].data.end].to_vec();
+                normalized[16..18].copy_from_slice(&51_u16.to_le_bytes());
+                match ParameterCalculationGroup::parse(&normalized) {
+                    Ok(group) if !refs.is_empty() && group.sources()
+                        == refs.iter().map(|id| (*id - page_base) as u32).collect::<Vec<_>>()
+                        && refs.iter().all(|id| objects.get(id - 1).is_some_and(|object|
+                            object.kind.numeric_unit().is_some()
+                                || matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric)))) => {
+                        Kind::ParameterCalculation(refs[0], group)
+                    }
+                    _ => Kind::Unsupported(code),
+                }
             } else if let Some(graph_kind) = graph_kind {
                 match graph_kind {
                     GraphObject::HorizontalUnit { origin, step }
@@ -1045,6 +1223,17 @@ impl Document {
                     {
                         Kind::CircleRadius(*host)
                     }
+                    (15, None, [host]) if !tool_inputs.is_empty()
+                        && h[6..10] == [1, 0, 10, 0]
+                        && constraint_payload.is_none()
+                        && objects.get(host.saturating_sub(1))
+                            .is_some_and(|object| matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Path))
+                                || straight_kind_mode(&object.kind).is_some()
+                                || object.kind.is_circle() || is_arc_kind(&object.kind)
+                                || object.kind.is_polygon()) =>
+                    {
+                        Kind::ToolPointOnPath(*host)
+                    }
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
                             (Some(kind), Some((payload, _)))
@@ -1097,7 +1286,7 @@ impl Document {
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
                                     && polygon_vertex_count(&objects, *host).is_some_and(|count| (u32_at(payload, 12) as usize) < count)
-                                    && payload[16..20] == [255, 255, 0, 0] => {
+                                    && matches!(&payload[16..20], [255, 255, 0, 0] | [255, 255, 240, 191]) => {
                                 Kind::PointOnPolygon(*host, u32_at(payload, 12) as usize, f64_at(payload, 4))
                             }
                             _ => Kind::Unsupported(code),
@@ -1403,6 +1592,7 @@ impl Document {
                     (1, _, [segment]) => {
                         match objects.get(segment.saturating_sub(1)).map(|o| &o.kind) {
                             Some(Kind::Segment(a, b)) => Kind::Midpoint(*a, *b),
+                            Some(kind) if is_segment_kind(kind) => Kind::SegmentMidpoint(*segment),
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -1477,7 +1667,8 @@ impl Document {
                 label = None;
             }
             if label.is_some() && !is_point_kind(&kind) && kind.numeric_unit().is_none()
-                && !matches!(kind, Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }) {
+                && !matches!(kind, Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. })
+                && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_))) {
                 safe = false;
                 label = None;
             }
@@ -1522,6 +1713,7 @@ impl Document {
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 kind,
                 visible: raw & 0x10000 == 0,
+                presentation_suppressed: raw & 0x20000 != 0,
                 tracing: h[4] & 1 != 0,
                 deleted: false,
                 point_offset,
@@ -1544,8 +1736,7 @@ impl Document {
             i += 1;
         }
         let source_count = objects.len();
-        let preambles: Vec<_> = rs
-            .iter()
+        let preambles: Vec<_> = document_records(&rs)
             .filter(|r| r.kind == 0x3e8 && r.data.len() >= 28)
             .collect();
         if preambles.len() != 1 || u32_at(b, preambles[0].data.start + 24) as usize != source_count

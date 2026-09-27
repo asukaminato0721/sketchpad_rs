@@ -1079,14 +1079,18 @@ impl ParameterExpr {
                 let (left, right) = (a.units(sources)?, b.units(sources)?);
                 match *op {
                     0x1000 | 0x1001 if left == right => Ok(left),
-                    // Native measured lengths can use bare decimal
-                    // thresholds (for example sgn((x-2)*(3-x)), with x in cm).
-                    // The literal adopts the other operand's units. A scalar
-                    // source or computed scalar expression remains distinct.
-                    0x1000 | 0x1001
-                        if left == NumericUnit::Length && right == Scalar && b.is_bare_decimal() => Ok(left),
-                    0x1000 | 0x1001
-                        if left == Scalar && right == NumericUnit::Length && a.is_bare_decimal() => Ok(right),
+                    // Native calculator and custom-tool controls produce a
+                    // unitless magnitude when a length, angle, or area is added
+                    // to a bare decimal. Native subtraction has a separately
+                    // retained length control. A scalar source stays distinct.
+                    0x1000
+                        if matches!(left, Length | Degrees | NumericUnit::Area)
+                            && right == Scalar && b.is_bare_decimal() => Ok(Scalar),
+                    0x1000
+                        if left == Scalar && matches!(right, Length | Degrees | NumericUnit::Area)
+                            && a.is_bare_decimal() => Ok(Scalar),
+                    0x1001 if left == Length && right == Scalar && b.is_bare_decimal() => Ok(Length),
+                    0x1001 if left == Scalar && right == Length && a.is_bare_decimal() => Ok(Length),
                     0x1002 | 0x1003 => {
                         let (al, ad) = left.dimensions();
                         let (bl, bd) = right.dimensions();
@@ -1129,6 +1133,16 @@ impl ParameterExpr {
                     _ => Err("Calculation uses incompatible or unsupported units".into()),
                 }
             }
+        }
+    }
+
+    fn caption_is_flat(&self) -> bool {
+        match self {
+            Self::Source(_) | Self::Literal(_, _) => true,
+            Self::Neg(argument) | Self::Group(argument) => argument.caption_is_flat(),
+            Self::Binary(op, left, right) => matches!(*op, 0x1000..=0x1002)
+                && left.caption_is_flat() && right.caption_is_flat(),
+            Self::Call(_, _) => false,
         }
     }
 
@@ -1684,6 +1698,27 @@ impl ParameterCalculationGroup {
         parsed.inferred_unit = self.inferred_unit;
         Ok(parsed)
     }
+    /// Bind an abstract native tool calculation to concrete numeric sources.
+    /// Native writes the result category after applying the expression's units.
+    pub fn specialize_tool_sources(
+        &self,
+        ids: &[u32],
+        units: &[NumericUnit],
+    ) -> Result<Self, String> {
+        if units.len() != ids.len() {
+            return Err("Invalid calculation source units".into());
+        }
+        let remapped = self.remap_sources(ids)?;
+        let unit = remapped.units_for_sources(units)?;
+        let mut bytes = remapped.bytes;
+        bytes[16..18].copy_from_slice(&unit.subtype().to_le_bytes());
+        let mut group = Self::parse(&bytes)?;
+        if unit.subtype() == 51 && unit != NumericUnit::Scalar {
+            group.inferred_unit = Some(unit);
+        }
+        Ok(group)
+    }
+
     pub fn with_source_units(mut self, units: &[NumericUnit]) -> Result<Self, String> {
         let inferred = self.units_for_sources(units)?;
         if inferred == self.unit() {
@@ -1705,6 +1740,11 @@ impl ParameterCalculationGroup {
         bytes[10] = (bytes[10] & !1) | u8::from(!visible);
         let mut parsed = Self::parse(&bytes)?;
         parsed.inferred_unit = self.inferred_unit;
+        Ok(parsed)
+    }
+    pub fn with_presentation(&self, visible: bool, suppressed: bool) -> Result<Self, String> {
+        let mut parsed = self.with_visibility(visible)?;
+        parsed.bytes[10] = (parsed.bytes[10] & !2) | (u8::from(suppressed) << 1);
         Ok(parsed)
     }
     pub fn unit(&self) -> NumericUnit {
@@ -1756,6 +1796,22 @@ impl ParameterCalculationGroup {
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
         )
     }
+    /// Preserve native expression and caches while mapping its local font.
+    pub fn with_caption_font(&self, index: u16) -> Result<Self, String> {
+        let mut bytes = self.bytes.clone();
+        let rs = records(&bytes, 0)?;
+        let at = rs.iter().find(|record| record.kind == 0x07d8)
+            .ok_or("Missing numeric caption font")?.payload;
+        bytes[at..at + 2].copy_from_slice(&index.to_le_bytes());
+        let mut group = Self::parse(&bytes)?;
+        group.inferred_unit = self.inferred_unit;
+        Ok(group)
+    }
+
+    pub(crate) fn caption_is_flat(&self) -> bool {
+        self.expression_tree().is_ok_and(|tree| tree.caption_is_flat())
+    }
+
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let at = rs[2].payload + 12;
@@ -2246,6 +2302,14 @@ impl CalculationGroup {
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
         )
     }
+    /// Persisted native caption bounds, including the original layout cache.
+    pub fn bbox(&self) -> ((i16, i16), (i16, i16)) {
+        let rs = records(&self.bytes, 0).unwrap();
+        let at = rs.iter().find(|record| record.kind == 0x08a3).unwrap().payload;
+        let word = |offset| i16::from_le_bytes(self.bytes[at + offset..at + offset + 2].try_into().unwrap());
+        ((word(0), word(2)), (word(4), word(6)))
+    }
+
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {
         let rs = records(&self.bytes, 0)?;
         let before = self.anchor();
@@ -3201,6 +3265,9 @@ mod tests {
             assert_eq!(group.anchor(), (150, 200));
             assert_eq!(CalculationGroup::parse(group.as_bytes()).unwrap(), group);
         }
+        let mixed_literal = CalculationGroup::from_expression("30°+2").unwrap();
+        assert_eq!(mixed_literal.unit(), NumericUnit::Scalar);
+        assert_eq!(mixed_literal.value(), 32.);
         for expression in ["0/0", "sqrt(-1)", "asin(2)"] {
             let group = CalculationGroup::from_expression(expression).unwrap();
             assert!(group.evaluated_value().is_none());
@@ -3213,7 +3280,6 @@ mod tests {
         }
         for expression in [
             "v+2",
-            "30°+2",
             "sin()",
             "(2+3",
             "2)3",
@@ -3902,4 +3968,24 @@ mod tests {
         assert_eq!(shifted.pair_source_ids(), Some([2, 1]));
         assert_eq!(shifted.pair_values(), pair.pair_values());
     }
+}
+
+/// Read a supported group's local numeric caption font index.
+pub(crate) fn numeric_caption_font_index(bytes: &[u8]) -> Result<usize, String> {
+    let rs = records(bytes, 0)?;
+    let record = rs.iter().find(|record| record.kind == 0x07d8)
+        .ok_or("Missing numeric caption font")?;
+    if record.end - record.payload != 2 {
+        return Err("Unsupported numeric caption font record".into());
+    }
+    Ok(u16::from_le_bytes(bytes[record.payload..record.end].try_into().unwrap()) as usize)
+}
+
+/// Native places the following caption one pixel after a cached bbox bottom.
+pub(crate) fn cached_numeric_caption_step(bbox: ((i16, i16), (i16, i16))) -> Result<i32, String> {
+    let height = i32::from(bbox.1.1) - i32::from(bbox.0.1);
+    if !(1..=2048).contains(&height) {
+        return Err("Unsupported numeric caption bounds".into());
+    }
+    Ok(height + 1)
 }

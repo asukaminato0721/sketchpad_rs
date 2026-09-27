@@ -26,10 +26,16 @@ impl Document {
             }
         }
         let rs = records(&bytes)?;
+        let drawing_indices: BTreeSet<_> = document_record_indices(&rs).into_iter().collect();
         let mut out = bytes[..4].to_vec();
         let mut group_id = 0;
         let mut dropping = false;
         for (index, record) in rs.iter().enumerate() {
+            if !drawing_indices.contains(&index) {
+                let end = rs.get(index + 1).map_or(bytes.len(), |next| next.start);
+                out.extend_from_slice(&bytes[record.start..end]);
+                continue;
+            }
             if record.kind == 0x7d0 {
                 group_id += 1;
                 dropping = self
@@ -686,14 +692,18 @@ impl Document {
                         put_record(&mut groups, 0x07d2, &references);
                         put_record(&mut groups, 0x07d7, &[]);
                     }
-                    Kind::Midpoint(a, b) => {
-                        let host = object
-                            .midpoint_host
-                            .ok_or("Midpoint needs a segment host")?;
-                        if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == *a && *second == *b) || (*first == *b && *second == *a))
-                        {
-                            return Err("Midpoint host has different endpoints".into());
-                        }
+                    Kind::Midpoint(_, _) | Kind::SegmentMidpoint(_) => {
+                        let host = match object.kind {
+                            Kind::SegmentMidpoint(host) => host,
+                            Kind::Midpoint(a, b) => {
+                                let host = object.midpoint_host.ok_or("Midpoint needs a segment host")?;
+                                if !matches!(self.objects.get(host.saturating_sub(1)).map(|parent| &parent.kind), Some(Kind::Segment(first, second)) if (*first == a && *second == b) || (*first == b && *second == a)) {
+                                    return Err("Midpoint host has different endpoints".into());
+                                }
+                                host
+                            }
+                            _ => unreachable!(),
+                        };
                         let local_host = self.multi_page_local_reference(page, object.id, host)?;
                         let mut object_header = header(1);
                         if !object.visible {
@@ -704,15 +714,15 @@ impl Document {
                             style_records::set_visual_style(&mut object_header, style)?;
                         }
                         put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = Vec::with_capacity(8);
+                        references.extend_from_slice(&1u32.to_le_bytes());
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
                         if let Some(label) = &object.label {
                             groups.extend_from_slice(
                                 &crate::text_records::encode_point_label_records(label),
                             );
                         }
-                        let mut references = Vec::with_capacity(8);
-                        references.extend_from_slice(&1u32.to_le_bytes());
-                        references.extend_from_slice(&local_host.to_le_bytes());
-                        put_record(&mut groups, 0x07d2, &references);
                         put_record(&mut groups, 0x07d7, &[]);
                     }
                     Kind::CircleBySegment(center, radius) => {

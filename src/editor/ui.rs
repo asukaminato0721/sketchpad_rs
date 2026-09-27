@@ -18,6 +18,11 @@ impl Editor {
             }
         }
         if !root.ctx().egui_wants_keyboard_input() && self.pending_action.is_none() {
+            if root.input(|input| input.key_pressed(egui::Key::Escape))
+                && matches!(self.tool, super::Tool::Custom(_))
+            {
+                self.cancel_custom_tool();
+            }
             if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) {
                 self.copy_selected();
             }
@@ -46,6 +51,7 @@ impl Editor {
         self.function_dialogs_ui(root);
         self.plot_dialogs_ui(root);
         self.transform_dialogs_ui(root);
+        self.custom_tool_dialog_ui(root);
         let viewport = Viewport {
             rect,
             scale: self.scale,
