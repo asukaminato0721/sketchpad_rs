@@ -10,7 +10,9 @@ impl Editor {
                 ui.heading("Calculate");
                 ui.text_edit_singleline(&mut self.calculation_draft);
                 ui.label(
-                    if self.doc.selected.len() >= 2 {
+                    if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))) {
+                        "Use f1(…), f2(…), … for selected functions and v1, v2, … for values, in selection order"
+                    } else if self.doc.selected.len() >= 2 {
                         "Use v1, v2, … in selection order; a and b also name the first two values"
                     } else if self.doc.selected.len() == 1
                         && self.doc.selected.iter().next().is_some_and(|&id| {
@@ -127,6 +129,8 @@ impl Editor {
                         })
                 } else if let Some(source) = selected_parameter {
                     self.doc.add_parameter_calculation(source, draft, (10, y))
+                } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))) {
+                    self.doc.add_multi_calculation(&[*self.doc.selected.iter().next().unwrap()], draft, (10, y))
                 } else {
                     self.doc.add_calculation_expression(draft, (10, y))
                 };

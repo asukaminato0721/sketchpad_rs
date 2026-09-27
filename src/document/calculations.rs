@@ -671,14 +671,14 @@ impl Document {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
         let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
         let sources = calculation_source_ids(first, group);
-        group.value_for_sources_with_functions(&values, &units, &|index, argument| self.function_value(*sources.get(index)?, argument))
+        group.value_for_sources_with_functions(&values, &units, &|index, argument, unit| self.function_value_with_unit(*sources.get(index)?, argument, unit))
     }
 
     pub(crate) fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
         let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
         let sources = calculation_source_ids(first, group);
-        group.display_value_with_functions(&values, &units, &|index, argument| self.function_value(*sources.get(index)?, argument))
+        group.display_value_with_functions(&values, &units, &|index, argument, unit| self.function_value_with_unit(*sources.get(index)?, argument, unit))
     }
 
     fn parameter_calculation_inputs(

@@ -1062,17 +1062,17 @@ impl ParameterExpr {
         self.eval_raw_values(&[source])
     }
     fn eval_raw_values(&self, sources: &[f64]) -> Option<f64> {
-        self.eval_raw_context(sources, &|_, _| None)
+        self.eval_raw_context(sources, &[], &|_, _, _| None)
     }
-    fn eval_raw_context(&self, sources: &[f64], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
+    fn eval_raw_context(&self, sources: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
         let value = match self {
             Self::Source(index) => *sources.get(*index)?,
-            Self::FunctionSource(index, argument) => functions(*index, argument.eval_raw_context(sources, functions)?)?,
-            Self::Neg(argument) => -argument.eval_raw_context(sources, functions)?,
-            Self::Group(argument) => argument.eval_raw_context(sources, functions)?,
+            Self::FunctionSource(index, argument) => functions(*index, argument.eval_raw_context(sources, units, functions)?, argument.units(units).ok()?)?,
+            Self::Neg(argument) => -argument.eval_raw_context(sources, units, functions)?,
+            Self::Group(argument) => argument.eval_raw_context(sources, units, functions)?,
             Self::Literal(value, _) => *value,
             Self::Call(function, argument) => {
-                let value = argument.eval_raw_context(sources, functions)?;
+                let value = argument.eval_raw_context(sources, units, functions)?;
                 // Native calculator PI constant, present at executable offset 0x272690.
                 let angle = value / 180. * CALCULATOR_PI;
                 match function {
@@ -1099,8 +1099,8 @@ impl ParameterExpr {
                 }
             }
             Self::Binary(operator, left, right) => {
-                let left = left.eval_raw_context(sources, functions)?;
-                let right = right.eval_raw_context(sources, functions)?;
+                let left = left.eval_raw_context(sources, units, functions)?;
+                let right = right.eval_raw_context(sources, units, functions)?;
                 match operator {
                     0x1000 => left + right,
                     0x1001 => left - right,
@@ -1625,7 +1625,7 @@ impl ParameterCalculationGroup {
         anchor: (i16, i16),
         units: &[NumericUnit],
     ) -> Result<Self, String> {
-        if !(2..=256).contains(&sources.len())
+        if !(1..=256).contains(&sources.len())
             || sources.contains(&0)
             || sources.len() != units.len()
         {
@@ -1644,6 +1644,13 @@ impl ParameterCalculationGroup {
         aliases.extend(function_names.iter().enumerate().map(|(i, name)| (name.as_str(), i)));
         let words = calculation_words_for_sources(expression, &aliases)?;
         let tree = calculation_tree(&words)?;
+        if sources.len() == 1 {
+            let mut kinds = vec![None];
+            tree.source_kinds(&mut kinds)?;
+            if kinds != [Some(CalculationSourceKind::Function)] {
+                return Err("Select 2–256 numeric sources or one function".into());
+            }
+        }
         let unit = tree.units(units)?;
         let base = object_group(PARAMETER_CALCULATION_NATIVE, 2);
         let rs = records(&base, 0)?;
@@ -1794,14 +1801,17 @@ impl ParameterCalculationGroup {
         self.display_value_for_sources(values, units)
             .filter(|value| value.is_finite())
     }
-    pub fn value_for_sources_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
+    /// Function indexes share the native reference list with numeric indexes.
+    /// Their value slots are placeholders; the callback evaluates each call at
+    /// its argument's current magnitude. Undefined calls suppress the result.
+    pub fn value_for_sources_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
         self.display_value_with_functions(values, units, functions).filter(|value| value.is_finite())
     }
-    pub(crate) fn display_value_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
+    pub(crate) fn display_value_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>) -> Option<f64> {
         if values.len() != self.sources().len() || units.len() != values.len() || values.iter().any(|value| !value.is_finite()) { return None; }
         let tree = self.expression_tree().ok()?;
         if tree.units(units).ok()? != self.unit() { return None; }
-        tree.eval_raw_context(values, functions)
+        tree.eval_raw_context(values, units, functions)
     }
     /// Caption evaluation retains an infinite result from finite inputs.
     /// Geometry and downstream numeric sources still use `value_for_sources`.
@@ -1810,14 +1820,7 @@ impl ParameterCalculationGroup {
         values: &[f64],
         units: &[NumericUnit],
     ) -> Option<f64> {
-        if values.iter().any(|value| !value.is_finite()) {
-            return None;
-        }
-        let tree = self.expression_tree().ok()?;
-        if tree.units(units).ok()? != self.unit() {
-            return None;
-        }
-        tree.eval_raw_values(values)
+        self.display_value_with_functions(values, units, &|_, _, _| None)
     }
     pub fn expression_for_sources(&self, names: &[&str]) -> String {
         self.expression_tree().unwrap().display_names(names)

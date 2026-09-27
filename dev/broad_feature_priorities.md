@@ -137,3 +137,23 @@ account for most unsupported calculations. Native controls, actual writer
 proof and the original trigonometry sample are documented in
 [quantity exponent evidence](quantity_exponents_analysis.md). Copying and
 custom-tool support remain deferred.
+
+
+Checkpoint 38 implements the common referenced-function call prerequisite in
+calculations and numeric iteration labels. It recovers 139 drawing slots
+including 75 calculations, while removing expression-token/source-token failures
+for the common call encoding. Remaining function calls now expose their actual
+unsupported function parents in the audit rather than hiding them as parser
+errors. All 1599 source files retain their bytes. Native controls and actual
+API writer proofs include nested calls, derivatives, typed arguments, angle
+modes and numeric iteration; see [function call evidence](function_applications_analysis.md).
+
+The role-aware audit leaves 5982 unsupported calculations: 5968 have missing
+numeric/function parents, nine fail headers and five fail function-unit rules.
+The refreshed dependency-root audit identifies code-59 roots affecting 1566
+calculations in 93 files, code-101 roots affecting 1140 in 27 files, and code-71
+referenced functions affecting 812 in 86 files. These overlapping counts guide
+next work on function definitions/plot dependencies and iteration bindings;
+they are not additive recovery predictions. Copying and custom tools remain
+deferred. Evidence: `/tmp/numeric_import_audit38.log` and
+`/tmp/broad_measure_roots_checkpoint38.log`.

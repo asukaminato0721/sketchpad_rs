@@ -2,7 +2,7 @@
 //! rustc --edition=2024 -L dependency=target/debug/deps --extern sketchpad_rs=TARGET_RLIB dev/numeric_import_audit.rs -o /tmp/numeric_import_audit
 //! /tmp/numeric_import_audit ../gsp-rs
 use sketchpad_rs::document::{Document, Kind, records};
-use sketchpad_rs::table_records::ParameterCalculationGroup;
+use sketchpad_rs::table_records::{CalculationSourceKind, NumericUnit, ParameterCalculationGroup};
 use std::{
     collections::BTreeMap,
     fs,
@@ -23,6 +23,13 @@ fn collect(path: &Path, output: &mut Vec<PathBuf>) {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("gsp"))
     {
         output.push(path.to_path_buf());
+    }
+}
+fn source_unit(kind: &Kind, role: CalculationSourceKind) -> Option<NumericUnit> {
+    match role {
+        CalculationSourceKind::Numeric => kind.numeric_unit(),
+        CalculationSourceKind::Function if matches!(kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => Some(NumericUnit::Scalar),
+        _ => None,
     }
 }
 fn main() {
@@ -93,13 +100,13 @@ fn main() {
                         .unwrap()
                         .id
                         - 1;
-                    for id in calculation.sources() {
+                    for (id, role) in calculation.sources().into_iter().zip(calculation.source_kinds().unwrap()) {
                         if let Some(parent) = document.objects.get(base + id as usize - 1)
-                            && parent.kind.numeric_unit().is_none()
+                            && source_unit(&parent.kind, role).is_none()
                         {
                             let reason = match &parent.kind {
                                 Kind::Unsupported(code) => format!("unsupported code {code}"),
-                                _ => "decoded non-numeric parent".to_owned(),
+                                _ => "decoded parent has incompatible numeric/function role".to_owned(),
                             };
                             let entry = missing_parents.entry(reason).or_insert_with(|| (
                                 0, format!("{} object {} parent {}", path.display(), object.id, parent.id),
@@ -109,16 +116,16 @@ fn main() {
                     }
                     let units = calculation
                         .sources()
-                        .into_iter()
-                        .map(|id| {
+                        .into_iter().zip(calculation.source_kinds().unwrap())
+                        .map(|(id, role)| {
                             document
                                 .objects
                                 .get(base + id as usize - 1)
-                                .and_then(|parent| parent.kind.numeric_unit())
+                                .and_then(|parent| source_unit(&parent.kind, role))
                         })
                         .collect::<Option<Vec<_>>>();
                     match units {
-                        None => "parent numeric units unavailable".to_owned(),
+                        None => "parent numeric/function source type unavailable".to_owned(),
                         Some(units) => match calculation.with_source_units(&units) {
                             Err(error) => format!("units: {error}"),
                             Ok(_) => "valid math and source units; inspect decoder safety gate"

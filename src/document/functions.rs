@@ -38,6 +38,12 @@ impl Document {
         let value = self.function_expression(id)?.evaluate_with_angle_unit(argument, self.angle_unit_radians);
         value.is_finite().then_some(value)
     }
+    pub(super) fn function_value_with_unit(&self, id: usize, argument: f64, unit: crate::table_records::NumericUnit) -> Option<f64> {
+        let argument = if unit == crate::table_records::NumericUnit::Degrees && self.angle_unit_radians {
+            argument.to_radians()
+        } else { argument };
+        self.function_value(id, argument)
+    }
     pub fn function_display_text(&self, id: usize) -> Option<String> {
         let expression = self.function_expression(id)?;
         let symbol = self.function_symbol(id)?;

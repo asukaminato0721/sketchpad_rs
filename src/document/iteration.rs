@@ -157,7 +157,8 @@ pub(super) fn supported_mapped_point_iteration(
             Kind::Free(_) => {}
             Kind::Segment(a, b) | Kind::Midpoint(a, b) => pending.extend([a, b]),
             // Only pure parameter formulas are supported as mapped numeric inputs.
-            Kind::Parameter(_) | Kind::Calculation(_) => {}
+            Kind::Parameter(_) | Kind::Calculation(_) | Kind::FunctionDefinition(_) => {}
+            Kind::DerivativeFunction(source, _) => pending.push(source),
             Kind::ParameterCalculation(source, ref group) => {
                 pending.extend(calculation_source_ids(source, group));
             }
@@ -553,18 +554,10 @@ impl Document {
             return None;
         };
         let sources = calculation_source_ids(*first, formula);
-        let units = sources
-            .iter()
-            .map(|source| {
-                self.objects
-                    .get(source.checked_sub(1)?)?
-                    .kind
-                    .numeric_unit()
-            })
-            .collect::<Option<Vec<_>>>()?;
+        let units = super::calculations::calculation_source_units(formula, &sources, &self.objects)?;
         let mut values = sources
-            .iter()
-            .map(|source| self.numeric_value(*source))
+            .iter().zip(formula.source_kinds().ok()?)
+            .map(|(source, kind)| if kind == crate::table_records::CalculationSourceKind::Function { Some(0.) } else { self.numeric_value(*source) })
             .collect::<Option<Vec<_>>>()?;
         let mapped_inputs = sources
             .iter()
@@ -579,7 +572,7 @@ impl Document {
             for index in &mapped_inputs {
                 values[*index] = value;
             }
-            value = formula.value_for_sources(&values, &units)?;
+            value = formula.value_for_sources_with_functions(&values, &units, &|index, argument, unit| self.function_value_with_unit(*sources.get(index)?, argument, unit))?;
             Some(value)
         };
         next_value()?;

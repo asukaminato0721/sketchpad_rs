@@ -466,9 +466,15 @@ impl Editor {
                     }
                     if ui.button("Calculate…").clicked() {
                         self.calculation_draft = if self.doc.selected.len() >= 2 {
-                            "a + b".into()
+                            let ids = self.selection_order.iter().copied().filter(|id| self.doc.selected.contains(id)).collect::<Vec<_>>();
+                            let argument = ids.iter().position(|id| self.doc.objects[*id - 1].kind.numeric_unit().is_some())
+                                .map(|index| format!("v{}", index+1)).unwrap_or_else(|| "2".into());
+                            let calls = ids.iter().enumerate().filter(|(_, id)| matches!(self.doc.objects[**id - 1].kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)))
+                                .map(|(index, _)| format!("f{}({argument})", index+1)).collect::<Vec<_>>();
+                            if calls.is_empty() { "a + b".into() } else { calls.join(" + ") }
                         } else if self.doc.selected.len() == 1 {
                             match self.doc.selected.iter().next().and_then(|&id| self.doc.objects.get(id - 1)).map(|object| &object.kind) {
+                                Some(Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => "f1(2)".into(),
                                 Some(Kind::Parameter(group)) => {
                                     let source = *self.doc.selected.iter().next().unwrap();
                                     let name = self.doc.parameter_display_name(source).unwrap_or_else(|| "v1".into());

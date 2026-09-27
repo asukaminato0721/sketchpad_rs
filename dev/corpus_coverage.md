@@ -1,6 +1,6 @@
 # Corpus decoding coverage
 
-Checkpoint 37 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
+Checkpoint 38 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
 
 Documents: 1599 total, 89 with all object kinds decoded, 1510 with unsupported objects, 0 failed.
 
@@ -14,7 +14,7 @@ Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 4167 deco
 
 Isolated tool views: 31 complete, 72 partial, 0 failed, with separate object and font namespaces.
 
-Unsupported object slots including tool prototypes: 64616 (63427 drawing slots and 1189 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Unsupported object slots including tool prototypes: 64477 (63288 drawing slots and 1189 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
 
 Embedded tool prototypes are decoded through isolated documents. Declared point placeholders receive neutral coordinates; declared path, finite-segment, and generic-numeric placeholders retain typed abstract inputs. Other unknown prototype constructions remain unsupported. The drawing and prototype histograms retain separate namespaces. Complete isolated decoding does not establish invocation or authoring support for every tool. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects, or to snapshots that counted every prototype slot as undecoded.
 
@@ -24,14 +24,14 @@ Inspect complete groups and parent payloads before selecting a target.
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
 | 77 | 7405 | 797 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 48 | 6057 | 490 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 48 | 5982 | 481 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 62 | 5540 | 428 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 16 | 3508 | 363 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 16 | 3493 | 362 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 | 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
 | 90 | 2711 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
 | 89 | 2538 | 772 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 34 | 1930 | 139 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
+| 34 | 1928 | 139 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
 | 35 | 1904 | 402 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
 
 Run the command again for the current full report and all examples.
@@ -310,3 +310,14 @@ actual original/edited 17-object API writer outputs open and save byte-identical
 in Native. The final scan is `/tmp/sketchpad_corpus_checkpoint37_final.log`.
 See [quantity exponent evidence](quantity_exponents_analysis.md).
 Scoped gates pass 623 library, 109 editor, 34 numeric-import and 4 coverage tests.
+
+
+Checkpoint 38 adds referenced function calls to the shared calculator, including
+constant calls, nested calls and derivative functions. Typed Degree arguments
+follow the function's document angle mode. Numeric iteration labels use the
+same callback and retain their function dependencies. It recovers 139 drawing
+objects, including 75 calculations, with all 1599 exact source round trips.
+The actual original/edited 28-object API writer outputs open and save exactly in
+Native. The final scan is `/tmp/sketchpad_corpus_checkpoint38_final.log`.
+See [function call evidence](function_applications_analysis.md).
+Scoped gates pass 628 library, 109 editor, 34 numeric-import and four coverage tests.

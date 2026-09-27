@@ -1357,3 +1357,114 @@ fn quantity_exponents_actual_api_writer_matches_native_before_and_after_edits() 
     d.undo();d.undo();d.undo();assert_eq!(d.encode().unwrap(),original);
     d.redo();d.redo();d.redo();assert_eq!(d.encode().unwrap(),edited);
 }
+
+#[test]
+fn function_applications_native_constant_and_quantity_literals_keep_function_dependencies() {
+    for bytes in [include_bytes!("../../../tests/fixtures/function_application_literal_native_created.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/function_application_length_literal_native_created.gsp").as_slice(),
+        include_bytes!("../../../tests/fixtures/function_application_degree_literal_native_created.gsp").as_slice()] {
+        let mut d=Document::from_bytes(bytes,None).unwrap();assert!(!d.partial_view);
+        assert_eq!(d.numeric_value(12),Some(5.));
+        assert_eq!(d.objects[11].kind.numeric_unit(),Some(NumericUnit::Scalar));
+        assert_eq!(d.encode().unwrap(),bytes);d.verify_roundtrip().unwrap();
+        d.set_function_expression(9,crate::function_records::SimpleFunction::parse("x^3+1").unwrap()).unwrap();
+        assert_eq!(d.numeric_value(12),Some(9.));d.verify_roundtrip().unwrap();
+        d.undo();assert_eq!(d.encode().unwrap(),bytes);
+    }
+}
+
+#[test]
+fn function_applications_native_parameter_derivative_and_length_sources_remain_live() {
+    let bytes=include_bytes!("../../../tests/fixtures/function_application_controls_native_created.gsp");
+    let mut d=Document::from_bytes(bytes,None).unwrap();assert!(!d.partial_view);
+    for (id,expected) in [(12,5.),(13,2_f64.sqrt()),(14,4.),(15,d.numeric_value(5).unwrap().powi(2)+1.)] {
+        assert_eq!(d.objects[id-1].kind.numeric_unit(),Some(NumericUnit::Scalar));
+        assert_eq!(d.numeric_value(id),Some(expected));
+    }
+    assert_eq!(d.encode().unwrap(),bytes);d.verify_roundtrip().unwrap();
+    d.set_parameter_value(6,-2.).unwrap();assert_eq!(d.numeric_value(12),Some(5.));
+    assert_eq!(d.numeric_value(13),None);assert_eq!(d.numeric_value(14),Some(-4.));
+    d.set_function_expression(9,crate::function_records::SimpleFunction::parse("x^3+1").unwrap()).unwrap();
+    assert_eq!(d.numeric_value(12),Some(-7.));assert_eq!(d.numeric_value(14),Some(12.));
+    let p=d.position(2).unwrap();d.checkpoint();assert!(d.move_point(2,Point{x:p.x+30.,y:p.y}));
+    assert_eq!(d.numeric_value(15),Some(d.numeric_value(5).unwrap().powi(3)+1.));
+    d.verify_roundtrip().unwrap();let edited=d.encode().unwrap();
+    d.undo();d.undo();d.undo();assert_eq!(d.encode().unwrap(),bytes);
+    d.redo();d.redo();d.redo();assert_eq!(d.encode().unwrap(),edited);
+}
+
+#[test]
+fn function_applications_original_transform_sample_uses_its_defined_function() {
+    let bytes=include_bytes!("../../../tests/fixtures/function_application_transform_corpus.gsp");
+    let d=Document::from_bytes(bytes,None).unwrap();
+    let x=d.numeric_value(93).unwrap();assert_eq!(x,-1.25);
+    let expected=x.powi(2)-4.*x+3.;
+    assert_eq!(d.function_value(1,x),Some(expected));assert_eq!(d.numeric_value(94),Some(expected));
+    assert_eq!(d.parameter_calculation_expression(94).as_deref(),Some("f(x)"));
+    assert_eq!(d.encode().unwrap(),bytes);
+}
+
+#[test]
+fn function_applications_nested_calls_validate_reference_roles_and_angle_mode() {
+    let mut d=Document::from_bytes(include_bytes!("../../../tests/fixtures/function_application_base_port.gsp"),None).unwrap();
+    let nested=d.add_multi_calculation(&[9,10,6],"f1(f2(v3))+f1(3)",(10,150)).unwrap();
+    assert!((d.numeric_value(nested).unwrap()-13.).abs()<1e-12);
+    let reverse=d.add_multi_calculation(&[6,9],"f2(v1)",(10,180)).unwrap();assert_eq!(d.numeric_value(reverse),Some(5.));
+    assert!(d.add_multi_calculation(&[9,6],"v1+v2",(10,200)).is_err());
+    assert!(d.add_multi_calculation(&[9,6],"f2(v1)",(10,200)).is_err());
+    assert!(d.add_multi_calculation(&[9,6],"f1(v2)+v1",(10,200)).is_err());
+    assert!(d.add_multi_calculation(&[9,6],"f3(v2)",(10,200)).is_err());
+    assert!(d.add_multi_calculation(&[9,6],"f1(v2",(10,200)).is_err());
+    let sine=d.add_function_definition(crate::function_records::SimpleFunction::parse("sin(x)").unwrap()).unwrap();
+    let angle=d.add_multi_calculation(&[sine,8],"f1(v2)",(10,210)).unwrap();
+    assert!((d.numeric_value(angle).unwrap()-1.).abs()<1e-12);
+    let scalar_angle=d.add_multi_calculation(&[sine],"f1(90)",(10,240)).unwrap();
+    assert!((d.numeric_value(scalar_angle).unwrap()-90_f64.sin()).abs()<1e-12);
+    d.set_function_expression_with_angle_unit(sine,crate::function_records::SimpleFunction::parse("sin(x)").unwrap(),false).unwrap();
+    assert!((d.numeric_value(angle).unwrap()-1.).abs()<1e-12);d.verify_roundtrip().unwrap();
+    d.set_parameter_value(6,-2.).unwrap();assert_eq!(d.numeric_value(nested),None);
+    d.verify_roundtrip().unwrap();
+}
+
+fn function_applications_writer_document()->Document {
+    let mut d=Document::from_bytes(include_bytes!("../../../tests/fixtures/function_application_base_port.gsp"),None).unwrap();
+    for (i,sources,expression) in [
+        (0,vec![9],"f1(2)"),(1,vec![9,6],"f1(v2)"),(2,vec![10,6],"f1(v2)"),(3,vec![11,6],"f1(v2)"),
+        (4,vec![9,5],"f1(v2)"),(5,vec![9,10,6],"f1(f2(v3))"),(6,vec![10,9,6],"f1(f2(v3))"),(7,vec![10,11,6],"f1(v3)+f2(v3)"),
+    ] {d.add_multi_calculation(&sources,expression,(330,150+26*i)).unwrap();}
+    let sine=d.add_function_definition(crate::function_records::SimpleFunction::parse("sin(x)").unwrap()).unwrap();
+    d.objects[sine-1].function_anchor=Some((10,380));d.objects[sine-1].function_name=Some("s".into());
+    d.add_multi_calculation(&[sine,8],"f1(v2)",(330,358)).unwrap();
+    d.add_multi_calculation(&[9],"f1(2°)",(330,384)).unwrap();
+    let image=d.add(Kind::PolarTranslatedPoint(2,-90.,37.79527559055118,1.5875));
+    let label=d.add_point_numeric_label(image,13).unwrap();
+    d.add_point_parameter_iteration(2,6,image,13,label,IterationDepth::Fixed(3)).unwrap();
+    d
+}
+
+#[test]
+fn function_applications_actual_api_writer_matches_native_calls_and_iteration_edits() {
+    let mut d=function_applications_writer_document();
+    let original=include_bytes!("../../../tests/fixtures/function_applications_writer_original_native_verified.gsp");
+    let edited=include_bytes!("../../../tests/fixtures/function_applications_writer_edited_native_verified.gsp");
+    assert_eq!(d.encode().unwrap(),original);d.verify_roundtrip().unwrap();
+    for id in (12..=19).chain([21,22]) {assert_eq!(d.objects[id-1].kind.numeric_unit(),Some(NumericUnit::Scalar));}
+    assert_eq!(d.numeric_value(12),Some(5.));assert_eq!(d.numeric_value(21),Some(1.));
+    assert_eq!(d.numeric_value(22),Some(2_f64.to_radians().powi(2)+1.));
+    let labels=d.point_parameter_iteration_labels(25).unwrap();
+    assert_eq!(labels.iter().map(|(_,text)|text.as_str()).collect::<Vec<_>>(),["26.00","677.00","458330.00"]);
+    assert_eq!(labels.iter().map(|(p,_)|*p).collect::<Vec<_>>(),[Point{x:220.,y:300.},Point{x:220.,y:360.},Point{x:220.,y:420.}]);
+    d.set_parameter_value(6,-2.).unwrap();
+    d.set_function_expression(9,crate::function_records::SimpleFunction::parse("x^3+1").unwrap()).unwrap();
+    d.set_function_expression_with_angle_unit(20,crate::function_records::SimpleFunction::parse("sin(x)").unwrap(),false).unwrap();
+    let p=d.position(2).unwrap();d.checkpoint();assert!(d.move_point(2,Point{x:p.x+30.,y:p.y}));
+    assert_eq!(d.numeric_value(12),Some(9.));assert_eq!(d.numeric_value(13),Some(-7.));
+    assert_eq!(d.numeric_value(15),Some(12.));assert_eq!(d.numeric_value(22),Some(9.));
+    for id in [14,17,18,19] {assert_eq!(d.numeric_value(id),None);}
+    let labels=d.point_parameter_iteration_labels(25).unwrap();
+    assert_eq!(labels.iter().map(|(_,text)|text.as_str()).collect::<Vec<_>>(),["-342.00","-4.00 · 10⁷","-6.40 · 10²²"]);
+    assert_eq!(labels.iter().map(|(p,_)|*p).collect::<Vec<_>>(),[Point{x:250.,y:300.},Point{x:250.,y:360.},Point{x:250.,y:420.}]);
+    assert_eq!(d.encode().unwrap(),edited);d.verify_roundtrip().unwrap();
+    for _ in 0..4 {d.undo();}assert_eq!(d.encode().unwrap(),original);
+    for _ in 0..4 {d.redo();}assert_eq!(d.encode().unwrap(),edited);
+}
