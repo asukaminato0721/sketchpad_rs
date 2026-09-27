@@ -141,10 +141,25 @@ impl Document {
                 }
             }
             match &o.kind {
+                Kind::ReferencedText { parents, text } => {
+                    if !super::referenced_captions::supported(parents, text, &self.objects, o.page, o.id) {
+                        return Err("Invalid referenced caption parents".into());
+                    }
+                }
                 Kind::RayIteration(seed,image,ray,value)=>{
                     if o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(value.saturating_sub(1)).is_some_and(|o|!o.deleted&&o.kind.is_iteration_depth_value())
                         || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
                         || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
+                }
+                Kind::Colorized(definition) => {
+                    if !definition.supported(&self.objects, o.page, o.id) {
+                        return Err(format!("Invalid colorized geometry {}", o.id));
+                    }
+                }
+                Kind::MappedElement(definition) => {
+                    if !definition.supported(&self.objects, o.page, o.id) {
+                        return Err(format!("Invalid mapped element {}", o.id));
+                    }
                 }
                 Kind::MappedPointIteration { seeds, branches, carried, depth, .. } => {
                     let valid_depth = match depth {
@@ -211,14 +226,9 @@ impl Document {
                             || !self
                                 .objects
                                 .get(id - 1)
-                                .is_some_and(|parent| !parent.deleted)
+                                .is_some_and(|parent| !parent.deleted && parent.page == o.page)
                     }) || !is_point_kind(&self.objects[*point - 1].kind)
-                        || !matches!(
-                            self.objects[*value - 1].kind,
-                            Kind::Parameter(_)
-                                | Kind::ParameterCalculation(_, _)
-                                | Kind::Calculation(_)
-                        )
+                        || self.objects[*value - 1].kind.numeric_unit().is_none()
                     {
                         return Err("Invalid attached numeric label parents".into());
                     }
@@ -755,7 +765,7 @@ impl Document {
                     ValueEquationKind::PointValue => {
                         self.objects.get(first.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
                             && self.objects.get(second.saturating_sub(1)).is_some_and(|object| is_straight_kind(&object.kind) || object.kind.is_circle() || is_arc_kind(&object.kind)
-                                || matches!(self.objects[first-1].kind, Kind::PointOnPolygon(host, _, _) if host == second))
+                                || object.kind.is_polygon())
                     }
                     ValueEquationKind::LineEquation => {
                         self.objects

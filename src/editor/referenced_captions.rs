@@ -1,0 +1,31 @@
+use super::Editor;
+use sketchpad_rs::document::Kind;
+use sketchpad_rs::render::Viewport;
+
+impl Editor {
+    pub(super) fn referenced_action_hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
+        for object in self.doc.objects.iter().rev().filter(|object| self.doc.is_displayed(object.id)) {
+            let Kind::ReferencedText { parents, .. } = &object.kind else { continue; };
+            let (_, rect) = self.doc.text_content(object.id)?;
+            let rows = self.doc.referenced_text_runs(object.id)?;
+            let origin = v.screen(sketchpad_rs::document::Point { x: f64::from(rect.left), y: f64::from(rect.top) });
+            let size = self.doc.text_font_state(object.id).map_or(16., |style| f32::from(style.size_code));
+            let mut y = origin.y;
+            for row in rows {
+                let height = row.iter().map(|run| run.style.font.size_code.map_or(size, f32::from)).fold(size, f32::max);
+                let mut x = origin.x;
+                for run in row {
+                    let run_size = run.style.font.size_code.map_or(size, f32::from);
+                    let width = run.text.chars().count() as f32 * run_size * 0.65;
+                    if let Some(target) = run.reference.and_then(|slot| parents.get(slot-1)).copied() {
+                        if self.doc.objects.get(target-1).is_some_and(|object| !object.deleted && object.kind.is_action_button())
+                            && egui::Rect::from_min_size(egui::pos2(x,y),egui::vec2(width,height*1.1)).contains(p) { return Some(target); }
+                    }
+                    x += width;
+                }
+                y += (height * 1.1).max(19.);
+            }
+        }
+        None
+    }
+}

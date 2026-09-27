@@ -25,6 +25,9 @@ impl Document {
         {
             return false;
         }
+        if matches!(object.kind, Kind::Colorized(_)) && self.colorized_color(id).is_none() {
+            return false;
+        }
         if matches!(object.kind, Kind::DistanceVerticalUnit(_, _, false)) {
             return false;
         }

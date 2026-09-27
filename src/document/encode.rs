@@ -6,7 +6,7 @@ use super::kind::{
 };
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
 use super::transform_model::{ElementType, NativeTransformFlavor};
-use super::{Document, IterationDepth, Kind, LineMode};
+use super::{Document, IterationDepth, Kind, LineMode, Object};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkUrlButtonGroup, MovementButtonGroup,
     PresentationButtonGroup, ScrollButtonGroup,
@@ -22,6 +22,24 @@ use crate::{
 };
 
 impl Document {
+    pub(super) fn colorized_object_header(&self, object: &Object, definition: &super::colorized::ColorizedDefinition) -> Result<[u8; 28], String> {
+        let mut h = header(match definition.element() {
+            ElementType::Point => 0, ElementType::Segment => 2,
+            ElementType::Ray => 64, ElementType::Line => 63,
+            ElementType::Circle => 3, ElementType::Arc => 80, ElementType::Polygon => 8,
+        });
+        h[..2].copy_from_slice(&75u16.to_le_bytes());
+        h[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
+        h[4] = u8::from(object.tracing);
+        if definition.element() == ElementType::Polygon {
+            let count = polygon_vertex_count_for_encoding(&self.objects, definition.source())
+                .ok_or("Colorized polygon has no supported source vertices")?;
+            h[8..10].copy_from_slice(&polygon_subtype(count).ok_or("Polygon has too many vertices")?.to_le_bytes());
+            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing polygon drawing order")?.to_le_bytes());
+        }
+        if let Some(style) = object.visual_style { crate::style_records::set_visual_style(&mut h, style)?; }
+        Ok(h)
+    }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
         if self
             .objects
@@ -143,7 +161,8 @@ impl Document {
                     Kind::PointOnRay(_, t) if out.get(i..i + 4) == Some(&[15, 0, 13, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnLine(_, t) if out.get(i..i + 4) == Some(&[15, 0, 12, 0]) => {
+                    Kind::PointOnLine(_, t)
+                        if matches!(out.get(i..i + 4), Some([15, 0, 12 | 38, 0])) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
@@ -478,6 +497,40 @@ impl Document {
             .filter(|o| !o.deleted && o.kind.is_measurement())
             .count();
         for o in self.objects.iter().skip(self.source_count) {
+            if let Kind::ReferencedText { parents, text } = &o.kind {
+                let refs = parents.iter().map(|id| u32::try_from(*id).map_err(|_| "Caption reference is too large")).collect::<Result<Vec<_>, _>>()?;
+                added.extend(super::referenced_captions::encode_group(o, &refs, text));
+                continue;
+            }
+            if let Kind::Colorized(ref definition) = o.kind {
+                put_record(&mut added, 0x07d0, &self.colorized_object_header(o, definition)?);
+                let ids = definition.native_references();
+                let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
+                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &refs);
+                put_record(&mut added, 0x07d3, &definition.native_payload());
+                if let Some(label) = &o.label { added.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
+            if let Kind::MappedElement(ref definition) = o.kind {
+                let mut h = header(101);
+                h[2] = u8::from(!o.visible) | (u8::from(o.presentation_suppressed) << 1);
+                h[4] = u8::from(o.tracing);
+                if let Some(style) = o.visual_style {
+                    crate::style_records::set_visual_style(&mut h, style)?;
+                }
+                put_record(&mut added, 0x07d0, &h);
+                if let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
+                let ids = definition.native_references();
+                let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
+                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &refs);
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::MappedPointIteration {
                 ref seeds,
                 ref branches,
@@ -1549,12 +1602,9 @@ impl Document {
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
-                    Kind::PointOnRay(_, t) | Kind::PointOnLine(_, t) => {
-                        let code = if matches!(o.kind, Kind::PointOnRay(_, _)) {
-                            13
-                        } else {
-                            12
-                        };
+                    Kind::PointOnRay(host, t) | Kind::PointOnLine(host, t) => {
+                        let code = super::kind::straight_point_constraint_subtype(&self.objects[host - 1].kind)
+                            .ok_or("Invalid straight-point host")?;
                         let mut payload = vec![15, 0, code, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);

@@ -21,13 +21,7 @@ impl Kind {
     }
 
     pub fn is_iteration_depth_value(&self) -> bool {
-        matches!(
-            self,
-            Kind::Parameter(_)
-                | Kind::Calculation(_)
-                | Kind::ParameterCalculation(_, _)
-                | Kind::LengthPairCalculation(_, _, _)
-        ) && self.numeric_unit() == Some(NumericUnit::Scalar)
+        self.numeric_unit() == Some(NumericUnit::Scalar)
     }
     pub fn numeric_unit(&self) -> Option<NumericUnit> {
         match self {
@@ -107,6 +101,7 @@ impl Kind {
     }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
+            || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Circle)
             || self
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Circle)
@@ -116,6 +111,7 @@ impl Kind {
     }
     pub fn is_polygon(&self) -> bool {
         matches!(self, Kind::Polygon(_))
+            || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Polygon)
             || self
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Polygon)
@@ -198,6 +194,15 @@ impl Kind {
         }
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Kind::ReferencedText { parents, .. } = self {
+            return parents.clone();
+        }
+        if let Kind::Colorized(definition) = self {
+            return definition.native_references();
+        }
+        if let Kind::MappedElement(definition) = self {
+            return definition.native_references();
+        }
         if let Some(definition) = self.transform_definition() {
             return definition.dependencies();
         }
@@ -404,11 +409,17 @@ impl Kind {
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
-            Kind::Transformed(..) => unreachable!("transform dependencies handled above"),
+            Kind::Transformed(..) | Kind::MappedElement(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
         }
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
+        if let Kind::Colorized(definition) = self {
+            return Kind::Colorized(definition.remap(ids));
+        }
+        if let Kind::MappedElement(definition) = self {
+            return Kind::MappedElement(definition.remap(ids));
+        }
         if let Kind::MappedPointIteration {
             seeds,
             branches,
@@ -629,6 +640,9 @@ impl Kind {
                 },
             ),
             Kind::PointNumericLabel(point, value) => Kind::PointNumericLabel(m(point), m(value)),
+            Kind::ReferencedText { ref parents, ref text } => Kind::ReferencedText {
+                parents: parents.iter().map(|id| m(*id)).collect(), text: text.clone(),
+            },
             Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) => {
                 Kind::PointParameterIteration(
                     m(seed),
@@ -744,6 +758,7 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
+            Kind::MappedElement(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
         }
     }
     pub(super) fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
@@ -780,6 +795,8 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
     matches!(
         kind,
         Kind::PlainText { .. }
+            | Kind::MappedElement(_)
+            | Kind::Colorized(_)
             | Kind::Free(_)
             | Kind::PointOnSegment(_, _)
             | Kind::PointOnRay(_, _)
@@ -833,7 +850,7 @@ pub(super) fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
         )
 }
 pub(super) fn is_segment_kind(kind: &Kind) -> bool {
-    matches!(
+    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Segment) || matches!(
         kind,
         Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment)
     ) || kind
@@ -845,7 +862,30 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
     straight_kind_mode(kind).is_some()
 }
 
+/// Native Point on Object uses the coordinate-axis host subtype, independently
+/// of its infinite-line geometry. Keep this wire identity out of point kinds.
+pub(super) fn straight_point_constraint_subtype(kind: &Kind) -> Option<u8> {
+    match kind {
+        Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+        | Kind::CircleAxis(_, 0 | 1)
+        | Kind::DistanceAxis(_, _, 0 | 1) => Some(38),
+        _ => straight_kind_mode(kind).map(|mode| match mode {
+            LineMode::Segment => 14,
+            LineMode::Ray => 13,
+            LineMode::Line => 12,
+        }),
+    }
+}
+
 pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
+    if let Kind::Colorized(d) = kind {
+        return match d.element() {
+            ElementType::Segment => Some(LineMode::Segment),
+            ElementType::Ray => Some(LineMode::Ray),
+            ElementType::Line => Some(LineMode::Line),
+            _ => None,
+        };
+    }
     if let Some(definition) = kind.transform_definition() {
         return match definition.element() {
             ElementType::Segment => Some(LineMode::Segment),
@@ -870,7 +910,9 @@ pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
 }
 
 pub(super) fn is_point_kind(kind: &Kind) -> bool {
-    kind.transform_definition()
+    matches!(kind, Kind::MappedElement(definition) if definition.element() == ElementType::Point)
+        || matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Point)
+        || kind.transform_definition()
         .is_some_and(|definition| definition.element() == ElementType::Point)
         || matches!(
             kind,
@@ -1051,14 +1093,14 @@ pub(super) fn expected_locus_refs(
 }
 
 pub(super) fn is_arc_kind(kind: &Kind) -> bool {
-    matches!(
+    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Arc) || matches!(
         kind,
         Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
     ) || kind.transform_definition().is_some_and(|definition| definition.element() == ElementType::Arc)
 }
 
 pub(super) fn is_locus_polygon_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Polygon(_))
+    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Polygon) || matches!(kind, Kind::Polygon(_))
         || kind.transform_definition().is_some_and(|definition| {
             definition.element() == ElementType::Polygon
                 && matches!(
@@ -1179,6 +1221,7 @@ fn polygon_vertex_count_impl(
             return None;
         }
         let source = match &object.kind {
+            Kind::Colorized(d) if d.element() == ElementType::Polygon => d.source(),
             Kind::Polygon(vertices) => {
                 if vertices.len() < 3 {
                     return None;
@@ -1219,8 +1262,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         width: LineWidth::Medium,
         pattern: LinePattern::Solid,
     };
-    if let Some(definition) = kind.transform_definition() {
-        return Some(match definition.element() {
+    if let Some(element) = kind.transform_definition().map(|d| d.element()).or_else(|| match kind { Kind::Colorized(d) => Some(d.element()), _ => None }) {
+        return Some(match element {
             ElementType::Point => VisualStyle::Point {
                 shape: PointStyle::Medium,
                 color: red,
@@ -1241,6 +1284,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
     }
     match kind {
         Kind::Free(_)
+        | Kind::MappedElement(_)
         | Kind::ToolPointOnPath(_)
         | Kind::SegmentMidpoint(_)
         | Kind::PointOnSegment(_, _)

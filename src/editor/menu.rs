@@ -411,12 +411,7 @@ impl Editor {
                 });
                 ui.menu_button("Number", |ui| {
                     if ui.button("Attach Selected Value to Point").clicked() {
-                        let point=self.doc.selected.iter().copied().find(|id|self.doc.position(*id).is_some());
-                        let value=self.doc.selected.iter().copied().find(|id|self.doc.unitless_numeric_value(*id).is_some());
-                        let result=if self.doc.selected.len()==2 {
-                            point.zip(value).ok_or_else(||"Select one point and one numeric value".to_string()).and_then(|(point,value)|self.doc.add_point_numeric_label(point,value))
-                        } else { Err("Select one point and one numeric value".into()) };
-                        match result { Ok(id)=>{self.select_only(id);self.status=format!("Created attached numeric label {id}");},Err(error)=>self.status=error }
+                        self.attach_numeric_label_selected();
                         ui.close();
                     }
                     if ui.button("New Parameter (1.00)").clicked() {
@@ -971,6 +966,20 @@ impl Editor {
                             }
                         }
                     });
+                    ui.menu_button("Color from Values", |ui| {
+                        for (label, model) in [
+                            ("Spectrum", super::colorized::ColorModel::Spectrum),
+                            ("Grayscale", super::colorized::ColorModel::Grayscale),
+                            ("RGB (red, green, blue)", super::colorized::ColorModel::Rgb),
+                            ("HSV (hue, saturation, brightness)", super::colorized::ColorModel::Hsv),
+                        ] {
+                            if ui.button(label).clicked() {
+                                self.colorize_selected(model);
+                                ui.close();
+                            }
+                        }
+                    });
+
                     ui.separator();
                     if ui.button("Hide Objects").clicked() {
                         self.doc.set_selected_visibility(false);

@@ -4,6 +4,18 @@ use sketchpad_rs::document::{Kind, LineMode};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 
 impl Editor {
+    pub(super) fn attach_numeric_label_selected(&mut self) {
+        let point = self.doc.selected.iter().copied().find(|id| self.doc.position(*id).is_some());
+        let value = self.doc.selected.iter().copied().find(|id| self.doc.numeric_value(*id).is_some());
+        let result = if self.doc.selected.len() == 2 {
+            point.zip(value).ok_or_else(|| "Select one point and one numeric value".to_string())
+                .and_then(|(point, value)| self.doc.add_point_numeric_label(point, value))
+        } else { Err("Select one point and one numeric value".into()) };
+        match result {
+            Ok(id) => { self.select_only(id); self.status = format!("Created attached numeric label {id}"); }
+            Err(error) => self.status = error,
+        }
+    }
     pub(super) fn measure_length(&mut self) {
         if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
@@ -144,33 +156,70 @@ impl Editor {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
-        let [first] = self.selection_order.as_slice() else {
-            self.status = "Select one constrained point, line, or circle".into();
-            return;
-        };
-        let first = *first;
-        let (kind, second) = match self
-            .doc
-            .objects
-            .get(first.saturating_sub(1))
-            .map(|object| &object.kind)
-        {
-            Some(
-                Kind::PointOnSegment(host, _)
-                | Kind::PointOnRay(host, _)
-                | Kind::PointOnLine(host, _)
-                | Kind::PointOnArc(host, _)
-                | Kind::PointOnCircle(host, _, _),
-            ) if !equation => (ValueEquationKind::PointValue, *host),
-            Some(kind) if equation && kind.is_line() => (ValueEquationKind::LineEquation, 0),
-            Some(kind) if equation && kind.is_circle() => (ValueEquationKind::CircleEquation, 0),
-            _ => {
-                self.status = if equation {
-                    "Select one line or circle for Equation"
+        let (first, kind, second) = match self.selection_order.as_slice() {
+            [first, second] if !equation => {
+                let point_polygon = |point: usize, polygon: usize| {
+                    self.doc.position(point).is_some()
+                        && self
+                            .doc
+                            .objects
+                            .get(polygon.saturating_sub(1))
+                            .is_some_and(|o| o.kind.is_polygon())
+                };
+                if point_polygon(*first, *second) {
+                    (*first, ValueEquationKind::PointValue, *second)
+                } else if point_polygon(*second, *first) {
+                    (*second, ValueEquationKind::PointValue, *first)
                 } else {
-                    "Select one point constrained to a segment, ray, line, circle, or arc"
+                    self.status = "Select a point and a polygon for Value of Point".into();
+                    return;
                 }
-                .into();
+            }
+            [first] => {
+                let second = match self
+                    .doc
+                    .objects
+                    .get(first.saturating_sub(1))
+                    .map(|o| &o.kind)
+                {
+                    Some(
+                        Kind::PointOnSegment(host, _)
+                        | Kind::PointOnRay(host, _)
+                        | Kind::PointOnLine(host, _)
+                        | Kind::PointOnArc(host, _)
+                        | Kind::PointOnCircle(host, _, _)
+                        | Kind::PointOnPolygon(host, _, _),
+                    ) if !equation => (ValueEquationKind::PointValue, *host),
+                    Some(Kind::PathLiteralPoint(host, _) | Kind::PathValuePoint(_, host))
+                        if !equation
+                            && self
+                                .doc
+                                .objects
+                                .get(host.saturating_sub(1))
+                                .is_some_and(|o| o.kind.is_polygon()) =>
+                    {
+                        (ValueEquationKind::PointValue, *host)
+                    }
+                    Some(kind) if equation && kind.is_line() => {
+                        (ValueEquationKind::LineEquation, 0)
+                    }
+                    Some(kind) if equation && kind.is_circle() => {
+                        (ValueEquationKind::CircleEquation, 0)
+                    }
+                    _ => {
+                        self.status = if equation {
+                            "Select one line or circle for Equation"
+                        } else {
+                            "Select a constrained point, or a point and a polygon"
+                        }
+                        .into();
+                        return;
+                    }
+                };
+                (*first, second.0, second.1)
+            }
+            _ => {
+                self.status = "Select a constrained point, or a point and a polygon".into();
                 return;
             }
         };
@@ -419,7 +468,12 @@ impl Editor {
             return;
         };
         let arc = *arc;
-        if !self.doc.objects.get(arc.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
+        if !self
+            .doc
+            .objects
+            .get(arc.saturating_sub(1))
+            .is_some_and(|o| o.kind.is_arc())
+        {
             self.status = "Select one arc to measure".into();
             return;
         }
@@ -441,7 +495,12 @@ impl Editor {
             return;
         };
         let arc = *arc;
-        if !self.doc.objects.get(arc.saturating_sub(1)).is_some_and(|o| o.kind.is_arc()) {
+        if !self
+            .doc
+            .objects
+            .get(arc.saturating_sub(1))
+            .is_some_and(|o| o.kind.is_arc())
+        {
             self.status = "Select one arc to measure".into();
             return;
         }

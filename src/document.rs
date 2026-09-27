@@ -5,6 +5,9 @@ mod actions;
 mod calculations;
 mod button_encoding;
 mod coordinates;
+pub mod colorized;
+pub mod referenced_text;
+mod referenced_captions;
 mod decode;
 mod embedded_tools;
 mod encode;
@@ -22,7 +25,9 @@ pub use movement::MovementValue;
 mod kind;
 mod legacy;
 mod locus;
+pub mod mapped_element;
 mod measurements;
+mod point_numeric_labels;
 mod pages;
 mod parameter_names;
 mod plotting;
@@ -91,6 +96,8 @@ pub enum Kind {
     /// A prototype operation whose path position is assigned at invocation.
     ToolPointOnPath(usize),
     Transformed(transform_model::TransformDefinition),
+    MappedElement(mapped_element::MappedElementDefinition),
+    Colorized(colorized::ColorizedDefinition),
     PresentationButton {
         targets: Vec<usize>,
         mode: PresentationMode,
@@ -202,6 +209,7 @@ pub enum Kind {
     PointDistance(usize, usize),
     PointLineDistance(usize, usize),
     PointNumericLabel(usize, usize),
+    ReferencedText { parents: Vec<usize>, text: referenced_text::ReferencedText },
     PointParameterIteration(usize, usize, usize, usize, usize, IterationDepth),
     BranchingPolygonIteration {
         seed: usize,

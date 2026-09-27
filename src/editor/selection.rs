@@ -127,6 +127,11 @@ impl Editor {
         match self.tool {
             Tool::Custom(index) => self.custom_tool_click(index, v, p),
             Tool::Select => {
+                if !multi && let Some(id) = self.referenced_action_hit(v, p) {
+                    if let Err(error) = self.activate_referenced_action(id, v) { self.status = error; }
+                    self.selection_order.clear();
+                    return;
+                }
                 let hit = self.hit(v, p);
                 if !multi
                     && let Some(id) = hit

@@ -307,6 +307,8 @@ impl Document {
                 })
         };
         match host.kind {
+            Kind::Colorized(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
+                self.plot_arc_host_available(definition.source()),
             Kind::Transformed(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
                 self.plot_arc_host_available(definition.source()),
             Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => {
@@ -335,6 +337,9 @@ impl Document {
     /// Native three-point arcs with three distinct collinear positions form a
     /// segment only when the middle vertex is strictly between the endpoints.
     pub fn linear_three_point_arc(&self, path: usize) -> Option<(Point, Point)> {
+        if let Some(Kind::Colorized(definition)) = self.objects.get(path.checked_sub(1)?).map(|object| &object.kind) {
+            return self.linear_three_point_arc(definition.source());
+        }
         if let Some(original) = self.frozen_evaluation_document(path) {
             return original.linear_three_point_arc(path);
         }
@@ -429,6 +434,9 @@ impl Document {
     }
 
     pub(super) fn undefined_three_point_arc(&self, path: usize) -> bool {
+        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+            return self.undefined_three_point_arc(definition.source());
+        }
         self.objects
             .get(path.saturating_sub(1))
             .is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
@@ -436,6 +444,9 @@ impl Document {
     }
 
     pub(super) fn undefined_center_arc(&self, path: usize) -> bool {
+        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+            return self.undefined_center_arc(definition.source());
+        }
         self.objects
             .get(path.saturating_sub(1))
             .is_some_and(|host| matches!(host.kind, Kind::CenterArc(..)))
@@ -443,6 +454,9 @@ impl Document {
     }
 
     pub(super) fn undefined_transformed_arc(&self, path: usize) -> bool {
+        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+            return self.undefined_transformed_arc(definition.source());
+        }
         self.objects.get(path.saturating_sub(1)).is_some_and(|host|
             host.kind.is_arc() && host.kind.transform_definition().is_some())
             && self.undefined_arc_plot(path, 0.5)
@@ -529,6 +543,8 @@ impl Document {
                 return point;
             }
             let p = match &object.kind {
+                Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Point =>
+                    go(d, definition.source(), seen),
                 Kind::Free(p) => Some(*p),
                 Kind::GraphHorizontalUnit(origin, step) => {
                     let origin = go(d, *origin, seen)?;
@@ -629,10 +645,11 @@ impl Document {
                         y: point.y,
                     })
                 }
+                Kind::MappedElement(_) => d.mapped_element_point(id),
                 Kind::PointOnSegment(host, t)
                 | Kind::PointOnRay(host, t)
                 | Kind::PointOnLine(host, t) => {
-                    let (a, b, _) = d.line_points(*host)?;
+                    let (a, b, _) = d.point_constraint_line_points(*host)?;
                     Some(Point {
                         x: a.x + (b.x - a.x) * t,
                         y: a.y + (b.y - a.y) * t,
@@ -702,6 +719,8 @@ impl Document {
             };
         }
         match &object.kind {
+            Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Polygon =>
+                self.polygon_points(definition.source()),
             Kind::Polygon(vertices) => vertices
                 .iter()
                 .map(|&vertex| self.position(vertex))
@@ -792,6 +811,8 @@ impl Document {
                 return straight;
             }
             let result = match object.kind {
+                Kind::Colorized(ref definition) if matches!(definition.element(), super::transform_model::ElementType::Segment | super::transform_model::ElementType::Ray | super::transform_model::ElementType::Line) =>
+                    go(d, definition.source(), seen),
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::CircleAxis(circle, axis @ (0 | 1)) => {
@@ -903,6 +924,10 @@ impl Document {
         if object.deleted {
             return None;
         }
+        if let Kind::Colorized(definition) = &object.kind {
+            return (definition.element() == super::transform_model::ElementType::Circle)
+                .then(|| self.circle_points(definition.source())).flatten();
+        }
         if object.kind.transform_definition().is_some() {
             return match self.evaluate_transform(id).ok()? {
                 TransformGeometry::Circle { center, radius } => Some((center, radius)),
@@ -945,6 +970,8 @@ impl Document {
             return None;
         }
         let geometry = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Colorized(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
+                return self.arc_geometry(definition.source()),
             Kind::Transformed(_) if is_arc_kind(&self.objects[id - 1].kind) => {
                 match self.evaluate_transform(id).ok()? {
                     TransformGeometry::Arc { center, radius, start, sweep, clockwise_y } =>
@@ -1123,7 +1150,7 @@ impl Document {
             | Some(Kind::PointOnRay(host, _))
             | Some(Kind::PointOnLine(host, _)) => {
                 let host = *host;
-                let Some((a, b, mode)) = self.line_points(host) else {
+                let Some((a, b, mode)) = self.point_constraint_line_points(host) else {
                     return false;
                 };
                 let dx = b.x - a.x;
@@ -1251,10 +1278,23 @@ impl Document {
         }
         vertices.first().copied()
     }
+    /// Native axis constraints parameterize a fixed 200-pixel span centered
+    /// on the origin. Coordinate unit vectors still govern equations and plots.
+    pub(super) fn point_constraint_line_points(&self, host: usize) -> Option<(Point, Point, LineMode)> {
+        let (center, horizontal) = match &self.objects.get(host.checked_sub(1)?)?.kind {
+            Kind::GraphAxis(origin, _, axis @ (0 | 1 | 0x1_0001))
+                | Kind::DistanceAxis(origin, _, axis @ (0 | 1)) => (self.position(*origin)?, *axis != 0),
+            Kind::CircleAxis(circle, axis @ (0 | 1)) => (self.circle_points(*circle)?.0, *axis != 0),
+            _ => return self.line_points(host),
+        };
+        let (dx, dy) = if horizontal { (100., 0.) } else { (0., 100.) };
+        Some((Point { x: center.x-dx, y: center.y-dy },
+              Point { x: center.x+dx, y: center.y+dy }, LineMode::Line))
+    }
     pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
         match self.objects.get(host.checked_sub(1)?)?.kind {
             ref kind if is_straight_kind(kind) => {
-                let (a, b, mode) = self.line_points(host)?;
+                let (a, b, mode) = self.point_constraint_line_points(host)?;
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
                 let length_sq = dx * dx + dy * dy;

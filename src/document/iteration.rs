@@ -126,11 +126,11 @@ fn mapped_value_construction(kind: &Kind) -> bool {
             || is_arc_kind(kind)
             || kind.numeric_unit().is_some()
             || kind.is_function()
-            || matches!(kind, Kind::CoordinateSystem(..)))
+            || matches!(kind, Kind::CoordinateSystem(..) | Kind::PointNumericLabel(..)))
 }
 
 pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
-    is_point_kind(kind)
+    matches!(kind,Kind::PointNumericLabel(..)) || is_point_kind(kind)
         || is_straight_kind(kind)
         || kind.is_circle()
         || kind.is_polygon()
@@ -293,13 +293,13 @@ pub(super) fn supported_mapped_point_iteration(
 
 // State values are runtime substitutions, never additional native object kinds.
 #[derive(Clone, Copy)]
-enum MappedValue {
+pub(super) enum MappedValue {
     Point(Point),
     Scalar(f64),
 }
 
 impl MappedValue {
-    fn read(document: &Document, id: usize) -> Option<Self> {
+    pub(super) fn read(document: &Document, id: usize) -> Option<Self> {
         let object = document.objects.get(id.checked_sub(1)?)?;
         if is_point_kind(&object.kind) {
             let point = document.position(id)?;
@@ -310,7 +310,7 @@ impl MappedValue {
         }
     }
 
-    fn substitute(self, document: &mut Document, id: usize) -> Option<()> {
+    pub(super) fn substitute(self, document: &mut Document, id: usize) -> Option<()> {
         match self {
             Self::Point(point) => document.set_evaluation_point(id, point),
             Self::Scalar(value) => document.set_evaluation_scalar(id, value),
@@ -406,6 +406,16 @@ fn mapped_iteration_kind(
     depth: IterationDepth,
     final_only: bool,
 ) -> Kind {
+    if !final_only
+        && let [seed, parameter] = seeds
+        && let [branch] = branches
+        && let [image, calculation] = branch.as_slice()
+        && let [carried_value, carried_point, label] = carried
+        && calculation == carried_value && image == carried_point
+        && supported_point_parameter_iteration(objects,*seed,*parameter,*image,*calculation,*label)
+    {
+        return Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,depth);
+    }
     if !final_only && let [seed] = seeds {
         if let [branch] = branches
             && let [image] = branch.as_slice()
@@ -468,7 +478,9 @@ impl Document {
             self.objects[iteration - 1].kind,
             Kind::MappedPointIteration { .. }
         ) {
-            return if source.is_polygon() {
+            return if matches!(source,Kind::PointNumericLabel(..)) {
+                include_bytes!("../../assets/point_parameter_iteration_label_binding.bin")
+            } else if source.is_polygon() {
                 include_bytes!("../../assets/branch_polygon_iteration_polygon_binding.bin")
             } else if is_point_kind(source) {
                 if matches!(
@@ -727,7 +739,7 @@ impl Document {
         }
     }
 
-    fn mapped_external_inputs(
+    pub(super) fn mapped_external_inputs(
         &self,
         seeds: &[usize],
         branches: &[Vec<usize>],
@@ -762,6 +774,15 @@ impl Document {
         Some(external.into_iter().collect())
     }
 
+    /// Reevaluate anchored numeric text in the same substituted scope as carried geometry.
+    pub fn mapped_numeric_label_images(&self, id: usize) -> Option<Vec<(Point, String)>> {
+        let object=self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source,iteration)=object.kind else { return None; };
+        if object.deleted || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,Kind::PointNumericLabel(..)) { return None; }
+        self.mapped_iteration_images(source,iteration,|sample,source| {
+            sample.frozen_evaluation_document(source).unwrap_or(sample).point_numeric_label(source)
+        })
+    }
     fn mapped_iteration_images<T>(
         &self,
         source: usize,

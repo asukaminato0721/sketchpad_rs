@@ -335,6 +335,13 @@ pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -
     let (anchor, lines) = number_lines_for_object(doc, id)?;
     Some(number_rect(vp, anchor, &lines))
 }
+
+pub fn mapped_numeric_label_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    let size = doc.text_font_state(id).map_or(16., |style| f32::from(style.size_code));
+    doc.mapped_numeric_label_images(id).is_some_and(|labels| labels.into_iter().any(|(point, text)| {
+        Rect::from_center_size(vp.screen(point), egui::vec2(text.chars().count() as f32 * size * 0.65, size * 1.1)).contains(at)
+    }))
+}
 pub fn repeated_polygon_opacity(opacity: u16, paths: f64) -> f32 {
     (1. - (1. - f64::from(opacity) / 65535.).powf(paths)) as f32
 }
@@ -1034,7 +1041,7 @@ pub fn svg_page_with_button_offset(
                 a.y,
                 b.x,
                 b.y,
-                svg_stroke(o.visual_style)
+                svg_stroke(doc.effective_visual_style(o.id))
             )
             .unwrap();
         }
@@ -1066,7 +1073,7 @@ pub fn svg_page_with_button_offset(
             })
             .or_else(|| doc.locus_strokes(o.id, 384))
         {
-            if matches!(o.visual_style, Some(VisualStyle::Stroke { .. })) {
+            if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
                 for path in curve_screen_paths(vp, &segments) {
                     let points = path
                         .iter()
@@ -1077,7 +1084,7 @@ pub fn svg_page_with_button_offset(
                         svg,
                         "<polyline points=\"{}\"{}/>",
                         points,
-                        svg_stroke(o.visual_style)
+                        svg_stroke(doc.effective_visual_style(o.id))
                     )
                     .unwrap();
                 }
@@ -1102,7 +1109,7 @@ pub fn svg_page_with_button_offset(
                 at.x,
                 at.y,
                 radius as f32 * vp.scale,
-                svg_stroke(o.visual_style)
+                svg_stroke(doc.effective_visual_style(o.id))
             )
             .unwrap();
         }
@@ -1113,7 +1120,7 @@ pub fn svg_page_with_button_offset(
                 write!(
                     svg,
                     "<path{} d=\"M {} {}",
-                    svg_stroke(o.visual_style),
+                    svg_stroke(doc.effective_visual_style(o.id)),
                     at.x,
                     at.y
                 )
@@ -1143,11 +1150,11 @@ pub fn svg_page_with_button_offset(
                 svg,
                 "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
                 vertices,
-                match polygon_object.visual_style {
+                match doc.effective_visual_style(polygon_object.id) {
                     Some(VisualStyle::Polygon { color, .. }) => css_color(color),
                     _ => "#f6ad60".into(),
                 },
-                match polygon_object.visual_style {
+                match doc.effective_visual_style(polygon_object.id) {
                     Some(VisualStyle::Polygon { opacity, .. }) => f64::from(opacity) / 65535.,
                     _ => 0.5,
                 }
@@ -1155,7 +1162,7 @@ pub fn svg_page_with_button_offset(
             .unwrap();
         }
         if let Some(polygons) = doc.polygon_iteration_images(o.id) {
-            let (color, opacity) = match o.visual_style {
+            let (color, opacity) = match doc.effective_visual_style(o.id) {
                 Some(VisualStyle::Polygon { color, opacity }) => (css_color(color), opacity),
                 _ => ("#f6ad60".into(), 32767),
             };
@@ -1184,7 +1191,7 @@ pub fn svg_page_with_button_offset(
                 writeln!(
                     svg,
                     "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                    svg_stroke(o.visual_style),
+                    svg_stroke(doc.effective_visual_style(o.id)),
                     a.x,
                     a.y,
                     b.x,
@@ -1199,7 +1206,7 @@ pub fn svg_page_with_button_offset(
                 writeln!(
                     svg,
                     "<circle{} cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"none\"/>",
-                    svg_stroke(o.visual_style),
+                    svg_stroke(doc.effective_visual_style(o.id)),
                     center.x,
                     center.y,
                     (radius as f32 * vp.scale).abs()
@@ -1222,7 +1229,7 @@ pub fn svg_page_with_button_offset(
                     writeln!(
                         svg,
                         "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                        svg_stroke(o.visual_style),
+                        svg_stroke(doc.effective_visual_style(o.id)),
                         a.x,
                         a.y,
                         b.x,
@@ -1245,7 +1252,7 @@ pub fn svg_page_with_button_offset(
                 writeln!(
                     svg,
                     "<polyline{} points=\"{}\" fill=\"none\"/>",
-                    svg_stroke(o.visual_style),
+                    svg_stroke(doc.effective_visual_style(o.id)),
                     vertices
                 )
                 .unwrap();
@@ -1259,7 +1266,7 @@ pub fn svg_page_with_button_offset(
                     writeln!(
                         svg,
                         "<line{} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                        svg_stroke(o.visual_style),
+                        svg_stroke(doc.effective_visual_style(o.id)),
                         a.x,
                         a.y,
                         b.x,
@@ -1274,7 +1281,7 @@ pub fn svg_page_with_button_offset(
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some(p) = doc.position(o.id) {
             let at = vp.screen(p);
-            let (radius, color) = match o.visual_style {
+            let (radius, color) = match doc.effective_visual_style(o.id) {
                 Some(VisualStyle::Point { shape, color }) => {
                     (point_radius(shape), css_color(color))
                 }
@@ -1294,7 +1301,7 @@ pub fn svg_page_with_button_offset(
         .filter(|object| doc.is_displayed(object.id))
     {
         if let Some(images) = doc.point_iteration_images(object.id) {
-            let (radius, color) = match object.visual_style {
+            let (radius, color) = match doc.effective_visual_style(object.id) {
                 Some(VisualStyle::Point { shape, color }) => {
                     (point_radius(shape), css_color(color))
                 }
@@ -1313,7 +1320,7 @@ pub fn svg_page_with_button_offset(
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
     for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
-        if let Kind::PlainText { text, rect } = &object.kind {
+        if let Some((text, rect)) = doc.text_content(object.id) {
             let at = vp.screen(Point {
                 x: rect.left.into(),
                 y: rect.top.into(),
@@ -1429,9 +1436,18 @@ pub fn svg_page_with_button_offset(
                 writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>",at.x,at.y,xml_text(&text)).unwrap();
             }
         }
-        if let Some((point, text)) = doc.point_numeric_label(object.id) {
+        for (point, text) in doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
             let at = vp.screen(point);
-            writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>",at.x,at.y,xml_text(&text)).unwrap();
+            let style = doc.text_font_state(object.id);
+            let size = style.as_ref().map_or(16, |style| style.size_code);
+            let family = style.as_ref().map_or("sans-serif", |style| style.family.as_str())
+                .replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+            writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
+                at.x,at.y,family,size,
+                if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
+                if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" },
+                xml_text(&text)).unwrap();
         }
         if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
@@ -1932,12 +1948,12 @@ impl GeometryRenderer {
             let col = if is_selected {
                 selected
             } else {
-                match o.visual_style {
+                match doc.effective_visual_style(o.id) {
                     Some(VisualStyle::Stroke { color, .. }) => rgba(color, 1.),
                     _ => dark,
                 }
             };
-            let stroke = match o.visual_style {
+            let stroke = match doc.effective_visual_style(o.id) {
                 Some(VisualStyle::Stroke { line, .. }) => line,
                 _ => SegmentLineStyle {
                     width: LineWidth::Medium,
@@ -1950,7 +1966,7 @@ impl GeometryRenderer {
                 }
             }
             if let Some(polygons) = doc.polygon_iteration_images(o.id) {
-                let (color, opacity) = match o.visual_style {
+                let (color, opacity) = match doc.effective_visual_style(o.id) {
                     Some(VisualStyle::Polygon { color, opacity }) => (color, opacity),
                     _ => (
                         RgbColor {
@@ -2060,7 +2076,7 @@ impl GeometryRenderer {
                 })
                 .or_else(|| doc.locus_strokes(o.id, 384))
             {
-                if matches!(o.visual_style, Some(VisualStyle::Stroke { .. })) {
+                if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
                     for path in curve_screen_paths(vp, &segments) {
                         mesh.styled_path(&path, false, stroke, col);
                     }
@@ -2116,7 +2132,7 @@ impl GeometryRenderer {
                             .into_iter()
                             .map(|point| vp.screen(point))
                             .collect::<Vec<_>>();
-                        let fill = match polygon_object.visual_style {
+                        let fill = match doc.effective_visual_style(polygon_object.id) {
                             Some(VisualStyle::Polygon { color, opacity }) => {
                                 rgba(color, f32::from(opacity) / 65535.)
                             }
@@ -2133,7 +2149,7 @@ impl GeometryRenderer {
                 continue;
             }
             if let Some(p) = doc.position(o.id) {
-                let (radius, color) = match o.visual_style {
+                let (radius, color) = match doc.effective_visual_style(o.id) {
                     Some(VisualStyle::Point { shape, color }) => {
                         (point_radius(shape), rgba(color, 1.))
                     }
@@ -2154,7 +2170,7 @@ impl GeometryRenderer {
                 );
             }
             if let Some(images) = doc.point_iteration_images(o.id) {
-                let (radius, color) = match o.visual_style {
+                let (radius, color) = match doc.effective_visual_style(o.id) {
                     Some(VisualStyle::Point { shape, color }) => {
                         (point_radius(shape), rgba(color, 1.))
                     }
@@ -3100,6 +3116,36 @@ mod tests {
             f64::from(32767) / 65535.
         )));
         assert!(svg.contains("r=\"6\" fill=\"#0000ff\""));
+    }
+    #[test]
+    fn live_color_wrappers_update_svg_geometry_and_color_after_reopen() {
+        use crate::document::colorized::{ColorBinding, ColorRangeBehavior};
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let b = doc.add(Kind::Free(Point { x: 200., y: 100. }));
+        let c = doc.add(Kind::Free(Point { x: 100., y: 200. }));
+        let segment = doc.add(Kind::Segment(a, b));
+        let circle = doc.add(Kind::Circle(a, b));
+        let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+        let arc = doc.add(Kind::CenterArc(a, b, c));
+        let value = doc.add_named_parameter("q", 0.5, (10, 10)).unwrap();
+        for source in [a, segment, circle, polygon, arc] {
+            doc.add_colorized(source, ColorBinding::Grayscale { value }, 0., 1., ColorRangeBehavior::Clamp).unwrap();
+            doc.objects[source - 1].visible = false;
+        }
+        let vp = Viewport {
+            rect: Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(800., 600.)),
+            scale: 1., center: Point { x: 200., y: 200. },
+        };
+        let before = svg_page(&doc, &vp).unwrap();
+        assert!(before.matches("#7f7f7f").count() >= 5);
+        doc.set_parameter_value(value, 0.75).unwrap();
+        assert!(doc.move_point(b, Point { x: 250., y: 100. }));
+        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+        let after = svg_page(&reopened, &vp).unwrap();
+        assert!(after.matches("#bfbfbf").count() >= 5);
+        assert!(!after.contains("#7f7f7f"));
+        assert_ne!(before, after);
     }
     #[test]
     fn picture_hit_and_svg_use_the_same_affine_viewport() {

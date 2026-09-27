@@ -8,6 +8,8 @@ use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::render::{TraceMark, Viewport};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
 mod actions;
+mod colorized;
+mod referenced_captions;
 mod animation_buttons;
 mod animation_motion;
 mod animation_sources;

@@ -8,6 +8,14 @@ use crate::text_style_records::FontState;
 use crate::{text_object, text_style_records};
 
 impl Document {
+    /// Current displayed caption content and its saved placement.
+    pub fn text_content(&self, id: usize) -> Option<(String, TextRect)> {
+        if let Some(content) = self.referenced_caption_content(id) { return Some(content); }
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted { return None; }
+        let Kind::PlainText { text, rect } = &object.kind else { return None; };
+        Some((text.clone(), *rect))
+    }
     fn can_edit_literal_text(&self) -> bool {
         if self.page_count == 1 {
             !self.partial_view
@@ -108,6 +116,7 @@ impl Document {
         (template.decode().ok()?.0 == *text).then_some(template)
     }
     pub fn text_rich_runs(&self, id: usize) -> Option<Vec<Vec<text_object::RichTextRun>>> {
+        if let Some(rows) = self.referenced_caption_rich_runs(id) { return Some(rows); }
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::PlainText { ref text, .. } = object.kind else {
             return None;
@@ -128,6 +137,11 @@ impl Document {
     }
     pub fn text_font_state(&self, id: usize) -> Option<FontState> {
         let object = self.objects.get(id.checked_sub(1)?)?;
+        if let Kind::IterationBinding(source, _) = object.kind {
+            if self.objects.get(source.checked_sub(1)?).is_some_and(|object| matches!(object.kind, Kind::PointNumericLabel(..))) {
+                return self.text_font_state(source);
+            }
+        }
         if !matches!(object.kind, Kind::PlainText { .. })
             && !(is_point_kind(&object.kind) && object.label.is_some())
             && object.kind.numeric_unit().is_none()
@@ -137,6 +151,8 @@ impl Document {
                     | Kind::ValueTablePair(_, _, _)
                     | Kind::ValueEquation { .. }
                     | Kind::CoordinateMeasurement { .. }
+                    | Kind::PointNumericLabel(_, _)
+                    | Kind::ReferencedText { .. }
             )
         {
             return None;
@@ -202,7 +218,7 @@ impl Document {
                 self.objects.get(id - 1).is_some_and(|object| {
                     !object.deleted
                         && object.page == self.active_page
-                        && (matches!(object.kind, Kind::PlainText { .. })
+                        && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. })
                             || (is_point_kind(&object.kind) && object.label.is_some())
                             || object.measurement_anchor.is_some())
                 })
@@ -262,7 +278,7 @@ impl Document {
                 self.objects.get(id - 1).is_some_and(|object| {
                     !object.deleted
                         && object.page == self.active_page
-                        && (matches!(object.kind, Kind::PlainText { .. })
+                        && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. })
                             || (is_point_kind(&object.kind) && object.label.is_some())
                             || object.measurement_anchor.is_some())
                 })
@@ -435,6 +451,15 @@ impl Document {
             .objects
             .get(id.checked_sub(1).ok_or("Invalid text ID")?)
             .ok_or("Invalid text ID")?;
+        if let Kind::ReferencedText { parents, text } = &object.kind {
+            if object.deleted || object.page != self.active_page { return Err("Caption is not on the active page".into()); }
+            let parents = parents.clone();
+            let text = text.with_origin((x, y));
+            if checkpoint { self.checkpoint(); }
+            self.objects[id-1].kind = Kind::ReferencedText { parents, text };
+            self.dirty = true;
+            return Ok(());
+        }
         let Kind::PlainText { ref text, rect } = object.kind else {
             return Err("Object is not free text".into());
         };

@@ -32,8 +32,29 @@ impl Document {
         original: &Document,
         external_ids: &[usize],
     ) -> Option<()> {
+        self.freeze_evaluation_inputs_with_parent(original, external_ids, false)
+    }
+
+    /// A nested stored mapping samples the caller's existing substitutions.
+    /// Retain that parent context when caching omitted construction boundaries.
+    pub(super) fn freeze_scoped_evaluation_inputs(
+        &mut self,
+        original: &Document,
+        external_ids: &[usize],
+    ) -> Option<()> {
+        self.freeze_evaluation_inputs_with_parent(original, external_ids, true)
+    }
+
+    fn freeze_evaluation_inputs_with_parent(
+        &mut self,
+        original: &Document,
+        external_ids: &[usize],
+        retain_parent: bool,
+    ) -> Option<()> {
         let mut baseline = original.clone();
-        baseline.evaluation_context = None;
+        if !retain_parent {
+            baseline.evaluation_context = None;
+        }
         let mut context = EvaluationContext {
             points: BTreeMap::new(),
             numbers: BTreeMap::new(),

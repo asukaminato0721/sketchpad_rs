@@ -7,6 +7,8 @@ mod animation;
 mod calculation_dialogs;
 mod canvas;
 mod construction;
+mod colorized;
+mod referenced_captions;
 mod custom_tools;
 mod document_dialogs;
 mod files;

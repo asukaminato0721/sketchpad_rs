@@ -1,7 +1,8 @@
 use super::kind::{is_multi_page_addition_kind, is_point_kind, straight_kind_mode};
 use super::{Document, Kind, LineMode};
 use crate::action_records::{
-    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction, VisibilityOptions,
+    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction,
+    VisibilityOptions,
 };
 
 impl Document {
@@ -87,44 +88,92 @@ impl Document {
     /// Create a fixed or alternating visibility action, including an explicit
     /// Show action whose targets are currently hidden.
     pub fn add_visibility_button_for_targets(
-        &mut self, targets: &[usize], action: VisibilityAction, options: VisibilityOptions,
-    ) -> Result<usize,String> {
-        let multi_page_append = self.page_count > 1 && !self.objects.iter()
-            .any(|object| matches!(object.kind,Kind::Unsupported(_))) && self.objects.iter()
-            .skip(self.source_count).all(|object| is_multi_page_addition_kind(&object.kind));
+        &mut self,
+        targets: &[usize],
+        action: VisibilityAction,
+        options: VisibilityOptions,
+    ) -> Result<usize, String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
         if targets.is_empty() || !multi_page_append && (self.partial_view || self.page_count != 1) {
             return Err("A visibility button needs supported objects on this page".into());
         }
-        for (index,&target) in targets.iter().enumerate() {
-            let object = self.objects.get(target.checked_sub(1).ok_or("Invalid button target")?)
+        for (index, &target) in targets.iter().enumerate() {
+            let object = self
+                .objects
+                .get(target.checked_sub(1).ok_or("Invalid button target")?)
                 .ok_or("Invalid button target")?;
-            if targets[..index].contains(&target) || object.deleted || object.page != self.active_page
-                || matches!(object.kind,Kind::Unsupported(_)) {
-                return Err("A visibility button needs distinct supported targets on this page".into());
+            if targets[..index].contains(&target)
+                || object.deleted
+                || object.page != self.active_page
+                || matches!(object.kind, Kind::Unsupported(_))
+            {
+                return Err(
+                    "A visibility button needs distinct supported targets on this page".into(),
+                );
             }
         }
-        let row = self.objects.iter().filter(|object| object.page == self.active_page && !object.deleted
-            && matches!(object.kind,Kind::HideShowButton{..}|Kind::AnimationButton{..}
-                |Kind::MovementButton{..}|Kind::ScrollButton{..}|Kind::PresentationButton{..})).count();
-        let label = self.generated_visibility_caption(targets,action);
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page
+                    && !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::HideShowButton { .. }
+                            | Kind::AnimationButton { .. }
+                            | Kind::MovementButton { .. }
+                            | Kind::ScrollButton { .. }
+                            | Kind::PresentationButton { .. }
+                    )
+            })
+            .count();
+        let label = self.generated_visibility_caption(targets, action);
         Ok(self.add(Kind::HideShowButton {
-            targets:targets.to_vec(),action,options,caption_flags:Some(4),label,
-            anchor:(10,(5usize+row*30).min(i16::MAX as usize) as i16),
+            targets: targets.to_vec(),
+            action,
+            options,
+            caption_flags: Some(4),
+            label,
+            anchor: (10, (5usize + row * 30).min(i16::MAX as usize) as i16),
         }))
     }
 
-    pub fn set_hide_show_button_options(&mut self, id: usize, options: VisibilityOptions) -> Result<(),String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+    pub fn set_hide_show_button_options(
+        &mut self,
+        id: usize,
+        options: VisibilityOptions,
+    ) -> Result<(), String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
             .ok_or("Invalid button ID")?;
         if object.deleted || object.page != self.active_page {
             return Err("Button is unavailable on this page".into());
         }
-        let Kind::HideShowButton { options: current,.. } = &object.kind else {
+        let Kind::HideShowButton {
+            options: current, ..
+        } = &object.kind
+        else {
             return Err("Object is not a Hide/Show button".into());
         };
-        if *current == options { return Ok(()); }
+        if *current == options {
+            return Ok(());
+        }
         self.checkpoint();
-        if let Kind::HideShowButton { options:current,.. } = &mut self.objects[id-1].kind {
+        if let Kind::HideShowButton {
+            options: current, ..
+        } = &mut self.objects[id - 1].kind
+        {
             *current = options;
         }
         Ok(())
@@ -132,46 +181,87 @@ impl Document {
 
     /// Native format7 is a custom name; an explicitly empty caption omits the
     /// label record. Changing the policy later still preserves these raw flags.
-    pub fn set_hide_show_button_caption(&mut self, id: usize, caption: &str) -> Result<(),String> {
+    pub fn set_hide_show_button_caption(&mut self, id: usize, caption: &str) -> Result<(), String> {
         if caption.len() > u16::MAX as usize {
             return Err("Button caption exceeds65535 bytes".into());
         }
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
             .ok_or("Invalid button ID")?;
         if object.deleted || object.page != self.active_page {
             return Err("Button is unavailable on this page".into());
         }
-        let Kind::HideShowButton { caption_flags,label,.. } = &object.kind else {
+        let Kind::HideShowButton {
+            caption_flags,
+            label,
+            ..
+        } = &object.kind
+        else {
             return Err("Object is not a Hide/Show button".into());
         };
-        let flags = if caption.is_empty() { None } else { Some(caption_flags.unwrap_or(0)&0xffff0000 |7) };
-        if label == caption && *caption_flags == flags { return Ok(()); }
+        let flags = if caption.is_empty() {
+            None
+        } else {
+            Some(caption_flags.unwrap_or(0) & 0xffff0000 | 7)
+        };
+        if label == caption && *caption_flags == flags {
+            return Ok(());
+        }
         self.checkpoint();
-        if let Kind::HideShowButton { caption_flags,label,.. } = &mut self.objects[id-1].kind {
+        if let Kind::HideShowButton {
+            caption_flags,
+            label,
+            ..
+        } = &mut self.objects[id - 1].kind
+        {
             *caption_flags = flags;
             *label = caption.into();
         }
         Ok(())
     }
 
-    pub fn reset_hide_show_button_caption(&mut self,id: usize) -> Result<(),String> {
-        let object = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+    pub fn reset_hide_show_button_caption(&mut self, id: usize) -> Result<(), String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
             .ok_or("Invalid button ID")?;
         if object.deleted || object.page != self.active_page {
             return Err("Button is unavailable on this page".into());
         }
-        let Kind::HideShowButton { targets,action,caption_flags,label,.. } = &object.kind else {
+        let Kind::HideShowButton {
+            targets,
+            action,
+            caption_flags,
+            label,
+            ..
+        } = &object.kind
+        else {
             return Err("Object is not a Hide/Show button".into());
         };
-        if targets.is_empty() || targets.iter().any(|&target| target == 0 || self.objects.get(target-1)
-            .is_none_or(|target| target.deleted || target.page != self.active_page)) {
+        if targets.is_empty()
+            || targets.iter().any(|&target| {
+                target == 0
+                    || self
+                        .objects
+                        .get(target - 1)
+                        .is_none_or(|target| target.deleted || target.page != self.active_page)
+            })
+        {
             return Err("Button target is unavailable".into());
         }
-        let next_label = self.generated_visibility_caption(targets,*action);
-        let flags = Some(caption_flags.unwrap_or(0)&0xffff0000 |4);
-        if *label == next_label && *caption_flags == flags { return Ok(()); }
+        let next_label = self.generated_visibility_caption(targets, *action);
+        let flags = Some(caption_flags.unwrap_or(0) & 0xffff0000 | 4);
+        if *label == next_label && *caption_flags == flags {
+            return Ok(());
+        }
         self.checkpoint();
-        if let Kind::HideShowButton { caption_flags,label,.. } = &mut self.objects[id-1].kind {
+        if let Kind::HideShowButton {
+            caption_flags,
+            label,
+            ..
+        } = &mut self.objects[id - 1].kind
+        {
             *caption_flags = flags;
             *label = next_label;
         }
@@ -650,21 +740,45 @@ impl Document {
         self.activate_hide_show_button_impl(id, false)
     }
 
-    fn activate_hide_show_button_impl(&mut self, id: usize, require_visible: bool) -> Result<(), String> {
-        let button = self.objects.get(id.checked_sub(1).ok_or("Invalid button ID")?)
+    fn activate_hide_show_button_impl(
+        &mut self,
+        id: usize,
+        require_visible: bool,
+    ) -> Result<(), String> {
+        let button = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
             .ok_or("Invalid button ID")?;
         if button.deleted || require_visible && !button.visible || button.page != self.active_page {
             return Err("Button is not available on this page".into());
         }
-        let Kind::HideShowButton { targets, action, options, caption_flags, label, .. } = &button.kind else {
+        let Kind::HideShowButton {
+            targets,
+            action,
+            options,
+            caption_flags,
+            label,
+            ..
+        } = &button.kind
+        else {
             return Err("Object is not a Hide/Show button".into());
         };
-        let (targets, action, options, old_caption_flags, old_label) =
-            (targets.clone(), *action, *options, *caption_flags, label.clone());
-        if targets.is_empty() || targets.iter().any(|&target| {
-            target == 0 || self.objects.get(target - 1)
-                .is_none_or(|object| object.deleted || object.page != self.active_page)
-        }) {
+        let (targets, action, options, old_caption_flags, old_label) = (
+            targets.clone(),
+            *action,
+            *options,
+            *caption_flags,
+            label.clone(),
+        );
+        if targets.is_empty()
+            || targets.iter().any(|&target| {
+                target == 0
+                    || self
+                        .objects
+                        .get(target - 1)
+                        .is_none_or(|object| object.deleted || object.page != self.active_page)
+            })
+        {
             return Err("Button target is unavailable".into());
         }
         let next_action = if options.alternates() {
@@ -672,22 +786,36 @@ impl Document {
                 VisibilityAction::Hide => VisibilityAction::Show,
                 VisibilityAction::Show => VisibilityAction::Hide,
             }
-        } else { action };
+        } else {
+            action
+        };
         let (next_caption_flags, next_label) = if options.alternates() {
             if old_caption_flags.is_some_and(|flags| flags & 0xffff == 7) {
                 // Native custom names keep their noun. Its explicit localized
                 // Hide/Show prefix remains state-sensitive; other names stay.
-                let suffix = old_label.strip_prefix("隐藏").or_else(|| old_label.strip_prefix("显示"));
-                (old_caption_flags, suffix.map(|suffix| format!("{}{suffix}",visibility_action_prefix(next_action)))
-                    .unwrap_or_else(|| old_label.clone()))
+                let suffix = old_label
+                    .strip_prefix("隐藏")
+                    .or_else(|| old_label.strip_prefix("显示"));
+                (
+                    old_caption_flags,
+                    suffix
+                        .map(|suffix| format!("{}{suffix}", visibility_action_prefix(next_action)))
+                        .unwrap_or_else(|| old_label.clone()),
+                )
             } else {
-                (Some(old_caption_flags.unwrap_or(0) & 0xffff0000 | 4),
-                 self.generated_visibility_caption(&targets,next_action))
+                (
+                    Some(old_caption_flags.unwrap_or(0) & 0xffff0000 | 4),
+                    self.generated_visibility_caption(&targets, next_action),
+                )
             }
-        } else { (old_caption_flags,old_label.clone()) };
-        let changed = next_action != action || next_caption_flags != old_caption_flags
-            || next_label != old_label || targets.iter().any(|&target| {
-                self.objects[target-1].visible != (action == VisibilityAction::Show)
+        } else {
+            (old_caption_flags, old_label.clone())
+        };
+        let changed = next_action != action
+            || next_caption_flags != old_caption_flags
+            || next_label != old_label
+            || targets.iter().any(|&target| {
+                self.objects[target - 1].visible != (action == VisibilityAction::Show)
             });
         if !changed {
             self.selected.clear();
@@ -695,9 +823,15 @@ impl Document {
         }
         self.checkpoint();
         for target in targets {
-            self.objects[target-1].visible = action == VisibilityAction::Show;
+            self.objects[target - 1].visible = action == VisibilityAction::Show;
         }
-        if let Kind::HideShowButton { action, caption_flags, label, .. } = &mut self.objects[id-1].kind {
+        if let Kind::HideShowButton {
+            action,
+            caption_flags,
+            label,
+            ..
+        } = &mut self.objects[id - 1].kind
+        {
             *action = next_action;
             *caption_flags = next_caption_flags;
             *label = next_label;
@@ -708,32 +842,54 @@ impl Document {
 
     fn generated_visibility_caption(&self, targets: &[usize], action: VisibilityAction) -> String {
         let category = |target: usize| {
-            let kind = &self.objects[target-1].kind;
-            if is_point_kind(kind) { "点" }
-            else if let Some(mode) = straight_kind_mode(kind) { match mode {
-                LineMode::Segment => "线段", LineMode::Ray => "射线", LineMode::Line => "直线",
-            }}
-            else if kind.is_circle() { "圆" }
-            else if kind.is_arc() { "弧" }
-            else if kind.is_polygon() && self.polygon_points(target).is_some_and(|points| points.len()==3) { "三角形" }
-            else { "对象" }
+            let kind = &self.objects[target - 1].kind;
+            if is_point_kind(kind) {
+                "点"
+            } else if let Some(mode) = straight_kind_mode(kind) {
+                match mode {
+                    LineMode::Segment => "线段",
+                    LineMode::Ray => "射线",
+                    LineMode::Line => "直线",
+                }
+            } else if kind.is_circle() {
+                "圆"
+            } else if kind.is_arc() {
+                "弧"
+            } else if kind.is_polygon()
+                && self
+                    .polygon_points(target)
+                    .is_some_and(|points| points.len() == 3)
+            {
+                "三角形"
+            } else {
+                "对象"
+            }
         };
         let first = category(targets[0]);
         let noun = if targets.iter().all(|&target| category(target) == first) {
             first
-        } else { "对象" };
+        } else {
+            "对象"
+        };
         let name = if targets.len() == 1 {
-            self.objects[targets[0]-1].label.as_ref()
-                .and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty())
-        } else { None };
+            self.objects[targets[0] - 1]
+                .label
+                .as_ref()
+                .and_then(|label| label.name_utf8().ok())
+                .filter(|name| !name.is_empty())
+        } else {
+            None
+        };
         match name {
-            Some(name) => format!("{}{noun} {name}",visibility_action_prefix(action)),
-            None => format!("{}{noun}",visibility_action_prefix(action)),
+            Some(name) => format!("{}{noun} {name}", visibility_action_prefix(action)),
+            None => format!("{}{noun}", visibility_action_prefix(action)),
         }
     }
-
 }
 
 fn visibility_action_prefix(action: VisibilityAction) -> &'static str {
-    match action { VisibilityAction::Hide => "隐藏", VisibilityAction::Show => "显示" }
+    match action {
+        VisibilityAction::Hide => "隐藏",
+        VisibilityAction::Show => "显示",
+    }
 }

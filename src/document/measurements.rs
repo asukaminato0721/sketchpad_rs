@@ -269,6 +269,25 @@ impl Document {
         }
         Ok(changes.len())
     }
+    /// Format current numeric values, including scoped substitutions, using the
+    /// source's own precision and quantity suffix.
+    pub fn numeric_value_text(&self, id: usize) -> Option<String> {
+        let object=self.objects.get(id.checked_sub(1)?)?;
+        let value=self.numeric_value(id)?;
+        if value.is_nan(){return Some("undefined".into())}
+        let precision=match &object.kind {
+            Kind::Parameter(group)=>group.precision(),
+            Kind::ParameterCalculation(_,group)=>group.precision(),
+            Kind::Calculation(group)=>group.precision(),
+            Kind::MeasuredCalculation(_,group)=>group.precision(),
+            Kind::LengthPairCalculation(_,_,group)=>group.precision(),
+            _=>usize::from(object.measurement_precision?),
+        };
+        let number=if value==f64::INFINITY {"∞".into()}
+            else if value==f64::NEG_INFINITY {"−∞".into()}
+            else {crate::table_records::format_numeric_value(value,precision)};
+        Some(format!("{number}{}",object.kind.numeric_unit()?.suffix()))
+    }
     pub fn point_numeric_label(&self, id: usize) -> Option<(Point, String)> {
         let o = self.objects.get(id.checked_sub(1)?)?;
         let Kind::PointNumericLabel(point, source) = o.kind else {
@@ -278,15 +297,10 @@ impl Document {
             return None;
         }
         let position = self.position(point)?;
-        let Some(value) = self.numeric_value(source) else {
+        let Some(_) = self.numeric_value(source) else {
             return Some((position, "undefined".into()));
         };
-        let text = match &self.objects.get(source.checked_sub(1)?)?.kind {
-            Kind::Parameter(group) => group.value_text(),
-            Kind::ParameterCalculation(_, group) => group.value_text(value),
-            Kind::Calculation(group) => group.value_text(),
-            _ => return None,
-        };
+        let text = self.numeric_value_text(source)?;
         Some((position, text))
     }
     pub fn slope_value(&self, id: usize) -> Option<f64> {
@@ -375,7 +389,7 @@ impl Document {
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
                     ref kind if is_straight_kind(kind) => {
-                        let (a, b, _) = self.line_points(second)?;
+                        let (a, b, _) = self.point_constraint_line_points(second)?;
                         value_equation_records::segment_point_value(point, screen(a), screen(b))
                     }
                     ref kind if kind.is_circle() => {
@@ -411,14 +425,23 @@ impl Document {
                         .map(EquationValue::PointValue)
                     }
                     ref kind if kind.is_polygon() => {
-                        let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind
-                        else {
-                            return None;
-                        };
-                        if host != second {
-                            return None;
+                        if let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind
+                            && host == second
+                        {
+                            return self
+                                .polygon_boundary_parameter(host, edge, t)
+                                .map(EquationValue::PointValue);
                         }
-                        self.polygon_boundary_parameter(host, edge, t)
+                        // Native projects independent points to the closest edge,
+                        // then measures progress along the complete listed perimeter.
+                        let (edge, t) = self.polygon_boundary_projection(
+                            second,
+                            Point {
+                                x: point.x,
+                                y: point.y,
+                            },
+                        )?;
+                        self.polygon_boundary_parameter(second, edge, t)
                             .map(EquationValue::PointValue)
                     }
                     _ => None,

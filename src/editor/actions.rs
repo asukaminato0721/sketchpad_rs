@@ -229,6 +229,14 @@ impl Editor {
         viewport: &Viewport,
         depth: usize,
     ) -> Result<(), String> {
+        self.activate_action(id, viewport, depth, false)
+    }
+
+    pub(super) fn activate_referenced_action(&mut self, id: usize, viewport: &Viewport) -> Result<(), String> {
+        self.activate_action(id, viewport, 0, true)
+    }
+
+    fn activate_action(&mut self, id: usize, viewport: &Viewport, depth: usize, indirect: bool) -> Result<(), String> {
         if depth > 32 {
             return Err("Presentation buttons are nested too deeply".into());
         }
@@ -238,7 +246,7 @@ impl Editor {
             .get(id.checked_sub(1).ok_or("Invalid action button ID")?)
             .ok_or("Invalid action button ID")?;
         if object.deleted
-            || (!object.visible && !matches!(object.kind, Kind::HideShowButton { .. }))
+            || (!indirect && !object.visible && !matches!(object.kind, Kind::HideShowButton { .. }))
             || object.page != self.doc.active_page
         {
             return Err("A Presentation parent button is unavailable".into());

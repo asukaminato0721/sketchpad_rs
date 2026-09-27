@@ -119,3 +119,18 @@ mod iteration_bindings;
 mod transformed_arcs;
 
 mod visibility_options;
+
+mod polygon_point_values;
+mod referenced_captions;
+
+mod mapped_elements;
+
+mod axis_point_constraints;
+
+mod scalar_iteration_depth;
+
+mod colorized;
+
+mod point_numeric_labels;
+
+mod mapped_numeric_labels;

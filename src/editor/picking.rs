@@ -131,8 +131,7 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && matches!(&object.kind, Kind::PlainText { text, rect }
-                if {
+                && self.doc.text_content(object.id).is_some_and(|(text, rect)| {
                     let top_left = v.screen(Point {
                         x: rect.left.into(),
                         y: rect.top.into(),
@@ -227,7 +226,8 @@ impl Editor {
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && (sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
+                && (sketchpad_rs::render::mapped_numeric_label_hit(v, &self.doc, object.id, p)
+                    || sketchpad_rs::render::branch_iteration_hit(v, &self.doc, object.id, p)
                     || sketchpad_rs::render::point_iteration_hit(v, &self.doc, object.id, p)
                     || sketchpad_rs::render::circle_iteration_hit(v, &self.doc, object.id, p))
         }) {

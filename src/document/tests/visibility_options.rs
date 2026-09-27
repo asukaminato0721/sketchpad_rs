@@ -48,14 +48,19 @@ fn compare_visibility_state(doc: &Document, native: &[u8], context: &str) {
     // Native also rewrites document frames and font records when activating a
     // button. Compare the action records independently of that unrelated rewrite.
     assert_eq!(
-        visibility_records(&encoded),
-        visibility_records(native),
+        visibility_records(&encoded, true),
+        visibility_records(native, true),
         "{context} action records"
+    );
+    assert_eq!(
+        visibility_records(&encoded, false),
+        visibility_records(&doc.original, false),
+        "{context} preserved opaque auxiliary records"
     );
     doc.verify_roundtrip().unwrap();
 }
 
-fn visibility_records(bytes: &[u8]) -> Vec<Vec<(u32, Vec<u8>)>> {
+fn visibility_records(bytes: &[u8], semantic: bool) -> Vec<Vec<(u32, Vec<u8>)>> {
     let mut offset = 4;
     let mut groups = Vec::new();
     let mut current = Vec::new();
@@ -68,8 +73,19 @@ fn visibility_records(bytes: &[u8]) -> Vec<Vec<(u32, Vec<u8>)>> {
             current.clear();
             is_visibility = u16::from_le_bytes(payload[..2].try_into().unwrap()) == 62;
         }
-        if is_visibility && matches!(kind, 0x07d2 | 0x0906 | 0x07d5 | 0x07d8 | 0x232e) {
-            current.push((kind, payload.to_vec()));
+        if is_visibility
+            && if semantic {
+                matches!(kind, 0x07d2 | 0x0906 | 0x07d5 | 0x232e)
+            } else {
+                kind == 0x07d8
+            }
+        {
+            let end = if semantic && kind == 0x07d5 {
+                25 + u16::from_le_bytes(payload[22..24].try_into().unwrap()) as usize
+            } else {
+                payload.len()
+            };
+            current.push((kind, payload[..end].to_vec()));
         }
         if is_visibility && kind == 0x07d7 {
             groups.push(std::mem::take(&mut current));
@@ -308,7 +324,7 @@ fn native_geometric_category_and_named_point_captions_match() {
 }
 
 #[test]
-fn generated_caption_rebuilds_known_native_alignment_but_rejects_unknown_tail() {
+fn generated_caption_rebuilds_known_native_alignment_and_materializes_absent_record() {
     let mut group = HideShowButtonGroup::parse(include_bytes!(
         "../../../tests/fixtures/visibility48_original_a0_o5_group.bin"
     ))

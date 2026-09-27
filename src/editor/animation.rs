@@ -14,7 +14,7 @@ impl Editor {
             .iter()
             .filter(|o| o.tracing && o.visible && !o.deleted && o.page == self.doc.active_page)
         {
-            let color = match object.visual_style {
+            let color = match self.doc.effective_visual_style(object.id) {
                 Some(
                     VisualStyle::Point { color, .. }
                     | VisualStyle::Stroke { color, .. }

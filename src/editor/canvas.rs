@@ -34,6 +34,7 @@ impl Editor {
                                         | Kind::GraphVerticalUnit(_, _)
                                         | Kind::Image { .. }
                                         | Kind::PlainText { .. }
+                                        | Kind::ReferencedText { .. }
                                         | Kind::Parameter(_)
                                         | Kind::Calculation(_)
                                         | Kind::MeasuredCalculation(_, _)
@@ -54,6 +55,10 @@ impl Editor {
                                     p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
                                 } else {
                                     match &self.doc.objects[id - 1].kind {
+                                        Kind::ReferencedText { text, .. } => {
+                                            let (x, y) = text.stored_origin();
+                                            p - vp.screen(Point { x: f64::from(x), y: f64::from(y) })
+                                        }
                                         Kind::PlainText { rect, .. } => {
                                             p - vp.screen(Point {
                                                 x: rect.left.into(),
@@ -110,7 +115,7 @@ impl Editor {
                             {
                                 self.status = error;
                             }
-                        } else if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. }) {
+                        } else if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }) {
                             if let Err(error) =
                                 self.doc.drag_text(id, vp.world(p - self.drag_offset))
                             {
@@ -209,7 +214,7 @@ impl Editor {
                             ui.painter().add(egui::Shape::mesh(mesh));
                         }
                     }
-                    if let Kind::PlainText { text, rect } = &object.kind {
+                    if let Some((text, rect)) = self.doc.text_content(object.id) {
                         let at = vp.screen(Point {
                             x: rect.left.into(),
                             y: rect.top.into(),
@@ -333,12 +338,15 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some((point, text)) = self.doc.point_numeric_label(object.id) {
+                    for (point, text) in self.doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| self.doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
+                        let style = self.doc.text_font_state(object.id);
+                        let size = style.as_ref().map_or(16, |style| style.size_code);
+                        let font_id = self.canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size as f32);
                         ui.painter().text(
                             vp.screen(point),
                             egui::Align2::CENTER_CENTER,
                             text,
-                            egui::FontId::proportional(16.),
+                            font_id,
                             if self.doc.selected.contains(&object.id) {
                                 egui::Color32::MAGENTA
                             } else {

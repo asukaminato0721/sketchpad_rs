@@ -235,6 +235,8 @@ impl Document {
                         | Kind::ValueTablePair(_, _, _)
                         | Kind::ValueEquation { .. }
                         | Kind::CoordinateMeasurement { .. }
+                        | Kind::PointNumericLabel(_, _)
+                        | Kind::ReferencedText { .. }
                 )
         }) {
             return Err("Object has no supported caption font style".into());
@@ -580,6 +582,15 @@ impl Document {
                 replacement[10] = (replacement[10] & !1) | u8::from(!object.visible);
                 if bytes[group[0].start..record.data.end] != replacement {
                     edits.push((group[0].start, record.data.end, replacement));
+                }
+                continue;
+            }
+            if let Kind::ReferencedText { text, .. } = &object.kind {
+                let rich = group.iter().find(|r| r.kind == 0x08fc).ok_or("Missing referenced caption payload")?;
+                if bytes[rich.data.clone()] != *text.rich_bytes() {
+                    let mut replacement = Vec::new();
+                    super::records::put_record(&mut replacement, 0x08fc, text.rich_bytes());
+                    edits.push((rich.start, rich.data.end + rich.data.len()%2, replacement));
                 }
                 continue;
             }

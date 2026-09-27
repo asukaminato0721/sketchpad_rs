@@ -34,11 +34,12 @@ fn is_point_header(payload: &[u8]) -> bool {
     matches!(
         (code, subtype),
         (
-            0 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+            0 | 75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
             4
         ) | (0, 41)
             | (1, 11)
             | (15, 10)
+            | (101, 89)
             | (9 | 11 | 12 | 13 | 14, 45)
             | (67 | 68 | 69 | 95 | 123, 56)
     )
@@ -121,7 +122,7 @@ fn is_circle_header(payload: &[u8]) -> bool {
     matches!(
         (code, subtype),
         (
-            3 | 4 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+            3 | 4 | 75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
             28
         )
     )
@@ -152,7 +153,7 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     code == 8
         || (matches!(
             code,
-            16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
+            75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
         ) && subtype >= 52
             && payload[6..8] == [4, 0])
 }
@@ -218,7 +219,7 @@ fn is_segment_header(payload: &[u8]) -> bool {
                 u16::from_le_bytes([payload[8], payload[9]])
             ),
             (
-                2 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+                2 | 75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
                 14
             )
         )
@@ -296,7 +297,10 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
         return false;
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
-    matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)
+    (payload.len() == 28 && code == 75
+        && (payload[6..10] == [12, 0, 67, 0]
+            || (payload[6..8] == [2,0] && matches!(u16::from_le_bytes([payload[8],payload[9]]),12|13))))
+        || matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)
         || (payload.len() == 28
             && payload[6..10] == [12, 0, 67, 0]
             && matches!(code, 16..=21 | 24 | 27..=30 | 32..=34))

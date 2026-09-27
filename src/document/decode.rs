@@ -402,6 +402,7 @@ impl Document {
                         | 67
                         | 68
                         | 69
+                        | 75
                         | 95
                         | 123
                 );
@@ -568,7 +569,7 @@ impl Document {
                     0x7d3
                         if matches!(
                             code,
-                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57
+                            15 | 17 | 18 | 19 | 21 | 24 | 27 | 30 | 52 | 54 | 55 | 56 | 57 | 75
                         ) =>
                     {
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -608,13 +609,13 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(matches!(code, 48 | 67 | 68 | 94) && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 90 | 94) && r.kind == 0x232e && d.is_empty())
                     && !(code == 0
                         && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
                         && r.kind == 0x232e
                         && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
-                    && !(code == 90 && matches!(r.kind, 0x08fc | 0x07d8))
+                    && !(matches!(code, 73 | 90) && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
@@ -933,6 +934,21 @@ impl Document {
                     }
                     _ => Kind::Unsupported(code),
                 }
+            } else if let Some(caption) = super::referenced_captions::decode(
+                &objects, page, objects.len() + 1, h, &refs,
+                &b[group_start..rs[i].data.end], text_style_count,
+            ) {
+                caption
+            } else if let Some(definition) = super::colorized::decode_colorized(
+                &objects, page, objects.len() + 1, h, &refs,
+                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+            ) {
+                Kind::Colorized(definition)
+            } else if let Some(definition) = super::mapped_element::decode_mapped_element(
+                &objects, page, objects.len() + 1, h, &refs,
+                constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
+            ) {
+                Kind::MappedElement(definition)
             } else if let Some(definition) = super::transform_arc_decode::decode_arc_transform(
                 &objects, page, objects.len() + 1, h, &refs,
                 constraint_payload.as_ref().map(|(payload, _)| payload.as_slice()),
@@ -974,15 +990,10 @@ impl Document {
                             let template=include_bytes!("../../assets/point_parameter_iteration_values_group.bin");
                             group.len()==template.len() && group.iter().zip(template).enumerate().all(|(at,(a,b))|at==10 || (48..56).contains(&at) || (100..102).contains(&at) || a==b)
                         } => Kind::IterationValues(*iteration,*calculation),
-                    (90,None,[host,value]) if *host>0 && *value>0
-                        && objects.get(host-1).is_some_and(|o|is_point_kind(&o.kind))
-                        && objects.get(value-1).is_some_and(|o|matches!(o.kind,Kind::Parameter(_) | Kind::ParameterCalculation(_,_) | Kind::Calculation(_)))
-                        && {
-                            let group=&b[group_start..rs[i].data.end];
-                            let template=include_bytes!("../../assets/point_numeric_label_group.bin");
-                            group.len()==template.len() && group.iter().zip(template).enumerate().all(|(at,(a,b))|
-                                at==10 || (26..28).contains(&at) || (48..56).contains(&at) || (76..80).contains(&at) || (108..110).contains(&at) || a==b)
-                        } => Kind::PointNumericLabel(*host,*value),
+                    (90,None,_) if super::point_numeric_labels::decode_numeric_label(
+                        &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).is_some() =>
+                        super::point_numeric_labels::decode_numeric_label(
+                            &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).unwrap(),
                     (89, None, [parameter, seed, image, carried, ray])
                         if *parameter > 0 && *seed > 0 && *image > 0 && *ray > 0
                             && h[6..10] == [14, 0, 64, 0]
@@ -1142,7 +1153,7 @@ impl Document {
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
-                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || matches!(objects[first-1].kind, Kind::PointOnPolygon(host, _, _) if host == *second))) => {
+                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || o.kind.is_polygon())) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -1480,7 +1491,9 @@ impl Document {
                             (Some(kind), Some((payload, _)))
                                 if straight_kind_mode(kind) == Some(LineMode::Line)
                                     && payload.len() == 12
-                                    && payload[..4] == [15, 0, 12, 0]
+                                    && (payload[..4] == [15, 0, 12, 0]
+                                        || (super::kind::straight_point_constraint_subtype(kind) == Some(38)
+                                            && payload[..4] == [15, 0, 38, 0]))
                                     && f64_at(payload, 4).is_finite() =>
                             {
                                 Kind::PointOnLine(*host, f64_at(payload, 4))

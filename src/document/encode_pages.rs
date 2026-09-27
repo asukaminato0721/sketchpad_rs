@@ -358,6 +358,7 @@ impl Document {
         if !object.visible {
             object_header[2] = 1;
         }
+        object_header[2] |= u8::from(object.presentation_suppressed) << 1;
         object_header[4] = u8::from(object.tracing);
         if let Some(style) = object.visual_style {
             style_records::set_visual_style(&mut object_header, style)?;
@@ -481,6 +482,10 @@ impl Document {
                 .count();
             for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
+                    Kind::ReferencedText { parents, text } => {
+                        let refs = parents.iter().map(|id| self.multi_page_local_reference(page, object.id, *id)).collect::<Result<Vec<_>, _>>()?;
+                        groups.extend(super::referenced_captions::encode_group(object, &refs, text));
+                    }
                     Kind::PlainText { text, rect } => {
                         let mut group = if let Some(template) = &object.rich_text_override {
                             template.encode_group(text, *rect)?
@@ -491,6 +496,22 @@ impl Document {
                             group[10] |= 1;
                         }
                         groups.extend_from_slice(&group);
+                    }
+                    Kind::Colorized(definition) => {
+                        put_record(&mut groups, 0x07d0, &self.colorized_object_header(object, definition)?);
+                        let ids = definition.native_references();
+                        let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
+                        for id in ids { refs.extend_from_slice(&self.multi_page_local_reference(page, object.id, id)?.to_le_bytes()); }
+                        put_record(&mut groups, 0x07d2, &refs);
+                        put_record(&mut groups, 0x07d3, &definition.native_payload());
+                        if let Some(label) = &object.label { groups.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
+                    Kind::MappedElement(definition) => {
+                        let refs = definition.native_references().into_iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 101, &refs)?;
                     }
                     Kind::Free(point) => {
                         if !point.x.is_finite() || !point.y.is_finite() {
@@ -565,7 +586,8 @@ impl Document {
                         references.extend_from_slice(&local_host.to_le_bytes());
                         put_record(&mut groups, 0x07d2, &references);
                         let code = match object.kind {
-                            Kind::PointOnLine(_, _) => 12,
+                            Kind::PointOnLine(host, _) => super::kind::straight_point_constraint_subtype(&self.objects[host - 1].kind)
+                                .ok_or("Invalid straight-point host")?,
                             Kind::PointOnRay(_, _) => 13,
                             Kind::PointOnSegment(_, _) => 14,
                             Kind::PointOnArc(_, _) => 67,
@@ -1601,7 +1623,9 @@ impl Document {
                         } else {
                             12
                         };
-                        if out.get(at..at + 4) != Some(&[15, 0, code, 0]) {
+                        if out.get(at..at + 4) != Some(&[15, 0, code, 0])
+                            && !(matches!(current.kind, Kind::PointOnLine(_, _))
+                                && out.get(at..at + 4) == Some(&[15, 0, 38, 0])) {
                             return Err("Invalid straight-point constraint".into());
                         }
                         out.get_mut(at + 4..at + 12)
