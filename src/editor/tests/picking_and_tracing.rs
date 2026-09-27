@@ -237,3 +237,25 @@ fn native_linear_three_point_arc_is_pickable_on_its_segment() {
     assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 190., y: 180. })), None);
     assert_eq!(editor.hit(&viewport, viewport.screen(Point { x: 225., y: 190. })), None);
 }
+
+#[test]
+fn centered_arc_construct_measure_and_constrained_point_commands_share_geometry() {
+    let mut doc=Document::new();
+    let center=doc.add(Kind::Free(Point{x:200.,y:180.}));
+    let start=doc.add(Kind::Free(Point{x:260.,y:180.}));
+    let end=doc.add(Kind::Free(Point{x:200.,y:60.}));
+    let mut editor=Editor::new(doc);
+    editor.selection_order=vec![center,start,end];
+    editor.doc.selected=[center,start,end].into_iter().collect();
+    editor.center_arc();let arc=editor.doc.objects.len();
+    assert_eq!(editor.doc.objects[arc-1].kind,Kind::CenterArc(center,start,end));
+    editor.select_only(arc);editor.measure_arc_angle();
+    assert_eq!(editor.doc.numeric_value(editor.doc.objects.len()),Some(90.));
+    editor.select_only(arc);editor.measure_arc_length();
+    assert!((editor.doc.numeric_value(editor.doc.objects.len()).unwrap()-std::f64::consts::FRAC_PI_2*60./37.79527559055118).abs()<1e-12);
+    editor.select_only(arc);editor.point_on_object();
+    let point=editor.doc.objects.len();
+    assert!(matches!(editor.doc.objects[point-1].kind,Kind::PointOnArc(host,_) if host==arc));
+    assert!(editor.doc.position(point).is_some());
+    editor.doc.verify_roundtrip().unwrap();
+}

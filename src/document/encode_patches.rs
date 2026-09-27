@@ -110,9 +110,15 @@ impl Document {
         let mut current = None;
         for record in document_records(&rs) {
             if record.kind == 0x07d0 {
-                current = Some(objects.next().ok_or("Object group count mismatch")?);
+                current = Some(objects.next().ok_or("Object group count mismatch in patch_measurement_precisions")?);
             } else if record.kind == 0x0903 {
                 if let Some(object) = current {
+                    // Unsupported groups retain their source records. Their
+                    // numeric-looking metadata does not authorize rewriting a
+                    // measurement format that has not been decoded.
+                    if matches!(object.kind, Kind::Unsupported(_)) {
+                        continue;
+                    }
                     if let Some(anchor) = object.measurement_anchor {
                         if record.data.len() != 32 {
                             return Err("Invalid measurement caption record".into());
@@ -138,7 +144,7 @@ impl Document {
             }
         }
         if objects.next().is_some() {
-            return Err("Object group count mismatch".into());
+            return Err("Object group count mismatch in patch_measurement_precisions".into());
         }
         Ok(bytes)
     }
@@ -208,7 +214,7 @@ impl Document {
                 && object.kind.numeric_unit().is_none()
                 && !matches!(
                     object.kind,
-                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                    Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _) | Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
                 )
         }) {
             return Err("Object has no supported caption font style".into());
@@ -307,7 +313,7 @@ impl Document {
                 .collect::<Vec<_>>();
             if !group
                 .iter()
-                .any(|record| matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907))
+                .any(|record| matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907 | 0x090d))
             {
                 return Err("Font style target has no text".into());
             }
@@ -323,7 +329,7 @@ impl Document {
         let entries = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
         for record in document_records(&entries).filter(|r| r.kind == 0x07d0) {
-            let object = objects.next().ok_or("Object group count mismatch")?;
+            let object = objects.next().ok_or("Object group count mismatch in patch_trace_flags")?;
             if record.data.len() < 5 {
                 return Err("Short object header".into());
             }
@@ -331,7 +337,7 @@ impl Document {
             *flag = (*flag & !1) | u8::from(object.tracing);
         }
         if objects.next().is_some() {
-            return Err("Object group count mismatch".into());
+            return Err("Object group count mismatch in patch_trace_flags".into());
         }
         Ok(bytes)
     }
@@ -341,7 +347,7 @@ impl Document {
         let mut current = None;
         for record in document_records(&rs) {
             if record.kind == 0x07d0 {
-                current = Some(objects.next().ok_or("Object group count mismatch")?);
+                current = Some(objects.next().ok_or("Object group count mismatch in patch_mapped_iteration_image_levels")?);
             } else if record.kind == 0x090a
                 && let Some(object) = current
                 && let Kind::MappedPointIteration { final_only, .. } = object.kind
@@ -351,7 +357,7 @@ impl Document {
                     .copy_from_slice(&u16::from(final_only).to_le_bytes());
             }
         }
-        if objects.next().is_some() { return Err("Object group count mismatch".into()); }
+        if objects.next().is_some() { return Err("Object group count mismatch in patch_mapped_iteration_image_levels".into()); }
         Ok(bytes)
     }
 
@@ -366,7 +372,7 @@ impl Document {
         for record in document_records(&rs).filter(|record| record.kind == 0x07d0) {
             let object = survivors
                 .get(ordinal)
-                .ok_or("Object group count mismatch")?;
+                .ok_or("Object group count mismatch in patch_visual_styles")?;
             ordinal += 1;
             if object.kind.is_polygon() {
                 let payload = bytes.get_mut(record.data.clone())
@@ -415,7 +421,7 @@ impl Document {
             }
         }
         if ordinal != survivors.len() {
-            return Err("Object group count mismatch".into());
+            return Err("Object group count mismatch in patch_visual_styles".into());
         }
         Ok(bytes)
     }
@@ -443,7 +449,7 @@ impl Document {
                 .ok_or("Object terminator without header")?;
             let object = survivors
                 .get(ordinal - 1)
-                .ok_or("Object group count mismatch")?;
+                .ok_or("Object group count mismatch in caption patch")?;
             if object.id > self.source_count {
                 continue;
             }
@@ -618,7 +624,7 @@ impl Document {
             }
         }
         if ordinal != survivors.len() {
-            return Err("Object group count mismatch".into());
+            return Err("Object group count mismatch in caption patch".into());
         }
         edits.sort_by(|a, b| b.0.cmp(&a.0));
         for (start, end, replacement) in edits {

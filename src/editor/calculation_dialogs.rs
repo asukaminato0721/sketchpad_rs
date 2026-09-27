@@ -24,7 +24,7 @@ impl Editor {
                     } else if self.doc.selected.len() == 1 && self.doc.selected.iter().next().is_some_and(|&id| self.doc.objects.get(id - 1).is_some_and(|object| object.kind.numeric_unit().is_some())) {
                         "Use a parameter by name, or a selected numeric value as v; degree literals use °"
                     } else {
-                        "Enter numbers, arithmetic, functions, pi/π, e, and degree literals"
+                        "Enter numbers, arithmetic, functions, pi/π, e, and cm, degree, or radian literals"
                     },
                 );
                 if self.doc.selected.iter().all(|&id| self.doc.objects.get(id - 1).is_some_and(|o| o.kind.numeric_unit().is_some())) {

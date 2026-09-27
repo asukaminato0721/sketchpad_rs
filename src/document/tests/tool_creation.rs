@@ -743,6 +743,13 @@ fn create_two_numeric_givens_preserves_binding_order_and_semantic_references() {
     document.redo();
     let n = document.add_named_parameter("n", 5., (280, 20)).unwrap();
     let m = document.add_named_parameter("m", 7., (280, 80)).unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_NUMERIC_GRAPH_FIXTURES").is_some() {
+        fs::write(
+            "/tmp/numeric_graph_two_sources_native_input_port.gsp",
+            document.encode().unwrap(),
+        )
+        .unwrap();
+    }
     let output = document.invoke_embedded_tool(0, &[n, m]).unwrap()[0];
     assert_eq!(document.numeric_value(output), Some(12.));
     assert!(
@@ -799,6 +806,18 @@ fn create_nested_numeric_graph_includes_suppressed_unselected_helpers() {
         assert_eq!(document.encode().unwrap(), source);
         document.redo();
         let input = document.add_named_parameter("n", 5., (280, 20)).unwrap();
+        if std::env::var_os("SKETCHPAD_WRITE_NUMERIC_GRAPH_FIXTURES").is_some() {
+            let suffix = if helper_selected {
+                "nested"
+            } else {
+                "nested_hidden"
+            };
+            fs::write(
+                format!("/tmp/numeric_graph_{suffix}_native_input_port.gsp"),
+                document.encode().unwrap(),
+            )
+            .unwrap();
+        }
         let outputs = document.invoke_embedded_tool(0, &[input]).unwrap();
         assert_eq!(outputs.len(), 2);
         assert_eq!(document.numeric_value(outputs[0]), Some(6.));

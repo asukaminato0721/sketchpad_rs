@@ -667,3 +667,132 @@ fn trigonometric_axis_matches_original_and_roundtrips() {
     assert!(!reopened.partial_view);
     assert!(reopened.axis_trigonometric());
 }
+
+#[test]
+fn corpus_coordinate_labels_and_display_formats_feed_calculations() {
+    for (bytes, id, calculation, kind) in [
+        (include_bytes!("../../../tests/fixtures/coordinate_abscissa_labeled_corpus.gsp").as_slice(), 15, 17, CoordinateMeasureKind::Abscissa),
+        (include_bytes!("../../../tests/fixtures/coordinate_ordinate_formatted_corpus.gsp").as_slice(), 18, 19, CoordinateMeasureKind::Ordinate),
+    ] {
+        let original = Document::from_bytes(bytes, None).unwrap();
+        assert!(matches!(original.objects[id - 1].kind, Kind::CoordinateMeasurement { kind: actual, .. } if actual == kind));
+        assert!(original.objects[id - 1].label.is_some());
+        let initial = original.numeric_value(id).unwrap();
+        assert!(initial.is_finite());
+        assert!(original.numeric_value(calculation).unwrap().is_finite());
+        assert_eq!(original.encode().unwrap(), bytes);
+        // Move a free dependency in the original graph, retaining the corpus layout.
+        let mut changed = None;
+        for object in &original.objects {
+            let Kind::Free(point) = object.kind else { continue; };
+            let mut candidate = original.clone();
+            candidate.checkpoint();
+            if candidate.move_point(object.id, Point { x: point.x + 11., y: point.y - 13. })
+                && candidate.numeric_value(id).is_some_and(|value| (value - initial).abs() > 1e-9)
+            {
+                changed = Some(candidate);
+                break;
+            }
+        }
+        let edited = changed.expect("Coordinate measurement must follow a movable dependency");
+        assert!(edited.numeric_value(calculation).unwrap().is_finite());
+        // Other unsupported/undefined constructions in these original pages
+        // still prevent saving edits; their raw imports remain byte preserving.
+    }
+}
+
+#[test]
+fn formatted_labeled_coordinates_save_live_values_and_calculations() {
+    for (kind, mode) in [(CoordinateMeasureKind::Abscissa, 1_u16), (CoordinateMeasureKind::Ordinate, 3)] {
+        let mut bytes = crate::coordinate_measure_records::encode_on_original_base(kind, &[1, 9]).unwrap();
+        let native = include_bytes!("../../../tests/fixtures/coordinate_abscissa_labeled_corpus.gsp");
+        let native_records = records(native).unwrap();
+        let header = native_records.iter().filter(|r| r.kind == 0x07d0).nth(14).unwrap();
+        let label = native_records.iter().find(|r| r.start > header.start && r.kind == 0x07d5).unwrap();
+        let caption = native[label.start..label.data.end + (label.data.len() & 1)].to_vec();
+        let rs = records(&bytes).unwrap();
+        let aux = rs.iter().find(|r| r.kind == 0x0903).unwrap();
+        let at = aux.data.start;
+        bytes[at + 22..at + 24].copy_from_slice(&0x524d_u16.to_le_bytes());
+        bytes[at + 26..at + 28].copy_from_slice(&mode.to_le_bytes());
+        let style = rs.iter().find(|r| r.start > aux.start && r.kind == 0x07d8).unwrap();
+        bytes.splice(style.start..style.start, caption);
+        let mut doc = Document::from_bytes(&bytes, None).unwrap();
+        assert!(!doc.partial_view);
+        assert_eq!(doc.encode().unwrap(), bytes);
+        assert!(doc.objects[9].label.is_some());
+        let calculation = doc.add_parameter_calculation(10, "2*v+1", (10, 80)).unwrap();
+        let authored = doc.encode().unwrap();
+        let before = doc.numeric_value(10).unwrap();
+        doc.checkpoint();
+        assert!(doc.move_point(1, Point { x: 170., y: 100. }));
+        let after = doc.numeric_value(10).unwrap();
+        assert!((after - before).abs() > 0.1);
+        assert!((doc.numeric_value(calculation).unwrap() - (2. * after + 1.)).abs() < 1e-12);
+        doc.verify_roundtrip().unwrap();
+        let saved = doc.encode().unwrap();
+        let reopened = Document::from_bytes(&saved, None).unwrap();
+        assert_eq!(reopened.numeric_value(10), Some(after));
+        assert_eq!(reopened.numeric_value(calculation), doc.numeric_value(calculation));
+        assert_eq!(reopened.objects[9].label, doc.objects[9].label);
+        assert_eq!(reopened.encode().unwrap(), saved);
+        doc.undo();
+        assert_eq!(doc.encode().unwrap(), authored);
+        doc.redo();
+        assert_eq!(doc.encode().unwrap(), saved);
+    }
+}
+
+#[test]
+fn coordinate_display_tail_native_controls_keep_live_values_and_writer_records() {
+    for (bytes,golden,kind,initial,delta) in [
+        (include_bytes!("../../../tests/fixtures/coordinate_display_tail_x_native_verified.gsp").as_slice(),include_bytes!("../../../tests/fixtures/coordinate_display_tail_x_writer_native_verified.gsp").as_slice(),CoordinateMeasureKind::Abscissa,-1.2964583333333337,1.),
+        (include_bytes!("../../../tests/fixtures/coordinate_display_tail_y_native_verified.gsp").as_slice(),include_bytes!("../../../tests/fixtures/coordinate_display_tail_y_writer_native_verified.gsp").as_slice(),CoordinateMeasureKind::Ordinate,0.1322916666666667,2.),
+    ] {
+        let mut d=Document::from_bytes(bytes,None).unwrap();
+        assert!(!d.partial_view);
+        assert!(matches!(d.objects[9].kind,Kind::CoordinateMeasurement{kind:actual,first:1,second:None,frame:9} if actual==kind));
+        assert!((d.numeric_value(10).unwrap()-initial).abs()<1e-12);
+        assert_eq!(d.encode().unwrap(),bytes);
+        let calc=d.add_parameter_calculation(10,"2*v+1",(10,80)).unwrap();
+        let baseline=d.encode().unwrap();
+        let p=d.position(1).unwrap();d.checkpoint();
+        assert!(d.move_point(1,Point{x:p.x+37.79527559055118,y:p.y-75.59055118110236}));
+        d.set_measurement_precision(&[10],3).unwrap();
+        assert!((d.numeric_value(10).unwrap()-initial-delta).abs()<1e-12);
+        assert!((d.numeric_value(calc).unwrap()-(2.*(initial+delta)+1.)).abs()<1e-12);
+        assert_eq!(d.encode().unwrap(),golden);
+        d.verify_roundtrip().unwrap();
+        let saved=records(golden).unwrap();
+        let aux=saved.iter().find(|r|r.kind==0x0903).unwrap();
+        assert_eq!(&golden[aux.data.start+30..aux.data.end],&0x003e_u16.to_le_bytes());
+        d.undo();d.undo();assert_eq!(d.encode().unwrap(),baseline);
+        d.redo();d.redo();assert_eq!(d.encode().unwrap(),golden);
+    }
+}
+
+#[test]
+fn coordinate_display_tail_original_sine_graph_unblocks_dependent_calculation() {
+    let bytes=include_bytes!("../../../tests/fixtures/coordinate_display_tail_sine_corpus.gsp");
+    let d=Document::from_bytes(bytes,None).unwrap();
+    assert!(matches!(d.objects[69].kind,Kind::CoordinateMeasurement{kind:CoordinateMeasureKind::Abscissa,first:45,second:None,frame:29}));
+    assert!(matches!(d.objects[82].kind,Kind::CoordinateMeasurement{kind:CoordinateMeasureKind::Ordinate,first:33,second:None,frame:29}));
+    assert!((d.numeric_value(74).unwrap()-(d.numeric_value(70).unwrap()-d.numeric_value(71).unwrap())).abs()<1e-12);
+    // This original still contains unsupported functions and actions; strict
+    // editing verification is covered by the complete Native controls above.
+    assert!(d.partial_view);
+    assert_eq!(d.encode().unwrap(),bytes);
+    let initial=d.numeric_value(70).unwrap();
+    let mut changed=None;
+    for o in &d.objects {
+        let Kind::Free(p)=o.kind else {continue;};
+        let mut candidate=d.clone();candidate.checkpoint();
+        if candidate.move_point(o.id,Point{x:p.x+11.,y:p.y-13.})
+            && candidate.numeric_value(70).is_some_and(|v|(v-initial).abs()>1e-9) {
+            changed=Some(candidate);break;
+        }
+    }
+    let mut edited=changed.expect("The coordinate must retain its geometric dependencies");
+    assert!((edited.numeric_value(74).unwrap()-(edited.numeric_value(70).unwrap()-edited.numeric_value(71).unwrap())).abs()<1e-12);
+    edited.undo();assert_eq!(edited.encode().unwrap(),bytes);
+}

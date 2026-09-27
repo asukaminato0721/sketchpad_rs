@@ -150,7 +150,7 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
         )),
         Kind::ValueTable(_, group) => {
             if let Some((name, values)) = group.named_label_values() {
-                let mut lines = vec![name];
+                let mut lines = vec![display_parameter_indices(&name)];
                 lines.extend(values);
                 return Some((group.anchor(), lines));
             }
@@ -256,9 +256,11 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
             .map(|object| &object.kind)
             && let Some(last) = values.last_mut()
         {
-            *last = format!("{:.*}", parameter.precision(), parameter.value());
+            *last = crate::table_records::named_table_value_text(
+                parameter.value(), parameter.precision(),
+            ).ok()?;
         }
-        let mut lines = vec![name];
+        let mut lines = vec![display_parameter_indices(&name)];
         lines.extend(values);
         return Some((group.anchor(), lines));
     }
@@ -1957,7 +1959,7 @@ impl GeometryRenderer {
                         }
                     }
                 }
-                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
+                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => {
                     if let Some(points) = doc.arc_points(o.id, 128) {
                         let screen = points
                             .into_iter()

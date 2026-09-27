@@ -253,7 +253,7 @@ impl Editor {
                     ((p - v.screen(center)).length() - radius as f32 * v.scale).abs()
                 } else {
                     match o.kind {
-                        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
+                        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => {
                             let points = self.doc.arc_points(o.id, 96)?;
                             points
                                 .windows(2)

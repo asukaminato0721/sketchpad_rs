@@ -7,42 +7,53 @@ impl Document {
         source: usize,
         anchor: (i16, i16),
     ) -> Result<usize, String> {
-        if self.partial_view || self.page_count != 1 || source == 0 {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 || source == 0 {
             return Err("Cannot tabulate a parameter in this sketch".into());
         }
-        let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).map(|o| &o.kind) else {
+        let Some(Kind::Parameter(parameter)) = self.objects.get(source - 1).filter(|o| !o.deleted && o.page == self.active_page).map(|o| &o.kind) else {
             return Err("Select a supported parameter".into());
         };
-        // Native Tabulate uses a separate literal/unit caption for mode zero.
-        // For unnamed sources it materializes generated names and advances the
-        // page counter on save. Neither family is the named scalar snapshot.
-        // Reject before checkpointing or changing source/name metadata.
+        // Definition captions need their separate typed unit grammar.
+        // Validate the requested source before changing naming metadata.
         if parameter.display_mode() == 0 {
             return Err("Tables of parameter definitions are not yet supported".into());
-        }
-        if parameter.name().is_empty() {
-            return Err("Tables of generated parameter names are not yet supported".into());
         }
         if parameter.unit() != crate::table_records::NumericUnit::Scalar {
             return Err("This table supports scalar parameters".into());
         }
-        let group = if parameter.name() == "t[1]" {
-            TableGroup::for_source_value(
-                u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
-                anchor,
-                parameter.value(),
-            )?
-        } else if !matches!(parameter.name(), "t[1]" | "t[2]") {
-            TableGroup::named_snapshot(
-                u32::try_from(source).map_err(|_| "Invalid parameter ID")?,
-                parameter,
-                anchor,
-            )?
-        } else {
-            return Err("This default parameter table is not yet supported".into());
+        let indexed = parameter.name().is_empty()
+            || parameter.name().starts_with("t[") && parameter.name() != "t[1]";
+        let mut candidate = self.clone();
+        candidate.materialize_parameter_names()?;
+        let Kind::Parameter(parameter) = &candidate.objects[source - 1].kind else {
+            unreachable!()
         };
-        self.checkpoint();
-        Ok(self.append_object(Kind::ValueTable(source, group)))
+        let style = crate::text_style_records::FontState {
+            family: "Tahoma".into(),
+            size_code: 14,
+            bold: false,
+            italic: false,
+            underline: false,
+        };
+        let source_id = u32::try_from(source).map_err(|_| "Invalid parameter ID")?;
+        let font = candidate.imported_caption_font_index(&style)?;
+        let group = if indexed {
+            TableGroup::indexed_snapshot(source_id, parameter, anchor, font)?
+        } else if parameter.name() == "t[1]" {
+            TableGroup::for_source_value(source_id, anchor, parameter.value())?
+        } else {
+            TableGroup::named_snapshot(source_id, parameter, anchor)?
+        };
+        let group = group.with_font_reference(font)?;
+        let id = candidate.append_object(Kind::ValueTable(source, group));
+        candidate.objects[id - 1].text_style_override = Some(style);
+        candidate.dirty = true;
+        candidate.verify_roundtrip()?;
+        self.checkpoint_structure();
+        candidate.undo = self.undo.clone();
+        candidate.redo = self.redo.clone();
+        *self = candidate;
+        Ok(id)
     }
     pub fn tabulate_default_pair(&mut self, anchor: (i16, i16)) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 || !self.safe_structure {
@@ -115,7 +126,9 @@ impl Document {
                             return Err("Invalid named table source".into());
                         };
                         crate::table_records::table_value_text(parameter.value())?;
-                        let value = format!("{:.*}", parameter.precision(), parameter.value());
+                        let value = crate::table_records::named_table_value_text(
+                            parameter.value(), parameter.precision(),
+                        )?;
                         group.add_named_snapshot(&value)?;
                     } else {
                         group.add_default_snapshot()?;

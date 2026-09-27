@@ -387,3 +387,56 @@ fn marked_and_mixed_rectangular_translation_accepts_segments_and_circles() {
             .partial_view
     );
 }
+
+#[test]
+fn typed_length_parameter_can_be_marked_and_drives_editor_translation() {
+    let doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"), None,
+    ).unwrap();
+    let mut editor = Editor::new(doc);
+    let source = editor.doc.add(Kind::Free(Point { x: 100., y: 220. }));
+    let before = editor.doc.encode().unwrap();
+    editor.select_only(2);
+    editor.mark_distance_selected();
+    assert_eq!(editor.marked_distance, Some(2));
+    assert_eq!(editor.translation_mode, TranslationMode::MarkedDistance);
+    assert!(editor.selection_order.is_empty());
+    assert_eq!(editor.doc.encode().unwrap(), before);
+    editor.select_only(source);
+    editor.translate_selected();
+    let image = editor.doc.objects.len();
+    assert_eq!(editor.doc.objects[image - 1].kind, Kind::MarkedDistanceTranslatedPoint(source, 2, 90.));
+    assert!(editor.doc.position(image).unwrap().distance(Point {
+        x: 100., y: 220. - 37.79527559055118,
+    }) < 1e-9);
+    let baseline = editor.doc.encode().unwrap();
+    editor.doc.set_parameter_value(2, 2.).unwrap();
+    assert!(editor.doc.position(image).unwrap().distance(Point {
+        x: 100., y: 220. - 2. * 37.79527559055118,
+    }) < 1e-9);
+    editor.doc.verify_roundtrip().unwrap();
+    let edited = editor.doc.encode().unwrap();
+    editor.doc.undo();
+    assert_eq!(editor.doc.encode().unwrap(), baseline);
+    editor.doc.redo();
+    assert_eq!(editor.doc.encode().unwrap(), edited);
+}
+
+#[test]
+fn scalar_parameter_can_be_marked_as_centimeters_and_translated_with_sign() {
+    let mut doc=Document::new();
+    let distance=doc.add_named_parameter("distance",-3.,(10,20)).unwrap();
+    let source=doc.add(Kind::Free(Point{x:350.,y:220.}));
+    let mut editor=Editor::new(doc);
+    let before=editor.doc.encode().unwrap();
+    editor.select_only(distance);editor.mark_distance_selected();
+    assert_eq!(editor.marked_distance,Some(distance));
+    assert_eq!(editor.doc.encode().unwrap(),before);
+    editor.translation_angle=0.;editor.select_only(source);editor.translate_selected();
+    let image=editor.doc.objects.len();
+    assert_eq!(editor.doc.objects[image-1].kind,Kind::MarkedDistanceTranslatedPoint(source,distance,0.));
+    assert!(editor.doc.position(image).unwrap().distance(Point{x:350.-3.*37.79527559055118,y:220.})<1e-9);
+    editor.doc.set_parameter_value(distance,0.).unwrap();
+    assert_eq!(editor.doc.position(image),editor.doc.position(source));
+    editor.doc.verify_roundtrip().unwrap();
+}

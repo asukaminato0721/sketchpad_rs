@@ -838,7 +838,7 @@ impl Document {
                             &[local_a, local_b],
                         )?;
                     }
-                    Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) => {
+                    Kind::Bisector(a, b, c) | Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => {
                         if [*a, *b, *c].iter().any(|id| {
                             !self
                                 .objects
@@ -856,7 +856,7 @@ impl Document {
                             if self.arc_geometry(object.id).is_none() {
                                 return Err("Three-point arc has no finite geometry".into());
                             }
-                            81
+                            if matches!(object.kind, Kind::CenterArc(..)) { 80 } else { 81 }
                         };
                         let refs = [
                             self.multi_page_local_reference(page, object.id, *a)?,

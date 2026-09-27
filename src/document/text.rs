@@ -133,7 +133,7 @@ impl Document {
             && object.kind.numeric_unit().is_none()
             && !matches!(
                 object.kind,
-                Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _) | Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
             )
         {
             return None;

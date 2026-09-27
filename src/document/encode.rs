@@ -1249,11 +1249,15 @@ impl Document {
                         }) {
                     value_equation_records::encode_straight_point_value_group(references)?
                 } else if kind == ValueEquationKind::PointValue
+                    && matches!(self.objects.get(second.saturating_sub(1)).map(|object| &object.kind), Some(Kind::CenterArc(..)))
+                {
+                    value_equation_records::encode_circle_arc_point_value_group(references)?
+                } else if kind == ValueEquationKind::PointValue
                     && matches!(
                         self.objects
                             .get(second.saturating_sub(1))
                             .map(|object| &object.kind),
-                        Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
+                        Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
                     )
                 {
                     let Some(crate::value_equation_records::EquationValue::PointValue(parameter)) =
@@ -1457,6 +1461,7 @@ impl Document {
                 Kind::Ray(a, b) => (64, vec![a, b]),
                 Kind::ThreePointArc(a, b, c) => (81, vec![a, b, c]),
                 Kind::ArcOnCircle(a, b, c) => (79, vec![a, b, c]),
+                Kind::CenterArc(a, b, c) => (80, vec![a, b, c]),
                 _ => return Err("Unsupported new object".into()),
             };
             let mut h = header(code);

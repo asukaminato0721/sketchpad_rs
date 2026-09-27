@@ -58,23 +58,11 @@ impl Kind {
         }
     }
     pub fn is_distance_value(&self) -> bool {
-        if let Kind::ParameterCalculation(_, group) = self {
-            return group.unit() == NumericUnit::Length;
-        }
-        if let Kind::LengthPairCalculation(_, _, group) = self {
-            return group.length_power() == 1;
-        }
-        matches!(
-            self,
-            Kind::SegmentLength(_)
-                | Kind::PointDistance(_, _)
-                | Kind::PointLineDistance(_, _)
-                | Kind::PolygonPerimeter(_)
-                | Kind::CircleCircumference(_)
-                | Kind::CircleRadius(_)
-                | Kind::ArcLength(_)
-                | Kind::MeasuredCalculation(_, _)
-        )
+        self.numeric_unit() == Some(NumericUnit::Length)
+    }
+    /// Marked translation interprets scalar values as signed centimeters.
+    pub fn is_marked_distance_value(&self) -> bool {
+        matches!(self.numeric_unit(), Some(NumericUnit::Length | NumericUnit::Scalar))
     }
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
@@ -374,6 +362,7 @@ impl Kind {
             Kind::Bisector(a, b, c)
             | Kind::ThreePointArc(a, b, c)
             | Kind::ArcOnCircle(a, b, c)
+            | Kind::CenterArc(a, b, c)
             | Kind::AngleMeasurement(a, b, c) => {
                 vec![a, b, c]
             }
@@ -710,6 +699,7 @@ impl Kind {
             Kind::Bisector(a, b, c) => Kind::Bisector(m(a), m(b), m(c)),
             Kind::ThreePointArc(a, b, c) => Kind::ThreePointArc(m(a), m(b), m(c)),
             Kind::ArcOnCircle(a, b, c) => Kind::ArcOnCircle(m(a), m(b), m(c)),
+            Kind::CenterArc(a, b, c) => Kind::CenterArc(m(a), m(b), m(c)),
             Kind::Intersection(a, b) => Kind::Intersection(m(a), m(b)),
             Kind::LineCircleIntersection(a, b, root) => {
                 Kind::LineCircleIntersection(m(a), m(b), root)
@@ -790,6 +780,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::Bisector(_, _, _)
             | Kind::ThreePointArc(_, _, _)
             | Kind::ArcOnCircle(_, _, _)
+            | Kind::CenterArc(_, _, _)
             | Kind::Polygon(_)
             | Kind::SegmentLength(_)
             | Kind::PolygonPerimeter(_)
@@ -988,7 +979,7 @@ pub(super) fn expected_locus_refs(
         Kind::PointOnArc(path, _)
             if matches!(
                 objects.get(path.checked_sub(1)?)?.kind,
-                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _)
+                Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
             ) =>
         {
             path
@@ -1004,7 +995,7 @@ pub(super) fn expected_locus_refs(
 pub(super) fn is_arc_kind(kind: &Kind) -> bool {
     matches!(
         kind,
-        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _)
+        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
     )
 }
 
@@ -1077,7 +1068,7 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
         && is_plot_path_kind(kind)
         && if matches!(
             kind,
-            Kind::Segment(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)
+            Kind::Segment(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..)
         ) {
             (0.0..=1.0).contains(&value)
         } else if matches!(kind, Kind::Ray(..)) || is_transformed_plot_ray_kind(kind) {
@@ -1218,7 +1209,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         Kind::Circle(_, _)
         | Kind::CircleBySegment(_, _)
         | Kind::ThreePointArc(_, _, _)
-        | Kind::ArcOnCircle(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
+        | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
         Kind::FunctionPlot(_, _, _, _, _) => Some(VisualStyle::Stroke {
             line: SegmentLineStyle {
                 width: LineWidth::Thin,

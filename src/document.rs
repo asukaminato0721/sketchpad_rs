@@ -235,6 +235,8 @@ pub enum Kind {
     Bisector(usize, usize, usize),
     ThreePointArc(usize, usize, usize),
     ArcOnCircle(usize, usize, usize),
+    /// Circle arc defined by center, radius/start point and end direction.
+    CenterArc(usize, usize, usize),
     Intersection(usize, usize),
     LineCircleIntersection(usize, usize, usize),
     CircleCircleIntersection(usize, usize, usize),

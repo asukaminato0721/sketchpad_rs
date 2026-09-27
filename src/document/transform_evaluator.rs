@@ -9,6 +9,98 @@ use super::{Document, Kind, LineMode, Point};
 use crate::table_records::NumericUnit;
 use std::collections::BTreeSet;
 
+/// A homogeneous affine matrix in screen coordinates, applied to column vectors.
+/// The last row is always `[0, 0, 1]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AffineMatrix {
+    rows: [[f64; 3]; 2],
+    evaluation: MatrixEvaluation,
+}
+// Centered/native operations retain their arithmetic order. Expanding them
+// into coefficients changes floating-point rounding and native cache bytes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MatrixEvaluation {
+    Expanded,
+    Translation(f64, f64),
+    Rotation(Point, f64),
+    Dilation(Point, f64),
+    Reflection(Point, Point),
+}
+impl AffineMatrix {
+    pub const IDENTITY: Self = Self {
+        rows: [[1., 0., 0.], [0., 1., 0.]],
+        evaluation: MatrixEvaluation::Expanded,
+    };
+
+    pub fn from_rows(rows: [[f64; 3]; 2]) -> Self {
+        Self {
+            rows,
+            evaluation: MatrixEvaluation::Expanded,
+        }
+    }
+
+    pub fn rows(&self) -> [[f64; 3]; 2] {
+        self.rows
+    }
+
+    pub fn apply(self, point: Point) -> Option<Point> {
+        let [[a, b, tx], [c, d, ty]] = self.rows;
+        let result = match self.evaluation {
+            MatrixEvaluation::Expanded => Point {
+                x: a * point.x + b * point.y + tx,
+                y: c * point.x + d * point.y + ty,
+            },
+            MatrixEvaluation::Translation(dx, dy) => Point {
+                x: point.x + dx,
+                y: point.y + dy,
+            },
+            MatrixEvaluation::Rotation(center, theta) => {
+                return rotate_point_about(point, center, theta);
+            }
+            MatrixEvaluation::Dilation(center, factor) => {
+                return scale_point_about(point, center, factor);
+            }
+            MatrixEvaluation::Reflection(a, b) => return reflect_point(point, a, b),
+        };
+        (result.x.is_finite() && result.y.is_finite()).then_some(result)
+    }
+
+    /// Apply this matrix first, then `next` (the product is `next * self`).
+    pub fn then(self, next: Self) -> Self {
+        let [[a, b, tx], [c, d, ty]] = self.rows;
+        let [[e, f, ux], [g, h, uy]] = next.rows;
+        Self::from_rows([
+            [e * a + f * c, e * b + f * d, e * tx + f * ty + ux],
+            [g * a + h * c, g * b + h * d, g * tx + h * ty + uy],
+        ])
+    }
+}
+
+/// An evaluated view of a live source chain. Rebuild after dependency edits;
+/// matrices are snapshots, while the document retains construction references.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransformSequence {
+    pub source: usize,
+    pub element: ElementType,
+    /// Matrices in execution order, from the source to the final image.
+    pub matrices: Vec<AffineMatrix>,
+}
+impl TransformSequence {
+    pub fn apply(&self, point: Point) -> Option<Point> {
+        self.matrices
+            .iter()
+            .try_fold(point, |point, matrix| matrix.apply(point))
+    }
+
+    /// Composition expands centered operations; floating-point rounding can
+    /// differ from `apply`, which preserves each native operation's order.
+    pub fn combined_matrix(&self) -> AffineMatrix {
+        self.matrices
+            .iter()
+            .fold(AffineMatrix::IDENTITY, |matrix, next| matrix.then(*next))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum TransformGeometry {
     Point(Point),
@@ -37,6 +129,42 @@ impl Document {
     /// Evaluate a transform through the shared model. This does not
     /// change authoring capability guards or native serialization.
     pub fn evaluate_transform(&self, id: usize) -> Result<TransformGeometry, Error> {
+        self.evaluate_transform_with_matrix(id)
+            .map(|(geometry, _)| geometry)
+    }
+
+    /// Resolve each live operation and reject undefined intermediate geometry
+    /// before exposing a matrix sequence. A later transform cannot recover an
+    /// undefined circle, ray, line, or dependency.
+    pub fn transform_sequence(&self, id: usize) -> Result<TransformSequence, Error> {
+        let (_, matrix) = self.evaluate_transform_with_matrix(id)?;
+        let definition = self.objects[id - 1]
+            .kind
+            .transform_definition()
+            .ok_or(Error::NotTransform)?;
+        let element = definition.element();
+        let mut source = definition.source();
+        let mut matrices = vec![matrix];
+        while let Some(parent) = self.objects[source - 1].kind.transform_definition() {
+            if parent.element() != element {
+                return Err(Error::WrongElement(source));
+            }
+            let (_, matrix) = self.evaluate_transform_with_matrix(source)?;
+            matrices.push(matrix);
+            source = parent.source();
+        }
+        matrices.reverse();
+        Ok(TransformSequence {
+            source,
+            element,
+            matrices,
+        })
+    }
+
+    fn evaluate_transform_with_matrix(
+        &self,
+        id: usize,
+    ) -> Result<(TransformGeometry, AffineMatrix), Error> {
         let object = id
             .checked_sub(1)
             .and_then(|i| self.objects.get(i))
@@ -127,13 +255,19 @@ impl Document {
                     magnitude, scale, ..
                 } => Some(magnitude * scale),
                 NumericExpr::ObjectValue { id, unit } => {
-                    if self.objects.get(id - 1).and_then(|o| o.kind.numeric_unit()) != Some(unit) {
+                    let parent = &self.objects[id - 1].kind;
+                    let compatible = if unit == NumericUnit::Length {
+                        parent.is_marked_distance_value()
+                    } else {
+                        parent.numeric_unit() == Some(unit)
+                    };
+                    if !compatible {
                         return Err(Error::WrongUnit { id, expected: unit });
                     }
                     match unit {
                         NumericUnit::Scalar => self.unitless_numeric_value(id),
                         NumericUnit::Degrees => self.numeric_value(id),
-                        NumericUnit::Length => self.distance_value_pixels(id),
+                        NumericUnit::Length => self.marked_distance_value_pixels(id),
                         _ => None,
                     }
                 }
@@ -152,7 +286,7 @@ impl Document {
             value.filter(|v| v.is_finite()).ok_or(Error::Undefined)
         };
         let mut radius_factor = 1.;
-        let map: Box<dyn Fn(Point) -> Option<Point>> = match definition.transform() {
+        let matrix = match definition.transform() {
             Transform::Translate(displacement) => {
                 let (dx, dy) = match displacement {
                     DisplacementExpr::Cartesian {
@@ -170,17 +304,22 @@ impl Document {
                         (b.x - a.x, b.y - a.y)
                     }
                 };
-                Box::new(move |p| {
-                    Some(Point {
-                        x: p.x + dx,
-                        y: p.y + dy,
-                    })
-                })
+                AffineMatrix {
+                    rows: [[1., 0., dx], [0., 1., dy]],
+                    evaluation: MatrixEvaluation::Translation(dx, dy),
+                }
             }
             Transform::Rotate { center, angle } => {
                 let center = point(*center)?;
                 let theta = numeric(angle)?.to_radians();
-                Box::new(move |p| rotate_point_about(p, center, theta))
+                let (sin, cos) = theta.sin_cos();
+                AffineMatrix {
+                    rows: [
+                        [cos, sin, center.x - cos * center.x - sin * center.y],
+                        [-sin, cos, center.y + sin * center.x - cos * center.y],
+                    ],
+                    evaluation: MatrixEvaluation::Rotation(center, theta),
+                }
             }
             Transform::Dilate { center, ratio } => {
                 let center = point(*center)?;
@@ -194,15 +333,36 @@ impl Document {
                     return Err(Error::Undefined);
                 }
                 radius_factor = factor.abs();
-                Box::new(move |p| scale_point_about(p, center, factor))
+                AffineMatrix {
+                    rows: [
+                        [factor, 0., center.x * (1. - factor)],
+                        [0., factor, center.y * (1. - factor)],
+                    ],
+                    evaluation: MatrixEvaluation::Dilation(center, factor),
+                }
             }
             Transform::Reflect { mirror } => {
                 let (a, b, _) = self.line_points(*mirror).ok_or(Error::Undefined)?;
-                Box::new(move |p| reflect_point(p, a, b))
+                let (dx, dy) = (b.x - a.x, b.y - a.y);
+                let length_sq = dx * dx + dy * dy;
+                if !length_sq.is_finite() || length_sq <= 1e-18 {
+                    return Err(Error::Undefined);
+                }
+                let xx = 2. * dx * dx / length_sq - 1.;
+                let xy = 2. * dx * dy / length_sq;
+                let yy = 2. * dy * dy / length_sq - 1.;
+                AffineMatrix {
+                    rows: [
+                        [xx, xy, a.x - xx * a.x - xy * a.y],
+                        [xy, yy, a.y - xy * a.x - yy * a.y],
+                    ],
+                    evaluation: MatrixEvaluation::Reflection(a, b),
+                }
             }
         };
         let apply = |p| -> Result<Point, Error> {
-            map(p)
+            matrix
+                .apply(p)
                 .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .ok_or(Error::Undefined)
         };
@@ -225,7 +385,7 @@ impl Document {
                 }
             }
         }
-        Ok(geometry)
+        Ok((geometry, matrix))
     }
 }
 
@@ -338,6 +498,37 @@ mod tests {
                     assert_eq!(stored, &definition);
                     assert_eq!(object.kind.dependencies(), definition.native_references());
                     compare(&d, object.id);
+                    match d.evaluate_transform(object.id) {
+                        Ok(geometry) => {
+                            let sequence = d.transform_sequence(object.id).unwrap();
+                            let apply = |point| sequence.apply(point).unwrap();
+                            match geometry {
+                                TransformGeometry::Point(expected) => {
+                                    close(apply(d.position(sequence.source).unwrap()), expected)
+                                }
+                                TransformGeometry::Straight { start, end, .. } => {
+                                    let (a, b, _) = d.line_points(sequence.source).unwrap();
+                                    close(apply(a), start);
+                                    close(apply(b), end);
+                                }
+                                TransformGeometry::Circle { center, .. } => close(
+                                    apply(d.circle_points(sequence.source).unwrap().0),
+                                    center,
+                                ),
+                                TransformGeometry::Polygon(points) => {
+                                    for (source, expected) in d
+                                        .polygon_points(sequence.source)
+                                        .unwrap()
+                                        .into_iter()
+                                        .zip(points)
+                                    {
+                                        close(apply(source), expected);
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => assert_eq!(d.transform_sequence(object.id), Err(error)),
+                    }
                     count += 1;
                     flavors.insert(definition.wire_flavor().code());
                     elements.insert(format!("{:?}", definition.element()));
@@ -349,6 +540,68 @@ mod tests {
         assert_eq!(elements.len(), 6);
         assert!(count > 200);
     }
+    #[test]
+    fn matrix_sequence_preserves_order_and_refreshes_live_dependencies() {
+        let mut d = Document::new();
+        let seed = d.add(Kind::Free(Point { x: 20., y: 30. }));
+        let center = d.add(Kind::Free(Point { x: 10., y: 10. }));
+        let n = d.add_named_parameter("n", 4., (10, 10)).unwrap();
+        let angle = d.add_parameter_calculation(n, "360°/n", (10, 40)).unwrap();
+        let rotated = d
+            .add_calculated_angle_rotation(seed, center, angle)
+            .unwrap();
+        let image = d.add(Kind::ScaledPoint(rotated, center, -2.));
+        let sequence = d.transform_sequence(image).unwrap();
+        assert_eq!(sequence.source, seed);
+        assert_eq!(sequence.element, ElementType::Point);
+        assert_eq!(sequence.matrices.len(), 2);
+        close(
+            sequence.apply(d.position(seed).unwrap()).unwrap(),
+            Point { x: -30., y: 30. },
+        );
+        close(
+            sequence
+                .combined_matrix()
+                .apply(d.position(seed).unwrap())
+                .unwrap(),
+            d.position(image).unwrap(),
+        );
+        d.set_parameter_value(n, 2.).unwrap();
+        assert!(d.move_point(center, Point { x: 0., y: 0. }));
+        let changed = d.transform_sequence(image).unwrap();
+        assert_ne!(changed, sequence);
+        close(
+            changed.apply(d.position(seed).unwrap()).unwrap(),
+            Point { x: 40., y: 60. },
+        );
+        close(
+            changed
+                .combined_matrix()
+                .apply(d.position(seed).unwrap())
+                .unwrap(),
+            d.position(image).unwrap(),
+        );
+        d.set_parameter_value(n, 0.).unwrap();
+        assert_eq!(d.transform_sequence(image), Err(Error::Undefined));
+        assert_eq!(d.transform_sequence(seed), Err(Error::NotTransform));
+        assert_eq!(d.transform_sequence(0), Err(Error::InvalidReference(0)));
+    }
+
+    #[test]
+    fn matrix_product_applies_noncommuting_operations_in_execution_order() {
+        let translation = AffineMatrix::from_rows([[1., 0., 10.], [0., 1., -5.]]);
+        let rotation = AffineMatrix::from_rows([[0., 1., 0.], [-1., 0., 0.]]);
+        let p = Point { x: 2., y: 3. };
+        close(
+            translation.then(rotation).apply(p).unwrap(),
+            Point { x: -2., y: -12. },
+        );
+        close(
+            rotation.then(translation).apply(p).unwrap(),
+            Point { x: 13., y: -7. },
+        );
+    }
+
     #[test]
     fn shared_undefined_dependency_dag_does_not_expand_repeated_parent_paths() {
         let mut d = Document::new();

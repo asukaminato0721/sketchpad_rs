@@ -1,4 +1,4 @@
-use super::calculations::calculation_source_ids;
+use super::calculations::{calculation_source_ids, calculation_source_units};
 use super::iteration::{
     mapped_segment_binding,
     supported_branch_polygon_mapping, supported_mapped_point_iteration, supported_point_iteration_mapping,
@@ -257,7 +257,8 @@ impl Document {
                 Kind::ParameterCalculation(source,group)=>{
                     ParameterCalculationGroup::parse(group.as_bytes())?;
                     let sources=calculation_source_ids(*source,group);
-                    let units=sources.iter().map(|id|self.objects.get(id.saturating_sub(1)).filter(|p|!p.deleted && *id<o.id).and_then(|p|p.kind.numeric_unit())).collect::<Option<Vec<_>>>().ok_or("Invalid calculation sources")?;
+                    if sources.iter().any(|id| *id == 0 || *id >= o.id || self.objects.get(id-1).is_none_or(|parent| parent.page != o.page)) { return Err("Invalid calculation sources".into()); }
+                    let units=calculation_source_units(group,&sources,&self.objects).ok_or("Invalid calculation sources")?;
                     if group.units_for_sources(&units)?!=group.unit() { return Err("Invalid calculation units".into()); }
                 }
                 Kind::ValueTable(source, group) => {
@@ -694,7 +695,14 @@ impl Document {
                             )
                     }
                 };
-                if !hosts_match || self.value_equation_value(o.id).is_none() {
+                let undefined_center_value = kind == ValueEquationKind::PointValue
+                    && self.undefined_center_arc(second)
+                    && self.objects.get(first.saturating_sub(1)).is_some_and(|point| match point.kind {
+                        Kind::PointOnArc(host, _) | Kind::PathLiteralPoint(host, _) => host == second,
+                        Kind::PathValuePoint(_, host) => host == second,
+                        _ => false,
+                    });
+                if !hosts_match || (self.value_equation_value(o.id).is_none() && !undefined_center_value) {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
             }
@@ -740,7 +748,7 @@ impl Document {
                 && self
                     .arc_angle_degrees(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_three_point_arc(host))
+                && !matches!(o.kind, Kind::ArcAngle(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host)))
             {
                 return Err(format!("Invalid arc in angle measurement {}", o.id));
             }
@@ -748,7 +756,7 @@ impl Document {
                 && self
                     .arc_length_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
-                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_three_point_arc(host))
+                && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host)))
             {
                 return Err(format!("Invalid arc in length measurement {}", o.id));
             }
@@ -788,7 +796,7 @@ impl Document {
             if i >= self.source_count
                 && matches!(o.kind, Kind::PointOnArc(host, _) if self.arc_geometry(host).is_none()
                     && !(self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page)
-                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host))))
+                        && (self.linear_three_point_arc(host).is_some() || self.undefined_three_point_arc(host) || self.undefined_center_arc(host))))
             {
                 return Err(format!("Invalid arc host in point {}", o.id));
             }
@@ -800,7 +808,7 @@ impl Document {
                                 Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
-                                    && self.undefined_three_point_arc(path),
+                                    && (self.undefined_three_point_arc(path) || self.undefined_center_arc(path)),
                                 _ => false,
                             })
                     })
@@ -846,7 +854,7 @@ impl Document {
                 return Err(format!("Invalid points in angle bisector {}", o.id));
             }
             if i >= self.source_count
-                && matches!(o.kind,Kind::ThreePointArc(a,b,c)
+                && matches!(o.kind,Kind::ThreePointArc(a,b,c) | Kind::CenterArc(a,b,c)
                     if self.position(a).is_none() || self.position(b).is_none() || self.position(c).is_none())
             {
                 return Err(format!("Invalid points in three-point arc {}", o.id));

@@ -390,7 +390,7 @@ impl Document {
                         }
                         value_equation_records::circle_point_value(dx / length, dy / length)
                     }
-                    Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => {
+                    Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => {
                         if let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind {
                             if host == second {
                                 return t.is_finite().then_some(EquationValue::PointValue(t));
@@ -529,23 +529,20 @@ impl Document {
         };
         Some(a.distance(b) / 37.79527559055118)
     }
-    pub fn distance_value_pixels(&self, id: usize) -> Option<f64> {
+    /// Native marked translations accept signed lengths and unitless centimeters.
+    pub fn marked_distance_value_pixels(&self, id: usize) -> Option<f64> {
         let kind = &self.objects.get(id.checked_sub(1)?)?.kind;
-        let cm = match kind {
-            Kind::SegmentLength(_) => self.segment_length_cm(id)?,
-            Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(id)?,
-            Kind::LengthPairCalculation(_, _, _) => self.length_pair_calculation_cm(id)?,
-            Kind::ParameterCalculation(_, g) if g.unit() == NumericUnit::Length => {
-                self.parameter_calculation_value(id)?
-            }
-            Kind::PointDistance(_, _) => self.point_distance_cm(id)?,
-            Kind::PointLineDistance(_, _) => self.point_line_distance_cm(id)?,
-            Kind::PolygonPerimeter(_) => self.perimeter_cm(id)?,
-            Kind::CircleCircumference(_) => self.circle_circumference_cm(id)?,
-            Kind::CircleRadius(_) => self.circle_radius_cm(id)?,
-            Kind::ArcLength(_) => self.arc_length_cm(id)?,
-            _ => return None,
-        };
+        if !kind.is_marked_distance_value() {
+            return None;
+        }
+        let pixels = self.numeric_value(id)? * 37.79527559055118;
+        pixels.is_finite().then_some(pixels)
+    }
+    pub fn distance_value_pixels(&self, id: usize) -> Option<f64> {
+        if !self.objects.get(id.checked_sub(1)?)?.kind.is_distance_value() {
+            return None;
+        }
+        let cm = self.numeric_value(id)?;
         let pixels = cm * 37.79527559055118;
         (pixels.is_finite() && pixels >= 0.).then_some(pixels)
     }

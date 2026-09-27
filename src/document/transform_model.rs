@@ -24,6 +24,8 @@ pub enum NumericExpr {
         unit: NumericUnit,
         scale: f64,
     },
+    /// Expected operation unit. Length operands in marked translations also
+    /// accept unitless values interpreted as signed centimeters by Native.
     ObjectValue {
         id: usize,
         unit: NumericUnit,

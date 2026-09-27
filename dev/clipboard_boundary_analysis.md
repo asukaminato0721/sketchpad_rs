@@ -62,3 +62,12 @@ included in a retained construction become ordinary hidden; selected hosts
 retain their ordinary visibility. Other point construction families,
 unselected points used as prerequisites, locus seeds, and iteration bindings
 still need independent Native controls before changing their copy semantics.
+
+The four actual API writer outputs separately open and save unchanged in Native,
+with positive free-point/live-point geometry and the expected helper visibility.
+They are retained as
+`midpoint_{alone,one_endpoint,both_endpoints,segment}_clipboard_writer_native_verified.gsp/png`
+at2,176/2,368/2,368/2,368 bytes. These establish the writer independently of the
+Native UI-created graph ordering. The explicit live-graph clipboard tests
+select the prerequisites they intend to retain; their graph assertions remain
+unchanged.

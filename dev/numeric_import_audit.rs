@@ -37,6 +37,9 @@ fn main() {
     );
     files.sort();
     let mut counts: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut missing_parents: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut audited = 0;
+
     for path in files {
         let Ok(bytes) = fs::read(&path) else {
             continue;
@@ -49,7 +52,19 @@ fn main() {
         };
         let mut start = None;
         let mut ordinal = 0;
+        let mut tool_depth = 0usize;
         for record in &rs {
+            if record.kind == 0x03ea {
+                tool_depth += 1;
+                continue;
+            }
+            if record.kind == 0x03eb && tool_depth > 0 {
+                tool_depth -= 1;
+                continue;
+            }
+            if tool_depth > 0 {
+                continue;
+            }
             if record.kind == 0x07d0 {
                 start = Some(record.start);
             }
@@ -66,6 +81,7 @@ fn main() {
             if object.kind != Kind::Unsupported(48) {
                 continue;
             }
+            audited += 1;
             let group = &bytes[group_start..record.data.end];
             let reason = match ParameterCalculationGroup::parse(group) {
                 Err(error) => format!("layout/expression: {error}"),
@@ -77,6 +93,20 @@ fn main() {
                         .unwrap()
                         .id
                         - 1;
+                    for id in calculation.sources() {
+                        if let Some(parent) = document.objects.get(base + id as usize - 1)
+                            && parent.kind.numeric_unit().is_none()
+                        {
+                            let reason = match &parent.kind {
+                                Kind::Unsupported(code) => format!("unsupported code {code}"),
+                                _ => "decoded non-numeric parent".to_owned(),
+                            };
+                            let entry = missing_parents.entry(reason).or_insert_with(|| (
+                                0, format!("{} object {} parent {}", path.display(), object.id, parent.id),
+                            ));
+                            entry.0 += 1;
+                        }
+                    }
                     let units = calculation
                         .sources()
                         .into_iter()
@@ -103,9 +133,16 @@ fn main() {
             entry.0 += 1;
         }
     }
+    println!("Unsupported drawing calculations audited: {audited}");
     let mut results = counts.into_iter().collect::<Vec<_>>();
     results.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
     for (reason, (count, example)) in results {
+        println!("{count}: {reason}\n  {example}");
+    }
+    let mut parents = missing_parents.into_iter().collect::<Vec<_>>();
+    parents.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
+    println!("Unavailable numeric parent references (a calculation can contribute multiple):");
+    for (reason, (count, example)) in parents {
         println!("{count}: {reason}\n  {example}");
     }
 }

@@ -149,3 +149,42 @@ and three value/equation regressions. Corpus checkpoint 16 independently
 confirms all 1599 byte-identical round trips and the unchanged 108783 unsupported
 object slots. The storage migration does not claim additional native decoding
 families or completion of the remaining command requirements.
+
+
+## Ordered matrix evaluation (2026-09-27)
+
+`Document::transform_sequence(id)` now exposes the base source element and an
+ordered `Vec<AffineMatrix>` derived from the live construction chain. The
+sequence retains execution order; `combined_matrix()` multiplies later matrices
+on the left. Translation, rotation, dilation and reflection share this matrix
+representation across all six supported element families. The source graph
+retains object identities, native flavors and dependency references; callers
+rebuild the evaluated sequence after dependency edits.
+
+Each intermediate geometry is evaluated before its matrix enters the sequence.
+Undefined numeric sources, degenerate mirrors, collapsed circles and undefined
+ray/line ancestors therefore remain undefined even when a later matrix alone
+would be finite. Matrices are snapshots and do not introduce new serialization
+or native source-family capabilities.
+
+Single-operation matrix application retains centered/native arithmetic order.
+A naive coefficient expansion changed five existing geometry/cache regressions
+by floating-point rounding. `AffineMatrix` stores private evaluation metadata
+for that arithmetic order; the coefficients remain available through `rows()`.
+Explicit matrix composition expands coefficients and can round differently from
+sequential `apply`. Native geometry and cache generation use sequential
+operation evaluation. No existing expected bytes or exact point assertions
+were relaxed.
+
+Tests compare sequential matrices with independently evaluated source geometry
+for more than 200 imported transforms spanning all 14 native flavors and six
+element types. Additional regressions cover noncommuting composition, negative
+scale, live angle and center edits, undefined sources, and invalid IDs.
+Copy and custom-tool work is deferred at the user's request.
+
+The bounded regression gate passes 587 library tests after excluding clipboard,
+copy/paste and tool tests, plus 11 editor transform tests. Both commands exit 0;
+`git diff --check` also passes. Logs are
+`/tmp/sketchpad_matrix_sequence_lib_gate2.log` and
+`/tmp/sketchpad_matrix_sequence_editor_gate2.log`. This is a transform regression
+gate, not a claim that deferred features or the overall port are complete.

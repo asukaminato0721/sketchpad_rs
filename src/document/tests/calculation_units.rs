@@ -20,7 +20,10 @@ fn dimensional_length_expressions_update_units_and_marked_distance() {
     let threshold = doc.add_parameter_calculation(4, "v+1", (10, 250)).unwrap();
     assert_eq!(doc.objects[threshold - 1].kind.numeric_unit(), Some(NumericUnit::Scalar));
     assert_eq!(doc.numeric_value(threshold), Some(length + 1.));
-    assert!(doc.add_parameter_calculation(4, "v+1°", (10, 250)).is_err());
+    let mut mixed=doc.clone();
+    let result=mixed.add_parameter_calculation(4, "v+1°", (10, 250)).unwrap();
+    assert_eq!(mixed.objects[result-1].kind.numeric_unit(),Some(NumericUnit::Scalar));
+    assert_eq!(mixed.numeric_value(result),Some(length+1.));
     let cube = doc.add_parameter_calculation(4, "v^3", (10, 250)).unwrap();
     assert_eq!(
         doc.objects[cube - 1].kind.numeric_unit(),
@@ -29,7 +32,10 @@ fn dimensional_length_expressions_update_units_and_marked_distance() {
             degrees: 0
         })
     );
-    assert!(doc.add_parameter_calculation(4, "v^2°", (10, 250)).is_err());
+    let mut typed=doc.clone();
+    let result=typed.add_parameter_calculation(4,"v^2°",(10,250)).unwrap();
+    assert_eq!(typed.objects[result-1].kind.numeric_unit(),Some(NumericUnit::Scalar));
+    assert_eq!(typed.numeric_value(result),Some(length.powi(2)));
     let identity = doc.add_parameter_calculation(4, "v^1", (10, 250)).unwrap();
     assert_eq!(
         doc.objects[identity - 1].kind.numeric_unit(),
@@ -319,7 +325,10 @@ fn degree_calculations_track_units_and_undefined_angles() {
     let bytes = include_bytes!("../../../tests/fixtures/regular_polygon_iteration_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(doc.unitless_numeric_value(5).is_none());
-    assert!(doc.add_parameter_calculation(1, "n+1°", (10, 100)).is_err());
+    let mut mixed=doc.clone();
+    let result=mixed.add_parameter_calculation(1, "n+1°", (10, 100)).unwrap();
+    assert_eq!(mixed.objects[result-1].kind.numeric_unit(),Some(NumericUnit::Scalar));
+    assert_eq!(mixed.numeric_value(result),Some(doc.numeric_value(1).unwrap()+1.));
     let squared = doc
         .add_parameter_calculation(1, "360°*90°/n", (10, 100))
         .unwrap();

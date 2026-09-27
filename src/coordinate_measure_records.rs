@@ -164,11 +164,20 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
     let kind =
         CoordinateMeasureKind::from_code(u16::from_le_bytes(header[..2].try_into().unwrap()))
             .ok_or("Unsupported coordinate measurement code")?;
+    let labeled = rs.get(3).is_some_and(|r| r.kind == 0x07d5);
+    let style_index = if labeled { 4 } else { 3 };
     let expected: &[u32] = match kind {
         CoordinateMeasureKind::Coordinates => &[0x07d0, 0x07d2, 0x08fc, 0x07d8, 0x07d7],
         _ => &[0x07d0, 0x07d2, 0x0903, 0x07d8, 0x07d7],
     };
-    if rs.iter().map(|r| r.kind).collect::<Vec<_>>() != expected {
+    if rs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !labeled || *index != 3)
+        .map(|(_, record)| record.kind)
+        .collect::<Vec<_>>()
+        != expected
+    {
         return Err("Unsupported coordinate measurement record layout".into());
     }
     let refs = &group[rs[1].payload.clone()];
@@ -196,13 +205,19 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
         }
     } else if aux.len() != 32
         || aux[..12] != [0xfc, 0x08, 0, 0, 0x16, 0, 0, 0, 4, 0, 0, 0]
-        || aux[18..28] != [0x3c, 0x30, 0x3e, 0, 0, 0, 6, 0, 0, 0]
+        || aux[18..22] != [0x3c, 0x30, 0x3e, 0]
+        || u16::from_le_bytes(aux[24..26].try_into().unwrap()) != 6
+        || !matches!(u16::from_le_bytes(aux[26..28].try_into().unwrap()), 0 | 1 | 3)
         || u16::from_le_bytes(aux[28..30].try_into().unwrap()) > 5
-        || aux[30..] != [0, 0]
     {
         return Err("Unsupported coordinate measurement format".into());
     }
-    let style = &group[rs[3].payload.clone()];
+    // The final presentation word varies in native coordinate records, as in
+    // ordinary measurements. Preserve it without using it as geometry data.
+    if labeled {
+        crate::text_records::LabelAux::parse(&group[rs[3].payload.clone()])?;
+    }
+    let style = &group[rs[style_index].payload.clone()];
     if style.len() != 2 {
         return Err("Unsupported coordinate measurement style".into());
     }
@@ -406,6 +421,11 @@ mod tests {
     fn rejects_unknown_format_and_invalid_ids() {
         let mut group = encode_group(CoordinateMeasureKind::Abscissa, &[1, 9]).unwrap();
         let rs = records(&group, 0).unwrap();
+        group[rs[2].payload.start + 26..rs[2].payload.start + 28]
+            .copy_from_slice(&2_u16.to_le_bytes());
+        assert!(decode_group(&group).is_err());
+        group[rs[2].payload.start + 26..rs[2].payload.start + 28]
+            .copy_from_slice(&0_u16.to_le_bytes());
         group[rs[2].payload.start + 2] = 0xff;
         assert!(decode_group(&group).is_err());
         assert!(encode_group(CoordinateMeasureKind::Ordinate, &[0, 9]).is_err());

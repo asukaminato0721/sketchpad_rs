@@ -129,3 +129,12 @@ All three outputs are retained as exact regression goldens. Two additional
 document tests cover the complete independent control matrix, native drag and
 clamp results, both label-writing paths, source edits, recovery, undo/redo,
 defined/undefined copy and save/reopen.
+
+
+## Checkpoint34 center-arc follow-up
+
+Native code80 is now a supported basic center/start/end-direction construction.
+Shared sampling and point/value/literal plotting include it, with Native proof
+for radial endpoints, major sweeps and undefined saves. See
+[center arc evidence](center_arc_analysis.md). Earlier unsupported-family notes
+in this file describe their historical checkpoints.

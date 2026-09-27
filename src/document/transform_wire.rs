@@ -126,8 +126,13 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
             }
             payload[20..28].copy_from_slice(&angle.to_le_bytes());
             if definition.wire_flavor() == F::FixedPolar {
-                payload[32..40].copy_from_slice(&value(R::PolarUnitsToPixels)?.to_le_bytes());
-                payload[40..48].copy_from_slice(&value(R::PolarMagnitude)?.to_le_bytes());
+                let units = value(R::PolarUnitsToPixels)?;
+                let magnitude = value(R::PolarMagnitude)?;
+                payload[32..40].copy_from_slice(&(units * magnitude).to_le_bytes());
+                payload[40..48].copy_from_slice(&magnitude.to_le_bytes());
+                if units == 96. {
+                    payload[48..52].copy_from_slice(&2_u32.to_le_bytes());
+                }
             }
             payload
         }
@@ -182,7 +187,7 @@ mod tests {
         let payload = literal_payload(&definition).unwrap().unwrap();
         let template = include_bytes!("../../assets/polar_translation_payload.bin");
         assert_eq!(&payload[..20], &template[..20]);
-        assert_eq!(&payload[32..40], &17f64.to_le_bytes());
+        assert_eq!(&payload[32..40], &(-0f64).to_le_bytes());
         assert_eq!(&payload[40..48], &(-0f64).to_le_bytes());
 
         let definition = Kind::FixedRectangularTranslatedPoint(1, 17., -0., 23., 2.)

@@ -285,7 +285,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
         return false;
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
-    matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 81)
+    matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)
         || (payload.len() == 28 && matches!(code, 27 | 29 | 30 | 33) && payload[6..8] == [2, 0]
             && matches!(u16::from_le_bytes([payload[8], payload[9]]), 12 | 13))
         || (payload[6..8] == [6, 0]

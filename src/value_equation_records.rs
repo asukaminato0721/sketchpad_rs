@@ -211,21 +211,29 @@ fn records(b: &[u8], start: usize) -> Result<Vec<Record>, String> {
 
 pub fn decode_group(group: &[u8]) -> Result<ValueEquationGroup, String> {
     let rs = records(group, 0)?;
-    let labeled = rs.len() == 6 && rs.get(3).is_some_and(|r| r.kind == 0x07d5);
+    let labeled = rs.get(3).is_some_and(|r| r.kind == 0x07d5);
     let style_index = if labeled { 4 } else { 3 };
-    if (!labeled && rs.len() != 5)
+    let attribute_index = style_index + 1;
+    let empty_attribute = rs
+        .get(attribute_index)
+        .is_some_and(|r| r.kind == 0x232e && r.payload.is_empty());
+    let end_index = attribute_index + usize::from(empty_attribute);
+    if rs.len() != end_index + 1
         || rs[0].kind != 0x07d0
         || rs[0].payload.len() != 28
         || rs[1].kind != 0x07d2
         || rs[style_index].kind != 0x07d8
-        || rs[style_index + 1].kind != 0x07d7
-        || rs[style_index + 1].end != group.len()
+        || rs[end_index].kind != 0x07d7
+        || rs[end_index].end != group.len()
     {
         return Err("Unsupported Value/Equation group layout".into());
     }
     let header = &group[rs[0].payload.clone()];
     let kind = ValueEquationKind::from_code(u16::from_le_bytes(header[..2].try_into().unwrap()))
         .ok_or("Unsupported Value/Equation code")?;
+    if empty_attribute && kind != ValueEquationKind::PointValue {
+        return Err("Unsupported equation attribute".into());
+    }
     let refs = &group[rs[1].payload.clone()];
     if refs.len() != 12 || u32_at(refs, 0) != 2 || u32_at(refs, 4) == 0 || u32_at(refs, 8) == 0 {
         return Err("Invalid Value/Equation references".into());
@@ -314,6 +322,16 @@ fn encode_group_from_template(source: &[u8], references: [u32; 2]) -> Result<Vec
     let begin = rs[1].payload.start + 4;
     group[begin..begin + 4].copy_from_slice(&references[0].to_le_bytes());
     group[begin + 4..begin + 8].copy_from_slice(&references[1].to_le_bytes());
+    decode_group(&group)?;
+    Ok(group)
+}
+
+/// Circle/center arc value records carry no stored normalized parameter.
+/// Their live value may therefore become undefined without changing this layout.
+pub fn encode_circle_arc_point_value_group(references: [u32; 2]) -> Result<Vec<u8>, String> {
+    let group = encode_group_from_template(
+        include_bytes!("../tests/fixtures/point_on_circle_arc_value_native.gsp"), references,
+    )?;
     decode_group(&group)?;
     Ok(group)
 }

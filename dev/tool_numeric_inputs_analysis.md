@@ -77,11 +77,13 @@ subtype. It preserves expression tokens and presentation metadata. The runtime
 specializes in dependency order, so a later expression sees the actual unit of
 an earlier result. The same shared expression-unit rule now matches the
 independent ordinary Native calculator: adding a bare decimal to
-Length, Degrees, or Area produces Scalar. Native length subtraction has a separate
-retained control (`numeric_length_difference_native_verified.gsp`) that keeps
-Length; the addition proof does not broaden subtraction rules. Multiplication still combines units.
-A scalar variable remains distinct from a bare decimal; mismatched variable
-units remain guarded pending a separate proof.
+Length, Degrees, or Area produces Scalar. Checkpoint 36 independently proves
+that unlike variable quantities and bare-literal subtraction likewise produce
+Scalar. The earlier subtraction file's physical header was not evidence of
+Native result units: its initial screenshot cropped the caption. A new
+full-window capture confirms the result is unitless. Multiplication still
+combines dimensions. See [mixed arithmetic evidence](mixed_quantity_arithmetic_analysis.md).
+
 
 The corpus also contains raw class11/subtypes51,57,79,80,81,48 givens. Their
 category restrictions and placeholder representations are separate work. This

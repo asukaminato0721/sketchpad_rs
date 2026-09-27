@@ -104,6 +104,59 @@ fn marked_distance_shape_translations_import_and_track_measurement() {
     assert_eq!(radius, 100.);
 }
 #[test]
+fn marked_distance_translation_chains_preserve_shapes_and_downstream_measurements() {
+    let mut d = Document::new();
+    let measure_start = d.add(Kind::Free(Point { x: 150., y: 120. }));
+    let measure_end = d.add(Kind::Free(Point { x: 250., y: 120. }));
+    let distance = d.add(Kind::PointDistance(measure_start, measure_end));
+    let a = d.add(Kind::Free(Point { x: 100., y: 220. }));
+    let b = d.add(Kind::Free(Point { x: 200., y: 220. }));
+    let c = d.add(Kind::Free(Point { x: 100., y: 320. }));
+    let segment = d.add(Kind::Segment(a, b));
+    let circle = d.add(Kind::Circle(a, b));
+    let polygon = d.add(Kind::Polygon(vec![a, b, c]));
+    let segment1 = d.add(Kind::MarkedDistanceTranslatedSegment(segment, distance, 0.));
+    let segment2 = d.add(Kind::MarkedDistanceTranslatedSegment(segment1, distance, 90.));
+    let circle1 = d.add(Kind::MarkedDistanceTranslatedCircle(circle, distance, 0.));
+    let circle2 = d.add(Kind::MarkedDistanceTranslatedCircle(circle1, distance, 90.));
+    let polygon1 = d.add(Kind::MarkedDistanceTranslatedPolygon(polygon, distance, 0.));
+    let polygon2 = d.add(Kind::MarkedDistanceTranslatedPolygon(polygon1, distance, 90.));
+    let length = d.add(Kind::SegmentLength(segment2));
+    let area = d.add(Kind::CircleArea(circle2));
+    let polygon_area = d.add(Kind::PolygonArea(polygon2));
+    let bytes = d.encode().unwrap();
+    let mut reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    for (id, original) in [(segment2, segment), (circle2, circle), (polygon2, polygon)] {
+        let sequence = reopened.transform_sequence(id).unwrap();
+        assert_eq!(sequence.source, original);
+        assert_eq!(sequence.matrices.len(), 2);
+    }
+    let scale = 37.79527559055118_f64;
+    for (id, expected) in [(length, 100. / scale), (area, std::f64::consts::PI * 10000. / scale.powi(2)), (polygon_area, 5000. / scale.powi(2))] {
+        assert!((reopened.numeric_value(id).unwrap() - expected).abs() < 1e-9);
+    }
+    assert_eq!(reopened.numeric_value(length), d.numeric_value(length));
+    assert_eq!(reopened.numeric_value(area), d.numeric_value(area));
+    assert_eq!(reopened.numeric_value(polygon_area), d.numeric_value(polygon_area));
+    reopened.checkpoint();
+    assert!(reopened.move_point(measure_end, Point { x: 300., y: 120. }));
+    let expected = Point { x: 250., y: 70. };
+    let (first, _, mode) = reopened.line_points(segment2).unwrap();
+    assert_eq!(mode, LineMode::Segment);
+    assert!(first.distance(expected) < 1e-9);
+    assert!(reopened.circle_points(circle2).unwrap().0.distance(expected) < 1e-9);
+    assert!(reopened.polygon_points(polygon2).unwrap()[0].distance(expected) < 1e-9);
+    reopened.verify_roundtrip().unwrap();
+    let edited = reopened.encode().unwrap();
+    reopened.undo();
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    reopened.redo();
+    assert_eq!(reopened.encode().unwrap(), edited);
+}
+
+#[test]
 fn rectangular_marked_translation_imports_and_tracks_both_measurements() {
     let bytes = fs::read("tests/fixtures/rectangular_marked_translation_original.gsp").unwrap();
     let native = Document::from_bytes(&bytes, None).unwrap();
@@ -471,7 +524,7 @@ fn unavailable_marked_lengths_suppress_shapes_without_blocking_save() {
     .unwrap();
     doc.set_parameter_value(6, 1.).unwrap();
     let length = doc
-        .add_multi_calculation(&[5, 6], "v1*v2", (10, 5))
+        .add_multi_calculation(&[5, 6], "v1/v2", (10, 5))
         .unwrap();
     let a = doc.add(Kind::Free(Point { x: 200., y: 300. }));
     let b = doc.add(Kind::Free(Point { x: 250., y: 300. }));
@@ -489,7 +542,7 @@ fn unavailable_marked_lengths_suppress_shapes_without_blocking_save() {
         .into_iter()
         .map(|kind| doc.add(kind))
         .collect::<Vec<_>>();
-    doc.set_parameter_value(6, -1.).unwrap();
+    doc.set_parameter_value(6, 0.).unwrap();
     for &id in &ids {
         assert!(doc.line_points(id).is_none() && doc.circle_points(id).is_none());
     }
@@ -627,5 +680,361 @@ fn vector_translations_of_rotated_shapes_follow_edits_constraints_and_copy() {
         doc.selected.insert(5);
         let deleted = doc.clear_selected().unwrap();
         assert!(deleted.contains(&6) && deleted.contains(&point) && deleted.contains(&value));
+    }
+}
+
+#[test]
+fn fixed_polar_shape_chains_reuse_matrices_and_preserve_live_sources() {
+    let mut doc = Document::new();
+    let a = doc.add(Kind::Free(Point { x: 100., y: 220. }));
+    let b = doc.add(Kind::Free(Point { x: 200., y: 220. }));
+    let c = doc.add(Kind::Free(Point { x: 100., y: 320. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let circle = doc.add(Kind::Circle(a, b));
+    let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+    let s1 = doc.add(Kind::PolarTranslatedSegment(segment, 0., 37.79527559055118, 1.));
+    let s2 = doc.add(Kind::PolarTranslatedSegment(s1, 90., 37.79527559055118, 2.));
+    let c1 = doc.add(Kind::PolarTranslatedCircle(circle, 0., 37.79527559055118, 1.));
+    let c2 = doc.add(Kind::PolarTranslatedCircle(c1, 90., 37.79527559055118, 2.));
+    let p1 = doc.add(Kind::PolarTranslatedPolygon(polygon, 0., 37.79527559055118, 1.));
+    let p2 = doc.add(Kind::PolarTranslatedPolygon(p1, 90., 37.79527559055118, 2.));
+    let length = doc.add(Kind::SegmentLength(s2));
+    let area = doc.add(Kind::CircleArea(c2));
+    let polygon_area = doc.add(Kind::PolygonArea(p2));
+    let bytes = doc.encode().unwrap();
+    let mut reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    for (id, base) in [(s2, segment), (c2, circle), (p2, polygon)] {
+        let sequence = reopened.transform_sequence(id).unwrap();
+        assert_eq!(sequence.source, base);
+        assert_eq!(sequence.matrices.len(), 2);
+        assert!(sequence.apply(Point { x: 100., y: 220. }).unwrap().distance(
+            Point { x: 137.79527559055118, y: 144.40944881889763 }) < 1e-9);
+    }
+    reopened.checkpoint();
+    assert!(reopened.move_point(b, Point { x: 300., y: 220. }));
+    let scale = 37.79527559055118_f64;
+    assert!((reopened.numeric_value(length).unwrap() - 200. / scale).abs() < 1e-9);
+    assert!((reopened.numeric_value(area).unwrap() - std::f64::consts::PI * 40000. / scale.powi(2)).abs() < 1e-9);
+    assert!((reopened.numeric_value(polygon_area).unwrap() - 10000. / scale.powi(2)).abs() < 1e-9);
+    reopened.verify_roundtrip().unwrap();
+    let saved = reopened.encode().unwrap();
+    reopened.undo();
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    reopened.redo();
+    assert_eq!(reopened.encode().unwrap(), saved);
+}
+
+#[test]
+fn corpus_polar_distance_caches_and_radian_angles_match_exported_geometry() {
+    for (bytes, id, expected_distance) in [
+        (include_bytes!("../../../tests/fixtures/polar_radian_fractional_distance_corpus.gsp").as_slice(), 45, 3.779527559055118),
+        (include_bytes!("../../../tests/fixtures/polar_fractional_distance_corpus.gsp").as_slice(), 35, 11.338582677165356),
+        (include_bytes!("../../../tests/fixtures/polar_inch_distance_corpus.gsp").as_slice(), 17, 19.2),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        let object = &doc.objects[id - 1];
+        let definition = object.kind.transform_definition().unwrap();
+        // Some corpus pages still have undefined ancestors. Evaluate the parsed
+        // literal on a free source as well, so cache semantics are tested there.
+        let mut isolated = Document::new();
+        let source = Point { x: 150., y: 200. };
+        let source_id = isolated.add(Kind::Free(source));
+        let imported = crate::document::transform_model::TransformDefinition::new(
+            source_id, definition.element(), definition.transform().clone(), definition.wire_flavor(),
+        ).unwrap();
+        let image = isolated.add(Kind::Transformed(imported));
+        let offset = object.constraint_offset.unwrap();
+        let pixels = f64_at(bytes, offset + 32);
+        assert!((pixels - expected_distance).abs() < 1e-12);
+        let expected = Point {
+            x: source.x + pixels * f64_at(bytes, offset + 12),
+            y: source.y + pixels * f64_at(bytes, offset + 4),
+        };
+        assert!(isolated.position(image).unwrap().distance(expected) < 1e-9);
+        assert_eq!(doc.encode().unwrap(), bytes);
+    }
+    let rotation = include_bytes!("../../../tests/fixtures/rotation_radian_corpus.gsp");
+    let doc = Document::from_bytes(rotation, None).unwrap();
+    let definition = doc.objects[8].kind.transform_definition().unwrap();
+    assert_eq!(definition.source(), 2);
+    let source = doc.position(2).unwrap();
+    let center = doc.position(1).unwrap();
+    assert!(doc.position(9).unwrap().distance(Point {
+        x: center.x, y: center.y - (source.x - center.x),
+    }) < 1e-9);
+    assert_eq!(doc.encode().unwrap(), rotation);
+    let marked = include_bytes!("../../../tests/fixtures/marked_polar_radian_corpus.gsp");
+    let doc = Document::from_bytes(marked, None).unwrap();
+    let base = doc.position(1).unwrap();
+    let distance = doc.distance_value_pixels(19).unwrap();
+    assert!(doc.position(20).unwrap().distance(Point { x: base.x, y: base.y - distance }) < 1e-9);
+    assert_eq!(doc.encode().unwrap(), marked);
+}
+
+#[test]
+fn polar_writer_stores_total_pixels_for_fractional_negative_and_zero_distances() {
+    for units in [37.79527559055118_f64, 96.] {
+        for magnitude in [0.1, 0.3, 2.65, -0.3, 0., -0.] {
+            let mut doc = Document::new();
+            let source = doc.add(Kind::Free(Point { x: 150., y: 200. }));
+            let image = doc.add(Kind::PolarTranslatedPoint(source, 23., units, magnitude));
+            let bytes = doc.encode().unwrap();
+            let parsed = Document::from_bytes(&bytes, None).unwrap();
+            assert!(!parsed.partial_view);
+            let offset = parsed.objects[image - 1].constraint_offset.unwrap();
+            assert_eq!(f64_at(&bytes, offset + 32).to_bits(), (units * magnitude).to_bits());
+            assert_eq!(u32_at(&bytes, offset + 48), if units == 96. { 2 } else { 1 });
+            assert_eq!(parsed.objects[image - 1].kind, doc.objects[image - 1].kind);
+            assert_eq!(parsed.position(image), doc.position(image));
+            let mut parsed = parsed;
+            parsed.checkpoint();
+            assert!(parsed.move_point(source, Point { x: 170., y: 180. }));
+            parsed.verify_roundtrip().unwrap();
+            let saved = parsed.encode().unwrap();
+            parsed.undo();
+            assert_eq!(parsed.encode().unwrap(), bytes);
+            parsed.redo();
+            assert_eq!(parsed.encode().unwrap(), saved);
+        }
+    }
+}
+
+#[test]
+fn fractional_polar_shape_chain_writer_matches_native_verified_file() {
+    let mut doc = Document::new();
+    let a = doc.add(Kind::Free(Point { x: 100., y: 220. }));
+    let b = doc.add(Kind::Free(Point { x: 200., y: 220. }));
+    let c = doc.add(Kind::Free(Point { x: 100., y: 300. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let circle = doc.add(Kind::Circle(a, b));
+    let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+    let s = doc.add(Kind::PolarTranslatedSegment(segment, 23., 37.79527559055118, 0.3));
+    let s2 = doc.add(Kind::PolarTranslatedSegment(s, -31., 37.79527559055118, 2.65));
+    let ci = doc.add(Kind::PolarTranslatedCircle(circle, 23., 37.79527559055118, 0.3));
+    let ci2 = doc.add(Kind::PolarTranslatedCircle(ci, -31., 37.79527559055118, 2.65));
+    let po = doc.add(Kind::PolarTranslatedPolygon(polygon, 23., 37.79527559055118, 0.3));
+    let po2 = doc.add(Kind::PolarTranslatedPolygon(po, -31., 37.79527559055118, 2.65));
+    doc.add(Kind::SegmentLength(s2));
+    doc.add(Kind::CircleArea(ci2));
+    doc.add(Kind::PolygonArea(po2));
+    let native = include_bytes!("../../../tests/fixtures/polar_translation_cache_and_chains_writer_native_verified.gsp");
+    assert_eq!(doc.encode().unwrap(), native);
+    doc.verify_roundtrip().unwrap();
+    let mut reopened = Document::from_bytes(native, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.encode().unwrap(), native);
+    reopened.checkpoint();
+    assert!(reopened.move_point(b, Point { x: 250., y: 220. }));
+    reopened.verify_roundtrip().unwrap();
+    let saved = reopened.encode().unwrap();
+    reopened.undo();
+    assert_eq!(reopened.encode().unwrap(), native);
+    reopened.redo();
+    assert_eq!(reopened.encode().unwrap(), saved);
+}
+
+#[test]
+fn typed_length_parameters_and_calculations_drive_marked_transforms_live() {
+    let mut doc = Document::from_bytes(
+        include_bytes!("../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"), None,
+    ).unwrap();
+    assert!(!doc.partial_view);
+    let parameter = doc.objects.iter().find(|object|
+        matches!(&object.kind, Kind::Parameter(group) if group.unit() == NumericUnit::Length)
+    ).unwrap().id;
+    doc.set_parameter_value(parameter, 1.).unwrap();
+    let literal = doc.add_multi_calculation(&[parameter, parameter], "0.3 cm+0*v1+0*v2", (10, 80)).unwrap();
+    assert_eq!(doc.objects[literal - 1].kind.numeric_unit(), Some(NumericUnit::Length));
+    let name = doc.parameter_display_name(parameter).unwrap();
+    let doubled = doc.add_parameter_calculation(parameter, &format!("2*{name}"), (10, 110)).unwrap();
+    let a = doc.add(Kind::Free(Point { x: 150., y: 220. }));
+    let b = doc.add(Kind::Free(Point { x: 250., y: 220. }));
+    let c = doc.add(Kind::Free(Point { x: 150., y: 320. }));
+    let segment = doc.add(Kind::Segment(a, b));
+    let circle = doc.add(Kind::Circle(a, b));
+    let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
+    let point = doc.add(Kind::MarkedDistanceTranslatedPoint(a, parameter, 0.));
+    let s = doc.add(Kind::MarkedDistanceTranslatedSegment(segment, parameter, 0.));
+    let ci = doc.add(Kind::MarkedDistanceTranslatedCircle(circle, parameter, 0.));
+    let po = doc.add(Kind::MarkedDistanceTranslatedPolygon(polygon, parameter, 0.));
+    let rectangle = doc.add(Kind::RectangularMarkedTranslatedPoint(a, parameter, literal));
+    let mixed = doc.add(Kind::MixedRectangularTranslatedPoint(a, doubled, 0.5, true));
+    let baseline = doc.encode().unwrap();
+    let mut reopened = Document::from_bytes(&baseline, None).unwrap();
+    assert!(!reopened.partial_view);
+    reopened.verify_roundtrip().unwrap();
+    for value in [2., 0., -1., 1.5] {
+        reopened.set_parameter_value(parameter, value).unwrap();
+        let expected = Point { x: 150. + value * 37.79527559055118, y: 220. };
+        assert!(reopened.position(point).unwrap().distance(expected) < 1e-9);
+        assert!(reopened.line_points(s).unwrap().0.distance(expected) < 1e-9);
+        assert!(reopened.circle_points(ci).unwrap().0.distance(expected) < 1e-9);
+        assert!(reopened.polygon_points(po).unwrap()[0].distance(expected) < 1e-9);
+        assert!(reopened.position(rectangle).unwrap().distance(Point {
+            x: expected.x, y: 220. - 0.3 * 37.79527559055118,
+        }) < 1e-9);
+        assert!(reopened.position(mixed).unwrap().distance(Point {
+            x: 150. + 0.5 * 37.79527559055118, y: 220. - 2. * value * 37.79527559055118,
+        }) < 1e-9);
+        reopened.verify_roundtrip().unwrap();
+        let saved = reopened.encode().unwrap();
+        assert_eq!(Document::from_bytes(&saved, None).unwrap().encode().unwrap(), saved);
+    }
+    let edited = reopened.encode().unwrap();
+    for _ in 0..4 { reopened.undo(); }
+    assert_eq!(reopened.encode().unwrap(), baseline);
+    for _ in 0..4 { reopened.redo(); }
+    assert_eq!(reopened.encode().unwrap(), edited);
+}
+
+#[test]
+fn native_verified_length_parameter_transforms_reopen_and_follow_edits() {
+    let bytes = include_bytes!("../../../tests/fixtures/typed_length_marked_transforms_writer_native_verified.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.encode().unwrap(), bytes);
+    assert_eq!(doc.numeric_value(2), Some(2.));
+    assert_eq!(doc.objects[1].kind.numeric_unit(), Some(NumericUnit::Length));
+    assert_eq!(doc.objects[3].kind.numeric_unit(), Some(NumericUnit::Length));
+    assert_eq!(doc.objects[4].kind.numeric_unit(), Some(NumericUnit::Length));
+    let scale = 37.79527559055118;
+    let original = Point { x: 150. + 2. * scale, y: 220. };
+    assert!(doc.position(12).unwrap().distance(original) < 1e-9);
+    assert!(doc.line_points(13).unwrap().0.distance(original) < 1e-9);
+    assert!(doc.circle_points(14).unwrap().0.distance(original) < 1e-9);
+    assert!(doc.polygon_points(15).unwrap()[0].distance(original) < 1e-9);
+    doc.set_parameter_value(2, 1.5).unwrap();
+    let expected = Point { x: 150. + 1.5 * scale, y: 220. };
+    assert!(doc.position(12).unwrap().distance(expected) < 1e-9);
+    assert!(doc.line_points(13).unwrap().0.distance(expected) < 1e-9);
+    assert!(doc.circle_points(14).unwrap().0.distance(expected) < 1e-9);
+    assert!(doc.polygon_points(15).unwrap()[0].distance(expected) < 1e-9);
+    assert!(doc.position(16).unwrap().distance(Point { x: expected.x, y: 220. - 0.3 * scale }) < 1e-9);
+    assert!(doc.position(17).unwrap().distance(Point { x: 150. + 0.5 * scale, y: 220. - 3. * scale }) < 1e-9);
+    doc.verify_roundtrip().unwrap();
+    let saved = doc.encode().unwrap();
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), bytes);
+    doc.redo();
+    assert_eq!(doc.encode().unwrap(), saved);
+}
+
+#[test]
+fn marked_scalar_distance_native_controls_keep_units_and_signed_domains() {
+    for (bytes, value, point, image, length, expected) in [
+        (include_bytes!("../../../tests/fixtures/scalar_distance_positive_native_verified.gsp").as_slice(),3.,2,3,5,Some(3.)),
+        (include_bytes!("../../../tests/fixtures/scalar_distance_negative_native_verified.gsp").as_slice(),-3.,2,3,5,Some(-3.)),
+        (include_bytes!("../../../tests/fixtures/scalar_distance_zero_native_verified.gsp").as_slice(),0.,2,3,5,Some(0.)),
+        (include_bytes!("../../../tests/fixtures/scalar_distance_typed_isolated_negative_native_verified.gsp").as_slice(),-3.,2,3,5,Some(-3.)),
+        (include_bytes!("../../../tests/fixtures/scalar_distance_typed_isolated_positive_native_verified.gsp").as_slice(),3.,2,3,5,Some(3.)),
+        (include_bytes!("../../../tests/fixtures/scalar_distance_typed_negative_native_verified.gsp").as_slice(),-3.,4,5,7,Some(-3.)),
+    ] {
+        let d=Document::from_bytes(bytes,None).unwrap();
+        assert!(!d.partial_view);
+        let source=if point==2 {1} else {2};
+        assert_eq!(d.numeric_value(source),Some(value));
+        if d.objects[source-1].kind.numeric_unit()==Some(crate::table_records::NumericUnit::Scalar) || value<0. {
+            assert_eq!(d.distance_value_pixels(source),None);
+        } else {
+            assert!((d.distance_value_pixels(source).unwrap()-value*37.79527559055118).abs()<1e-10);
+        }
+        if let Some(distance)=expected {
+            assert!((d.marked_distance_value_pixels(source).unwrap()-distance*37.79527559055118).abs()<1e-10);
+            assert!(d.position(image).unwrap().distance(Point{x:350.+distance*37.79527559055118,y:220.})<1e-10);
+            assert!((d.numeric_value(length).unwrap()-distance.abs()).abs()<1e-10);
+        } else {
+            assert_eq!(d.marked_distance_value_pixels(source),None);
+            assert_eq!(d.position(image),None);
+        }
+        d.verify_roundtrip().unwrap();
+        assert_eq!(d.encode().unwrap(),bytes);
+    }
+}
+
+fn scalar_distance_transform_document() -> (Document,usize,Vec<usize>) {
+    let mut d=Document::new();
+    let scalar=d.add_named_parameter("distance",3.,(10,20)).unwrap();
+    let vertical=d.add_calculation_expression("0.5",(10,60)).unwrap();
+    let a=d.add(Kind::Free(Point{x:350.,y:220.}));
+    let b=d.add(Kind::Free(Point{x:450.,y:220.}));
+    let c=d.add(Kind::Free(Point{x:350.,y:300.}));
+    let segment=d.add(Kind::Segment(a,b));
+    let circle=d.add(Kind::Circle(a,b));
+    let polygon=d.add(Kind::Polygon(vec![a,b,c]));
+    let images=vec![
+        d.add(Kind::MarkedDistanceTranslatedPoint(a,scalar,0.)),
+        d.add(Kind::MarkedDistanceTranslatedSegment(segment,scalar,0.)),
+        d.add(Kind::MarkedDistanceTranslatedCircle(circle,scalar,0.)),
+        d.add(Kind::MarkedDistanceTranslatedPolygon(polygon,scalar,0.)),
+        d.add(Kind::RectangularMarkedTranslatedPoint(a,scalar,vertical)),
+        d.add(Kind::MixedRectangularTranslatedPoint(a,scalar,0.5,false)),
+    ];
+    (d,scalar,images)
+}
+
+#[test]
+fn scalar_distance_transforms_update_all_geometry_and_preserve_history() {
+    let (mut d,scalar,images)=scalar_distance_transform_document();
+    let before=d.encode().unwrap();
+    for value in [-3.,0.,0.5] {
+        d.set_parameter_value(scalar,value).unwrap();
+        let expected=Point{x:350.+value*37.79527559055118,y:220.};
+        assert!(d.position(images[0]).unwrap().distance(expected)<1e-10);
+        assert!(d.line_points(images[1]).unwrap().0.distance(expected)<1e-10);
+        assert!(d.circle_points(images[2]).unwrap().0.distance(expected)<1e-10);
+        assert!(d.polygon_points(images[3]).unwrap()[0].distance(expected)<1e-10);
+        let cartesian=Point{x:expected.x,y:220.-0.5*37.79527559055118};
+        assert!(d.position(images[4]).unwrap().distance(cartesian)<1e-10);
+        assert!(d.position(images[5]).unwrap().distance(cartesian)<1e-10);
+        d.verify_roundtrip().unwrap();
+        let saved=d.encode().unwrap();
+        d.undo();d.redo();assert_eq!(d.encode().unwrap(),saved);
+    }
+    d.undo();d.undo();d.undo();assert_eq!(d.encode().unwrap(),before);
+    let undefined=d.add_parameter_calculation(scalar,"1/distance",(10,100)).unwrap();
+    let image=d.add(Kind::MarkedDistanceTranslatedPoint(3,undefined,0.));
+    d.set_parameter_value(scalar,0.).unwrap();
+    assert_eq!(d.numeric_value(undefined),None);
+    assert_eq!(d.position(image),None);
+    d.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn original_scalar_marked_distance_calculation_unblocks_cube_geometry() {
+    let bytes=include_bytes!("../../../tests/fixtures/scalar_marked_distance_cube_corpus.gsp");
+    let d=Document::from_bytes(bytes,None).unwrap();
+    assert_eq!(d.objects[16].kind.numeric_unit(),Some(crate::table_records::NumericUnit::Scalar));
+    assert_eq!(d.numeric_value(17),Some(14.));
+    assert_eq!(d.objects[22].kind,Kind::MarkedDistanceTranslatedPoint(14,17,0.));
+    let source=d.position(14).unwrap();
+    assert!(d.position(23).unwrap().distance(Point{x:source.x+14.*37.79527559055118,y:source.y})<1e-9);
+    assert!(d.position(24).unwrap().distance(Point{x:source.x,y:source.y-14.*37.79527559055118})<1e-8);
+    assert!(d.numeric_value(28).is_some());
+    assert!(d.position(30).is_some());
+    assert_eq!(d.encode().unwrap(),bytes);
+}
+
+#[test]
+fn scalar_distance_transform_writer_matches_native_saved_golden() {
+    let (mut d,scalar,_)=scalar_distance_transform_document();
+    d.set_parameter_value(scalar,-3.).unwrap();
+    d.verify_roundtrip().unwrap();
+    assert_eq!(d.encode().unwrap(),include_bytes!("../../../tests/fixtures/scalar_distance_marked_transforms_writer_native_verified.gsp"));
+}
+
+#[test]
+fn scalar_distance_iteration_pins_numeric_value_and_updates_signed_steps() {
+    let (mut d,scalar,images)=scalar_distance_transform_document();
+    let iteration=d.add_point_iteration(3,images[0],crate::document::IterationDepth::Fixed(3)).unwrap();
+    for value in [3.,-3.,0.] {
+        d.set_parameter_value(scalar,value).unwrap();
+        let points=d.point_iteration_images(iteration).unwrap();
+        assert_eq!(points.len(),3);
+        for (index,point) in points.into_iter().enumerate() {
+            assert!(point.distance(Point{x:350.+(index+2) as f64*value*37.79527559055118,y:220.})<1e-9);
+        }
+        d.verify_roundtrip().unwrap();
     }
 }

@@ -27,6 +27,8 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
             if matches!(
                 flavor,
                 F::Vector
+                    | F::MarkedPolar
+                    | F::FixedPolar
                     | F::Reflection
                     | F::FixedRotation
                     | F::FixedDilation
@@ -50,6 +52,8 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
             if matches!(
                 flavor,
                 F::Vector
+                    | F::MarkedPolar
+                    | F::FixedPolar
                     | F::Reflection
                     | F::FixedRotation
                     | F::FixedDilation
@@ -63,7 +67,7 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
             }
         }
         E::Polygon => {
-            if matches!(flavor, F::Vector | F::NumericRotation | F::NumericDilation) {
+            if matches!(flavor, F::Vector | F::MarkedPolar | F::FixedPolar | F::NumericRotation | F::NumericDilation) {
                 source.kind.is_polygon()
                     && polygon_vertex_count(&document.objects, definition.source()).is_some()
             } else {
@@ -98,9 +102,7 @@ fn expression_parents_supported(
             .is_some_and(|parent| {
                 !parent.deleted
                     && if unit == NumericUnit::Length {
-                        // Marked distances historically exclude length-valued
-                        // parameters; preserve the existing capability category.
-                        parent.kind.is_distance_value()
+                        parent.kind.is_marked_distance_value()
                     } else {
                         parent.kind.numeric_unit() == Some(unit)
                     }
@@ -430,7 +432,6 @@ mod tests {
         let translated_circle = document.add(Kind::VectorTranslatedCircle(7, 1, 2));
         let translated_polygon = document.add(Kind::VectorTranslatedPolygon(8, 1, 2));
         for kind in [
-            Kind::PolarTranslatedSegment(translated_segment, 0., 37.79527559055118, 1.),
             Kind::FixedRectangularTranslatedCircle(
                 translated_circle,
                 37.79527559055118,
@@ -448,6 +449,7 @@ mod tests {
             assert!(validate_transform(&candidate, object, false).is_ok());
         }
         for kind in [
+            Kind::PolarTranslatedSegment(translated_segment, 0., 37.79527559055118, 1.),
             Kind::VectorTranslatedSegment(translated_segment, 1, 2),
             Kind::RotatedCircle(translated_circle, 3, 30.),
             Kind::RatioScaledCircle(translated_circle, 3, 1, 2, 3),

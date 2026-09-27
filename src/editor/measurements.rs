@@ -421,7 +421,7 @@ impl Editor {
         let arc = *arc;
         if !matches!(
             self.doc.objects.get(arc.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
+            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
         ) {
             self.status = "Select one arc to measure".into();
             return;
@@ -446,7 +446,7 @@ impl Editor {
         let arc = *arc;
         if !matches!(
             self.doc.objects.get(arc.saturating_sub(1)).map(|o| &o.kind),
-            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))
+            Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))
         ) {
             self.status = "Select one arc to measure".into();
             return;

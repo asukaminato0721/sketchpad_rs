@@ -535,3 +535,38 @@ fn corpus_named_point_values_import_matching_and_independent_points() {
         assert_eq!(doc.encode().unwrap(), source);
     }
 }
+
+#[test]
+fn corpus_point_value_empty_attribute_preserves_dependencies_and_bytes() {
+    let bytes = include_bytes!("../../../tests/fixtures/point_value_empty_attribute_corpus.gsp");
+    let doc = Document::from_bytes(bytes, None).unwrap();
+    assert_eq!(doc.objects[12].kind, Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: 12, second: 7 });
+    assert!(doc.numeric_value(13).unwrap().is_finite());
+    assert!(doc.numeric_value(14).unwrap().is_finite());
+    assert_eq!(doc.encode().unwrap(), bytes);
+}
+
+#[test]
+fn point_value_empty_attribute_survives_live_edit_save_and_undo() {
+    let mut bytes = include_bytes!("../../../tests/fixtures/point_value_free_segment_native.gsp").to_vec();
+    let rs = records(&bytes).unwrap();
+    let end = rs.iter().rfind(|record| record.kind == 0x07d7).unwrap().start;
+    bytes.splice(end..end, [0, 0, 0, 0, 0x2e, 0x23, 0, 0]);
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    assert!(!doc.partial_view);
+    assert_eq!(doc.numeric_value(5), Some(0.5));
+    assert_eq!(doc.encode().unwrap(), bytes);
+    doc.checkpoint();
+    assert!(doc.move_point(4, Point { x: 275., y: 150. }));
+    assert_eq!(doc.numeric_value(5), Some(1.25));
+    doc.verify_roundtrip().unwrap();
+    let saved = doc.encode().unwrap();
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.numeric_value(5), Some(1.25));
+    assert_eq!(reopened.encode().unwrap(), saved);
+    doc.undo();
+    assert_eq!(doc.encode().unwrap(), bytes);
+    doc.redo();
+    assert_eq!(doc.encode().unwrap(), saved);
+}

@@ -140,7 +140,7 @@ impl Editor {
                         .objects
                         .get(distance.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
-                    || self.doc.distance_value_pixels(distance).is_none()
+                    || self.doc.marked_distance_value_pixels(distance).is_none()
                 {
                     self.status = "Marked distance is unavailable".into();
                     return;
@@ -165,7 +165,7 @@ impl Editor {
                         .objects
                         .get(id.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
-                        || self.doc.distance_value_pixels(id).is_none()
+                        || self.doc.marked_distance_value_pixels(id).is_none()
                 }) {
                     self.status = "Marked distances are unavailable".into();
                     return;
@@ -204,7 +204,7 @@ impl Editor {
                         .objects
                         .get(distance.saturating_sub(1))
                         .is_none_or(|object| object.deleted || object.page != self.doc.active_page)
-                    || self.doc.distance_value_pixels(distance).is_none()
+                    || self.doc.marked_distance_value_pixels(distance).is_none()
                 {
                     self.status = "Mixed rectangular translation values are unavailable".into();
                     return;
@@ -379,7 +379,7 @@ impl Editor {
             .selection_order
             .iter()
             .copied()
-            .filter(|&id| self.doc.distance_value_pixels(id).is_some())
+            .filter(|&id| self.doc.marked_distance_value_pixels(id).is_some())
             .collect::<Vec<_>>();
         match values.as_slice() {
             [id] => {
@@ -387,7 +387,13 @@ impl Editor {
                 self.translation_mode = TranslationMode::MarkedDistance;
                 self.doc.selected.remove(id);
                 self.selection_order.retain(|selected| selected != id);
-                self.status = format!("Marked distance value {id}");
+                self.status = if self.doc.objects[*id - 1].kind.numeric_unit()
+                    == Some(sketchpad_rs::table_records::NumericUnit::Scalar)
+                {
+                    format!("Marked distance value {id} (using centimeters)")
+                } else {
+                    format!("Marked distance value {id}")
+                };
             }
             [horizontal, vertical] => {
                 self.marked_rectangular_distances = Some((*horizontal, *vertical));
@@ -401,7 +407,7 @@ impl Editor {
                     "Marked horizontal distance {horizontal} and vertical distance {vertical}"
                 );
             }
-            _ => self.status = "Select one or two distance measurements".into(),
+            _ => self.status = "Select one or two length or scalar values".into(),
         }
     }
     pub(super) fn mark_angle_selected(&mut self) {

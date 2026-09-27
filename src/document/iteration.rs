@@ -22,7 +22,7 @@ fn point_iteration_definition(
     let numeric = |expression: &NumericExpr| match *expression {
         NumericExpr::Literal { .. } => true,
         NumericExpr::ObjectValue { id, unit } => get(id).is_some_and(|object| {
-            if unit == NumericUnit::Length { object.kind.is_distance_value() }
+            if unit == NumericUnit::Length { object.kind.is_marked_distance_value() }
             else { object.kind.numeric_unit() == Some(unit) }
         }),
         NumericExpr::DirectedAngle { first, vertex, last } => [first, vertex, last].into_iter().all(point),
@@ -706,7 +706,7 @@ impl Document {
             let value = match *expression {
                 NumericExpr::Literal { magnitude, scale, .. } => Some(magnitude * scale),
                 NumericExpr::ObjectValue { id, unit } => match unit {
-                    NumericUnit::Length => self.distance_value_pixels(id),
+                    NumericUnit::Length => self.marked_distance_value_pixels(id),
                     NumericUnit::Degrees => self.numeric_value(id),
                     NumericUnit::Scalar => self.unitless_numeric_value(id),
                     _ => None,

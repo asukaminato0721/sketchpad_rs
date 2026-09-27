@@ -16,7 +16,7 @@ impl Document {
             _ => None,
         }
     }
-    fn function_symbol(&self, id: usize) -> Option<String> {
+    pub(super) fn function_symbol(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         match object.kind {
             Kind::FunctionDefinition(_) => Some(
@@ -32,6 +32,11 @@ impl Document {
             }
             _ => None,
         }
+    }
+    pub fn function_value(&self, id: usize, argument: f64) -> Option<f64> {
+        if !argument.is_finite() || self.objects.get(id.checked_sub(1)?)?.deleted { return None; }
+        let value = self.function_expression(id)?.evaluate_with_angle_unit(argument, self.angle_unit_radians);
+        value.is_finite().then_some(value)
     }
     pub fn function_display_text(&self, id: usize) -> Option<String> {
         let expression = self.function_expression(id)?;

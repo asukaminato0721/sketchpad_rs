@@ -64,3 +64,12 @@ All three creation fixtures, six generated probes, and the creation base pass
 unedited import/byte-preservation verification without partial view. The final
 complete suite passes 599 tests (496 library, 98 desktop, five integration).
 `git diff --check` is clean.
+
+
+Checkpoint 37 also accepts Length, Area and Degree values as exponents, plus
+unit-bearing literals. Their numeric magnitudes supply the exponent and their
+results are Scalar; bare dimensionless integer literal powers retain the
+previous dimensional rule. Native pixel literals (suffix `0x0200`) normalize
+to centimeters. See [quantity exponent evidence](quantity_exponents_analysis.md)
+for independent Native creation controls, actual API writer round trips and
+live geometry/domain tests.

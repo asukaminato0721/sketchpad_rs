@@ -265,7 +265,7 @@ impl Document {
             })
         };
         match host.kind {
-            Kind::ThreePointArc(a, b, c) => [a, b, c].into_iter().all(point_available),
+            Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => [a, b, c].into_iter().all(point_available),
             Kind::ArcOnCircle(circle, start, end) => {
                 self.objects.get(circle.saturating_sub(1)).is_some_and(|object| {
                     circle < path && !object.deleted && object.page == host.page && object.kind.is_circle()
@@ -310,6 +310,7 @@ impl Document {
                     && (projection <= 0.0 || projection >= length_squared)
             }
             Kind::ArcOnCircle(_, start, end) => self.position(start) == self.position(end),
+            Kind::CenterArc(..) => self.arc_geometry(path).is_none(),
             _ => false,
         }
     }
@@ -337,6 +338,11 @@ impl Document {
 
     pub(super) fn undefined_three_point_arc(&self, path: usize) -> bool {
         self.objects.get(path.saturating_sub(1)).is_some_and(|host| matches!(host.kind, Kind::ThreePointArc(..)))
+            && self.undefined_arc_plot(path, 0.5)
+    }
+
+    pub(super) fn undefined_center_arc(&self, path: usize) -> bool {
+        self.objects.get(path.saturating_sub(1)).is_some_and(|host| matches!(host.kind, Kind::CenterArc(..)))
             && self.undefined_arc_plot(path, 0.5)
     }
 
@@ -747,6 +753,21 @@ impl Document {
                 )?;
                 (center, radius, start, sweep, false)
             }
+            Kind::CenterArc(center, start, end) => {
+                let center = self.position(center)?;
+                let start_point = self.position(start)?;
+                let end_point = self.position(end)?;
+                let radius = center.distance(start_point);
+                let end_radius = center.distance(end_point);
+                if !radius.is_finite() || radius <= 0. || !end_radius.is_finite() || end_radius <= 0. {
+                    return None;
+                }
+                let a = (center.y - start_point.y).atan2(start_point.x - center.x);
+                let b = (center.y - end_point.y).atan2(end_point.x - center.x);
+                let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
+                if !sweep.is_finite() || sweep == 0. { return None; }
+                (center, radius, a, sweep, true)
+            }
             Kind::ArcOnCircle(circle, start, end) => {
                 let (center, radius) = self.circle_points(circle)?;
                 let start_point = self.position(start)?;
@@ -1038,7 +1059,7 @@ impl Document {
             ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),
-            Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) => self
+            Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _) => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
             _ => None,

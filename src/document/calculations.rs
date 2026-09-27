@@ -1,6 +1,6 @@
 use super::{Document, Kind, Object};
 use crate::table_records::{
-    CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
+    CalculationGroup, CalculationSourceKind, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
     ParameterCalculationGroup, ParameterGroup,
 };
 use crate::value_equation_records::ValueEquationKind;
@@ -15,6 +15,19 @@ pub(super) fn calculation_source_ids(
         .into_iter()
         .map(|id| base + id as usize)
         .collect()
+}
+pub(super) fn calculation_source_units(group: &ParameterCalculationGroup, refs: &[usize], objects: &[Object]) -> Option<Vec<NumericUnit>> {
+    let kinds = group.source_kinds().ok()?;
+    if refs.len() != kinds.len() { return None; }
+    refs.iter().zip(kinds).map(|(id, kind)| {
+        let parent = objects.get(id.checked_sub(1)?)?;
+        if parent.deleted { return None; }
+        match kind {
+            CalculationSourceKind::Numeric => parent.kind.numeric_unit(),
+            CalculationSourceKind::Function if matches!(parent.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)) => Some(NumericUnit::Scalar),
+            _ => None,
+        }
+    }).collect()
 }
 pub(super) fn parse_numeric_calculation(
     bytes: &[u8],
@@ -32,14 +45,7 @@ pub(super) fn parse_numeric_calculation(
     {
         return None;
     }
-    let units = refs
-        .iter()
-        .map(|id| {
-            objects
-                .get(id.checked_sub(1)?)
-                .and_then(|o| o.kind.numeric_unit())
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let units = calculation_source_units(&group, refs, objects)?;
     let group = group.with_source_units(&units).ok()?;
     // Match the ordinary decoder's established concrete representations. A
     // native abstract template can specialize into either legacy wire family.
@@ -270,7 +276,7 @@ impl Document {
                     numeric_caption_font_index(group.as_bytes())?, false)?;
                 let base = crate::table_records::NumericCaptionLayout::flat(step - 1)?;
                 let layout = if group.display_mode() == 1 { base } else if group.display_mode() == 3 && object.label.as_ref().is_some_and(|label| label.name_utf8().is_ok_and(|name| !name.is_empty())) {
-                    numeric_named_caption_layout(base, object.label.as_ref().unwrap().name_utf8()?)?
+                    numeric_named_caption_layout(base, object.label.as_ref().unwrap().name_utf8().map_err(|error| error.to_string())?)?
                 } else {
                     self.tool_numeric_expression_layout(object.id, base)?
                 };
@@ -508,7 +514,7 @@ impl Document {
                 self.objects
                     .get(id.saturating_sub(1))
                     .filter(|o| !o.deleted && o.page == self.active_page)
-                    .and_then(|o| o.kind.numeric_unit())
+                    .and_then(|o| o.kind.numeric_unit().or_else(|| matches!(o.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _)).then_some(NumericUnit::Scalar)))
             })
             .collect::<Option<Vec<_>>>()
             .ok_or("Select numeric values on the active page")?;
@@ -517,6 +523,7 @@ impl Document {
             .map(|id| u32::try_from(*id).map_err(|_| "Invalid calculation source ID"))
             .collect::<Result<Vec<_>, _>>()?;
         let group = ParameterCalculationGroup::from_sources(&ids, expression, anchor, &units)?;
+        calculation_source_units(&group, sources, &self.objects).ok_or("Calculation reference type disagrees with its expression")?;
         self.checkpoint();
         Ok(self.append_object(Kind::ParameterCalculation(sources[0], group)))
     }
@@ -662,12 +669,16 @@ impl Document {
     }
     pub fn parameter_calculation_value(&self, id: usize) -> Option<f64> {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
-        group.value_for_sources(&values, &units)
+        let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
+        let sources = calculation_source_ids(first, group);
+        group.value_for_sources_with_functions(&values, &units, &|index, argument| self.function_value(*sources.get(index)?, argument))
     }
 
     pub(crate) fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
         let (group, values, units) = self.parameter_calculation_inputs(id)?;
-        group.display_value_for_sources(&values, &units)
+        let Kind::ParameterCalculation(first, _) = self.objects[id-1].kind else { return None; };
+        let sources = calculation_source_ids(first, group);
+        group.display_value_with_functions(&values, &units, &|index, argument| self.function_value(*sources.get(index)?, argument))
     }
 
     fn parameter_calculation_inputs(
@@ -692,13 +703,10 @@ impl Document {
             return None;
         }
         let values = ids
-            .iter()
-            .map(|source| self.numeric_value(*source))
+            .iter().zip(group.source_kinds().ok()?)
+            .map(|(source, kind)| if kind == CalculationSourceKind::Function { Some(0.) } else { self.numeric_value(*source) })
             .collect::<Option<Vec<_>>>()?;
-        let units = ids
-            .iter()
-            .map(|source| self.objects[*source - 1].kind.numeric_unit())
-            .collect::<Option<Vec<_>>>()?;
+        let units = calculation_source_units(group, &ids, &self.objects)?;
         Some((group, values, units))
     }
 
@@ -721,14 +729,15 @@ impl Document {
             }
             let source = &source;
             let name = match &source_object.kind {
+                Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _) => self.function_symbol(*source)?,
                 Kind::Parameter(parameter) => {
                     let name = self.parameter_display_name(*source)?;
                     if parameter.display_mode() == 0 { format!("({name})") } else { name }
                 }
                 Kind::ParameterCalculation(_, g) if g.display_mode() == 3 => {
-                    source_object.label.as_ref().and_then(|label| label.name_utf8().ok())
-                        .filter(|name| !name.is_empty()).map(str::to_owned)
-                        .unwrap_or(self.parameter_calculation_expression(*source)?)
+                    if let Some(name) = source_object.label.as_ref().and_then(|label| label.name_utf8().ok()).filter(|name| !name.is_empty()) {
+                        name.to_owned()
+                    } else { self.parameter_calculation_expression(*source)? }
                 }
                 Kind::ParameterCalculation(_, _) => {
                     self.parameter_calculation_expression(*source)?

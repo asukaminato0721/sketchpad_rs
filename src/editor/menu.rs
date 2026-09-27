@@ -313,6 +313,10 @@ impl Editor {
                         self.three_point_arc();
                         ui.close();
                     }
+                    if ui.button("Arc by Center").clicked() {
+                        self.center_arc();
+                        ui.close();
+                    }
                     if ui.button("Arc on Circle").clicked() {
                         self.arc_on_circle();
                         ui.close();
@@ -599,7 +603,7 @@ impl Editor {
                                 self.plot_axis_dialog = Some(path);
                                 self.plot_axis_draft =
                                     match path.map(|id| &self.doc.objects[id - 1].kind) {
-                                        Some(Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)) => "0.5",
+                                        Some(Kind::Segment(_, _) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..)) => "0.5",
                                         Some(kind) if super::is_circle_construction_host(kind) => "0.25",
                                         _ => "1",
                                     }

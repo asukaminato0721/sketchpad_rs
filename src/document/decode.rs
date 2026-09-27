@@ -34,6 +34,58 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Native transform literals use radians (0) or either observed degree form
+/// (1/2). Check the direction cache in its declared unit before normalizing
+/// to the shared model's degrees; preserving saves retain the original record.
+fn transform_angle_degrees(payload: &[u8]) -> Option<f64> {
+    if payload.len() < 32 {
+        return None;
+    }
+    let angle = f64_at(payload, 20);
+    let (radians, degrees) = match u32_at(payload, 28) {
+        0 => (angle, angle.to_degrees()),
+        1 | 2 => (angle.to_radians(), angle),
+        _ => return None,
+    };
+    let sine_cache = f64_at(payload, 4);
+    let cosine_cache = f64_at(payload, 12);
+    (radians.is_finite()
+        && degrees.is_finite()
+        && sine_cache.is_finite()
+        && cosine_cache.is_finite()
+        && (sine_cache + radians.sin()).abs() < 1e-6
+        && (cosine_cache - radians.cos()).abs() < 1e-6)
+        .then_some(degrees)
+}
+
+/// The polar distance cache stores magnitude * pixels-per-unit, as in the
+/// Cartesian translation record. Preserve nonstandard imported scales too.
+fn polar_distance_scale(payload: &[u8]) -> Option<f64> {
+    let declared = match u32_at(payload, 48) {
+        1 => 37.79527559055118_f64,
+        2 => 96.,
+        _ => return None,
+    };
+    let magnitude = f64_at(payload, 40);
+    let pixels = f64_at(payload, 32);
+    if !magnitude.is_finite() || !pixels.is_finite() {
+        return None;
+    }
+    if magnitude == 0. {
+        return (pixels == 0.).then_some(declared);
+    }
+    let scale = pixels / magnitude;
+    if !scale.is_finite() || scale <= 0. {
+        return None;
+    }
+    // Avoid introducing a division rounding error for ordinary cm/inch units.
+    Some(if (scale - declared).abs() <= declared * 1e-12 {
+        declared
+    } else {
+        scale
+    })
+}
+
 /// Structural saves may retain complete registered tool canvases unchanged.
 /// Their local object IDs and opaque auxiliary records are never drawing IDs.
 pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Record]) -> bool {
@@ -455,7 +507,7 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(code == 0 && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(code == 48 && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 48 | 94) && r.kind == 0x232e && d.is_empty())
                     && !(code == 0 && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
                         && r.kind == 0x232e && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
@@ -990,7 +1042,8 @@ impl Document {
                         }
                     }
                     (48, None, [source]) if *source > 0
-                        && objects.get(source - 1).is_some_and(|object| object.kind.numeric_unit().is_some()) => {
+                        && objects.get(source - 1).is_some_and(|object| object.kind.numeric_unit().is_some()
+                            || matches!(object.kind, Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _))) => {
                         parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code))
                     }
                     (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
@@ -1207,13 +1260,13 @@ impl Document {
                     }
                     (43, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))) =>
                     {
                         Kind::ArcAngle(*host)
                     }
                     (44, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _))) =>
+                            && objects.get(host - 1).is_some_and(|o| matches!(o.kind, Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _))) =>
                     {
                         Kind::ArcLength(*host)
                     }
@@ -1271,7 +1324,7 @@ impl Document {
                                 Kind::PointOnCircle(*host, f64_at(payload, 4), f64_at(payload, 12))
                             }
                             (
-                                Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _)),
+                                Some(Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)),
                                 Some((payload, _)),
                             ) if payload.len() == 12
                                 && payload[..4] == [15, 0, 67, 0]
@@ -1299,29 +1352,23 @@ impl Document {
                                 && f64_at(payload, 20).is_finite()
                                 && f64_at(payload, 32).is_finite()
                                 && f64_at(payload, 40).is_finite()
-                                && (f64_at(payload, 4) + f64_at(payload, 20).to_radians().sin()).abs() < 1e-6
-                                && (f64_at(payload, 12) - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6
+                                && polar_distance_scale(payload).is_some()
+                                && transform_angle_degrees(payload).is_some()
                                 && *origin > 0
-                                && objects.get(origin - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::Polygon(_))) =>
+                                && objects.get(origin - 1).is_some_and(|o| is_point_kind(&o.kind) || is_segment_kind(&o.kind) || o.kind.is_circle() || o.kind.is_polygon()) =>
                         {
-                            if h[8..10] == [14, 0] && matches!(objects[origin - 1].kind, Kind::Segment(_, _)) {
-                                Kind::PolarTranslatedSegment(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
-                            } else if h[8..10] == [28, 0] && matches!(objects[origin - 1].kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) {
-                                Kind::PolarTranslatedCircle(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
+                            if h[8..10] == [14, 0] && is_segment_kind(&objects[origin - 1].kind) {
+                                Kind::PolarTranslatedSegment(*origin, transform_angle_degrees(payload).unwrap(), polar_distance_scale(payload).unwrap(), f64_at(payload, 40))
+                            } else if h[8..10] == [28, 0] && objects[origin - 1].kind.is_circle() {
+                                Kind::PolarTranslatedCircle(*origin, transform_angle_degrees(payload).unwrap(), polar_distance_scale(payload).unwrap(), f64_at(payload, 40))
                             } else if h[8..10] == [4, 0] && is_point_kind(&objects[origin - 1].kind) {
-                                Kind::PolarTranslatedPoint(*origin, f64_at(payload, 20), f64_at(payload, 32), f64_at(payload, 40))
-                            } else if matches!(&objects[origin - 1].kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])))
+                                Kind::PolarTranslatedPoint(*origin, transform_angle_degrees(payload).unwrap(), polar_distance_scale(payload).unwrap(), f64_at(payload, 40))
+                            } else if objects[origin - 1].kind.is_polygon()
+                                && polygon_vertex_count(&objects, *origin).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]]))
                                 && h.len() == 28 && h[6..8] == [4, 0] {
                                 let distance = f64_at(payload, 40);
-                                // Sketchpad's native polygon-locus save replaces the unit
-                                // scale with the translated pixel distance in this cache form.
-                                let units = if payload[52..60] == [0x64, 0xe4, 0x83, 0x01, 0, 0, 0, 0]
-                                    && distance != 0. {
-                                    f64_at(payload, 32) / distance
-                                } else {
-                                    f64_at(payload, 32)
-                                };
-                                Kind::PolarTranslatedPolygon(*origin, f64_at(payload, 20), units, distance)
+                                let units = polar_distance_scale(payload).unwrap();
+                                Kind::PolarTranslatedPolygon(*origin, transform_angle_degrees(payload).unwrap(), units, distance)
                             } else {
                                 Kind::Unsupported(code)
                             }
@@ -1358,7 +1405,7 @@ impl Document {
                     (18 | 19, _, [source, distance])
                         if matches!((objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]),
                             (Some(Kind::Segment(_, _)), [14, 0]) | (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]))
-                            && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value()) => match &constraint_payload {
+                            && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_marked_distance_value()) => match &constraint_payload {
                         Some((payload, _)) if payload.len() == 28
                             && payload[..4] == [code as u8, 0, 0, 0]
                             && u32_at(payload, 20) == 1
@@ -1386,7 +1433,7 @@ impl Document {
                                 && (f64_at(payload, 4) - f64_at(payload, 12) * 37.79527559055118).abs() < 1e-5
                                 && *source > 0 && *distance > 0
                                 && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
-                                && objects.get(distance - 1).is_some_and(|o| o.kind.is_distance_value()) =>
+                                && objects.get(distance - 1).is_some_and(|o| o.kind.is_marked_distance_value()) =>
                         {
                             Kind::MixedRectangularTranslatedPoint(*source, *distance, f64_at(payload, 12), code == 18)
                         }
@@ -1394,7 +1441,7 @@ impl Document {
                     },
                     (18 | 19, _, [source, distance])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
-                            && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value())
+                            && objects.get(distance.saturating_sub(1)).is_some_and(|o| o.kind.is_marked_distance_value())
                             && h.len() == 28 && h[6..8] == [4, 0] => match &constraint_payload {
                         Some((payload, _)) if payload.len() == 28
                             && payload[..4] == [code as u8, 0, 0, 0]
@@ -1408,28 +1455,24 @@ impl Document {
                     },
                     (24, _, [source, distance])
                         if *source > 0 && *distance > 0
-                            && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::Polygon(_)))
-                            && objects.get(distance - 1).is_some_and(|o| o.kind.is_distance_value()) =>
+                            && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind) || is_segment_kind(&o.kind) || o.kind.is_circle() || o.kind.is_polygon())
+                            && objects.get(distance - 1).is_some_and(|o| o.kind.is_marked_distance_value()) =>
                     {
                         match &constraint_payload {
                             Some((payload, _))
                                 if payload.len() == 36
                                     && payload[..4] == [24, 0, 0, 0]
-                                    && payload[28..32] == [1, 0, 0, 0]
+                                    && transform_angle_degrees(payload).is_some()
                                     && f64_at(payload, 20).is_finite()
                                     && f64_at(payload, 4).is_finite()
-                                    && f64_at(payload, 12).is_finite()
-                                    && (f64_at(payload, 4)
-                                        + f64_at(payload, 20).to_radians().sin()).abs() < 1e-6
-                                    && (f64_at(payload, 12)
-                                        - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 =>
+                                    && f64_at(payload, 12).is_finite() =>
                             {
                                 match (&objects[source - 1].kind, &h[8..10]) {
-                                    (kind, [4, 0]) if is_point_kind(kind) => Kind::MarkedDistanceTranslatedPoint(*source, *distance, f64_at(payload, 20)),
-                                    (Kind::Segment(_, _), [14, 0]) => Kind::MarkedDistanceTranslatedSegment(*source, *distance, f64_at(payload, 20)),
-                                    (Kind::Circle(_, _) | Kind::CircleBySegment(_, _), [28, 0]) => Kind::MarkedDistanceTranslatedCircle(*source, *distance, f64_at(payload, 20)),
-                                    (Kind::Polygon(vertices), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::MarkedDistanceTranslatedPolygon(*source, *distance, f64_at(payload, 20)),
+                                    (kind, [4, 0]) if is_point_kind(kind) => Kind::MarkedDistanceTranslatedPoint(*source, *distance, transform_angle_degrees(payload).unwrap()),
+                                    (kind, [14, 0]) if is_segment_kind(kind) => Kind::MarkedDistanceTranslatedSegment(*source, *distance, transform_angle_degrees(payload).unwrap()),
+                                    (kind, [28, 0]) if kind.is_circle() => Kind::MarkedDistanceTranslatedCircle(*source, *distance, transform_angle_degrees(payload).unwrap()),
+                                    (kind, _) if kind.is_polygon() && polygon_vertex_count(&objects, *source).and_then(polygon_subtype) == Some(u16::from_le_bytes([h[8], h[9]]))
+                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::MarkedDistanceTranslatedPolygon(*source, *distance, transform_angle_degrees(payload).unwrap()),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1439,7 +1482,7 @@ impl Document {
                     (20, None, [source, horizontal, vertical])
                         if matches!((objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]),
                             (Some(Kind::Segment(_, _)), [14, 0]) | (Some(Kind::Circle(_, _) | Kind::CircleBySegment(_, _)), [28, 0]))
-                            && [horizontal, vertical].iter().all(|&&id| id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_distance_value())) => {
+                            && [horizontal, vertical].iter().all(|&&id| id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_marked_distance_value())) => {
                             if h[8..10] == [14, 0] {
                                 Kind::RectangularMarkedTranslatedSegment(*source, *horizontal, *vertical)
                             } else {
@@ -1449,14 +1492,14 @@ impl Document {
                     (20, None, [source, horizontal, vertical])
                         if *source > 0 && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind))
                             && [horizontal, vertical].iter().all(|&&id| {
-                                id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_distance_value())
+                                id > 0 && objects.get(id - 1).is_some_and(|o| o.kind.is_marked_distance_value())
                             }) =>
                     {
                         Kind::RectangularMarkedTranslatedPoint(*source, *horizontal, *vertical)
                     }
                     (20, None, [source, horizontal, vertical])
                         if objects.get(source.saturating_sub(1)).is_some_and(|o| matches!(&o.kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))))
-                            && [horizontal, vertical].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_distance_value()))
+                            && [horizontal, vertical].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_marked_distance_value()))
                             && h.len() == 28 && h[6..8] == [4, 0] => {
                         Kind::RectangularMarkedTranslatedPolygon(*source, *horizontal, *vertical)
                     }
@@ -1573,16 +1616,15 @@ impl Document {
                         match &constraint_payload {
                             Some((payload, _)) if payload.len() == 36 && payload[..4] == [27, 0, 0, 0] && f64_at(payload, 20).is_finite()
                                 && f64_at(payload, 4).is_finite() && f64_at(payload, 12).is_finite()
-                                && (f64_at(payload, 4) + f64_at(payload, 20).to_radians().sin()).abs() < 1e-6
-                                && (f64_at(payload, 12) - f64_at(payload, 20).to_radians().cos()).abs() < 1e-6 => {
+                                && transform_angle_degrees(payload).is_some() => {
                                 match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
-                                    (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, f64_at(payload, 20)),
-                                    (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::RotatedSegment(*source, *center, f64_at(payload, 20)),
-                                    (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedRay(*source, *center, f64_at(payload, 20)),
-                                    (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedLine(*source, *center, f64_at(payload, 20)),
-                                    (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::RotatedCircle(*source, *center, f64_at(payload, 20)),
+                                    (Some(kind), [4, 0]) if is_point_kind(kind) => Kind::RotatedPoint(*source, *center, transform_angle_degrees(payload).unwrap()),
+                                    (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::RotatedSegment(*source, *center, transform_angle_degrees(payload).unwrap()),
+                                    (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedRay(*source, *center, transform_angle_degrees(payload).unwrap()),
+                                    (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::RotatedLine(*source, *center, transform_angle_degrees(payload).unwrap()),
+                                    (Some(kind), [28, 0]) if kind.is_circle() && h[6..8] == [3, 0] => Kind::RotatedCircle(*source, *center, transform_angle_degrees(payload).unwrap()),
                                     (Some(Kind::Polygon(vertices)), _) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]]))
-                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::RotatedPolygon(*source, *center, f64_at(payload, 20)),
+                                        && h.len() == 28 && h[6..8] == [4, 0] => Kind::RotatedPolygon(*source, *center, transform_angle_degrees(payload).unwrap()),
                                     _ => Kind::Unsupported(code),
                                 }
                             }
@@ -1633,6 +1675,12 @@ impl Document {
                     (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
                     (63, _, [a, b]) => Kind::Line(*a, *b),
                     (64, _, [a, b]) => Kind::Ray(*a, *b),
+                    (80, None, [center, start, end])
+                        if h.len() == 28 && h[6..10] == [12, 0, 67, 0]
+                            && constraint_payload.is_none()
+                            && [center, start, end].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))) => {
+                        Kind::CenterArc(*center, *start, *end)
+                    }
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
                     (79, _, [circle, start, end])
                         if objects.get(circle - 1).is_some_and(|o| o.kind.is_circle())

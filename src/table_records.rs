@@ -510,6 +510,53 @@ impl ParameterGroup {
         std::str::from_utf8(&self.bytes[payload + 24..payload + 24 + len]).unwrap()
     }
 
+    pub(crate) fn with_generated_name(&self, number: u32, font: &crate::text_style_records::FontState) -> Result<Self, String> {
+        if number == 0 || !self.name().is_empty() || self.display_mode() == 0 {
+            return Err("Parameter cannot receive a generated name".into());
+        }
+        if font.family != "Tahoma" || font.size_code != 18 || font.bold || font.italic || font.underline || self.literal().scientific {
+            return Err("Generated parameter captions need a verified font and literal layout".into());
+        }
+        // Native controls establish the normal-18 caption metrics, including
+        // two-digit subscripts. Restore short caches left by missing names.
+        let mut width = 58 + 7 * (number.to_string().len() as i32 - 1);
+        for ch in format_fixed_numeric_value(self.value(), self.precision()).chars() {
+            width += match ch {
+                '0'..='9' => 10,
+                '.' => 6,
+                '-' => 10,
+                _ => return Err("Generated parameter caption needs verified glyph metrics".into()),
+            };
+        }
+        width += match self.unit() { NumericUnit::Scalar => 0, NumericUnit::Degrees => 9, NumericUnit::Length => 42, _ => return Err("Unsupported generated parameter units".into()) };
+        let name = format!("t[{number}]");
+        let named = object_group(NAMED_PARAMETER, 1);
+        let named_records = records(&named, 0)?;
+        let mut label = named[named_records[2].payload..named_records[2].payload + 22].to_vec();
+        label[..2].copy_from_slice(&((name.len() + 2) as u16).to_le_bytes());
+        label.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        label.extend_from_slice(name.as_bytes());
+        label.push(0);
+        if name.len() % 2 == 0 { label.push(0); }
+        let rs = records(&self.bytes, 0)?;
+        let mut bytes = Vec::new();
+        for record in rs {
+            if record.kind == 0x07d5 { continue; }
+            if record.kind == 0x07d8 { put_record(&mut bytes, 0x07d5, &label); }
+            bytes.extend_from_slice(&self.bytes[record.start..record.end]);
+        }
+        let updated = records(&bytes, 0)?;
+        let bbox = updated.iter().find(|record| record.kind == 0x08a3).ok_or("Missing parameter caption box")?.payload;
+        let anchor = self.anchor();
+        let right = i16::try_from(i32::from(anchor.0) + width).map_err(|_| "Parameter caption box overflow")?;
+        let bottom = anchor.1.checked_add(32).ok_or("Parameter caption box overflow")?;
+        bytes[bbox + 4..bbox + 6].copy_from_slice(&right.to_le_bytes());
+        bytes[bbox + 6..bbox + 8].copy_from_slice(&bottom.to_le_bytes());
+        let mut result = Self::parse(&bytes)?;
+        result.evaluation_value = self.evaluation_value;
+        Ok(result)
+    }
+
     pub fn display_mode(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
         u16::from_le_bytes(self.bytes[rs[1].payload + 26..rs[1].payload + 28].try_into().unwrap())
@@ -946,6 +993,12 @@ pub struct ParameterCalculationGroup {
     inferred_unit: Option<NumericUnit>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CalculationSourceKind {
+    Numeric,
+    Function,
+}
+
 // Native calculator degree conversion, verified with tan(90).
 const CALCULATOR_PI: f64 = 3.1415926535898;
 
@@ -974,6 +1027,7 @@ fn calculation_function_name(token: u16) -> Option<&'static str> {
 #[derive(Clone, Debug)]
 enum ParameterExpr {
     Source(usize),
+    FunctionSource(usize, Box<ParameterExpr>),
     Literal(f64, String),
     Binary(u16, Box<ParameterExpr>, Box<ParameterExpr>),
     Call(u16, Box<ParameterExpr>),
@@ -982,6 +1036,24 @@ enum ParameterExpr {
 }
 
 impl ParameterExpr {
+    fn source_kinds(&self, kinds: &mut [Option<CalculationSourceKind>]) -> Result<(), String> {
+        use CalculationSourceKind::{Function, Numeric};
+        match self {
+            Self::Source(index) | Self::FunctionSource(index, _) => {
+                let kind = if matches!(self, Self::Source(_)) { Numeric } else { Function };
+                let slot = kinds.get_mut(*index).ok_or("Invalid calculation source token")?;
+                if slot.is_some_and(|previous| previous != kind) {
+                    return Err("Calculation source is used as both numeric and function".into());
+                }
+                *slot = Some(kind);
+                if let Self::FunctionSource(_, argument) = self { argument.source_kinds(kinds)?; }
+            }
+            Self::Binary(_, left, right) => { left.source_kinds(kinds)?; right.source_kinds(kinds)?; }
+            Self::Neg(argument) | Self::Group(argument) | Self::Call(_, argument) => argument.source_kinds(kinds)?,
+            Self::Literal(_, _) => {}
+        }
+        Ok(())
+    }
     fn eval(&self, source: f64) -> Option<f64> {
         let value = self.eval_raw(source)?;
         value.is_finite().then_some(value)
@@ -990,13 +1062,17 @@ impl ParameterExpr {
         self.eval_raw_values(&[source])
     }
     fn eval_raw_values(&self, sources: &[f64]) -> Option<f64> {
+        self.eval_raw_context(sources, &|_, _| None)
+    }
+    fn eval_raw_context(&self, sources: &[f64], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
         let value = match self {
             Self::Source(index) => *sources.get(*index)?,
-            Self::Neg(argument) => -argument.eval_raw_values(sources)?,
-            Self::Group(argument) => argument.eval_raw_values(sources)?,
+            Self::FunctionSource(index, argument) => functions(*index, argument.eval_raw_context(sources, functions)?)?,
+            Self::Neg(argument) => -argument.eval_raw_context(sources, functions)?,
+            Self::Group(argument) => argument.eval_raw_context(sources, functions)?,
             Self::Literal(value, _) => *value,
             Self::Call(function, argument) => {
-                let value = argument.eval_raw_values(sources)?;
+                let value = argument.eval_raw_context(sources, functions)?;
                 // Native calculator PI constant, present at executable offset 0x272690.
                 let angle = value / 180. * CALCULATOR_PI;
                 match function {
@@ -1023,8 +1099,8 @@ impl ParameterExpr {
                 }
             }
             Self::Binary(operator, left, right) => {
-                let left = left.eval_raw_values(sources)?;
-                let right = right.eval_raw_values(sources)?;
+                let left = left.eval_raw_context(sources, functions)?;
+                let right = right.eval_raw_context(sources, functions)?;
                 match operator {
                     0x1000 => left + right,
                     0x1001 => left - right,
@@ -1044,6 +1120,11 @@ impl ParameterExpr {
     fn units(&self, sources: &[NumericUnit]) -> Result<NumericUnit, String> {
         use NumericUnit::{Degrees, Length, Scalar};
         match self {
+            Self::FunctionSource(index, argument) => {
+                sources.get(*index).ok_or("Missing calculation function source")?;
+                argument.units(sources)?;
+                Ok(Scalar)
+            }
             Self::Source(index) => sources
                 .get(*index)
                 .copied()
@@ -1051,7 +1132,7 @@ impl ParameterExpr {
             Self::Neg(argument) | Self::Group(argument) => argument.units(sources),
             Self::Literal(_, text) => Ok(if text.ends_with('°') {
                 Degrees
-            } else if text.ends_with(" cm") {
+            } else if text.ends_with(" cm") || text.ends_with(" px") {
                 Length
             } else {
                 Scalar
@@ -1079,18 +1160,12 @@ impl ParameterExpr {
                 let (left, right) = (a.units(sources)?, b.units(sources)?);
                 match *op {
                     0x1000 | 0x1001 if left == right => Ok(left),
-                    // Native calculator and custom-tool controls produce a
-                    // unitless magnitude when a length, angle, or area is added
-                    // to a bare decimal. Native subtraction has a separately
-                    // retained length control. A scalar source stays distinct.
-                    0x1000
-                        if matches!(left, Length | Degrees | NumericUnit::Area)
-                            && right == Scalar && b.is_bare_decimal() => Ok(Scalar),
-                    0x1000
-                        if left == Scalar && matches!(right, Length | Degrees | NumericUnit::Area)
-                            && a.is_bare_decimal() => Ok(Scalar),
-                    0x1001 if left == Length && right == Scalar && b.is_bare_decimal() => Ok(Length),
-                    0x1001 if left == Scalar && right == Length && a.is_bare_decimal() => Ok(Length),
+                    // Native adds unlike quantities by magnitude and drops
+                    // their units, including scalar variables and compound units.
+                    0x1000 => Ok(Scalar),
+                    // The same magnitude rule applies to subtraction, including
+                    // bare decimals. Matching quantities retain their units.
+                    0x1001 => Ok(Scalar),
                     0x1002 | 0x1003 => {
                         let (al, ad) = left.dimensions();
                         let (bl, bd) = right.dimensions();
@@ -1103,8 +1178,10 @@ impl ParameterExpr {
                             .map(|(l, d)| NumericUnit::from_dimensions(l, d))
                             .ok_or_else(|| "Calculation unit exponent overflow".into())
                     }
-                    0x1004 if right == Scalar => {
-                        if left == Scalar {
+                    0x1004 => {
+                        // An exponent supplies its numeric magnitude, even if
+                        // its source/literal carries physical or angle units.
+                        if left == Scalar || right != Scalar {
                             return Ok(Scalar);
                         }
                         // Native retains dimensions only for a literal exponent.
@@ -1169,12 +1246,8 @@ impl ParameterExpr {
             Self::Neg(argument) | Self::Group(argument) => argument.caption_is_flat(),
             Self::Binary(op, left, right) => matches!(*op, 0x1000..=0x1002)
                 && left.caption_is_flat() && right.caption_is_flat(),
-            Self::Call(_, _) => false,
+            Self::Call(_, _) | Self::FunctionSource(_, _) => false,
         }
-    }
-
-    fn is_bare_decimal(&self) -> bool {
-        matches!(self, Self::Literal(_, text) if text.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
     }
 
     fn display(&self, source_name: &str) -> String {
@@ -1182,6 +1255,8 @@ impl ParameterExpr {
     }
     fn display_names(&self, source_names: &[&str]) -> String {
         match self {
+            Self::FunctionSource(index, argument) => format!("{}({})",
+                source_names.get(*index).copied().unwrap_or("?"), argument.display_names(source_names)),
             Self::Source(index) => source_names.get(*index).copied().unwrap_or("?").into(),
             Self::Neg(argument) => format!("−{}", argument.display_names(source_names)),
             Self::Group(argument) => argument.display_names(source_names),
@@ -1253,7 +1328,7 @@ impl<'a> ParameterExprParser<'a> {
                 argument
             });
         }
-        if calculation_function_name(word).is_some() {
+        if calculation_function_name(word).is_some() || (0x7000..=0x70ff).contains(&word) {
             self.at += 1;
             // A function has an implicit opener. A following token 11 is a
             // normal grouped subexpression; its trailing operators still belong
@@ -1269,7 +1344,9 @@ impl<'a> ParameterExprParser<'a> {
                 ParameterExpr::Group(inner) => *inner,
                 other => other,
             };
-            return Ok(ParameterExpr::Call(word, Box::new(argument)));
+            return Ok(if word >= 0x7000 {
+                ParameterExpr::FunctionSource((word - 0x7000) as usize, Box::new(argument))
+            } else { ParameterExpr::Call(word, Box::new(argument)) });
         }
         if word == 13 || word == 14 {
             self.at += 1;
@@ -1297,7 +1374,7 @@ impl<'a> ParameterExprParser<'a> {
             self.at += 1;
             return Ok(ParameterExpr::Group(Box::new(result)));
         }
-        if (0x6000..=0x600f).contains(&word) {
+        if (0x6000..=0x60ff).contains(&word) {
             self.at += 1;
             return Ok(ParameterExpr::Source((word - 0x6000) as usize));
         }
@@ -1362,6 +1439,12 @@ impl<'a> ParameterExprParser<'a> {
                 // the suffix supplies Length independently of the result type.
                 self.at += 1;
                 text.push_str(" cm");
+            } else if self.words.get(self.at) == Some(&0x0200) {
+                // Native length quantities use centimeters internally; the
+                // pixel suffix converts the literal magnitude into that unit.
+                self.at += 1;
+                value /= 37.79527559055118;
+                text.push_str(" px");
             }
             return Ok(ParameterExpr::Literal(value, text));
         }
@@ -1414,8 +1497,15 @@ fn calculation_words_for_sources(
                     .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
             })
         }) {
-            words.push(0x6000 + *index as u16);
-            input = &input[source_name.len()..];
+            let rest = &input[source_name.len()..];
+            if source_name.starts_with('f') && rest.trim_start().starts_with('(') {
+                words.push(0x7000 + *index as u16);
+                input = &rest.trim_start()[1..];
+                parentheses.push(false);
+            } else {
+                words.push(0x6000 + *index as u16);
+                input = rest;
+            }
         } else if input.strip_prefix("rad").is_some_and(|rest| {
             !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }) {
@@ -1425,6 +1515,11 @@ fn calculation_words_for_sources(
             !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         }) {
             words.push(0x0201);
+            input = &input[2..];
+        } else if input.strip_prefix("px").is_some_and(|rest| {
+            !rest.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }) {
+            words.push(0x0200);
             input = &input[2..];
         } else if ch == 'π' || input.starts_with("pi") {
             words.push(13);
@@ -1451,8 +1546,8 @@ fn calculation_words_for_sources(
             input = &input[ch.len_utf8()..];
         }
     }
-    if !(1..=32).contains(&words.len()) {
-        return Err("Calculation must use 1–32 tokens".into());
+    if !(1..=256).contains(&words.len()) {
+        return Err("Calculation must use 1–256 tokens".into());
     }
     Ok(words)
 }
@@ -1530,11 +1625,11 @@ impl ParameterCalculationGroup {
         anchor: (i16, i16),
         units: &[NumericUnit],
     ) -> Result<Self, String> {
-        if !(2..=16).contains(&sources.len())
+        if !(2..=256).contains(&sources.len())
             || sources.contains(&0)
             || sources.len() != units.len()
         {
-            return Err("Select 2–16 numeric sources".into());
+            return Err("Select 2–256 numeric sources".into());
         }
         let names = (1..=sources.len())
             .map(|n| format!("v{n}"))
@@ -1545,6 +1640,8 @@ impl ParameterCalculationGroup {
             .map(|(i, name)| (name.as_str(), i))
             .collect::<Vec<_>>();
         aliases.extend([("a", 0), ("b", 1)]);
+        let function_names = (1..=sources.len()).map(|n| format!("f{n}")).collect::<Vec<_>>();
+        aliases.extend(function_names.iter().enumerate().map(|(i, name)| (name.as_str(), i)));
         let words = calculation_words_for_sources(expression, &aliases)?;
         let tree = calculation_tree(&words)?;
         let unit = tree.units(units)?;
@@ -1583,7 +1680,7 @@ impl ParameterCalculationGroup {
             return Err("Missing calculation references".into());
         }
         let count = u32::from_le_bytes(payload[..4].try_into().unwrap()) as usize;
-        if !(1..=16).contains(&count)
+        if !(1..=256).contains(&count)
             || payload.len() != 4 + 4 * count
             || payload[4..].chunks_exact(4).any(|id| id == [0; 4])
         {
@@ -1655,14 +1752,22 @@ impl ParameterCalculationGroup {
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
         let count = self.sources().len();
-        if !words.iter().any(|w| (0x6000..=0x600f).contains(w))
+        if !words.iter().any(|w| (0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w))
             || words
                 .iter()
-                .any(|w| (0x6000..=0x600f).contains(w) && (*w - 0x6000) as usize >= count)
+                .any(|w| ((0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w)) && (*w & 0xff) as usize >= count)
         {
             return Err("Invalid calculation source token".into());
         }
-        calculation_tree(&words)
+        let tree = calculation_tree(&words)?;
+        tree.source_kinds(&mut vec![None; count])?;
+        Ok(tree)
+    }
+    pub fn source_kinds(&self) -> Result<Vec<CalculationSourceKind>, String> {
+        let mut kinds = vec![None; self.sources().len()];
+        self.expression_tree()?.source_kinds(&mut kinds)?;
+        // Retained unused references are still concrete numeric dependencies.
+        Ok(kinds.into_iter().map(|kind| kind.unwrap_or(CalculationSourceKind::Numeric)).collect())
     }
     pub fn value(&self, source: f64) -> Option<f64> {
         self.expression_tree().ok()?.eval(source)
@@ -1688,6 +1793,15 @@ impl ParameterCalculationGroup {
     pub fn value_for_sources(&self, values: &[f64], units: &[NumericUnit]) -> Option<f64> {
         self.display_value_for_sources(values, units)
             .filter(|value| value.is_finite())
+    }
+    pub fn value_for_sources_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
+        self.display_value_with_functions(values, units, functions).filter(|value| value.is_finite())
+    }
+    pub(crate) fn display_value_with_functions(&self, values: &[f64], units: &[NumericUnit], functions: &dyn Fn(usize, f64) -> Option<f64>) -> Option<f64> {
+        if values.len() != self.sources().len() || units.len() != values.len() || values.iter().any(|value| !value.is_finite()) { return None; }
+        let tree = self.expression_tree().ok()?;
+        if tree.units(units).ok()? != self.unit() { return None; }
+        tree.eval_raw_context(values, functions)
     }
     /// Caption evaluation retains an infinite result from finite inputs.
     /// Geometry and downstream numeric sources still use `value_for_sources`.
@@ -1754,7 +1868,11 @@ impl ParameterCalculationGroup {
         let subtype = u16::from_le_bytes(self.bytes[16..18].try_into().unwrap());
         // Native squared angles use subtype 50 too; the expression supplies
         // the actual base unit rather than the quantity category in the header.
-        if subtype == 51 || (subtype == 50 && inferred.dimensions() == (0, 2)) {
+        // Native can retain an older physical category after a formula becomes
+        // unitless (the retained length-minus-decimal control has subtype48 but
+        // no native result suffix). Expression units govern its live value.
+        if subtype == 51 || (inferred == NumericUnit::Scalar && units.contains(&self.unit()))
+            || (subtype == 50 && inferred.dimensions() == (0, 2)) {
             self.inferred_unit = (inferred != self.unit()).then_some(inferred);
         } else if inferred != self.unit() {
             return Err("Calculation result units disagree with its header".into());
@@ -2016,18 +2134,18 @@ impl CalculationGroup {
             .filter(|name| !name.is_empty())
     }
 
-    /// The independently verified source-free angle/radian record family.
+    /// Whether the source-free calculation uses the native angle header.
     pub fn is_native_radian_angle(&self) -> bool {
         self.bytes.get(16..18) == Some(&[49, 0])
     }
 
-    /// Edit the verified angle family while retaining its presentation/cache
-    /// records. A change of native quantity family is a separate operation.
+    /// Edit an expression while retaining its numeric unit and presentation
+    /// records. A change of quantity family is a separate operation.
     pub fn set_expression(&mut self, expression: &str) -> Result<(), String> {
-        if !self.is_native_radian_angle() {
-            return Err("Editing this calculation expression is not yet supported".into());
-        }
         let words = calculation_words(expression, "")?;
+        if calculation_tree(&words)?.unit(NumericUnit::Scalar)? != self.unit() {
+            return Err("Expression must retain the calculation's numeric unit".into());
+        }
         let rs = records(&self.bytes, 0)?;
         let mut payload = self.bytes[rs[1].payload..rs[1].end].to_vec();
         payload.truncate(92);
@@ -2065,9 +2183,6 @@ impl CalculationGroup {
         let words = calculation_words(expression, "")?;
         let tree = calculation_tree(&words)?;
         let unit = tree.unit(NumericUnit::Scalar)?;
-        if words.contains(&0x0100) && unit != NumericUnit::Degrees {
-            return Err("Source-free radian calculations require an angle result".into());
-        }
         let base = Self::literal_two_plus_three();
         let rs = records(&base.bytes, 0)?;
         let mut payload = base.bytes[rs[1].payload..rs[1].end].to_vec();
@@ -2080,8 +2195,8 @@ impl CalculationGroup {
         let mut bytes = base.bytes[..rs[1].start].to_vec();
         put_record(&mut bytes, 0x0907, &payload);
         bytes.extend_from_slice(&base.bytes[rs[1].end..]);
-        if words.contains(&0x0100) {
-            bytes[16..18].copy_from_slice(&49_u16.to_le_bytes());
+        if words.contains(&0x0100) || matches!(unit, NumericUnit::Length | NumericUnit::Area) {
+            bytes[16..18].copy_from_slice(&unit.subtype().to_le_bytes());
         }
         Self::parse(&bytes)
     }
@@ -2091,32 +2206,16 @@ impl CalculationGroup {
             .chunks_exact(2)
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
-        if words.iter().any(|word| (0x6000..=0x600f).contains(word)) {
+        if words.iter().any(|word| (0x6000..=0x60ff).contains(word)) {
             return Err("Literal calculation has a source reference".into());
-        }
-        if words.contains(&0x0201) {
-            return Err("Source-free centimeter calculations are not yet supported".into());
-        }
-        if words.iter().enumerate().any(|(i, word)| {
-            *word == 10 && words.get(i + 1).is_none_or(|next| *next > 9)
-        }) {
-            return Err("Source-free trailing decimal calculations are not yet supported".into());
-        }
-        // Native source-free radian expressions use subtype49 and produce an
-        // angle. Scalar/compound results and other subtype49 literal families
-        // are independent prerequisites, not inferred from these groups.
-        let native_radians = self.is_native_radian_angle();
-        if words.contains(&0x0100) && !native_radians {
-            return Err("Radian calculations without a source are not yet supported".into());
         }
         let tree = calculation_tree(&words)?;
         let unit = tree.unit(NumericUnit::Scalar)?;
-        if native_radians && (!words.contains(&0x0100) || unit != NumericUnit::Degrees
-            || !matches!(self.display_mode(), 0 | 3)) {
-            return Err("Unsupported source-free radian angle layout".into());
-        }
-        if native_radians && words.iter().any(|word| calculation_function_name(*word).is_some()) {
-            return Err("Source-free radian angle functions are not yet supported".into());
+        let subtype = u16::from_le_bytes(self.bytes[16..18].try_into().unwrap());
+        // Typed native quantities must agree with the expression. Subtype51
+        // is also the legacy generic expression container, including angles.
+        if subtype != 51 && subtype != unit.subtype() {
+            return Err("Calculation quantity subtype disagrees with expression".into());
         }
         Ok(tree)
     }
@@ -2235,7 +2334,7 @@ impl CalculationGroup {
             || rs[font_index + 1].end - rs[font_index + 1].payload != 8
             || rs.last().unwrap().end != rs.last().unwrap().payload
             || u32::from_le_bytes(bytes[8..12].try_into().unwrap()) & 0xffff != 0
-            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 49 | 51)
+            || !matches!(u16::from_le_bytes(bytes[16..18].try_into().unwrap()), 48..=51)
         {
             return Err("Unsupported calculation record lengths or subtype".into());
         }
@@ -2603,16 +2702,14 @@ fn named_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
         return None;
     }
     let text = std::str::from_utf8(&text[..used]).ok()?;
-    if !text.is_ascii() {
-        return None;
-    }
     let rest = text.strip_prefix("000<SS2<T")?;
     let (name_len, rest) = rest.split_once('x')?;
     let name_len = name_len.parse::<usize>().ok()?;
     if !(1..=32).contains(&name_len) || rest.len() < name_len {
         return None;
     }
-    let (name, rest) = rest.split_at(name_len);
+    let name = rest.get(..name_len)?;
+    let rest = rest.get(name_len..)?;
     if !name.as_bytes()[0].is_ascii_alphabetic()
         || !name
             .bytes()
@@ -2620,32 +2717,128 @@ fn named_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
     {
         return None;
     }
-    let mut rest = rest.strip_prefix(">>")?;
+    let values = table_decimal_rows(rest.strip_prefix(">>")?, true)?;
+    Some((name.to_owned(), values))
+}
+
+/// Rich-text run lengths count UTF-8 bytes. Historical ASCII-minus named rows
+/// remain readable, while new writers use the observed native en dash.
+fn table_decimal_rows(mut rest: &str, allow_ascii_minus: bool) -> Option<Vec<String>> {
     let mut values = Vec::new();
     while !rest.is_empty() {
         if values.len() >= 256 {
             return None;
         }
-        rest = rest.strip_prefix("0<H<T")?;
-        let (value_len, after_len) = rest.split_once('x')?;
-        let value_len = value_len.parse::<usize>().ok()?;
-        if !(3..=6).contains(&value_len) || after_len.len() < value_len {
+        let (length, after) = rest.strip_prefix("0<H<T")?.split_once('x')?;
+        let length = length.parse::<usize>().ok()?;
+        if !(1..=8).contains(&length) {
             return None;
         }
-        let (value, after_value) = after_len.split_at(value_len);
-        rest = after_value.strip_prefix(">>")?;
-        let decimals = value.split_once('.')?.1.len();
-        if !(1..=2).contains(&decimals) {
+        let value = after.get(..length)?;
+        rest = after.get(length..)?.strip_prefix(">>")?;
+        let decimals = value.split_once('.').map_or(0, |(_, fraction)| fraction.len());
+        if decimals > 2 {
             return None;
         }
-        let numeric = value.parse::<f64>().ok()?;
+        let decimal = value.strip_prefix('–')
+            .map_or_else(|| value.to_owned(), |absolute| format!("-{absolute}"));
+        if !decimal.is_ascii() {
+            return None;
+        }
+        let numeric = decimal.parse::<f64>().ok()?;
         table_value_text(numeric).ok()?;
-        if format!("{numeric:.decimals$}") != value {
+        if named_table_value_text(numeric, decimals).ok()? != value
+            && !(allow_ascii_minus && value.starts_with('-')
+                && format_fixed_numeric_value(numeric, decimals) == value)
+        {
             return None;
         }
         values.push(value.to_owned());
     }
-    (!values.is_empty()).then_some((name.to_owned(), values))
+    (!values.is_empty()).then_some(values)
+}
+
+pub(crate) fn named_table_value_text(value: f64, precision: usize) -> Result<String, String> {
+    table_value_text(value)?;
+    if precision > 2 { return Err("Named tables support up to two decimal places".into()); }
+    Ok(format_fixed_numeric_value(value, precision).replacen('-', "–", 1))
+}
+
+// Native automatically numbered headers encode the base letter and subscript
+// as separate text runs rather than the plain-name grammar.
+fn indexed_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
+    if layout.len() < 28 || layout.len() % 4 != 0 {
+        return None;
+    }
+    let text = &layout[28..];
+    let used = text
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(text.len());
+    if text.len() - used > 3 || text[used..].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let text = std::str::from_utf8(&text[..used]).ok()?;
+    let rest = text.strip_prefix("000<-<SS2<T1xt>><T")?;
+    let (length, rest) = rest.split_once('x')?;
+    let length = length.parse::<usize>().ok()?;
+    if !(1..=10).contains(&length) || rest.len() < length {
+        return None;
+    }
+    let index = rest.get(..length)?;
+    let rest = rest.get(length..)?;
+    let number = index.parse::<u32>().ok()?;
+    if number == 0 || number.to_string() != index {
+        return None;
+    }
+    let values = table_decimal_rows(rest.strip_prefix(">>")?, false)?;
+    Some((format!("t[{number}]"), values))
+}
+
+fn canonical_indexed_table(
+    source: u32,
+    name: &str,
+    values: &[String],
+    anchor: (i16, i16),
+    font: u16,
+) -> Result<Vec<u8>, String> {
+    let index = name
+        .strip_prefix("t[")
+        .and_then(|name| name.strip_suffix(']'))
+        .ok_or("Invalid indexed table name")?;
+    if source == 0 || !(1..=256).contains(&values.len()) {
+        return Err("Invalid indexed table source or rows".into());
+    }
+    let base = object_group(
+        include_bytes!("../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"),
+        15,
+    );
+    let rs = records(&base, 0)?;
+    let mut layout = base[rs[2].payload..rs[2].payload + 28].to_vec();
+    layout[12..14].copy_from_slice(&anchor.0.to_le_bytes());
+    layout[14..16].copy_from_slice(&anchor.1.to_le_bytes());
+    layout[16..18].copy_from_slice(&((values.len() + 2) as u16).to_le_bytes());
+    layout.extend_from_slice(format!("000<-<SS2<T1xt>><T{}x{index}>>", index.len()).as_bytes());
+    for value in values {
+        layout.extend_from_slice(format!("0<H<T{}x{value}>>", value.len()).as_bytes());
+    }
+    while layout.len() % 4 != 0 {
+        layout.push(0);
+    }
+    if indexed_table_parts(&layout) != Some((name.to_owned(), values.to_vec())) {
+        return Err("Invalid indexed table text".into());
+    }
+    let length = layout.len() as u32;
+    layout[4..8].copy_from_slice(&length.to_le_bytes());
+    let mut refs = base[rs[1].payload..rs[1].end].to_vec();
+    refs[4..8].copy_from_slice(&source.to_le_bytes());
+    let mut group = Vec::new();
+    put_record(&mut group, 0x07d0, &base[rs[0].payload..rs[0].end]);
+    put_record(&mut group, 0x07d2, &refs);
+    put_record(&mut group, 0x090d, &layout);
+    put_record(&mut group, 0x07d8, &font.to_le_bytes());
+    put_record(&mut group, 0x07d7, &[]);
+    Ok(group)
 }
 
 fn canonical_named_table(
@@ -2653,6 +2846,7 @@ fn canonical_named_table(
     name: &str,
     values: &[String],
     anchor: (i16, i16),
+    font: u16,
 ) -> Result<Vec<u8>, String> {
     if source == 0 || name.len() > 32 || !(1..=256).contains(&values.len()) {
         return Err("Invalid named table source or value".into());
@@ -2681,16 +2875,33 @@ fn canonical_named_table(
     put_record(&mut group, 0x07d0, &base[rs[0].payload..rs[0].end]);
     put_record(&mut group, 0x07d2, &refs);
     put_record(&mut group, 0x090d, &layout);
-    put_record(&mut group, 0x07d8, &base[rs[3].payload..rs[3].end]);
+    put_record(&mut group, 0x07d8, &font.to_le_bytes());
     put_record(&mut group, 0x07d7, &[]);
     Ok(group)
 }
 
 impl TableGroup {
+    pub(crate) fn with_font_reference(mut self, font: u16) -> Result<Self, String> {
+        let rs = records(&self.bytes, 0)?;
+        let record = rs.iter().find(|record| record.kind == 0x07d8)
+            .filter(|record| record.end - record.payload == 2)
+            .ok_or("Invalid table font reference")?;
+        self.bytes[record.payload..record.end].copy_from_slice(&font.to_le_bytes());
+        Self::parse(&self.bytes)
+    }
+
     pub fn default_snapshot() -> Self {
         Self {
             bytes: table_template(),
         }
+    }
+
+    pub(crate) fn indexed_snapshot(source: u32, parameter: &ParameterGroup, anchor: (i16, i16), font: u16) -> Result<Self, String> {
+        if parameter.unit() != NumericUnit::Scalar || parameter.display_mode() == 0 {
+            return Err("Indexed tables require a named scalar parameter".into());
+        }
+        let value = named_table_value_text(parameter.value(), parameter.precision())?;
+        Self::parse(&canonical_indexed_table(source, parameter.name(), &[value], anchor, font)?)
     }
 
     pub fn named_snapshot(
@@ -2702,8 +2913,8 @@ impl TableGroup {
             return Err("This table supports scalar parameters".into());
         }
         table_value_text(parameter.value())?;
-        let value = format!("{:.*}", parameter.precision(), parameter.value());
-        let bytes = canonical_named_table(source, parameter.name(), &[value], anchor)?;
+        let value = named_table_value_text(parameter.value(), parameter.precision())?;
+        let bytes = canonical_named_table(source, parameter.name(), &[value], anchor, 1)?;
         Self::parse(&bytes)
     }
 
@@ -2914,11 +3125,18 @@ impl TableGroup {
         if u32::from_le_bytes(layout[4..8].try_into().unwrap()) as usize == layout.len()
             && let Some((name, values)) = named_table_parts(layout)
             && rows == values.len()
-            && normalized == canonical_named_table(source, &name, &values, anchor)?
+            && normalized == canonical_named_table(source, &name, &values, anchor, u16::from_le_bytes(bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
         {
             return Ok(Self {
                 bytes: bytes.to_vec(),
             });
+        }
+        if u32::from_le_bytes(layout[4..8].try_into().unwrap()) as usize == layout.len()
+            && let Some((name, values)) = indexed_table_parts(layout)
+            && rows == values.len()
+            && normalized == canonical_indexed_table(source, &name, &values, anchor, u16::from_le_bytes(bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+        {
+            return Ok(Self { bytes: bytes.to_vec() });
         }
         // A two-row table saved after Plot Points has an observed `t` in
         // the penultimate padding byte of 0x090d. It is outside the row text.
@@ -2936,7 +3154,23 @@ impl TableGroup {
 
     pub fn named_label_values(&self) -> Option<(String, Vec<String>)> {
         let rs = records(&self.bytes, 0).ok()?;
-        named_table_parts(&self.bytes[rs[2].payload..rs[2].end])
+        let layout = &self.bytes[rs[2].payload..rs[2].end];
+        // Legacy t[1] tables have fixed two-decimal rows and a specific font
+        // reference. Preserve that API only for the complete observed layout;
+        // newly generated t[1] captions can have other precisions and fonts.
+        if let Some(values) = default_table_values(layout, self.rows()) {
+            let mut normalized = self.bytes.clone();
+            normalized[10] &= !1;
+            if self.rows() == 2 && normalized[rs[2].end - 2..rs[2].end] == [b't', 0] {
+                normalized[rs[2].end - 2] = 0;
+            }
+            if canonical_table_values(self.source_id(), self.anchor(), &values).ok().as_deref()
+                == Some(normalized.as_slice())
+            {
+                return None;
+            }
+        }
+        named_table_parts(layout).or_else(|| indexed_table_parts(layout))
     }
 
     pub fn named_label_value(&self) -> Option<(String, String)> {
@@ -2978,7 +3212,20 @@ impl TableGroup {
         let (name, mut values) = self.named_label_values().ok_or("Not a named table")?;
         *values.last_mut().ok_or("Table has no rows")? = value.to_owned();
         values.push(value.to_owned());
-        self.bytes = canonical_named_table(self.source_id(), &name, &values, self.anchor())?;
+        self.replace_named_rows(&name, &values)?;
+        Ok(())
+    }
+
+    fn replace_named_rows(&mut self, name: &str, values: &[String]) -> Result<(), String> {
+        let rs = records(&self.bytes, 0)?;
+        let indexed = indexed_table_parts(&self.bytes[rs[2].payload..rs[2].end]).is_some();
+        let mut bytes = if indexed {
+            canonical_indexed_table(self.source_id(), name, values, self.anchor(), u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+        } else {
+            canonical_named_table(self.source_id(), name, values, self.anchor(), u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().map_err(|_| "Invalid table font reference")?))?
+        };
+        bytes[10] = self.bytes[10];
+        *self = Self::parse(&bytes)?;
         Ok(())
     }
 
@@ -3007,7 +3254,7 @@ impl TableGroup {
                 return Err("Table has only one row".into());
             }
             values.pop();
-            self.bytes = canonical_named_table(self.source_id(), &name, &values, self.anchor())?;
+            self.replace_named_rows(&name, &values)?;
             return Ok(());
         }
         let mut values = self
@@ -3158,6 +3405,22 @@ pub fn append_default_parameter_table(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn indexed_table_text_requires_valid_byte_lengths_and_matching_native_metadata() {
+        let bytes = object_group(include_bytes!("../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"), 15);
+        assert!(TableGroup::parse(&bytes).is_ok());
+        let rs = records(&bytes, 0).unwrap();
+        for (offset, value) in [(rs[1].payload, 2), (rs[2].payload + 16, 4), (rs[2].end - 1, b'!')] {
+            let mut invalid = bytes.clone();
+            invalid[offset] = value;
+            assert!(TableGroup::parse(&invalid).is_err());
+        }
+        let mut layout = bytes[rs[2].payload..rs[2].end].to_vec();
+        let at = layout.windows(4).position(|text| text == b"1.00").unwrap();
+        layout[at..at + 4].copy_from_slice("é00".as_bytes());
+        assert!(indexed_table_parts(&layout).is_none());
+    }
+
+    #[test]
     fn native_binary_fraction_rounding_avoids_false_decimal_ties() {
         // Independent native scalar controls: 3/40, 1/8, and -1/8 at precision 2.
         assert_eq!(format_numeric_value(3. / 40., 2), "0.07");
@@ -3231,15 +3494,12 @@ mod tests {
             angle.value_for_sources(&[90., 2.], &[NumericUnit::Degrees, NumericUnit::Scalar]),
             Some(45.)
         );
-        assert!(
-            ParameterCalculationGroup::from_sources(
-                &[2, 4],
-                "v1+v2",
-                (10, 30),
-                &[NumericUnit::Degrees, NumericUnit::Scalar]
-            )
-            .is_err()
-        );
+        let mixed = ParameterCalculationGroup::from_sources(
+            &[2, 4], "v1+v2", (10, 30),
+            &[NumericUnit::Degrees, NumericUnit::Scalar],
+        ).unwrap();
+        assert_eq!(mixed.unit(), NumericUnit::Scalar);
+        assert_eq!(mixed.value_for_sources(&[90.,2.], &[NumericUnit::Degrees,NumericUnit::Scalar]),Some(92.));
         assert!(
             ParameterCalculationGroup::from_sources(
                 &[2, 4],
@@ -3249,8 +3509,8 @@ mod tests {
             )
             .is_err()
         );
-        let ids = (1..=16).collect::<Vec<_>>();
-        let expr = (1..=16)
+        let ids = (1..=51).collect::<Vec<_>>();
+        let expr = (1..=51)
             .map(|i| format!("v{i}"))
             .collect::<Vec<_>>()
             .join("+");
@@ -3258,22 +3518,34 @@ mod tests {
             &ids,
             &expr,
             (10, 30),
-            &[NumericUnit::Scalar; 16],
+            &[NumericUnit::Scalar; 51],
         )
         .unwrap();
         assert_eq!(
-            largest.value_for_sources(&[1.; 16], &[NumericUnit::Scalar; 16]),
-            Some(16.)
+            largest.value_for_sources(&[1.; 51], &[NumericUnit::Scalar; 51]),
+            Some(51.)
         );
         assert!(
             ParameterCalculationGroup::from_sources(
-                &[1; 17],
+                &[1; 257],
                 "v1",
                 (10, 30),
-                &[NumericUnit::Scalar; 17]
+                &[NumericUnit::Scalar; 257]
             )
             .is_err()
         );
+        let mut invalid_index = largest.as_bytes().to_vec();
+        let numeric = records(&invalid_index, 0).unwrap()[2];
+        let last = numeric.end - 2;
+        invalid_index[last..last + 2].copy_from_slice(&0x6033_u16.to_le_bytes());
+        assert!(ParameterCalculationGroup::parse(&invalid_index).is_err());
+        let boundary = ParameterCalculationGroup::from_sources(
+            &[1; 256], "v256", (10, 30), &[NumericUnit::Scalar; 256],
+        ).unwrap();
+        assert_eq!(boundary.value_for_sources(&[2.; 256], &[NumericUnit::Scalar; 256]), Some(2.));
+        assert!(ParameterCalculationGroup::from_sources(
+            &[1; 256], "v257", (10, 30), &[NumericUnit::Scalar; 256],
+        ).is_err());
         let mut broken = group.as_bytes().to_vec();
         broken[44..48].copy_from_slice(&2_u32.to_le_bytes());
         assert!(ParameterCalculationGroup::parse(&broken).is_err());
@@ -3325,7 +3597,7 @@ mod tests {
             "sin()",
             "(2+3",
             "2)3",
-            "1".repeat(33).as_str(),
+            "1".repeat(257).as_str(),
         ] {
             assert!(
                 CalculationGroup::from_expression(expression).is_err(),
@@ -3342,6 +3614,38 @@ mod tests {
                 .value_text()
                 .ends_with('°')
         );
+    }
+
+    #[test]
+    fn source_free_quantity_expressions_keep_dimensions_and_edit_history_data() {
+        for (expression, value, unit) in [
+            ("0.3 cm", 0.3, NumericUnit::Length),
+            ("2 cm+3 cm", 5., NumericUnit::Length),
+            ("2 cm*3 cm", 6., NumericUnit::Area),
+            ("sqrt(3 cm*3 cm)", 3., NumericUnit::Length),
+            ("3 cm/2 cm", 1.5, NumericUnit::Scalar),
+            ("sin(pi rad/6)", 0.5, NumericUnit::Scalar),
+            ("abs(-pi rad/6)", 30., NumericUnit::Degrees),
+            ("1.+2.", 3., NumericUnit::Scalar),
+        ] {
+            let group = CalculationGroup::from_expression(expression).unwrap();
+            assert_eq!(group.unit(), unit, "{expression}");
+            assert!((group.evaluated_value().unwrap() - value).abs() < 1e-12, "{expression}");
+            assert_eq!(CalculationGroup::parse(group.as_bytes()).unwrap(), group);
+        }
+        let mut length = CalculationGroup::from_expression("0.3 cm").unwrap();
+        length.set_expression("sqrt(2 cm*2 cm)").unwrap();
+        assert_eq!(length.unit(), NumericUnit::Length);
+        assert_eq!(length.evaluated_value(), Some(2.));
+        let retained = length.clone();
+        assert!(length.set_expression("3").is_err());
+        assert_eq!(length, retained);
+        let mut malformed = retained.as_bytes().to_vec();
+        malformed[16..18].copy_from_slice(&50_u16.to_le_bytes());
+        assert!(CalculationGroup::parse(&malformed).is_err());
+        let undefined = CalculationGroup::from_expression("sqrt(-1*(1 cm)^2)").unwrap();
+        assert_eq!(undefined.unit(), NumericUnit::Length);
+        assert_eq!(undefined.evaluated_value(), None);
     }
 
     #[test]
@@ -3397,7 +3701,9 @@ mod tests {
             ParameterCalculationGroup::from_expression(1, "e", "e+1", (10, 30)).unwrap();
         assert_eq!(e_parameter.value(2.), Some(3.));
         assert!(ParameterCalculationGroup::from_expression(1, "n", "pi+e", (10, 30)).is_err());
-        assert!(ParameterCalculationGroup::from_expression(1, "n", "asin(n)+n", (10, 30)).is_err());
+        let mixed = ParameterCalculationGroup::from_expression(1, "n", "asin(n)+n", (10, 30)).unwrap();
+        assert_eq!(mixed.unit(), NumericUnit::Scalar);
+        assert!((mixed.value(0.5).unwrap()-30.5).abs()<1e-12);
     }
 
     #[test]

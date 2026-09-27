@@ -362,6 +362,7 @@ impl Editor {
                         | Kind::Line(_, _)
                         | Kind::ThreePointArc(_, _, _)
                         | Kind::ArcOnCircle(_, _, _)
+                        | Kind::CenterArc(_, _, _)
                 )
             )
         });
@@ -506,6 +507,23 @@ impl Editor {
             return;
         }
         let id = self.doc.add(Kind::ThreePointArc(ids[0], ids[1], ids[2]));
+        self.select_only(id);
+    }
+    pub(super) fn center_arc(&mut self) {
+        if self.doc.partial_view && self.doc.page_count == 1 {
+            self.status = "Construction on this document cannot be saved safely".into();
+            return;
+        }
+        let ids = &self.selection_order;
+        if ids.len() != 3 || ids.iter().any(|id| self.doc.position(*id).is_none()) {
+            self.status = "Select the center, arc start, then its end direction".into();
+            return;
+        }
+        if ids.iter().any(|id| self.doc.objects[*id - 1].page != self.doc.active_page) {
+            self.status = "Select points on the current page".into();
+            return;
+        }
+        let id = self.doc.add(Kind::CenterArc(ids[0], ids[1], ids[2]));
         self.select_only(id);
     }
     pub(super) fn arc_on_circle(&mut self) {

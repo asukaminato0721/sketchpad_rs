@@ -698,3 +698,21 @@ fn multi_page_point_measurements_append_after_existing_labels() {
     document.add(Kind::PointDistance(1, 2));
     assert!(document.can_save().is_err());
 }
+
+#[test]
+fn centered_arc_multi_page_construction_uses_local_references() {
+    let base=include_bytes!("../../../tests/fixtures/two_page_blank_native.gsp");
+    let mut d=Document::from_bytes(base,None).unwrap();
+    d.active_page=1;
+    let center=d.add(Kind::Free(Point{x:200.,y:180.}));
+    let start=d.add(Kind::Free(Point{x:260.,y:180.}));
+    let end=d.add(Kind::Free(Point{x:200.,y:60.}));
+    let arc=d.add(Kind::CenterArc(center,start,end));
+    let midpoint=d.add(Kind::PointOnArc(arc,0.5));
+    let bytes=d.encode().unwrap();
+    let saved=Document::from_bytes(&bytes,None).unwrap();
+    assert_eq!(saved.objects[arc-1].kind,Kind::CenterArc(center,start,end));
+    assert_eq!(saved.position(midpoint),d.position(midpoint));
+    assert_eq!(saved.encode().unwrap(),bytes);
+    d.verify_roundtrip().unwrap();
+}

@@ -41,9 +41,13 @@ fn plot_value_on_axis_tracks_its_axis_and_cross_opens() {
         .add_default_coordinate_system(Point { x: 199., y: 125. })
         .unwrap();
     assert_eq!(generated.plot_parameter_on_path(1, None).unwrap(), 9);
+    let generated_bytes = generated.encode().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
+        fs::write("/tmp/graph_plot_value_axis_font14_writer.gsp", &generated_bytes).unwrap();
+    }
     assert_eq!(
-        generated.encode().unwrap(),
-        include_bytes!("../../../tests/fixtures/graph_plot_value_axis_generated.gsp")
+        generated_bytes,
+        include_bytes!("../../../tests/fixtures/graph_plot_value_axis_font14_writer_native_verified.gsp")
     );
     let reopened = Document::from_bytes(&generated.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
@@ -539,9 +543,12 @@ fn default_table_keeps_fractional_snapshots_and_native_edit() {
         Kind::ValueTable(1, group) if group.default_values() == Some(vec![2.5, 3.25])
     ));
     let bytes = doc.encode().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
+        fs::write("/tmp/table_t1_snapshots_font14_writer.gsp", &bytes).unwrap();
+    }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_snapshots_generated.gsp")
+        include_bytes!("../../../tests/fixtures/table_t1_snapshots_font14_writer_native_verified.gsp")
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
@@ -574,9 +581,12 @@ fn default_table_accepts_later_parameter_source() {
             if group.source_id() == 2 && group.default_values() == Some(vec![2.5, 3.25])
     ));
     let bytes = doc.encode().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
+        fs::write("/tmp/table_t1_late_source_snapshots_font14_writer.gsp", &bytes).unwrap();
+    }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_late_source_snapshots_generated.gsp")
+        include_bytes!("../../../tests/fixtures/table_t1_late_source_snapshots_font14_writer_native_verified.gsp")
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
@@ -631,9 +641,12 @@ fn default_table_preserves_native_wide_values_and_mixed_snapshots() {
             if group.default_values() == Some(vec![-2.5, 12.34, -99.99])
     ));
     let bytes = doc.encode().unwrap();
+    if std::env::var_os("SKETCHPAD_WRITE_TABLE_FONT_FIXTURES").is_some() {
+        fs::write("/tmp/table_t1_mixed_width_snapshots_font14_writer.gsp", &bytes).unwrap();
+    }
     assert_eq!(
         bytes,
-        include_bytes!("../../../tests/fixtures/table_t1_mixed_width_snapshots_generated.gsp")
+        include_bytes!("../../../tests/fixtures/table_t1_mixed_width_snapshots_font14_writer_native_verified.gsp")
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);

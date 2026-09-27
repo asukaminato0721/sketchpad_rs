@@ -121,7 +121,8 @@ see `dev/numeric_polygon_path_analysis.md`.
 A focused length threshold probe preserves the source quantity and its native
 scale: AB=2.51cm and the actual Color expression produces0.33. Native Sketchpad
 opens/saves its 14-object file byte-identically, retained as
-`numeric_measured_literal_threshold_native_verified.gsp`. The retained native length-difference control keeps Length for subtraction.
+`numeric_measured_literal_threshold_native_verified.gsp`. The retained length-difference file has an old physical header; checkpoint 36
+full-window Native evidence establishes its Scalar result instead.
 Later independent ordinary calculator and custom-tool controls establish that
 adding a bare decimal to Length, Degrees, or Area produces Scalar; source-free
 `30°+2` likewise evaluates as Scalar32. Scalar source variables and computed
@@ -736,3 +737,29 @@ Only its copied calculation's suppression flag differs from the earlier API
 golden, matching the Native full-graph clipboard control above. The exact
 current writer is retained as
 `numeric_calculation_trailing_decimal_cube84_edited_authored_copied_suppression_writer_native_verified.gsp/png`.
+
+
+The current drawing-only audit excludes embedded prototypes before assigning
+object ordinals. Its 20,270 inspected unsupported drawing calculations agree
+with corpus checkpoint 25; 19,472 fail because a parent has no available numeric
+unit. Earlier raw-record prerequisite totals above can include namespace
+misalignment and should not determine implementation priority. See
+[broad feature priorities](broad_feature_priorities.md) for the corrected reason
+and missing-parent histograms. Log: `/tmp/sketchpad_broad_numeric_import_audit.log`
+(exit 0). Display pixel identity is not required; shared measurement and
+construction dependencies take priority over further local presentation profiles.
+
+
+Checkpoint 36 mixed-quantity follow-up
+------------------------------------
+
+Native calculator creation now proves Scalar results for addition/subtraction
+of unlike variables, literals and compound quantities. The earlier Length
+subtraction expectation came from a generated header and a cropped Native
+caption; a new full-window open/save confirms AB-2 is unitless. That fixture
+retains its original bytes while source binding exposes the corrected Scalar
+unit. The previous guards on centimeter-plus-Scalar and radian-plus-length
+expressions are replaced with value/unit checks. The retained trailing-decimal
+`1. cm+Scalar2` file now fully decodes and evaluates to Scalar 3.00. Other
+unsupported token layouts and unrelated declaration mismatches remain guarded.
+See [mixed arithmetic evidence](mixed_quantity_arithmetic_analysis.md).
