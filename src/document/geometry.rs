@@ -693,11 +693,13 @@ impl Document {
                     let second = d.line_points(*b)?;
                     intersect_straight(first, second)
                 }
+                Kind::CurveIntersection(carrier, curve, branch) => d.curve_intersection_position(*carrier, *curve, *branch),
+                Kind::BoundaryIntersection(a, b) => d.boundary_intersection(*a, *b),
                 Kind::LineCircleIntersection(a, b, variant) => {
                     d.straight_round_intersection(*a, *b, *variant)
                 }
                 Kind::CircleCircleIntersection(a, b, variant) => {
-                    circle_circle_intersection(d.circle_points(*a)?, d.circle_points(*b)?, *variant)
+                    d.round_round_intersection(*a, *b, *variant)
                 }
                 _ => None,
             };
@@ -732,26 +734,13 @@ impl Document {
         if let Some((start, end)) = self.linear_three_point_arc(round) {
             return intersect_straight(line, (start, end, LineMode::Segment));
         }
-        let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(round)?;
+        let (center, radius, _, sweep, clockwise_y) = self.arc_geometry(round)?;
         let mut hits = Vec::new();
         for root in 0..2 {
             let Some(point) = line_circle_intersection(line, (center, radius), root) else {
                 continue;
             };
-            let angle = (if clockwise_y { center.y - point.y } else { point.y - center.y })
-                .atan2(point.x - center.x);
-            let mut progress = if sweep >= 0. {
-                (angle - start).rem_euclid(std::f64::consts::TAU)
-            } else {
-                (start - angle).rem_euclid(std::f64::consts::TAU)
-            };
-            // A root rounded just below the start angle is the inclusive start,
-            // rather than a full turn beyond it. Do not use arc_parameter here:
-            // that projection clamps points outside the sweep to an endpoint.
-            if std::f64::consts::TAU - progress <= 1e-10 {
-                progress = 0.;
-            }
-            if progress <= sweep.abs() + 1e-10 {
+            if self.circular_arc_contains(round, point) {
                 hits.push(point);
             }
         }
@@ -765,6 +754,54 @@ impl Document {
             hits.last()
         }
         .copied()
+    }
+
+    // Membership uses the actual sweep, never a clamped path projection.
+    pub(super) fn circular_arc_contains(&self, arc: usize, point: Point) -> bool {
+        let Some((center, _, start, sweep, clockwise_y)) = self.arc_geometry(arc) else { return false; };
+        let angle = (if clockwise_y { center.y - point.y } else { point.y - center.y }).atan2(point.x - center.x);
+        let mut progress = if sweep >= 0. { (angle - start).rem_euclid(std::f64::consts::TAU) } else { (start - angle).rem_euclid(std::f64::consts::TAU) };
+        if std::f64::consts::TAU - progress <= 1e-10 { progress = 0.; }
+        progress <= sweep.abs() + 1e-10
+    }
+
+    fn round_round_intersection(&self, first: usize, second: usize, variant: usize) -> Option<Point> {
+        if variant > 1 { return None; }
+        let a = self.objects.get(first.checked_sub(1)?)?;
+        let b = self.objects.get(second.checked_sub(1)?)?;
+        if a.deleted || b.deleted { return None; }
+        if a.kind.is_circle() && b.kind.is_circle() {
+            return circle_circle_intersection(self.circle_points(first)?, self.circle_points(second)?, variant);
+        }
+        let frame = |id, kind: &Kind| {
+            if kind.is_circle() { self.circle_points(id) }
+            else if is_arc_kind(kind) { self.arc_geometry(id).map(|(center, radius, _, _, _)| (center, radius)) }
+            else { None }
+        };
+        let first_linear = self.linear_three_point_arc(first);
+        let second_linear = self.linear_three_point_arc(second);
+        if let (Some((a, b)), Some((c, d))) = (first_linear, second_linear) {
+            return intersect_straight((a, b, LineMode::Segment), (c, d, LineMode::Segment));
+        }
+        if let Some((start, end)) = first_linear.or(second_linear) {
+            let round = if first_linear.is_some() { second } else { first };
+            let kind = if first_linear.is_some() { &b.kind } else { &a.kind };
+            let circle = frame(round, kind)?;
+            let mut hits: Vec<_> = (0..2)
+                .filter_map(|root| line_circle_intersection((start, end, LineMode::Segment), circle, root))
+                .filter(|point| !is_arc_kind(kind) || self.circular_arc_contains(round, *point))
+                .collect();
+            // Native 13/14 use the first linear arc's direction. When the
+            // linear arc is second, the ordered operand roles reverse them.
+            if first_linear.is_none() { hits.reverse(); }
+            return match hits.as_slice() { [point] => Some(*point), [_, _] => hits.get(variant).copied(), _ => None };
+        }
+        let first_frame = frame(first, &a.kind)?;
+        let second_frame = frame(second, &b.kind)?;
+        let hits: Vec<_> = (0..2).filter_map(|root| circle_circle_intersection(first_frame, second_frame, root))
+            .filter(|point| (!is_arc_kind(&a.kind) || self.circular_arc_contains(first, *point))
+                && (!is_arc_kind(&b.kind) || self.circular_arc_contains(second, *point))).collect();
+        match hits.as_slice() { [point] => Some(*point), [_, _] => hits.get(variant).copied(), _ => None }
     }
 
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {

@@ -1536,6 +1536,8 @@ impl Document {
                 Kind::Parallel(a, b) => (6, vec![a, b]),
                 Kind::Bisector(a, b, c) => (7, vec![a, b, c]),
                 Kind::Intersection(a, b) => (9, vec![a, b]),
+                Kind::CurveIntersection(a, b, _) => (98, vec![a, b]),
+                Kind::BoundaryIntersection(a, b) => (93, vec![a, b]),
                 Kind::LineCircleIntersection(a, b, variant) => {
                     (if variant == 0 { 12 } else { 11 }, vec![a, b])
                 }
@@ -1577,12 +1579,14 @@ impl Document {
                     | Kind::Midpoint(..)
                     | Kind::SegmentMidpoint(..)
                     | Kind::Intersection(..)
+                    | Kind::BoundaryIntersection(..)
                     | Kind::LineCircleIntersection(..)
                     | Kind::CircleCircleIntersection(..)
             );
             let label_after_constraint = matches!(
                 o.kind,
-                Kind::PointOnSegment(..)
+                Kind::CurveIntersection(..)
+                    | Kind::PointOnSegment(..)
                     | Kind::PointOnRay(..)
                     | Kind::PointOnLine(..)
                     | Kind::PointOnCircle(..)
@@ -1612,6 +1616,10 @@ impl Document {
                         .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 match o.kind {
+                    Kind::CurveIntersection(_, _, branch) => {
+                        let mut payload = 98u32.to_le_bytes().to_vec(); payload.extend_from_slice(&branch.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
                     Kind::PointOnSegment(_, t) => {
                         let mut payload = vec![15, 0, 14, 0];
                         payload.extend_from_slice(&t.to_le_bytes());

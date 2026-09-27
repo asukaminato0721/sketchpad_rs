@@ -36,3 +36,7 @@ mod visibility_actions;
 mod straight_transform_sources;
 
 mod arc_intersections55;
+
+mod polygon_boundary56;
+
+mod curve_intersections57;

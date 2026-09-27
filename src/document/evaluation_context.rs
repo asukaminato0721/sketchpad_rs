@@ -119,6 +119,24 @@ impl Document {
         }
         Some(())
     }
+    /// Re-evaluate a local trace driver and its descendants while preserving
+    /// unrelated frozen inputs and caller substitutions.
+    pub(super) fn invalidate_evaluation_dependents(&mut self, driver: usize) {
+        let mut affected = BTreeSet::from([driver]);
+        for object in &self.objects {
+            if object.kind.dependencies().iter().any(|id| affected.contains(id)) { affected.insert(object.id); }
+        }
+        if let Some(context) = &mut self.evaluation_context {
+            for id in affected {
+                context.points.remove(&id); context.numbers.remove(&id);
+                context.straights.remove(&id); context.circles.remove(&id);
+                context.polygons.remove(&id); context.arcs.remove(&id); context.frames.remove(&id);
+                context.frozen.remove(&id);
+            }
+            context.seed_points.remove(&driver); context.seed_numbers.remove(&driver);
+        }
+    }
+
     pub(super) fn clear_evaluation_seed_ids(&mut self, ids: &[usize]) {
         if let Some(context) = &mut self.evaluation_context {
             for id in ids { context.seed_points.remove(id); context.seed_numbers.remove(id); }

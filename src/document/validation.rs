@@ -151,6 +151,14 @@ impl Document {
                         || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
                         || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
                 }
+                Kind::CurveIntersection(carrier, curve, _) => {
+                    if !super::curve_intersection::supported(&self.objects, *carrier, *curve, o.page, o.id) { return Err(format!("Invalid curve intersection {}", o.id)); }
+                }
+                Kind::BoundaryIntersection(straight, polygon) => {
+                    if !super::boundary_intersection::supported(&self.objects, *straight, *polygon, o.page, o.id) {
+                        return Err(format!("Invalid polygon boundary intersection {}", o.id));
+                    }
+                }
                 Kind::IterationPointAlias(binding) => {
                     if super::iteration_endpoint::binding_source(&self.objects, *binding, o.page, o.id).is_none() {
                         return Err(format!("Invalid iteration point alias {}", o.id));
@@ -505,7 +513,7 @@ impl Document {
                 && let Kind::Polygon(vertices) = &o.kind
             {
                 if vertices.len() < 3
-                    || vertices.iter().collect::<BTreeSet<_>>().len() != vertices.len()
+                    || vertices.iter().collect::<BTreeSet<_>>().len() < 3
                     || self.polygon_points(o.id).is_none()
                 {
                     return Err(format!("Invalid polygon {}", o.id));
@@ -922,6 +930,11 @@ impl Document {
                     !self.objects.get(id.saturating_sub(1)).is_some_and(|point| {
                         !point.deleted && point.page == o.page && id < o.id && is_point_kind(&point.kind)
                             && (self.position(id).is_some() || match point.kind {
+                                Kind::CurveIntersection(carrier, curve, _) => super::curve_intersection::supported(&self.objects, carrier, curve, point.page, point.id),
+                                Kind::CircleCircleIntersection(a, b, variant) => variant <= 1
+                                    && [a, b].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|host| is_arc_kind(&host.kind)))
+                                    && [a, b].iter().all(|&id| id < point.id && self.objects.get(id.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == point.page && (host.kind.is_circle() || is_arc_kind(&host.kind)))),
+                                Kind::BoundaryIntersection(straight, polygon) => super::boundary_intersection::supported(&self.objects, straight, polygon, point.page, point.id),
                                 Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
                                 Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
@@ -998,7 +1011,9 @@ impl Document {
             }
             if i >= self.source_count
                 && matches!(o.kind,Kind::CircleCircleIntersection(a,b,variant)
-                    if variant > 1 || self.circle_points(a).is_none() || self.circle_points(b).is_none())
+                    if variant > 1 || if [a, b].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|o| is_arc_kind(&o.kind))) {
+                        [a, b].iter().any(|&id| self.objects.get(id.saturating_sub(1)).is_none_or(|o| o.deleted || !(o.kind.is_circle() || is_arc_kind(&o.kind))))
+                    } else { self.circle_points(a).is_none() || self.circle_points(b).is_none() })
             {
                 return Err(format!("Invalid circles in intersection {}", o.id));
             }

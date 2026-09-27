@@ -597,7 +597,7 @@ fn generated_parameter_calculations_recalculate_and_remap() {
     );
     assert!(
         document
-            .add_parameter_calculation(1, &format!("speed+{}", "9".repeat(255)), (10, 100))
+            .add_parameter_calculation(1, &format!("speed+{}", "9".repeat(4095)), (10, 100))
             .is_err()
     );
 }

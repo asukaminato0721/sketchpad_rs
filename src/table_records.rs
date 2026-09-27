@@ -1069,6 +1069,10 @@ impl NumericUnit {
     }
 }
 
+// Native token counts are u16, independently observed above 256 (339 tokens).
+// Bound expression work separately from the 256-addressable source operands.
+const MAX_CALCULATION_TOKENS: usize = 4096;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterCalculationGroup {
     bytes: Vec<u8>,
@@ -1678,8 +1682,10 @@ fn calculation_words_for_sources(
             input = &input[ch.len_utf8()..];
         }
     }
-    if !(1..=256).contains(&words.len()) {
-        return Err("Calculation must use 1–256 tokens".into());
+    if !(1..=MAX_CALCULATION_TOKENS).contains(&words.len()) {
+        return Err(format!(
+            "Calculation must use 1–{MAX_CALCULATION_TOKENS} tokens"
+        ));
     }
     Ok(words)
 }
@@ -1867,7 +1873,7 @@ impl ParameterCalculationGroup {
         let token_count = payload.len().saturating_sub(92) / 2;
         if rs[0].end - rs[0].payload != 28
             || rs[1].end - rs[1].payload != 8
-            || !(1..=256).contains(&token_count)
+            || !(1..=MAX_CALCULATION_TOKENS).contains(&token_count)
             || payload.len() != 92 + 2 * token_count
             || rs[font_index].end - rs[font_index].payload != 2
             || rs.last().unwrap().end != rs.last().unwrap().payload
@@ -3902,7 +3908,13 @@ mod tests {
             assert!(group.evaluated_value().is_none());
             assert_eq!(group.value_text(), text);
         }
-        for expression in ["v+2", "sin()", "(2+3", "2)3", "1".repeat(257).as_str()] {
+        for expression in [
+            "v+2",
+            "sin()",
+            "(2+3",
+            "2)3",
+            "1".repeat(MAX_CALCULATION_TOKENS + 1).as_str(),
+        ] {
             assert!(
                 CalculationGroup::from_expression(expression).is_err(),
                 "{expression}"

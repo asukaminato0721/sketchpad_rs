@@ -836,6 +836,24 @@ impl Document {
                             &[local_point, local_line],
                         )?;
                     }
+                    Kind::CurveIntersection(a, b, branch) => {
+                        if !super::curve_intersection::supported(&self.objects, *a, *b, object.page, object.id) { return Err("Invalid curve intersection".into()); }
+                        let mut h = header(98); if !object.visible { h[2] = 1; } h[2] |= u8::from(object.presentation_suppressed) << 1; h[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style { style_records::set_visual_style(&mut h, style)?; }
+                        put_record(&mut groups, 0x7d0, &h);
+                        let mut refs = 2u32.to_le_bytes().to_vec(); for id in [*a, *b] { refs.extend_from_slice(&self.multi_page_local_reference(page, object.id, id)?.to_le_bytes()); }
+                        put_record(&mut groups, 0x7d2, &refs);
+                        let mut payload = 98u32.to_le_bytes().to_vec(); payload.extend_from_slice(&branch.to_le_bytes()); put_record(&mut groups, 0x7d3, &payload);
+                        if let Some(label) = &object.label { groups.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                        put_record(&mut groups, 0x7d7, &[]);
+                    }
+                    Kind::BoundaryIntersection(a, b) => {
+                        if !super::boundary_intersection::supported(&self.objects, *a, *b, object.page, object.id) {
+                            return Err("Invalid polygon boundary intersection".into());
+                        }
+                        let refs = [self.multi_page_local_reference(page, object.id, *a)?, self.multi_page_local_reference(page, object.id, *b)?];
+                        Self::append_multi_page_reference_group(&mut groups, object, 93, &refs)?;
+                    }
                     Kind::Intersection(a, b)
                     | Kind::LineCircleIntersection(a, b, _)
                     | Kind::CircleCircleIntersection(a, b, _) => {
@@ -859,8 +877,7 @@ impl Document {
                             }
                             Kind::CircleCircleIntersection(_, _, variant)
                                 if variant <= 1
-                                    && self.circle_points(*a).is_some()
-                                    && self.circle_points(*b).is_some() =>
+                                    && [*a, *b].iter().all(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_circle() || is_arc_kind(&o.kind))) =>
                             {
                                 if variant == 0 {
                                     14

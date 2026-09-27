@@ -357,6 +357,8 @@ impl Kind {
             | Kind::Circle(a, b)
             | Kind::CircleBySegment(a, b)
             | Kind::Intersection(a, b)
+            | Kind::CurveIntersection(a, b, _)
+            | Kind::BoundaryIntersection(a, b)
             | Kind::LineCircleIntersection(a, b, _)
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::PointDistance(a, b)
@@ -733,6 +735,8 @@ impl Kind {
             Kind::ArcOnCircle(a, b, c) => Kind::ArcOnCircle(m(a), m(b), m(c)),
             Kind::CenterArc(a, b, c) => Kind::CenterArc(m(a), m(b), m(c)),
             Kind::Intersection(a, b) => Kind::Intersection(m(a), m(b)),
+            Kind::CurveIntersection(a, b, branch) => Kind::CurveIntersection(m(a), m(b), branch),
+            Kind::BoundaryIntersection(a, b) => Kind::BoundaryIntersection(m(a), m(b)),
             Kind::LineCircleIntersection(a, b, root) => {
                 Kind::LineCircleIntersection(m(a), m(b), root)
             }
@@ -812,6 +816,8 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::Parallel(_, _)
             | Kind::Perpendicular(_, _)
             | Kind::Intersection(_, _)
+            | Kind::CurveIntersection(_, _, _)
+            | Kind::BoundaryIntersection(_, _)
             | Kind::LineCircleIntersection(_, _, _)
             | Kind::CircleCircleIntersection(_, _, _)
             | Kind::Bisector(_, _, _)
@@ -952,7 +958,9 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::NumericCoordinatePoint(_, _, _)
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
-                | Kind::LineCircleIntersection(_, _, _)
+                | Kind::CurveIntersection(_, _, _)
+            | Kind::BoundaryIntersection(_, _)
+            | Kind::LineCircleIntersection(_, _, _)
                 | Kind::CircleCircleIntersection(_, _, _)
         )
 }
@@ -1341,7 +1349,9 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::NumericCoordinatePoint(_, _, _)
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)
-        | Kind::LineCircleIntersection(_, _, _)
+        | Kind::CurveIntersection(_, _, _)
+            | Kind::BoundaryIntersection(_, _)
+            | Kind::LineCircleIntersection(_, _, _)
         | Kind::CircleCircleIntersection(_, _, _) => Some(VisualStyle::Point {
             shape: PointStyle::Medium,
             color: red,

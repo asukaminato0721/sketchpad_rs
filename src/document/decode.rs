@@ -359,6 +359,7 @@ impl Document {
             let mut point = None;
             let mut point_offset = None;
             let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
+            let mut curve_constraint_count = 0usize;
             let mut refs = Vec::new();
             let mut measurement_format = false;
             let mut measurement_precision = None;
@@ -403,6 +404,8 @@ impl Document {
                         | 68
                         | 69
                         | 88
+                        | 93
+                        | 98
                         | 109
                         | 110
                         | 75
@@ -569,9 +572,16 @@ impl Document {
                             safe = false;
                         }
                     }
-                    0x7d3 if matches!(code, 11 | 12) => {
+                    0x7d3 if code == 98 => { curve_constraint_count += 1; constraint_payload = Some((d.to_vec(), r.data.start)); }
+                    0x7d3 if matches!(code, 11 | 12 | 13 | 14 | 93) => {
                         // Bounded arc intersections have references only.
                         constraint_payload = Some((d.to_vec(), r.data.start));
+                    }
+                    0x7d3 if code == 33 && h[6..10] == [1, 0, 89, 0] => {
+                        // Inherited mapped-point dilation has references only;
+                        // retain every payload length so malformed operands reject.
+                        constraint_payload = Some((d.to_vec(), r.data.start));
+                        safe = false;
                     }
                     0x7d3 if code == 16 => {
                         // Proved vector packets have references only. Retain
@@ -623,7 +633,7 @@ impl Document {
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
-                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 90 | 94) && r.kind == 0x232e && d.is_empty())
+                    && !(matches!(code, 48 | 67 | 68 | 73 | 75 | 90 | 94 | 98) && r.kind == 0x232e && d.is_empty())
                     && !(code == 0
                         && matches!(u16::from_le_bytes([h[8], h[9]]), 79..=81)
                         && r.kind == 0x232e
@@ -1755,6 +1765,13 @@ impl Document {
                             && objects.get(angle.saturating_sub(1)).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Scalar)) => {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
+                            // Native preserves the stored mapped point identity through
+                            // numeric dilation, including vector-transformed mapped points.
+                            (Some(kind), [89, 0]) if is_point_kind(kind)
+                                && h.len() == 28 && h[6..8] == [1, 0]
+                                && constraint_payload.is_none()
+                                && [source, center, angle].iter().all(|&&id| id > 0 && id < objects.len() + 1 && objects[id - 1].page == page && !objects[id - 1].deleted)
+                                && objects[source - 1].header_offset.is_some_and(|at| b.get(at + 6..at + 10) == Some(&[1, 0, 89, 0])) => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
                             (Some(kind), [14, 0]) if is_segment_kind(kind) && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledSegment(*source, *center, *angle),
                             (Some(kind), [13, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Ray) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledRay(*source, *center, *angle),
                             (Some(kind), [12, 0]) if kind.fixed_transform_straight_mode() == Some(LineMode::Line) && h.len() == 28 && h[6..8] == [2, 0] => Kind::CalculatedRatioScaledLine(*source, *center, *angle),
@@ -1874,6 +1891,8 @@ impl Document {
                     (6, _, [a, b]) => Kind::Parallel(*a, *b),
                     (7, _, [a, b, c]) => Kind::Bisector(*a, *b, *c),
                     (9, _, [a, b]) => Kind::Intersection(*a, *b),
+                    (98, None, _) if curve_constraint_count == 1 => super::curve_intersection::decode(&objects, page, objects.len() + 1, h, &refs, constraint_payload.as_ref().map(|(p, _)| p.as_slice())).unwrap_or(Kind::Unsupported(code)),
+                    (93, None, _) => super::boundary_intersection::decode(&objects, page, objects.len() + 1, h, &refs, constraint_payload.as_ref().map(|(p, _)| p.as_slice())).unwrap_or(Kind::Unsupported(code)),
                     (11, _, [a, b])
                         if objects
                             .get(a.saturating_sub(1))
@@ -1908,8 +1927,13 @@ impl Document {
                     {
                         Kind::LineCircleIntersection(*a, *b, 0)
                     }
-                    (13, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 1),
-                    (14, _, [a, b]) => Kind::CircleCircleIntersection(*a, *b, 0),
+                    (13 | 14, _, [a, b]) => {
+                        let arc_parent = [a, b].iter().any(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| is_arc_kind(&o.kind)));
+                        if !arc_parent || (h.len() == 28 && h[6..10] == [1, 0, 45, 0] && point.is_none() && constraint_payload.is_none()
+                            && [a, b].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && (o.kind.is_circle() || is_arc_kind(&o.kind))))) {
+                            Kind::CircleCircleIntersection(*a, *b, if code == 13 { 1 } else { 0 })
+                        } else { Kind::Unsupported(code) }
+                    },
                     (63, _, [a, b]) => Kind::Line(*a, *b),
                     (64, _, [a, b]) => Kind::Ray(*a, *b),
                     (80, None, [center, start, end])

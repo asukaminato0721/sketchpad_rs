@@ -566,7 +566,7 @@ impl Editor {
         }
         let ids: Vec<_> = self.selection_order.clone();
         if ids.len() != 2 {
-            self.status = "Select two straight objects, a straight object and circle or arc, or two circles".into();
+            self.status = "Select intersecting lines, circles, arcs, polygons or curves".into();
             return;
         }
         let (a, b) = (ids[0], ids[1]);
@@ -583,6 +583,10 @@ impl Editor {
         };
         let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
             vec![Kind::Intersection(a, b)]
+        } else if self.doc.can_construct_boundary_intersection(a, b)
+            || self.doc.can_construct_boundary_intersection(b, a) {
+            let (straight, polygon) = if self.doc.objects[b - 1].kind.is_polygon() { (a, b) } else { (b, a) };
+            vec![Kind::BoundaryIntersection(straight, polygon)]
         } else if (self.doc.line_points(a).is_some() && round(b))
             || (round(a) && self.doc.line_points(b).is_some())
         {
@@ -595,13 +599,17 @@ impl Editor {
                 Kind::LineCircleIntersection(line, circle, 0),
                 Kind::LineCircleIntersection(line, circle, 1),
             ]
-        } else if self.doc.circle_points(a).is_some() && self.doc.circle_points(b).is_some() {
+        } else if let Some(points) = self.doc.curve_intersections(a, b) {
+            (0..points.len()).map(|branch| Kind::CurveIntersection(a, b, branch as u32)).collect()
+        } else if let Some(points) = self.doc.curve_intersections(b, a) {
+            (0..points.len()).map(|branch| Kind::CurveIntersection(b, a, branch as u32)).collect()
+        } else if round(a) && round(b) {
             vec![
                 Kind::CircleCircleIntersection(a, b, 0),
                 Kind::CircleCircleIntersection(a, b, 1),
             ]
         } else {
-            self.status = "Select two straight objects, a straight object and circle or arc, or two circles".into();
+            self.status = "Select intersecting lines, circles, arcs, polygons or curves".into();
             return;
         };
         self.doc.selected.clear();

@@ -22,6 +22,8 @@ mod history;
 mod images;
 mod iteration;
 mod iteration_endpoint;
+mod boundary_intersection;
+mod curve_intersection;
 mod movement;
 pub use movement::MovementValue;
 mod kind;
@@ -258,6 +260,10 @@ pub enum Kind {
     /// Circle arc defined by center, radius/start point and end direction.
     CenterArc(usize, usize, usize),
     Intersection(usize, usize),
+    /// First strictly forward polygon boundary event on an ordered straight carrier.
+    BoundaryIntersection(usize, usize),
+    /// A ranked, clamped crossing of an ordered carrier and a point curve.
+    CurveIntersection(usize, usize, u32),
     LineCircleIntersection(usize, usize, usize),
     CircleCircleIntersection(usize, usize, usize),
     Unsupported(u16),

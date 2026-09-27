@@ -40,9 +40,9 @@ fn is_point_header(payload: &[u8]) -> bool {
             | (1, 11)
             | (15, 10)
             | (101, 89)
-            | (9 | 11 | 12 | 13 | 14, 45)
+            | (9 | 11 | 12 | 13 | 14 | 93 | 98, 45)
             | (67 | 68 | 69 | 95 | 109 | 110 | 123, 56)
-    ) || (payload.len() == 28 && code == 16 && subtype == 89 && payload[6..8] == [1, 0])
+    ) || (payload.len() == 28 && matches!(code, 16 | 33) && subtype == 89 && payload[6..8] == [1, 0])
 }
 
 fn is_legacy_free_point_header(payload: &[u8]) -> bool {
