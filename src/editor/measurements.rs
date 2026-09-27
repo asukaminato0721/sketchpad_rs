@@ -187,6 +187,7 @@ impl Editor {
                         | Kind::PointOnRay(host, _)
                         | Kind::PointOnLine(host, _)
                         | Kind::PointOnArc(host, _)
+                        | Kind::PointOnCurve(host, _)
                         | Kind::PointOnCircle(host, _, _)
                         | Kind::PointOnPolygon(host, _, _),
                     ) if !equation => (ValueEquationKind::PointValue, *host),

@@ -500,7 +500,8 @@ impl Editor {
             self.doc
                 .objects
                 .get(id.saturating_sub(1))
-                .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind))
+                .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind)
+                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..)))
                 || matches!(
                     self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
                     Some(
@@ -515,7 +516,7 @@ impl Editor {
                 )
         });
         let Some(host) = host else {
-            self.status = "Select a segment, ray, line, circle, arc, or polygon".into();
+            self.status = "Select a segment, ray, line, circle, arc, polygon, or point curve".into();
             return;
         };
         if self.doc.objects[host - 1].page != self.doc.active_page {
@@ -549,7 +550,7 @@ impl Editor {
                         y: (vertices[0].y + vertices[1].y) / 2.,
                     })
                 } else {
-                    self.doc.point_on_arc(host, 0.5)
+                    self.doc.point_on_arc(host, 0.5).or_else(|| self.doc.point_on_curve(host, 0.5))
                 }
             });
         let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {

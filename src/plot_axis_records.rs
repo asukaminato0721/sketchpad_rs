@@ -13,7 +13,7 @@ pub fn decode_group(group: &[u8]) -> Result<[u32; 2], String> {
         || word(group, 0) != 28
         || word(group, 4) != 0x07d0
         || word(group, 8) & 0xffff != 95
-        || word(group, 8) >> 16 > 3
+        || word(group, 8) >> 16 > 4
         || word(group, 36) != 12
         || word(group, 40) != 0x07d2
         || word(group, 44) != 2
@@ -133,7 +133,13 @@ mod tests {
             literal[10..12].copy_from_slice(&flags.to_le_bytes());
             assert_eq!(decode_literal_group(&literal).unwrap(), (3, 2.5));
         }
-        for flags in [4_u16, 5, 0x8000, 0xffff] {
+        let mut hidden = TEMPLATE.to_vec();
+        hidden[10..12].copy_from_slice(&4u16.to_le_bytes());
+        assert_eq!(decode_group(&hidden).unwrap(), [1, 5]);
+        let mut literal = LITERAL_TEMPLATE.to_vec();
+        literal[10..12].copy_from_slice(&4u16.to_le_bytes());
+        assert!(decode_literal_group(&literal).is_err());
+        for flags in [5_u16, 6, 7, 0x8000, 0xffff] {
             let mut value = TEMPLATE.to_vec();
             value[10..12].copy_from_slice(&flags.to_le_bytes());
             assert!(decode_group(&value).is_err());

@@ -362,3 +362,180 @@ fn native_curve_intersection_goldens_preserve_all_ranked_crossings_and_opaque_sw
         assert_eq!(d.encode().unwrap(), bytes);
     }
 }
+
+#[test]
+fn scoped_point_curve_sampling_invalidates_only_local_driver_dependents() {
+    for (name, driver, target, cached_numbers) in [
+        ("parameter_h0", 7, 9, vec![8]),
+        ("locus_h0", 10, 14, vec![11, 12, 13]),
+    ] {
+        let bytes = fs::read(format!(
+            "tests/fixtures/curve_intersection57_{name}_native_saved.gsp"
+        ))
+        .unwrap();
+        let mut original = Document::from_bytes(&bytes, None).unwrap();
+        let frozen_point = original.add(Kind::Free(Point { x: 510., y: 410. }));
+        let seeded_point = original.add(Kind::Free(Point { x: 520., y: 420. }));
+        let external = original.add_named_parameter("a", 2., (10, 500)).unwrap();
+        let frozen_number = original
+            .add_parameter_calculation(external, "a*3", (10, 530))
+            .unwrap();
+        let original_bytes = original.encode().unwrap();
+        let baseline_target = original.position(target);
+        let mut scoped = original.clone();
+        let mut frozen = cached_numbers;
+        frozen.extend([target, frozen_point, frozen_number]);
+        scoped
+            .freeze_scoped_evaluation_inputs(&original, &frozen)
+            .unwrap();
+        scoped.set_evaluation_scalar(external, 7.).unwrap();
+        let external_seed = Point { x: 610., y: 510. };
+        scoped
+            .set_evaluation_point(seeded_point, external_seed)
+            .unwrap();
+        // A caller seed and frozen descendants would otherwise pin the entire
+        // local trace to a single point instead of allowing its own sweep.
+        if name == "parameter_h0" {
+            scoped.set_evaluation_scalar(driver, 2.).unwrap();
+        } else {
+            scoped
+                .set_evaluation_point(driver, curve_root(2., 0.))
+                .unwrap();
+        }
+        curve_close(scoped.position(target), baseline_target);
+        let Kind::CurveIntersection(carrier, curve, _) = scoped
+            .objects
+            .iter()
+            .find_map(|o| matches!(o.kind, Kind::CurveIntersection(..)).then_some(o.kind.clone()))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let roots = scoped.curve_intersections(carrier, curve).unwrap();
+        assert_eq!(roots.len(), 2, "{name}");
+        for (root, x) in roots.into_iter().zip([-1., 1.]) {
+            curve_close(Some(root), Some(curve_root(x, 1.)));
+        }
+        // Exercise the same invalidation boundary independently of the solver:
+        // local numeric/point caches are cleared, external caches/seeds survive.
+        let mut sample = scoped.clone();
+        sample.invalidate_evaluation_dependents(driver);
+        if name == "parameter_h0" {
+            sample.set_evaluation_scalar(driver, 1.).unwrap();
+        } else {
+            sample
+                .set_evaluation_point(driver, curve_root(1., 0.))
+                .unwrap();
+        }
+        curve_close(sample.position(target), Some(curve_root(1., 1.)));
+        for doc in [&sample, &scoped] {
+            curve_close(doc.position(frozen_point), original.position(frozen_point));
+            curve_close(doc.position(seeded_point), Some(external_seed));
+            assert_eq!(doc.numeric_value(external), Some(7.));
+            assert_eq!(doc.numeric_value(frozen_number), Some(6.));
+            assert_eq!(doc.encode().unwrap(), original_bytes);
+        }
+        curve_close(scoped.position(target), baseline_target);
+        curve_close(original.position(target), baseline_target);
+        assert_eq!(original.numeric_value(external), Some(2.));
+        assert_eq!(
+            original.position(seeded_point),
+            Some(Point { x: 520., y: 420. })
+        );
+        assert_eq!(original.encode().unwrap(), original_bytes);
+    }
+}
+
+#[test]
+fn authored_second_page_curve_intersections_encode_page_local_refs() {
+    // Retain the known curve source groups: high-level plot and locus creation
+    // currently require a single-page sketch, and this test covers only the
+    // new multi-page intersection adapter.
+    let bytes = fs::read("tests/fixtures/curve_intersection57_base_h0_native_saved.gsp").unwrap();
+    let mut d = Document::from_bytes(&bytes, None).unwrap();
+    d.add_blank_page().unwrap();
+    d.move_page(0, 1).unwrap();
+    d.active_page = 0;
+    let a = d.add(Kind::Free(Point { x: 80., y: 100. }));
+    let b = d.add(Kind::Free(Point { x: 180., y: 100. }));
+    let c = d.add(Kind::Free(Point { x: 130., y: 160. }));
+    d.add(Kind::Segment(a, c));
+    d.add(Kind::Line(a, b));
+    // Reopen to establish the actual first-page/global IDs after page ordering.
+    d.active_page = 1;
+    let mut d = Document::from_bytes(&d.encode().unwrap(), None).unwrap();
+    let first_page_count = d.objects.iter().filter(|o| o.page == 0).count();
+    assert_eq!(first_page_count, 5);
+    let first_page_carrier = d
+        .objects
+        .iter()
+        .find(|o| o.page == 0 && matches!(o.kind, Kind::Line(..)))
+        .unwrap()
+        .id;
+    let plot = d
+        .objects
+        .iter()
+        .find(|o| o.page == 1 && matches!(o.kind, Kind::FunctionPlot(..)))
+        .unwrap()
+        .id;
+    let carrier = d
+        .objects
+        .iter()
+        .find(|o| o.page == 1 && matches!(o.kind, Kind::Line(..)))
+        .unwrap()
+        .id;
+    assert_eq!(d.active_page, 1);
+    let result = d.add(Kind::CurveIntersection(carrier, plot, 200));
+    curve_close(d.position(result), Some(curve_root(1., 1.)));
+    let bytes = d.encode().unwrap();
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert_eq!(reopened.page_count, 2);
+    assert_eq!(reopened.active_page, 1);
+    assert_eq!(reopened.objects[result - 1].page, 1);
+    assert_eq!(
+        reopened.objects[result - 1].kind,
+        Kind::CurveIntersection(carrier, plot, 200)
+    );
+    curve_close(reopened.position(result), Some(curve_root(1., 1.)));
+    assert!(
+        reopened
+            .objects
+            .iter()
+            .all(|o| !matches!(o.kind, Kind::Unsupported(_)))
+    );
+    let rs = records(&bytes).unwrap();
+    let h = reopened.objects[result - 1].header_offset.unwrap();
+    let i = rs
+        .iter()
+        .position(|r| r.kind == 0x7d0 && r.data.start == h)
+        .unwrap();
+    let refs = rs[i..].iter().find(|r| r.kind == 0x7d2).unwrap();
+    let expected: Vec<_> = [
+        2u32,
+        (carrier - first_page_count) as u32,
+        (plot - first_page_count) as u32,
+    ]
+    .into_iter()
+    .flat_map(u32::to_le_bytes)
+    .collect();
+    assert_eq!(&bytes[refs.data.clone()], &expected);
+    let constraint = rs[i..].iter().find(|r| r.kind == 0x7d3).unwrap();
+    assert_eq!(
+        &bytes[constraint.data.clone()],
+        &[98u32, 200]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(reopened.encode().unwrap(), bytes);
+    let mut invalid = d.clone();
+    let cross_page = invalid.add(Kind::CurveIntersection(first_page_carrier, plot, 0));
+    assert!(
+        invalid
+            .curve_intersections(first_page_carrier, plot)
+            .is_none()
+    );
+    assert!(invalid.position(cross_page).is_none());
+    assert!(invalid.encode().is_err());
+    assert_eq!(d.encode().unwrap(), bytes);
+}

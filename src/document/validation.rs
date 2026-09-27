@@ -654,6 +654,11 @@ impl Document {
                     }
                 }
             }
+            if let Kind::PointOnCurve(path, t) = o.kind {
+                if !t.is_finite() || !super::curve_points::supported(&self.objects, path, o.page, o.id) {
+                    return Err(format!("Invalid curve point {}", o.id));
+                }
+            }
             if let Kind::PathValuePoint(source, path) = o.kind {
                 if !self
                     .objects
@@ -671,14 +676,12 @@ impl Document {
                             !host.deleted
                                 && host.page == o.page
                                 && path < o.id
-                                && self
-                                    .numeric_value(source)
-                                    .is_some_and(|value| value_plot_path_accepts(&host.kind, value))
+                                && (super::curve_points::supported(&self.objects, path, o.page, o.id)
+                                    || self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
                         })
                     || (self.position(o.id).is_none()
-                        && !self
-                            .numeric_value(source)
-                            .is_some_and(|value| self.undefined_native_path_plot(path, value)))
+                        && !super::curve_points::supported(&self.objects, path, o.page, o.id)
+                        && !self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)))
                 {
                     return Err(format!("Invalid path value point {}", o.id));
                 }
@@ -775,7 +778,9 @@ impl Document {
                     ValueEquationKind::PointValue => {
                         self.objects.get(first.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
                             && self.objects.get(second.saturating_sub(1)).is_some_and(|object| is_straight_kind(&object.kind) || object.kind.is_circle() || is_arc_kind(&object.kind)
-                                || object.kind.is_polygon())
+                                || object.kind.is_polygon()
+                                || (matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
+                                    && super::curve_points::supported(&self.objects, second, o.page, first)))
                     }
                     ValueEquationKind::LineEquation => {
                         self.objects
@@ -822,7 +827,10 @@ impl Document {
                 if !hosts_match
                     || (self.value_equation_value(o.id).is_none()
                         && !undefined_center_value
-                        && !undefined_straight_value)
+                        && !undefined_straight_value
+                        && !(kind == ValueEquationKind::PointValue
+                            && matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
+                            && super::curve_points::supported(&self.objects, second, o.page, first)))
                 {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
@@ -936,7 +944,9 @@ impl Document {
                                     && [a, b].iter().all(|&id| id < point.id && self.objects.get(id.saturating_sub(1)).is_some_and(|host| !host.deleted && host.page == point.page && (host.kind.is_circle() || is_arc_kind(&host.kind)))),
                                 Kind::BoundaryIntersection(straight, polygon) => super::boundary_intersection::supported(&self.objects, straight, polygon, point.page, point.id),
                                 Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
-                                Kind::PathValuePoint(source, path) => self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
+                                Kind::PointOnCurve(path, _) => super::curve_points::supported(&self.objects, path, point.page, point.id),
+                                Kind::PathValuePoint(source, path) => super::curve_points::supported(&self.objects, path, point.page, point.id)
+                                    || self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
                                     && (self.undefined_three_point_arc(path) || self.undefined_center_arc(path)),

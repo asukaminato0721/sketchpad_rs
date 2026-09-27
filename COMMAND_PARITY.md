@@ -67,9 +67,9 @@ The release gate is every sketch and document command verified after editing, sa
 
 | Command | Status |
 | --- | --- |
-| Point on Object | Partial: segment, ray, line, circle, arc, and polygon boundary hosts, including drag and generated-file cross-open; creation works on supported multi-page pages. Native ray/line constraints import and their generated object groups match byte for byte. Polygon boundary points retain the native edge index and local fraction, follow vertex changes, support linked perimeter values and closed-path animation, and save on supported multi-page pages. Known transformed polygon hosts also support creation, live vertex edits, dragging, and dependency copying; actual generated/copied files saved byte-identically in Sketchpad. A generated dragged point and its linked value displayed correctly and saved byte-identically in Sketchpad 5 |
+| Point on Object | Partial: segment, ray, line, circle, arc, and polygon boundary hosts, including drag and generated-file cross-open; creation works on supported multi-page pages. Native ray/line constraints import and their generated object groups match byte for byte. Polygon boundary points retain the native edge index and local fraction, follow vertex changes, support linked perimeter values and closed-path animation, and save on supported multi-page pages. Known transformed polygon hosts also support creation, live vertex edits, dragging, and dependency copying; actual generated/copied files saved byte-identically in Sketchpad. A generated dragged point and its linked value displayed correctly and saved byte-identically in Sketchpad 5 Point-target geometric and parameter loci now support a shared constrained-point definition, projection, dragging, dependency edits, undo and page-local saving; 60 Native controls prove analytic evaluation and source-specific bounds. Swept targets and function-plot free points remain pending; see [curve point evidence](dev/path_curve_points58_analysis.md). |
 | Midpoint | Partial: supported multi-page segment hosts; generated object group matches native Sketchpad byte for byte and cross-opens |
-| Intersection | Partial: straight, line-circle, and circle-circle constructions work on supported multi-page pages; four generated files opened and saved byte-identically in Sketchpad 5, and the straight-intersection group matches a native construction byte for byte |
+| Intersection | Partial: straight, line-circle, and circle-circle constructions work on supported multi-page pages; four generated files opened and saved byte-identically in Sketchpad 5, and the straight-intersection group matches a native construction byte for byte. Straight/arc intersections now reuse the same construction identity, with Native-proved signed branch order, inclusive endpoints, range filtering, tangent and linear-arc limits. Twenty public API files are byte-identical to independently Native-saved controls. Circle/arc and arc/arc behavior remains pending; see [analytic arc evidence](dev/arc_intersections55_analysis.md) |
 | Segment | Partial |
 | Ray | Partial: supported multi-page point pairs; generated object group matches native Sketchpad byte for byte and cross-opens |
 | Line | Partial: supported multi-page point pairs; generated object group matches native Sketchpad byte for byte and cross-opens |
@@ -118,7 +118,7 @@ Length, distance, perimeter, circumference, angle, circle and polygon area, arc 
 | Arc Length | Partial: three-point and center arcs edited; circle-based arc opened; dynamic value and SVG |
 | Radius | Partial: base and transformed circle radius, dynamic value, SVG; generated transformed-circle files opened and saved byte-identically in Sketchpad 5 |
 | Ratio | Partial: signed point ratio, dynamic projection after drag, SVG, generated positive and negative files opened in Sketchpad 5 |
-| Value of Point | Partial: original and transformed segment/circle hosts, constructed straight paths, rays, lines, three-point arcs, and circle-arcs with live constrained values, precision 0–5, calculations, iteration depth, and save/reopen. Six transformed/constructed path originals/edits display the expected native values and iteration counts and save byte-identically. See `dev/transformed_point_values_analysis.md`. Native ray/line and both arc measurement groups match generated groups byte for byte before label placement; generated and moved files displayed the expected values and saved byte-identically in Sketchpad 5 |
+| Value of Point | Partial: original and transformed segment/circle hosts, constructed straight paths, rays, lines, three-point arcs, and circle-arcs with live constrained values, precision 0–5, calculations, iteration depth, and save/reopen. Six transformed/constructed path originals/edits display the expected native values and iteration counts and save byte-identically. See `dev/transformed_point_values_analysis.md`. Native ray/line and both arc measurement groups match generated groups byte for byte before label placement; generated and moved files displayed the expected values and saved byte-identically in Sketchpad 5 Direct constrained points on point-target loci retain their normalized geometric value or canonical parameter value (radians for degree drivers); arbitrary-point inverse values on curves remain pending. See [Native curve parameter evidence](dev/path_curve_points58_native_analysis.md). |
 | Coordinates | Partial: Cartesian point pair updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; complex names/formats pending |
 | Abscissa (x) | Partial: Cartesian x value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; optional native captions and observed display/cache formats, including nonzero presentation tails, import and feed calculations |
 | Ordinate (y) | Partial: Cartesian y value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; optional native captions and observed display/cache formats, including nonzero presentation tails, import and feed calculations |
@@ -149,7 +149,7 @@ Length, distance, perimeter, circumference, angle, circle and polygon area, arc 
 | Graph Menu &gt; Show Grid | Partial: coordinate-system visibility decoded and saved; hidden frame components omitted from native/SVG rendering; original and generated hidden frames reopened in Sketchpad 5 |
 | Graph Menu &gt; Dotted Grid | Partial: original grid flag decoded, native and SVG dots rendered, undo/redo and save/reopen tested; generated Cartesian and Polar dotted frames opened and saved byte-identically in Sketchpad 5 |
 | Graph Menu &gt; Snap Points | Partial: page flag decoded and saved; free-point creation and drag snap to the nearest Cartesian or Polar grid intersection; visible grid remains drawn while snapping, matching the original; original drag results matched numerically, and port-generated file opened, snapped again, and saved in Sketchpad 5; other point kinds pending |
-| Graph Menu &gt; Plot Value on Axis/Path | Partial: selected default or named parameter plots as a live code 95 point, while the value dialog plots a fixed numeric code 123 point; X/Y axes, segments, rays, lines, circles, and polygon boundaries decode, render, and save. Scalar calculations can drive code 95 polygon points; independently verified code 123 literals use normalized perimeter fractions with wrapping. Fixed rotated/scaled ray and line hosts also support both record families: negative line positions extrapolate, while negative ray positions stay undefined with their marker segments. Authored, edited, and copied graphs save byte-identically; see [transformed path evidence](dev/transformed_straight_plot_analysis.md). Literal points retain labels and fonts through edits, copying, and new label creation; see [label evidence](dev/labeled_literal_path_analysis.md). Original and generated cases opened and saved in Sketchpad 5; further paths pending |
+| Graph Menu &gt; Plot Value on Axis/Path | Partial: selected default or named parameter plots as a live code 95 point, while the value dialog plots a fixed numeric code 123 point; X/Y axes, segments, rays, lines, circles, and polygon boundaries decode, render, and save. Scalar calculations can drive code 95 polygon points; independently verified code 123 literals use normalized perimeter fractions with wrapping. Fixed rotated/scaled ray and line hosts also support both record families: negative line positions extrapolate, while negative ray positions stay undefined with their marker segments. Authored, edited, and copied graphs save byte-identically; see [transformed path evidence](dev/transformed_straight_plot_analysis.md). Literal points retain labels and fonts through edits, copying, and new label creation; see [label evidence](dev/labeled_literal_path_analysis.md). Original and generated cases opened and saved in Sketchpad 5; further paths pending Scalar code95 values now locate points on point-target geometric and parameter loci using source-specific parameters and bounds; undefined targets preserve their dependent segments. Native flag4 hides the plotted point while retaining its geometry and observers. Code123 curve hosts remain pending; see [curve point evidence](dev/path_curve_points58_analysis.md) and [identity evidence](dev/path_identity58_native_analysis.md). |
 | Graph Menu &gt; Plot Points/Plot as (x, y)/Plot as (r, θ) | Partial: supported one-page sketches with an active coordinate frame can plot entered Cartesian or polar coordinates, including multiple points. Original files with a parameter, free point, or text as the first object decode and round-trip; their generated point groups match. Generated mixed-layout and multi-point sketches opened and saved byte-identically in Sketchpad 5. Literal plotted points depend only on their frame, retain supported labels/fonts/empty attributes, and follow frame drags and live unit edits. Their counted reference packet no longer creates a false dependency on the first page object. Unrelated first-point deletion and label editing survive strict save/reopen. Multi-page plotting and broader source layouts pending |
 | Graph Menu &gt; Plot Table Data | Partial: one- to 256-row Cartesian or polar plot from the supported t₂/t₁ table, including values from −99.99 to 99.99 in both columns and a table and frame after a free point; duplicate rows combine, distinct rows produce separate points, and parameter edits update the live table row while plotted points stay fixed. A supported table can be plotted again after an edit. Original fractional and distinct-row polar files decode and round-trip; generated five-distinct-row, repeated-plot, shifted-ID polar, and mixed-width Cartesian files cross-opened byte-identically. Other column sources pending |
 | Graph Menu &gt; Plot Function/Plot New Function | Partial: clicking a function formula selects its definition; Plot Function reuses that definition without adding a second one. Cartesian arithmetic expressions and the shared 13 built-in functions, plus π/e constants, in `x` plot and update after origin drag. Square-root and logarithm plots omit undefined-domain segments. A derivative can also be plotted; a generated square derivative plot opened and saved byte-identically in Sketchpad 5. Double-clicking a plot edits its numeric domain and sample count; original and newly created range edits cross-opened byte-identically. Tangent and reciprocal curves leave asymptote gaps in native/SVG rendering and hit testing. Original trig, compound, decimal, and reciprocal formulas decode; generated existing-definition, tangent, reciprocal, sine, combined trig, compound, and decimal plots opened and saved byte-identically in Sketchpad 5. Supported referenced definitions also plot through live numeric and nested function sources, including inherited reciprocal pole gaps. Other sources, function types, arrowheads, and advanced discontinuities pending |
@@ -329,3 +329,63 @@ Independent point and support observations confirm both ray/line parameter frame
 and directions. The port preserves valid definitions through degeneration and undo;
 a malformed canonical straight output cannot be reinterpreted through a legacy
 point/circle decoder fallback. See [public API evidence](dev/straight_transform54_native_analysis.md).
+
+
+Checkpoint55 adds intrinsic point access to single-branch mapped iteration
+results, using the shared mapped evaluator. Imported aliases and public API
+authoring expose the final carried output, including original source position
+at numeric depth0 and undefined terminal geometry without prefix fallback.
+Final-only rendering does not change this point. Typed undefined endpoint
+segments remain savable. Caller substitutions and frozen external inputs are
+preserved; ordinary binding image behavior is unchanged. The original-layout
+Native controls retain an out-of-range borrowed font selector as read-only
+metadata; direct API controls use valid formatting and provide separate
+creation/edit/save verification. See [endpoint evidence](dev/iteration_endpoint55_native_analysis.md)
+and [shared prerequisite audit](dev/numeric_shared_roots55_analysis.md).
+
+The final full corpus scan recovers2,560 drawing slots, including458 calculations,
+while all1,599 originals remain byte-identical. The scoped core/editor/numeric/
+coverage gates pass994 tests. These are measured implementation checks; the
+release command gate remains unmet. Copying and custom-tool work remain deferred.
+
+
+Checkpoint56 adds directed polygon boundary construction and command support
+for ordered Segment/Ray/Line parents in either selection order. One intrinsic
+point Kind searches positive carrier events independently of the source extent,
+retains undefined definitions, and supports live edits, undo, deletion and
+page-local save. Repeated/retraced polygon runs remain ordered vertex sequences.
+Twenty-four Native controls and24 direct public API files match byte-for-byte.
+See [boundary command evidence](dev/polygon_boundary56_analysis.md).
+
+Inherited point89 Scalar dilation33 imports now normalize to the existing
+generic transform definition while preserving source records and styles.
+Actual source identity, operands and payload guards remain strict. Seven
+Native controls prove canonical4 equivalence, frozen inputs, edits and defined
+zero/negative ratios. Quantity and inherited rotation cases remain guarded.
+See [Scalar evidence](dev/inherited_numeric_transform56_native_analysis.md).
+
+The final full scan restores1,779 drawing objects, including194 calculations,
+plus seven incidental prototype objects, with all1,599 originals byte-exact.
+Scoped checks pass1,004 tests (829 core,137 editor,34 numeric,4 coverage).
+These measured checks do not satisfy the remaining release command gate.
+Copying and custom-tool implementation remain deferred.
+
+Checkpoint57 extends the intersection command to FunctionPlot and point-target
+Locus/ParameterLocus curves, normalizing selections to the proved carrier/curve
+roles and creating every ranked crossing. Curve tangencies, gaps and undefined
+sources retain their evidenced behavior. Arc/Circle and Arc/Arc selections also
+use the existing13/14 constructions, with native circular and bounded linear
+arc rules. Direct API61 curve files and18 round-pair files match Native saves
+byte-for-byte. The tests cover live edits, dependent observers, undo/deletion,
+scoped evaluation and page-local curve references. Calculation readers/writers
+accept up to4,096 tokens while retaining the existing256 source limit and strict
+units/schema guards; six Native controls include two unmodified originals.
+
+The full scan restores1,344 drawing slots, including304 calculations, and nine
+additional documents become fully decoded. All1,599 originals remain
+byte-identical. These checks do not establish the remaining release command
+requirements. Copying and custom-tool work remain deferred.
+
+Final checkpoint57 scoped gates pass1,019 tests (841 core,140 editor,34 numeric,
+four coverage). New page-local intersections retain imported curve sources;
+new plot authoring keeps its existing single-page restriction.

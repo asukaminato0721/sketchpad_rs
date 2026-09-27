@@ -548,7 +548,8 @@ impl Document {
                     Kind::PointOnSegment(host, t)
                     | Kind::PointOnRay(host, t)
                     | Kind::PointOnLine(host, t)
-                    | Kind::PointOnArc(host, t) => {
+                    | Kind::PointOnArc(host, t)
+                    | Kind::PointOnCurve(host, t) => {
                         if !t.is_finite()
                             || matches!(
                                 object.kind,
@@ -571,6 +572,8 @@ impl Document {
                                 && straight_kind_mode(&host_object.kind) != Some(LineMode::Line)
                             || matches!(object.kind, Kind::PointOnArc(_, _))
                                 && !is_arc_kind(&host_object.kind)
+                            || matches!(object.kind, Kind::PointOnCurve(..))
+                                && !super::curve_points::supported(&self.objects, *host, page, object.id)
                         {
                             return Err("Invalid point host on this page".into());
                         }
@@ -599,6 +602,7 @@ impl Document {
                             Kind::PointOnRay(_, _) => 13,
                             Kind::PointOnSegment(_, _) => 14,
                             Kind::PointOnArc(_, _) => 67,
+                            Kind::PointOnCurve(_, _) => 42,
                             _ => unreachable!(),
                         };
                         let mut constraint = vec![15, 0, code, 0];
@@ -635,7 +639,7 @@ impl Document {
                         put_record(&mut groups, 0x7d2, &references);
                         let mut constraint = 15u16.to_le_bytes().to_vec();
                         constraint.extend_from_slice(
-                            &polygon_subtype(count)
+                            &super::decode::polygon_constraint_subtype(&self.objects, &self.original, *host, count)
                                 .ok_or("Too many polygon vertices")?
                                 .to_le_bytes(),
                         );
@@ -1537,6 +1541,11 @@ impl Document {
                 {
                     expected.kind = current.kind.clone();
                 }
+                (Kind::PointOnCurve(old_host, _), Kind::PointOnCurve(host, t))
+                    if old_host == host && t.is_finite()
+                        && super::curve_points::supported(&self.objects, *host, current.page, current.id) => {
+                    expected.kind = current.kind.clone();
+                }
                 (Kind::PointOnPolygon(old_host, _, _), Kind::PointOnPolygon(host, edge, t))
                     if old_host == host
                         && t.is_finite()
@@ -1634,6 +1643,7 @@ impl Document {
                         | Kind::PointOnRay(_, _)
                         | Kind::PointOnLine(_, _)
                         | Kind::PointOnArc(_, _)
+                        | Kind::PointOnCurve(_, _)
                         | Kind::PointOnPolygon(_, _, _)
                         | Kind::PointOnCircle(_, _, _)
                 )
@@ -1669,6 +1679,10 @@ impl Document {
                             .ok_or("Short arc-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
                     }
+                    Kind::PointOnCurve(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 42, 0]) { return Err("Invalid curve-point constraint".into()); }
+                        out.get_mut(at + 4..at + 12).ok_or("Short curve-point constraint")?.copy_from_slice(&t.to_le_bytes());
+                    }
                     Kind::PointOnPolygon(_, edge, t) => {
                         if out.get(at..at + 2) != Some(&[15, 0]) {
                             return Err("Invalid polygon-point constraint".into());
@@ -1697,7 +1711,7 @@ impl Document {
             if saved.visible != current.visible {
                 let mut class = u32_at(&out, header);
                 if current.visible {
-                    class &= !0x1_0000;
+                    class &= if matches!(current.kind, Kind::PathValuePoint(..)) { !0x5_0000 } else { !0x1_0000 };
                 } else {
                     class |= 0x1_0000;
                 }

@@ -1,7 +1,7 @@
 //! Native98 ranks crossings on an ordered carrier, after domain filtering.
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
+use super::point_curve::PointCurve;
 use super::{Document, Kind, LineMode, Object, Point};
-use crate::table_records::ParameterGroup;
 
 fn point_curve(objects: &[Object], kind: &Kind) -> bool {
     match kind {
@@ -63,169 +63,6 @@ pub(super) fn decode(
         *curve,
         u32::from_le_bytes(payload[4..8].try_into().ok()?),
     ))
-}
-
-enum Source {
-    Function {
-        definition: usize,
-        frame: crate::graph::CoordinateFrame,
-        min: f64,
-        max: f64,
-    },
-    Parameter {
-        sample: Box<Document>,
-        parameter: ParameterGroup,
-        driver: usize,
-        target: usize,
-        min: f64,
-        max: f64,
-    },
-    Geometric {
-        sample: Box<Document>,
-        driver: usize,
-        path: usize,
-        target: usize,
-        kind: Kind,
-    },
-}
-struct PointCurve<'a> {
-    original: &'a Document,
-    source: Source,
-    intervals: usize,
-}
-impl<'a> PointCurve<'a> {
-    fn new(doc: &'a Document, id: usize) -> Option<Self> {
-        let object = doc.objects.get(id.checked_sub(1)?)?;
-        if object.deleted {
-            return None;
-        }
-        let (source, intervals) = match &object.kind {
-            Kind::FunctionPlot(definition, frame, min, max, samples) => {
-                if !min.is_finite() || !max.is_finite() || min >= max || *samples < 2 {
-                    return None;
-                }
-                (
-                    Source::Function {
-                        definition: *definition,
-                        frame: doc.graph_frame(*frame)?,
-                        min: *min,
-                        max: *max,
-                    },
-                    samples.saturating_sub(1) as usize,
-                )
-            }
-            Kind::ParameterLocus(refs, min, max, samples) => {
-                let (&target, &driver) = (refs.first()?, refs.get(1)?);
-                let Kind::Parameter(parameter) = &doc.objects.get(driver.checked_sub(1)?)?.kind
-                else {
-                    return None;
-                };
-                if !min.is_finite()
-                    || !max.is_finite()
-                    || min >= max
-                    || *samples < 2
-                    || !is_point_kind(&doc.objects.get(target.checked_sub(1)?)?.kind)
-                {
-                    return None;
-                }
-                let mut sample = Box::new(doc.clone());
-                sample.invalidate_evaluation_dependents(driver);
-                (
-                    Source::Parameter {
-                        sample,
-                        parameter: parameter.clone(),
-                        driver,
-                        target,
-                        min: *min,
-                        max: *max,
-                    },
-                    samples.saturating_sub(1) as usize,
-                )
-            }
-            Kind::Locus(refs, samples) => {
-                let (&target, &path, &driver) = (refs.first()?, refs.get(1)?, refs.get(2)?);
-                let kind = doc.objects.get(driver.checked_sub(1)?)?.kind.clone();
-                if *samples < 2
-                    || !is_point_kind(&doc.objects.get(target.checked_sub(1)?)?.kind)
-                    || !matches!(
-                        kind,
-                        Kind::PointOnSegment(..) | Kind::PointOnCircle(..) | Kind::PointOnArc(..)
-                    )
-                {
-                    return None;
-                }
-                let mut sample = Box::new(doc.clone());
-                sample.invalidate_evaluation_dependents(driver);
-                (
-                    Source::Geometric {
-                        sample,
-                        driver,
-                        path,
-                        target,
-                        kind,
-                    },
-                    *samples as usize,
-                )
-            }
-            _ => return None,
-        };
-        Some(Self {
-            original: doc,
-            source,
-            intervals: intervals.clamp(64, 4096),
-        })
-    }
-    fn at(&mut self, fraction: f64) -> Option<Point> {
-        let point = match &mut self.source {
-            Source::Function {
-                definition,
-                frame,
-                min,
-                max,
-            } => {
-                let x = *min + (*max - *min) * fraction;
-                let value = frame.world(x, self.original.function_value(*definition, x)?)?;
-                Point {
-                    x: value.x,
-                    y: value.y,
-                }
-            }
-            Source::Parameter {
-                sample,
-                parameter,
-                driver,
-                target,
-                min,
-                max,
-            } => {
-                let value = (*min + (*max - *min) * fraction) / parameter.native_unit_scale();
-                if !parameter.set_evaluation_value(value) {
-                    return None;
-                }
-                sample.objects[*driver - 1].kind = Kind::Parameter(parameter.clone());
-                sample.position(*target)?
-            }
-            Source::Geometric {
-                sample,
-                driver,
-                path,
-                target,
-                kind,
-            } => {
-                sample.objects[*driver - 1].kind = match kind {
-                    Kind::PointOnSegment(..) => Kind::PointOnSegment(*path, fraction),
-                    Kind::PointOnArc(..) => Kind::PointOnArc(*path, fraction),
-                    Kind::PointOnCircle(..) => {
-                        let angle = fraction * std::f64::consts::TAU;
-                        Kind::PointOnCircle(*path, angle.cos(), angle.sin())
-                    }
-                    _ => return None,
-                };
-                sample.position(*target)?
-            }
-        };
-        (point.x.is_finite() && point.y.is_finite()).then_some(point)
-    }
 }
 
 enum Carrier {
@@ -326,7 +163,7 @@ impl Document {
         let mut curve = PointCurve::new(self, curve)?;
         let mut hits = Vec::<(f64, Point)>::new();
         let curve_order = matches!(carrier, Carrier::Round { arc: None, .. });
-        let include_max = matches!(curve.source, Source::Parameter { .. });
+        let include_max = curve.includes_maximum();
         let mut record = |point: Point, curve_parameter: f64| {
             if carrier.residual(point).abs() > 1e-7 {
                 return;

@@ -104,11 +104,11 @@ impl Document {
                     class =
                         (class & !0x0004_ffff) | code | if independent { 0 } else { 0x0004_0000 };
                 }
-                if o.visible {
-                    class &= !0x1_0000;
-                } else {
-                    class |= 0x1_0000;
-                }
+                if matches!(o.kind, Kind::PathValuePoint(..)) {
+                    if (class & 0x5_0000 == 0) != o.visible {
+                        if o.visible { class &= !0x5_0000; } else { class |= 0x1_0000; }
+                    }
+                } else if o.visible { class &= !0x1_0000; } else { class |= 0x1_0000; }
                 out[i..i + 4].copy_from_slice(&class.to_le_bytes());
                 if o.kind.transform_definition().is_some_and(|definition| {
                     definition.element() == ElementType::Polygon
@@ -171,6 +171,9 @@ impl Document {
                         if out.get(i..i + 4).is_some_and(|payload|
                             payload == [15, 0, 12, 0]
                                 || super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnCurve(_, t) if out.get(i..i + 4) == Some(&[15, 0, 42, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
@@ -1092,6 +1095,9 @@ impl Document {
             }
             if let Kind::PathValuePoint(source, axis) = o.kind {
                 let mut group = plot_axis_records::encode_group([source as u32, axis as u32])?;
+                group[12] = u8::from(o.tracing);
+                if let Some(style) = o.visual_style { crate::style_records::set_visual_style(&mut group[8..36], style)?; }
+                if o.presentation_suppressed { group[10] |= 2; }
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -1519,6 +1525,7 @@ impl Document {
                 | Kind::PointOnLine(host, _)
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _)
+                | Kind::PointOnCurve(host, _)
                 | Kind::PointOnPolygon(host, _, _) => (15, vec![host]),
                 Kind::Midpoint(_, _) => (
                     1,
@@ -1591,6 +1598,7 @@ impl Document {
                     | Kind::PointOnLine(..)
                     | Kind::PointOnCircle(..)
                     | Kind::PointOnArc(..)
+                    | Kind::PointOnCurve(..)
                     | Kind::PointOnPolygon(..)
             );
             if !label_after_constraint
@@ -1632,6 +1640,11 @@ impl Document {
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
+                    Kind::PointOnCurve(_, t) => {
+                        let mut payload = vec![15, 0, 42, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
                     Kind::PointOnArc(_, t) => {
                         let mut payload = vec![15, 0, 67, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
@@ -1640,7 +1653,8 @@ impl Document {
                     Kind::PointOnPolygon(host, edge, t) => {
                         let count = polygon_vertex_count_for_encoding(&self.objects, host)
                             .ok_or("Missing polygon boundary host")?;
-                        let subtype = polygon_subtype(count).ok_or("Too many polygon vertices")?;
+                        let subtype = super::decode::polygon_constraint_subtype(&self.objects, &self.original, host, count)
+                            .ok_or("Too many polygon vertices")?;
                         let mut payload = 15u16.to_le_bytes().to_vec();
                         payload.extend_from_slice(&subtype.to_le_bytes());
                         payload.extend_from_slice(&t.to_le_bytes());

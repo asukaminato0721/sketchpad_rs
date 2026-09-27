@@ -614,8 +614,12 @@ impl Document {
                     }
                 }
                 Kind::PathValuePoint(source, path) => {
+                    let scalar = d.objects.get(source.checked_sub(1)?)?;
+                    if scalar.deleted || scalar.page != object.page || *source >= object.id
+                        || scalar.kind.numeric_unit() != Some(crate::table_records::NumericUnit::Scalar) { return None; }
                     let value = d.numeric_value(*source)?;
-                    if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
+                    if super::curve_points::supported(&d.objects, *path, object.page, object.id) { d.plotted_curve_position(*path, value) }
+                    else if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
                         d.point_at_polygon_parameter(*path, value)
                     } else {
                         on_path(d, *path, value, seen)
@@ -664,6 +668,9 @@ impl Document {
                     })
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
+                Kind::PointOnCurve(host, t) => {
+                    if super::curve_points::supported(&d.objects, *host, object.page, object.id) { d.point_on_curve(*host, *t) } else { None }
+                },
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
                 Kind::IterationPointAlias(_) => d.iteration_endpoint(id),
                 Kind::Midpoint(a, b) => {
@@ -1293,6 +1300,11 @@ impl Document {
                 };
                 Kind::PointOnPolygon(host, edge, t)
             }
+            Some(Kind::PointOnCurve(host, _)) => {
+                let host = *host;
+                let Some(t) = self.curve_parameter(host, p) else { return false; };
+                Kind::PointOnCurve(host, t)
+            }
             Some(Kind::PointOnArc(host, _)) => {
                 let host = *host;
                 let Some(t) = self.arc_parameter(host, p) else {
@@ -1428,6 +1440,7 @@ impl Document {
             ref kind if kind.is_arc() => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
+            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
             _ => None,
         }
     }

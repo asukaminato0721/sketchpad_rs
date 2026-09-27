@@ -386,6 +386,10 @@ impl Document {
         };
         match kind {
             ValueEquationKind::PointValue => {
+                if let Kind::PointOnCurve(host, t) = self.objects.get(first - 1)?.kind
+                    && host == second {
+                    return self.curve_point_value(host, t).map(EquationValue::PointValue);
+                }
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
                     ref kind if is_straight_kind(kind) => {

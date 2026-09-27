@@ -136,6 +136,10 @@ impl Document {
         if object.page != self.active_page || object.deleted {
             return Err("Select a path on this page".into());
         }
+        if super::curve_points::supported(&self.objects, path, object.page, self.objects.len() + 1) {
+            if !value.is_finite() { return Err("Select a finite scalar value".into()); }
+            return Ok(self.plotted_curve_position(path, value));
+        }
         if is_arc_kind(&object.kind) {
             if !value.is_finite() || !self.plot_arc_host_available(path) {
                 return Err("Select a valid arc and a finite value".into());

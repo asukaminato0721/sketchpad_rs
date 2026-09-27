@@ -330,6 +330,7 @@ impl Kind {
             | Kind::ValueTable(host, _)
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
+            | Kind::PointOnCurve(host, _)
             | Kind::PointOnPolygon(host, _, _)
             | Kind::PathLiteralPoint(host, _)
             | Kind::SegmentLength(host)
@@ -621,6 +622,7 @@ impl Kind {
             Kind::PointOnLine(a, t) => Kind::PointOnLine(m(a), t),
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
+            Kind::PointOnCurve(a, t) => Kind::PointOnCurve(m(a), t),
             Kind::PointOnPolygon(a, edge, t) => Kind::PointOnPolygon(m(a), edge, t),
             Kind::Locus(ref refs, samples) => {
                 Kind::Locus(refs.iter().map(|id| m(*id)).collect(), samples)
@@ -805,6 +807,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointOnLine(_, _)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
+            | Kind::PointOnCurve(_, _)
             | Kind::PointOnPolygon(_, _, _)
             | Kind::Segment(_, _)
             | Kind::Circle(_, _)
@@ -947,6 +950,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PointOnLine(_, _)
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
+            | Kind::PointOnCurve(_, _)
                 | Kind::PointOnPolygon(_, _, _)
                 | Kind::GraphHorizontalUnit(_, _)
                 | Kind::GraphVerticalUnit(_, _)
@@ -1342,6 +1346,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnLine(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
+            | Kind::PointOnCurve(_, _)
         | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)

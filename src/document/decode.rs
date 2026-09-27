@@ -1,3 +1,20 @@
+// Native preserves the generic Polygon identity for nine-reference walks, including
+// repeated vertices. Keep canonical identities for newly authored polygon sources.
+pub(super) fn polygon_constraint_subtype(
+    objects: &[super::Object], bytes: &[u8], host: usize, count: usize,
+) -> Option<u16> {
+    let object = objects.get(host.checked_sub(1)?)?;
+    if count == 9 && matches!(&object.kind, super::Kind::Polygon(vertices) if vertices.len() == 9) {
+        if let Some(at) = object.header_offset {
+            if bytes.get(at..at + 2) == Some(&[8, 0])
+                && bytes.get(at + 6..at + 10) == Some(&[4, 0, 15, 0]) {
+                return Some(15);
+            }
+        }
+    }
+    super::records::polygon_subtype(count)
+}
+
 use super::calculations::parse_numeric_calculation;
 use super::embedded_tools::{document_record_indices, document_records};
 use super::iteration::{
@@ -360,6 +377,7 @@ impl Document {
             let mut point_offset = None;
             let mut constraint_payload: Option<(Vec<u8>, usize)> = None;
             let mut curve_constraint_count = 0usize;
+            let mut point_curve_constraint_count = 0usize;
             let mut refs = Vec::new();
             let mut measurement_format = false;
             let mut measurement_precision = None;
@@ -590,6 +608,7 @@ impl Document {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                         safe = false;
                     }
+                    0x7d3 if code == 15 => { point_curve_constraint_count += 1; constraint_payload = Some((d.to_vec(), r.data.start)); }
                     0x7d3
                         if matches!(
                             code,
@@ -1173,9 +1192,10 @@ impl Document {
                         Kind::PathLiteralPoint(*path, literal_axis_value.unwrap().1)
                     }
                     (95, _, [source, path])
-                        if axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
+                        if h[6..10] == [1, 0, 56, 0]
+                            && axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
                             && objects.get(source - 1).is_some_and(|o| o.page == page && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
-                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_value_plot_path_kind(&o.kind)) => {
+                            && objects.get(path - 1).is_some_and(|o| o.page == page && (is_value_plot_path_kind(&o.kind) || super::curve_points::supported(&objects, *path, page, objects.len() + 1))) => {
                         Kind::PathValuePoint(*source, *path)
                     }
                     (69, None, [x, y, frame])
@@ -1194,7 +1214,9 @@ impl Document {
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
-                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || o.kind.is_polygon())) => {
+                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || o.kind.is_polygon()
+                            || (matches!(objects[first - 1].kind, Kind::PointOnCurve(host, _) if host == *second)
+                                && super::curve_points::supported(&objects, *second, page, objects.len() + 1)))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -1511,6 +1533,9 @@ impl Document {
                     {
                         Kind::ToolPointOnPath(*host)
                     }
+                    (15, None, [host]) if point_curve_constraint_count == 1
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.get(..4) == Some(&[15, 0, 42, 0])) =>
+                        super::curve_points::decode(&objects, *host, page, objects.len() + 1, h, &constraint_payload.as_ref().unwrap().0).unwrap_or(Kind::Unsupported(code)),
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
                             (Some(kind), Some((payload, _)))
@@ -1559,8 +1584,10 @@ impl Document {
                             }
                             (Some(kind), Some((payload, _)))
                                 if kind.is_polygon() && objects.get(host - 1).is_some_and(|object| !object.deleted && object.page == page)
+                                    && h[6..10] == [1, 0, 10, 0]
+                                    && point_curve_constraint_count == 1
                                     && payload.len() == 20
-                                    && polygon_vertex_count(&objects, *host).and_then(polygon_subtype).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
+                                    && polygon_vertex_count(&objects, *host).and_then(|count| polygon_constraint_subtype(&objects, b, *host, count)).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
                                     && polygon_vertex_count(&objects, *host).is_some_and(|count| (u16::from_le_bytes([payload[12], payload[13]]) as usize) < count) => {
@@ -2029,12 +2056,13 @@ impl Document {
             } else {
                 style_records::visual_style(h)
             };
+            let visible = raw & if matches!(kind, Kind::PathValuePoint(..)) { 0x5_0000 } else { 0x1_0000 } == 0;
             objects.push(Object {
                 id: objects.len() + 1,
                 page,
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 kind,
-                visible: raw & 0x10000 == 0,
+                visible,
                 presentation_suppressed: raw & 0x20000 != 0,
                 tracing: h[4] & 1 != 0,
                 deleted: false,

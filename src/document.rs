@@ -23,6 +23,8 @@ mod images;
 mod iteration;
 mod iteration_endpoint;
 mod boundary_intersection;
+mod point_curve;
+mod curve_points;
 mod curve_intersection;
 mod movement;
 pub use movement::MovementValue;
@@ -167,6 +169,8 @@ pub enum Kind {
     PointOnLine(usize, f64),
     PointOnCircle(usize, f64, f64),
     PointOnArc(usize, f64),
+    /// A draggable point constrained to an evaluated point trace.
+    PointOnCurve(usize, f64),
     PointOnPolygon(usize, usize, f64),
     /// Native midpoint construction using a finite segment as its dependency.
     SegmentMidpoint(usize),

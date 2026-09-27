@@ -158,3 +158,9 @@ mod calculation_tokens;
 mod curve_intersections57;
 
 mod round_intersections57;
+
+mod point_curves58;
+
+mod polygon_identity;
+
+mod plot_value_flags;

@@ -47,6 +47,7 @@ impl Editor {
                                         | Kind::PointOnLine(_, _)
                                         | Kind::PointOnCircle(_, _, _)
                                         | Kind::PointOnArc(_, _)
+            | Kind::PointOnCurve(..)
                                 )
                             {
                                 self.drag_offset = if let Some((x, y)) =
