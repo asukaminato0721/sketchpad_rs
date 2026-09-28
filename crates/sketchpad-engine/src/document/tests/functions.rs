@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn native_referenced_function_pi_suffix_decodes_and_tracks_live_sources() {
+    let original =
+        include_bytes!("../../../../../tests/fixtures/referenced_function93_original_input.gsp");
+    let changed =
+        include_bytes!("../../../../../tests/fixtures/referenced_function93_t080_input.gsp");
+    let baseline = Document::from_bytes(original, None).unwrap();
+    let moved = Document::from_bytes(changed, None).unwrap();
+    for (document, bytes) in [
+        (&baseline, original.as_slice()),
+        (&moved, changed.as_slice()),
+    ] {
+        assert!(matches!(
+            document.objects[96].kind,
+            Kind::ReferencedFunction(_, _)
+        ));
+        assert_eq!(
+            document.function_sources(97),
+            Some([83, 94, 61, 75].as_slice())
+        );
+        assert!(document.function_display_text(97).unwrap().contains('π'));
+        assert_eq!(document.encode().unwrap(), bytes);
+    }
+    let before = baseline.function_value(97, 1.).unwrap();
+    let after = moved.function_value(97, 1.).unwrap();
+    assert!((before - after).abs() > 0.01);
+}
+
+#[test]
 fn original_function_files_decode_as_editable_documents() {
     for (source, expression) in [
         (

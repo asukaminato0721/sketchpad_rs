@@ -483,3 +483,59 @@ Code65/66 scalar coordinate measurements now accept one empty `232e` after the n
 ## Checkpoint79 analytic sector rotation
 
 Class-13/subtype-68 code27 fixed rotations now decode when an intrinsic SectorBoundary and Free center have the proved two-reference layout. The object retains its live source, matrix expression and analytic sector geometry; fill and picking use evaluated geometry. Six Native-saved controls are whole-file byte exact and isolate both a 180°→90° angle change and upstream motion. All1,599 corpus originals still round-trip byte-exact; unsupported slots fall11,781→11,764 (17 code27 objects), and1,386 scope-aware test executions pass. Reflected/chained sectors and transformed centers remain unproved, so the auditor's 194-node reach is only a frontier. See [implementation](dev/sector_transform79_implementation.md).
+
+## Checkpoint80 reflected sector chain
+
+An intrinsic SectorBoundary can now reflect about a Segment, and that reflected Sector can undergo a fixed rotation about a Free point. The parser requires the two exact Native record layouts and rejects unproved marker-bearing and alternate-mirror groups. Seven Native-saved controls are complete-byte exact and isolate both operations through visibility differences; edited controls are field-only synthetic because the original document is partial. The strict final corpus scan keeps all1,599 originals byte exact and lowers unsupported11,764→11,745 (18 code34 reflections and one chained code27 rotation). The Sector-focused suite and1,387 scope-aware test executions pass. Further mapping and command behavior remain open. See [implementation](dev/sector_transform80_implementation.md).
+
+## Checkpoint81 repeated sector rotation
+
+A fixed-rotated Sector can now be rotated again about a Free point using the same exact code27 record layout and ordered semantic matrix sequence. Native controls isolate the second 30° object and show that changing either its own angle or the upstream 30° angle yields the same 90° sector geometry; every tested full-file save remains exact. The compiled corpus checks all1,599 originals byte-exact and restores160 code27 objects, lowering unsupported11,745→11,585; 1,388 scope-aware test executions pass. Sector mapping and remaining geometry families are still outside this proof. See [implementation](dev/sector_transform81_implementation.md).
+
+## Checkpoint82 imported polygon-walk points
+
+Imported subtype-15 Polygon boundaries now keep their wire identity for ordered walks beyond nine stored vertices. Under exact point group layouts, a subtype-15 PointOnPolygon uses its stored edge slot and live fraction, including repeated source references. Eight-slot, repeated twelve-slot, and high-word-1 266-slot Native controls isolate the visible point through fraction and source changes; all 26 tested whole-file saves are byte exact. The corpus restores 290 slots behind 14 points, lowering unsupported11,585→11,295 across all1,599 byte-exact originals; 1,392 scope-aware test executions pass. Extra-marker point groups remain unsupported. See [implementation](dev/polygon_walk82_implementation.md).
+
+## Checkpoint83 intrinsic circular-segment boundary
+
+Exact no-marker code83 groups now import as live CircularSegmentBoundary objects: the source Arc sweep closes with its endpoint chord to form the filled region. Fourteen Native saves, including visibility pairs and an upstream endpoint edit, are whole-file byte exact; isolated gray fill follows the chord and arc. The compiled corpus keeps all1,599 originals exact and restores102 code83 objects, lowering unsupported11,295→11,193; 1,395 scope-aware test executions pass. A point constrained to this boundary and six alternate code83 record layouts remain unsupported pending their own contracts. See [implementation](dev/circular_segment83_implementation.md).
+
+## Checkpoint84 directed angle values
+
+Standard three-point `090e` groups now import as two distinct live Degrees values. Native edits show code115 uses the positive signed turn modulo 360°, while code116 uses its reverse; the unchanged downstream labels read `146.34→207.27°` and `34.02→320.84°` respectively. Eight Native full-file saves are exact. Across all1,599 byte-exact originals, 36 drawing slots and five isolated prototype slots decode, lowering total unsupported11,193→11,152; 1,397 scope-aware test executions pass. Alternate marker packets, downstream label objects and authoring remain separate. See [implementation](dev/angle_values84_implementation.md).
+
+## Checkpoint85 named angle aliases
+
+Strict code120 aliases of verified angle-value parents now form a generic numeric alias node with a live Degrees source. Native hiding controls attribute the changing `∠ABC` and `D` captions to the aliases, independently of parent angle markers; two further precision controls show the saved `0903` decimal field controls displayed digits, and all twelve whole-file saves are exact. The compiled 1,599-file scan restores 302 drawing and 11 prototype slots through 31 direct aliases and their existing downstream graph, lowering unsupported11,152→10,839. All originals remain byte-exact, and 1,400 scope-aware workspace test executions pass. Other alias source categories and new-object authoring remain open. See [implementation](dev/angle_alias85_implementation.md).
+
+## Checkpoint86 colorized filled disks
+
+Strict code75 wrappers over `CircleInterior` now share the existing numeric color evaluator and filled-region presentation. Native source motion, visibility isolation, Spectrum and Grayscale scalar substitutions establish a live disk carrier; all eleven complete saves are byte exact. Across 1,599 byte-exact originals, 25 drawing disks and two prototype slots decode, lowering unsupported10,839→10,812; 1,404 scope-aware workspace test executions pass. Disk transforms and fresh disk-color authoring remain outside the verified contract. See [implementation](dev/colorized_disk86_implementation.md).
+
+## Checkpoint87 three-point angle markers
+
+Strict code113 groups now derive one or two live arc strokes from three point references. Their code120 aliases reuse the numeric-alias object, calculate a signed angle, and display degrees or radians according to the page setting. All 23 Native controls save byte exact; the compiled scan restores 160 drawing slots, lowering unsupported10,812→10,652 across 1,599 exact originals, and 1,411 scope-aware workspace test executions pass. Alternate marker flags and unproved alias parents remain unsupported. See [implementation](dev/angle_marker87_implementation.md).
+
+## Checkpoint88 mapped colorized disks
+
+The shared code89 mapped DAG now carries a bounded `Colorized(Disk)` and code77 binds its per-generation filled outputs separately from circle outlines. Native six-state visibility controls save whole-file exact; earlier scalar and movement controls prove changing colors and positions. The corpus restores 64 slots, lowering unsupported10,652→10,588 across 1,599 exact originals. Imported mapped value depth 359 is evaluated with generation caps; fresh authoring retains its existing limit. Source-interior hiding has no valid Native control. See [implementation](dev/colorized_iteration88_implementation.md).
+
+## Checkpoint89 colorized polygon regions
+
+Strict code75 class4/subtype15 polygon wrappers retain live vertices, numeric color bindings and independent visibility. Generic code89/code77 mapped bindings now evaluate and draw each polygon generation with its own color. Native direct/mapped visibility, range, point-motion and depth controls save exactly in 11 states. The corpus restores 66 drawing slots, lowering unsupported10,588→10,522 across 1,599 byte-exact originals; seven more documents decode fully. Polygon source hiding and other packet variants remain unverified. See [implementation](dev/colorized_polygon89_implementation.md).
+
+## Checkpoint90 imported URL buttons with opaque suffixes
+
+Native URL Link actions with observed 44- and 56-byte payloads can carry nonzero bytes after the terminated URL. The importer keeps those bytes opaque while preserving the existing strict action and label checks. Eight passive Native controls save whole-file exact; a safe local-link click gives no reliable suffix activation rule. Changing an imported nonzero-suffix URL is refused, while ordinary label and document edits preserve it. The compiled corpus restores 408 buttons and 241 dependent texts, lowering unsupported10,522→9,873 across 1,599 byte-exact originals. See [implementation](dev/url_suffix90_implementation.md).
+
+## Checkpoint91 imported multi-resource pictures
+
+Independent code0 picture objects can now select one of several validated embedded PNG resources by native index and retain their own affine transform and visibility. Five-record and empty-marker six-record groups use the existing image renderer/SVG/picking path. Six Native visibility/translation controls save whole-file exact. Multi-picture files remain structurally read-only; two labeled image groups are still opaque. The corpus restores 146 drawing slots, lowering unsupported9,873→9,727 across 1,599 byte-exact originals. See [implementation](dev/image_objects91_implementation.md).
+
+## Checkpoint92 colored free-text runs
+
+Ordered native `R/G/L` channel triples with values1..256 now color individual text runs in canvas and SVG output. Seven Native controls save whole-file exact and separate the date-run palette from unchanged preceding text; zero-channel inheritance remains unverified for import. The compiled corpus restores 83 text slots, lowering unsupported9,727→9,644 across 1,599 byte-exact originals. Mixed-format content replacement retains its existing guard. See [implementation](dev/rich_style92_implementation.md).
+
+## Checkpoint93 referenced-function π suffix
+
+The shared expression parser now accepts the exact native `π,0x0100` pair, restoring 216 code71 function objects across the corpus without a new object variant. Six Native controls preserve whole files byte-for-byte and show that the ordinary upstream numeric chain changes while the function caption remains symbolically displayed. The engine predicts a changing `f97(1)` value; no direct Native function-value readout was available. Unsupported falls9,644→9,428 across 1,599 exact originals. This example remains a partial document with expression edits guarded. See [implementation](dev/referenced_function93_implementation.md).

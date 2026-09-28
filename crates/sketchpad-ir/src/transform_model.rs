@@ -15,6 +15,8 @@ pub enum ElementType {
     Arc,
     Polygon,
     Sector,
+    /// Filled circular region; currently admitted as a color carrier only.
+    Disk,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -407,6 +409,7 @@ impl TransformDefinition {
         };
         let straight = matches!(element, ElementType::Ray | ElementType::Line);
         if !valid
+            || element == ElementType::Disk
             || (element == ElementType::Sector
                 && !matches!(flavor, F::FixedRotation | F::Reflection))
             || (straight

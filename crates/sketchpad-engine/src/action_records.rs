@@ -537,11 +537,11 @@ impl LinkUrlButtonGroup {
             || u16_at(action, 12) != 6
             // Native word 14 may contain opaque data (Ant: 0x3264); keep it verbatim.
             || u32_at(action, 16) != 0
-            || !valid_url_zero_terminated_text(action, 24)
+            || !valid_url_zero_terminated_text(action, 24, true)
         {
             return Err("Unsupported Link URL action".into());
         }
-        if label.len() < 26 || !valid_url_zero_terminated_text(label, 22) {
+        if label.len() < 26 || !valid_url_zero_terminated_text(label, 22, false) {
             return Err("Link URL label is truncated".into());
         }
         if self.records[3].payload.len() != 2
@@ -569,6 +569,11 @@ impl LinkUrlButtonGroup {
     pub fn set_url(&mut self, url: &str) -> Result<(), String> {
         if self.url_utf8().is_ok_and(|current| current == url) {
             return Ok(());
+        }
+        let action = &self.records[1].payload;
+        let end = 26 + usize::from(u16_at(action, 24));
+        if action[end + 1..].iter().any(|&byte| byte != 0) {
+            return Err("Editing a URL with opaque native suffix bytes is not supported".into());
         }
         set_zero_terminated_text_aligned(&mut self.records[1], 24, url, self.text_alignment)?;
         let payload_len = self.records[1].payload.len() as u32;
@@ -638,14 +643,17 @@ fn translate_caption_rect(rect: &mut [u8], anchor: (i16, i16)) -> Result<(), Str
 }
 
 // Native URL buttons use either even-byte or four-byte string payload alignment.
-fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
+// Observed action payloads of length 44 and 56 retain opaque bytes after the
+// terminator. The label record still requires zero padding.
+fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize, action: bool) -> bool {
     if payload.len() < length_offset + 4 {
         return false;
     }
     let end = length_offset + 2 + usize::from(u16_at(payload, length_offset));
     end < payload.len()
         && payload[end] == 0
-        && payload[end + 1..].iter().all(|byte| *byte == 0)
+        && ((action && matches!(payload.len(), 44 | 56))
+            || payload[end + 1..].iter().all(|byte| *byte == 0))
         && [2usize, 4]
             .iter()
             .any(|alignment| payload.len() == (end + alignment) & !(alignment - 1))
@@ -2043,13 +2051,50 @@ mod tests {
         opened.set_url("https://example.org/").unwrap();
         assert_eq!(opened.records[1].payload.len() % 4, 0);
         let mut invalid = group.clone();
-        *invalid.records[1].payload.last_mut().unwrap() = 1;
+        let end = 26 + usize::from(u16_at(&invalid.records[1].payload, 24));
+        invalid.records[1].payload[end] = 1;
         assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
         let mut invalid = group.clone();
         invalid.records[1].payload.extend([0; 4]);
         let len = invalid.records[1].payload.len() as u32;
         invalid.records[1].payload[4..8].copy_from_slice(&len.to_le_bytes());
         assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
+    }
+
+    #[test]
+    fn native_url_action_opaque_suffix_survives_caption_edits() {
+        for (file, url, nonzero_tail) in [
+            (include_bytes!("../../../tests/fixtures/url_suffix90_small_original_native_saved.gsp").as_slice(), "https://www.kejianyuan.net", true),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_small_tail_zero_native_saved.gsp").as_slice(), "https://www.kejianyuan.net", false),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_original_native_saved.gsp").as_slice(), "http://exjh.com", true),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_tail_zero_native_saved.gsp").as_slice(), "http://exjh.com", false),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_native_saved.gsp").as_slice(), "http://exjh.com", true),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_tail_zero_native_saved.gsp").as_slice(), "http://exjh.com", false),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_safe_local_tail72_native_saved.gsp").as_slice(), "file:///tmp/abc", true),
+            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_safe_local_tail0_native_saved.gsp").as_slice(), "file:///tmp/abc", false),
+        ] {
+            let bytes = link_url_group(file);
+            let mut group = LinkUrlButtonGroup::parse(&bytes).unwrap();
+            assert_eq!(group.url_utf8().unwrap(), url);
+            let action = &group.records[1].payload;
+            let end = 26 + usize::from(u16_at(action, 24));
+            assert_eq!(action[end], 0);
+            assert_eq!(action[end + 1..].iter().any(|&byte| byte != 0), nonzero_tail);
+            group.set_url(url).unwrap();
+            let label = group.label_utf8().unwrap().to_owned();
+            group.set_label(&label).unwrap();
+            assert_eq!(group.encode(), bytes);
+            if nonzero_tail {
+                assert!(group.set_url("https://example.invalid/").is_err());
+                assert_eq!(group.encode(), bytes);
+            }
+        }
+
+        let before = link_url_group(include_bytes!("../../../tests/fixtures/url_suffix90_visible_original_native_saved.gsp"));
+        let after = link_url_group(include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_native_saved.gsp"));
+        let mut group = LinkUrlButtonGroup::parse(&before).unwrap();
+        group.set_label("SAFE LOCAL LINK").unwrap();
+        assert_eq!(group.encode(), after);
     }
 
     #[test]

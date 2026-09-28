@@ -80,7 +80,7 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
                 (matches!(source.kind, Kind::SectorBoundary(_))
                     || matches!(&source.kind, Kind::Transformed(parent)
                         if parent.element() == E::Sector
-                            && parent.wire_flavor() == F::Reflection))
+                            && matches!(parent.wire_flavor(), F::Reflection | F::FixedRotation)))
                     && definition
                         .native_references()
                         .get(1)
@@ -105,6 +105,7 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
                 matches!(source.kind, Kind::Polygon(_))
             }
         }
+        E::Disk => false,
     }
 }
 

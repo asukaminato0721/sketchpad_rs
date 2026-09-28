@@ -374,6 +374,10 @@ pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -
 }
 
 pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    if let Some(disks) = doc.colorized_disk_iteration_images(id) {
+        return disks.into_iter().any(|(center, radius, _)|
+            vp.screen(center).distance(at) <= (radius as f32 * vp.scale).abs());
+    }
     if let Some(polygons) = doc.polygon_iteration_images(id) {
         return polygons.into_iter().any(|(points, _)| {
             let points = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
@@ -1148,6 +1152,16 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
+        if let Some(paths) = doc.angle_marker_strokes(o.id) {
+            for points in paths {
+                let values = points.into_iter().map(|point| {
+                    let at = vp.screen(point);
+                    format!("{},{}", at.x, at.y)
+                }).collect::<Vec<_>>().join(" ");
+                writeln!(svg, "<polyline points=\"{}\"{}/>", values,
+                    svg_stroke(doc.effective_visual_style(o.id))).unwrap();
+            }
+        }
         let polygon_object = if o.kind.is_filled_region() {
             polygon_fills.next().unwrap()
         } else {
@@ -1177,7 +1191,22 @@ pub fn svg_page_with_button_offset(
             )
             .unwrap();
         }
-        if let Some(polygons) = doc.polygon_iteration_images(o.id) {
+        if let Some(polygons) = doc.colorized_polygon_iteration_images(o.id) {
+            let opacity = match doc.effective_visual_style(o.id) {
+                Some(VisualStyle::Polygon { opacity, .. }) => opacity,
+                _ => 32767,
+            };
+            for (points, color) in polygons {
+                let vertices = points.into_iter().map(|point| {
+                    let at = vp.screen(point);
+                    format!("{},{}", at.x, at.y)
+                }).collect::<Vec<_>>().join(" ");
+                writeln!(svg,
+                    "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                    vertices, css_color(color), f64::from(opacity) / 65535.
+                ).unwrap();
+            }
+        } else if let Some(polygons) = doc.polygon_iteration_images(o.id) {
             let (color, opacity) = match doc.effective_visual_style(o.id) {
                 Some(VisualStyle::Polygon { color, opacity }) => (css_color(color), opacity),
                 _ => ("#f6ad60".into(), 32767),
@@ -1199,6 +1228,19 @@ pub fn svg_page_with_button_offset(
                     repeated_polygon_opacity(opacity, paths)
                 )
                 .unwrap();
+            }
+        }
+        if let Some(disks) = doc.colorized_disk_iteration_images(o.id) {
+            let opacity = match doc.effective_visual_style(o.id) {
+                Some(VisualStyle::Polygon { opacity, .. }) => opacity,
+                _ => 32767,
+            };
+            for (center, radius, color) in disks {
+                let at = vp.screen(center);
+                writeln!(svg,
+                    "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                    at.x, at.y, radius as f32 * vp.scale, css_color(color), f64::from(opacity) / 65535.
+                ).unwrap();
             }
         }
         if let Some(segments) = doc.branch_segment_iteration_images(o.id) {
@@ -1413,10 +1455,14 @@ pub fn svg_page_with_button_offset(
                             .style
                             .underline
                             .unwrap_or_else(|| style.as_ref().is_some_and(|style| style.underline));
+                        let run_color = run.style.rgb_color().map(|[red, green, blue]| {
+                            format!(" fill=\"#{red:02x}{green:02x}{blue:02x}\"")
+                        }).unwrap_or_default();
                         write!(
                             svg,
-                            "<tspan{} font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</tspan>",
+                            "<tspan{}{} font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</tspan>",
                             run_family,
+                            run_color,
                             run.style.size_code.unwrap_or(size),
                             if bold { "bold" } else { "normal" },
                             if slanted { "italic" } else { "normal" },
@@ -1481,7 +1527,8 @@ pub fn svg_page_with_button_offset(
         if let Some(label) = &object.label
             && label.visible()
             && let Ok(name) = label.name_utf8()
-            && let Some(point) = doc.position(object.id)
+            && let Some(point) = doc.position(object.id).or_else(||
+                doc.angle_marker_strokes(object.id)?.into_iter().next()?.get(12).copied())
         {
             let at = vp.screen(point);
             let offset = label.offset();
@@ -2001,7 +2048,18 @@ impl GeometryRenderer {
                     mesh.styled_path(&[a, b], false, stroke, col);
                 }
             }
-            if let Some(polygons) = doc.polygon_iteration_images(o.id) {
+            if let Some(polygons) = doc.colorized_polygon_iteration_images(o.id) {
+                let opacity = match doc.effective_visual_style(o.id) {
+                    Some(VisualStyle::Polygon { opacity, .. }) => opacity,
+                    _ => 32767,
+                };
+                for (points, color) in polygons {
+                    let screen = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
+                    mesh.polygon(&screen,
+                        if is_selected { [selected[0], selected[1], selected[2], f32::from(opacity) / 65535.] }
+                        else { rgba(color, f32::from(opacity) / 65535.) });
+                }
+            } else if let Some(polygons) = doc.polygon_iteration_images(o.id) {
                 let (color, opacity) = match doc.effective_visual_style(o.id) {
                     Some(VisualStyle::Polygon { color, opacity }) => (color, opacity),
                     _ => (
@@ -2028,6 +2086,20 @@ impl GeometryRenderer {
                             rgba(color, repeated_polygon_opacity(opacity, paths))
                         },
                     );
+                }
+            }
+            if let Some(disks) = doc.colorized_disk_iteration_images(o.id) {
+                let opacity = match doc.effective_visual_style(o.id) {
+                    Some(VisualStyle::Polygon { opacity, .. }) => opacity,
+                    _ => 32767,
+                };
+                for (center, radius, color) in disks {
+                    let r = (radius as f32 * vp.scale).abs();
+                    if r > 0.5 && r < 100000. {
+                        mesh.disk(vp.screen(center), r,
+                            if is_selected { [selected[0], selected[1], selected[2], f32::from(opacity) / 65535.] }
+                            else { rgba(color, f32::from(opacity) / 65535.) });
+                    }
                 }
             }
             if let Some(segments) = doc.branch_segment_iteration_images(o.id) {
@@ -2165,6 +2237,14 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
+                Kind::AngleMarker(..) => {
+                    if let Some(paths) = doc.angle_marker_strokes(o.id) {
+                        for path in paths {
+                            let screen = path.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
+                            mesh.styled_path(&screen, false, stroke, col);
+                        }
+                    }
+                }
                 ref kind if kind.is_filled_region() => {
                     let polygon_object = polygon_fills.next().unwrap();
                     if let Some(points) = doc.filled_region_points(polygon_object.id) {
@@ -2273,6 +2353,114 @@ impl GeometryRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_angle_markers_export_one_and_two_live_svg_arcs() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        let mut hidden = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/angle_marker87_hide_both_native_saved.gsp"),
+            None,
+        ).unwrap();
+        hidden.partial_view = false;
+        let baseline = svg_page(&hidden, &viewport).unwrap().matches("<polyline").count();
+        for (bytes, expected_arcs) in [
+            (include_bytes!("../../../tests/fixtures/angle_marker87_original_native_saved.gsp").as_slice(), 3),
+            (include_bytes!("../../../tests/fixtures/angle_marker87_hide13_native_saved.gsp").as_slice(), 2),
+            (include_bytes!("../../../tests/fixtures/angle_marker87_hide14_native_saved.gsp").as_slice(), 1),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            // This fixture contains unrelated opaque objects; isolate the
+            // already-decoded marker strokes for renderer verification.
+            doc.partial_view = false;
+            let svg = svg_page(&doc, &viewport).unwrap();
+            assert_eq!(svg.matches("<polyline").count(), baseline + expected_arcs);
+        }
+    }
+
+    #[test]
+    fn mapped_colorized_disks_export_each_generation_with_its_live_fill() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        let mut original = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/colorized_iteration88_original_native_saved.gsp"),
+            None,
+        ).unwrap();
+        let mut hidden = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/colorized_iteration88_hide_fill_binding20_native_saved.gsp"),
+            None,
+        ).unwrap();
+        let generations = original.colorized_disk_iteration_images(20).unwrap().len();
+        original.partial_view = false;
+        hidden.partial_view = false;
+        let svg = svg_page(&original, &viewport).unwrap();
+        let baseline = svg_page(&hidden, &viewport).unwrap();
+        assert_eq!(svg.matches("fill-opacity=").count(), baseline.matches("fill-opacity=").count() + generations);
+        assert!(svg.contains("fill=\"#ff0000\""));
+        assert!(svg.contains("fill=\"#1f42f5\""));
+    }
+
+    #[test]
+    fn mapped_colorized_polygons_export_each_generation_with_its_live_fill() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        let mut doc = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/colorized_polygon89_depth3_native_saved.gsp"),
+            None,
+        ).unwrap();
+        let images = doc.colorized_polygon_iteration_images(23).unwrap();
+        let distinct = images.iter().map(|(_, color)| css_color(*color)).collect::<std::collections::HashSet<_>>();
+        assert!(distinct.len() >= 3);
+        for object in &mut doc.objects {
+            object.visible = object.id == 23;
+        }
+        doc.partial_view = false;
+        let svg = svg_page(&doc, &viewport).unwrap();
+        assert_eq!(svg.matches("<polygon ").count(), images.len());
+        for color in distinct {
+            assert!(svg.contains(&format!("fill=\"{color}\"")), "missing {color}");
+        }
+    }
+
+    #[test]
+    fn direct_colorized_polygon_svg_recolors_without_changing_its_outline() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        let mut svg_results = Vec::new();
+        for bytes in [
+            include_bytes!("../../../tests/fixtures/colorized_polygon89_hide_binding23_native_saved.gsp").as_slice(),
+            include_bytes!("../../../tests/fixtures/colorized_polygon89_range_hi2_hide_binding23_native_saved.gsp").as_slice(),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            let color = css_color(doc.colorized_color(14).unwrap());
+            for object in &mut doc.objects {
+                object.visible = object.id == 14;
+            }
+            doc.partial_view = false;
+            let svg = svg_page(&doc, &viewport).unwrap();
+            assert_eq!(svg.matches("<polygon ").count(), 1);
+            assert!(svg.contains(&format!("fill=\"{color}\"")));
+            svg_results.push((svg, color));
+        }
+        assert_ne!(svg_results[0].1, svg_results[1].1);
+        let without_fill = |svg: &str, color: &str| svg.replace(color, "#fill");
+        assert_eq!(
+            without_fill(&svg_results[0].0, &svg_results[0].1),
+            without_fill(&svg_results[1].0, &svg_results[1].1)
+        );
+    }
 
     #[test]
     fn generic_straight_locus_svg_keeps_independent_sample_colors_and_pen_styles() {
@@ -3287,6 +3475,48 @@ mod tests {
         let svg = svg_page(&doc, &vp).unwrap();
         assert!(svg.contains("data:image/png;base64,iVBORw0KGgo"));
         assert!(svg.contains("<image width=\"16\" height=\"16\""));
+    }
+    #[test]
+    fn imported_multi_resource_pictures_export_their_own_pngs() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        for (bytes, first, second) in [
+            (include_bytes!("../../../tests/fixtures/image_objects91_original_native_saved.gsp").as_slice(), true, true),
+            (include_bytes!("../../../tests/fixtures/image_objects91_hide20_native_saved.gsp").as_slice(), false, true),
+            (include_bytes!("../../../tests/fixtures/image_objects91_hide21_native_saved.gsp").as_slice(), true, false),
+            (include_bytes!("../../../tests/fixtures/image_objects91_hide_both_native_saved.gsp").as_slice(), false, false),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            doc.partial_view = false;
+            let svg = svg_page(&doc, &viewport).unwrap();
+            assert_eq!(svg.matches("<image ").count(), usize::from(first) + usize::from(second));
+            assert_eq!(svg.contains("<image width=\"253\" height=\"35\""), first);
+            assert_eq!(svg.contains("<image width=\"321\" height=\"35\""), second);
+        }
+    }
+    #[test]
+    fn imported_free_text_rgb_runs_export_live_run_colors() {
+        let viewport = Viewport {
+            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        for (bytes, color) in [
+            (include_bytes!("../../../tests/fixtures/rich_style92_original_native_saved.gsp").as_slice(), "#0000ff"),
+            (include_bytes!("../../../tests/fixtures/rich_style92_g2_native_saved.gsp").as_slice(), "#0001ff"),
+            (include_bytes!("../../../tests/fixtures/rich_style92_l050_native_saved.gsp").as_slice(), "#00004f"),
+        ] {
+            let mut doc = Document::from_bytes(bytes, None).unwrap();
+            for object in &mut doc.objects {
+                object.visible = object.id == 14;
+            }
+            doc.partial_view = false;
+            let svg = svg_page(&doc, &viewport).unwrap();
+            assert!(svg.contains(&format!("fill=\"{color}\"")), "missing {color}");
+        }
     }
     #[test]
     fn collapsed_iteration_circles_are_omitted_from_svg() {

@@ -47,6 +47,10 @@ impl Document {
             Kind::PointRatio(_, _, _) => self.ratio_value(id),
             Kind::SlopeMeasurement(_, _) => self.slope_value(id),
             Kind::AngleMeasurement(_, _, _) => self.angle_degrees(id),
+            Kind::AngleMarker(a, vertex, c, _) => self.signed_angle_degrees(*a, *vertex, *c),
+            Kind::PolarAngleValue(_, _, _) | Kind::VertexAngleValue(_, _, _) =>
+                self.directed_angle_degrees(id),
+            Kind::NumericAlias { source, .. } => self.numeric_value(*source),
             Kind::ArcAngle(_) => self.arc_angle_degrees(id),
             Kind::SegmentLength(_) => self.segment_length_cm(id),
             Kind::PointDistance(_, _) => self.point_distance_cm(id),
@@ -83,6 +87,40 @@ impl Document {
     pub fn measurement_text(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let name = match object.kind {
+            Kind::NumericAlias { source, .. } => {
+                let named = object.label.as_ref()
+                    .and_then(|label| label.name_utf8().ok())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned);
+                let generated = || {
+                    let angle = self.objects.get(source.checked_sub(1)?)?;
+                    let (first, vertex, last) = match angle.kind {
+                        Kind::PolarAngleValue(a, b, c)
+                        | Kind::VertexAngleValue(a, b, c)
+                        | Kind::AngleMarker(a, b, c, _) => (a, b, c),
+                        _ => return None,
+                    };
+                    let point_name = |id: usize| self.objects.get(id.checked_sub(1)?)?
+                        .label.as_ref()?.name_utf8().ok().filter(|name| !name.is_empty()).map(str::to_owned);
+                    Some(format!("∠{}{}{}",
+                        point_name(first).unwrap_or_else(|| "P".into()),
+                        point_name(vertex).unwrap_or_else(|| "Q".into()),
+                        point_name(last).unwrap_or_else(|| "R".into())))
+                };
+                let name = named.or_else(generated)?;
+                let radians = self.angle_unit_radians
+                    && matches!(self.objects.get(source.checked_sub(1)?)?.kind, Kind::AngleMarker(..));
+                let value = if radians {
+                    crate::table_records::format_numeric_value(
+                        self.numeric_value(id)?.to_radians(),
+                        usize::from(object.measurement_precision?),
+                    )
+                } else {
+                    self.measurement_value_text(id)?
+                };
+                let unit = if radians { String::new() } else { object.kind.numeric_unit()?.suffix() };
+                return Some(format!("{name} = {value}{unit}"));
+            }
             Kind::SegmentLength(_) => "Length",
             Kind::PointDistance(_, _) | Kind::PointLineDistance(_, _) => "Distance",
             Kind::PointRatio(_, _, _) => "Ratio",
@@ -776,6 +814,34 @@ impl Document {
             return None;
         };
         self.angle_for_points(a, vertex, c)
+    }
+    pub fn directed_angle_degrees(&self, id: usize) -> Option<f64> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let (a, vertex, c, reverse) = match object.kind {
+            Kind::PolarAngleValue(a, vertex, c) => (a, vertex, c, false),
+            Kind::VertexAngleValue(a, vertex, c) => (a, vertex, c, true),
+            _ => return None,
+        };
+        let degrees = self.signed_angle_degrees(a, vertex, c)?;
+        Some((if reverse { -degrees } else { degrees }).rem_euclid(360.))
+    }
+    pub fn signed_angle_degrees(&self, a: usize, vertex: usize, c: usize) -> Option<f64> {
+        let a = self.position(a)?;
+        let vertex = self.position(vertex)?;
+        let c = self.position(c)?;
+        let (ax, ay) = (a.x - vertex.x, vertex.y - a.y);
+        let (cx, cy) = (c.x - vertex.x, vertex.y - c.y);
+        let (al, cl) = (ax.hypot(ay), cx.hypot(cy));
+        if !al.is_finite() || !cl.is_finite() || al == 0. || cl == 0. {
+            return None;
+        }
+        let cross = (ax / al) * (cy / cl) - (ay / al) * (cx / cl);
+        let dot = (ax / al) * (cx / cl) + (ay / al) * (cy / cl);
+        let radians = cross.atan2(dot);
+        Some(radians.to_degrees())
     }
     pub fn angle_for_points(&self, a: usize, vertex: usize, c: usize) -> Option<f64> {
         let a = self.position(a)?;

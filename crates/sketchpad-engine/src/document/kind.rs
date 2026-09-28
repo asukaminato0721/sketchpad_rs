@@ -55,7 +55,12 @@ impl Kind {
                 ..
             } => Some(NumericUnit::Scalar),
             Kind::ParameterCalculation(_, group) => Some(group.unit()),
-            Kind::AngleMeasurement(_, _, _) | Kind::ArcAngle(_) => Some(NumericUnit::Degrees),
+            Kind::NumericAlias { unit, .. } => Some(*unit),
+            Kind::AngleMeasurement(_, _, _)
+            | Kind::AngleMarker(_, _, _, _)
+            | Kind::PolarAngleValue(_, _, _)
+            | Kind::VertexAngleValue(_, _, _)
+            | Kind::ArcAngle(_) => Some(NumericUnit::Degrees),
             _ => None,
         }
     }
@@ -102,9 +107,11 @@ impl Kind {
     }
     pub fn is_filled_region(&self) -> bool {
         self.is_polygon() || self.is_sector() || self.is_circle_interior()
+            || matches!(self, Kind::CircularSegmentBoundary(_))
     }
     pub fn is_circle_interior(&self) -> bool {
         matches!(self, Kind::CircleInterior(_))
+            || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Disk)
     }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
@@ -136,6 +143,7 @@ impl Kind {
                 | Kind::CircleArea(_)
                 | Kind::PolygonArea(_)
                 | Kind::AngleMeasurement(_, _, _)
+                | Kind::NumericAlias { .. }
                 | Kind::SlopeMeasurement(_, _)
                 | Kind::CoordinateMeasurement { .. }
                 | Kind::ValueEquation { .. }
@@ -156,6 +164,7 @@ impl Kind {
                 | Kind::CircleArea(_)
                 | Kind::PolygonArea(_)
                 | Kind::AngleMeasurement(_, _, _)
+                | Kind::NumericAlias { .. }
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
                 | Kind::SlopeMeasurement(_, _)
@@ -349,6 +358,7 @@ impl Kind {
             | Kind::PointOnCircle(host, _, _)
             | Kind::PointOnArc(host, _)
             | Kind::SectorBoundary(host)
+            | Kind::CircularSegmentBoundary(host)
             | Kind::CircleInterior(host)
             | Kind::PointOnSector(host, _)
             | Kind::PointOnCurve(host, _)
@@ -362,6 +372,7 @@ impl Kind {
             | Kind::PolygonArea(host)
             | Kind::ArcAngle(host)
             | Kind::ArcLength(host)
+            | Kind::NumericAlias { source: host, .. }
             | Kind::CircleAxis(host, _) => vec![host],
             Kind::DistanceVerticalUnit(host, _, _) => vec![host],
             Kind::GraphHorizontalUnit(origin, _) | Kind::GraphVerticalUnit(origin, _) => {
@@ -400,9 +411,12 @@ impl Kind {
             | Kind::ThreePointArc(a, b, c)
             | Kind::ArcOnCircle(a, b, c)
             | Kind::CenterArc(a, b, c)
-            | Kind::AngleMeasurement(a, b, c) => {
+            | Kind::AngleMeasurement(a, b, c)
+            | Kind::PolarAngleValue(a, b, c)
+            | Kind::VertexAngleValue(a, b, c) => {
                 vec![a, b, c]
             }
+            Kind::AngleMarker(a, b, c, _) => vec![a, b, c],
             Kind::PointRatio(a, b, c) => vec![a, b, c],
             Kind::PointReferencedText { point, source, .. } => vec![point, source],
             Kind::Polygon(_)
@@ -648,6 +662,7 @@ impl Kind {
             Kind::PointOnCircle(a, x, y) => Kind::PointOnCircle(m(a), x, y),
             Kind::PointOnArc(a, t) => Kind::PointOnArc(m(a), t),
             Kind::SectorBoundary(a) => Kind::SectorBoundary(m(a)),
+            Kind::CircularSegmentBoundary(a) => Kind::CircularSegmentBoundary(m(a)),
             Kind::CircleInterior(a) => Kind::CircleInterior(m(a)),
             Kind::PointOnSector(a, t) => Kind::PointOnSector(m(a), t),
             Kind::PointOnCurve(a, t) => Kind::PointOnCurve(m(a), t),
@@ -751,6 +766,10 @@ impl Kind {
             Kind::ArcAngle(a) => Kind::ArcAngle(m(a)),
             Kind::ArcLength(a) => Kind::ArcLength(m(a)),
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
+            Kind::PolarAngleValue(a, b, c) => Kind::PolarAngleValue(m(a), m(b), m(c)),
+            Kind::VertexAngleValue(a, b, c) => Kind::VertexAngleValue(m(a), m(b), m(c)),
+            Kind::AngleMarker(a, b, c, class) => Kind::AngleMarker(m(a), m(b), m(c), class),
+            Kind::NumericAlias { source, unit } => Kind::NumericAlias { source: m(source), unit },
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
@@ -861,6 +880,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::ArcOnCircle(_, _, _)
             | Kind::CenterArc(_, _, _)
             | Kind::SectorBoundary(_)
+            | Kind::CircularSegmentBoundary(_)
             | Kind::CircleInterior(_)
             | Kind::Polygon(_)
             | Kind::SegmentLength(_)
@@ -874,6 +894,8 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointDistance(_, _)
             | Kind::PointLineDistance(_, _)
             | Kind::AngleMeasurement(_, _, _)
+            | Kind::PolarAngleValue(_, _, _)
+            | Kind::VertexAngleValue(_, _, _)
             | Kind::PointRatio(_, _, _)
             | Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
@@ -1387,7 +1409,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 VisualStyle::Stroke { line, color: navy }
             }
             ElementType::Circle | ElementType::Arc => VisualStyle::Stroke { line, color: green },
-            ElementType::Polygon | ElementType::Sector => VisualStyle::Polygon {
+            ElementType::Polygon | ElementType::Sector | ElementType::Disk => VisualStyle::Polygon {
                 opacity: 32767,
                 color: RgbColor {
                     red: 255,
@@ -1459,7 +1481,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
             line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
             color: RgbColor { red: 255, green: 0, blue: 0 },
         }),
-        Kind::CircleInterior(_) | Kind::SectorBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
+        Kind::CircleInterior(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {
                 red: 255,

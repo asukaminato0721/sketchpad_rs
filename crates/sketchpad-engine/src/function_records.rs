@@ -164,7 +164,10 @@ impl SimpleFunction {
         let mut parentheses = Vec::new();
         let mut function_open = false;
         let mut skip_close = false;
-        for word in self.words() {
+        for (index, word) in self.words().iter().enumerate() {
+            if *word == 0x0100 && index > 0 && self.words()[index - 1] == 13 {
+                continue;
+            }
             if skip_close {
                 skip_close = false;
                 if *word == 0x000c {
@@ -360,7 +363,14 @@ impl<'a> ArithmeticParser<'a> {
                     .ok_or("Undefined referenced function")?
             }
             0x000f => self.x,
-            13 => crate::table_records::CALCULATOR_PI,
+            13 => {
+                // Native expressions may append a presentation word to π.
+                // It belongs to the constant, not to the following operator.
+                if self.words.get(self.index) == Some(&0x0100) {
+                    self.index += 1;
+                }
+                crate::table_records::CALCULATOR_PI
+            }
             14 => std::f64::consts::E,
             code if function_name(code).is_some() => {
                 if self.words.get(self.index) != Some(&0x000b) {
@@ -772,7 +782,12 @@ impl<'a> SymbolicParser<'a> {
                 SymbolicExpr::FunctionSource((word & 0xff) as usize, Box::new(argument))
             }
             0x000f => SymbolicExpr::Variable,
-            13 | 14 => SymbolicExpr::Constant(word),
+            13 | 14 => {
+                if word == 13 && self.words.get(self.index) == Some(&0x0100) {
+                    self.index += 1;
+                }
+                SymbolicExpr::Constant(word)
+            }
             code if function_name(code).is_some() => {
                 // Let an explicit group consume its own closer, then consume
                 // the call closer after any following binary continuation.
@@ -1933,6 +1948,50 @@ mod tests {
         assert!(g.evaluate(4.).is_nan());
         assert!(decode_simple_expression(&parameter).is_err());
         assert!(decode_simple_expression(&call).is_err());
+    }
+
+    #[test]
+    fn native_pi_suffix_is_scoped_to_pi_operands() {
+        let expression = SimpleFunction::from_words(&[
+            0x2000, 0x000b, 13, 0x0100, 0x1002, 0x000f, 0x000c, 0x000c,
+        ])
+        .unwrap();
+        assert!(expression.evaluate(1.).abs() < 1e-12);
+        assert_eq!(expression.display(), "f(x) = sin(π × x)");
+        assert_eq!(
+            expression.symbolic_derivative().unwrap().evaluate(0.),
+            crate::table_records::CALCULATOR_PI
+        );
+        for words in [
+            vec![13, 0x0100, 0x0100],
+            vec![14, 0x0100],
+            vec![0x000f, 0x0100],
+            vec![0x0100, 13],
+        ] {
+            assert!(SimpleFunction::from_words(&words).is_err(), "{words:?}");
+        }
+        let original =
+            include_bytes!("../../../tests/fixtures/referenced_function93_original_input.gsp");
+        let payload = reference_fixture_payload(original, 97);
+        assert_eq!(payload.len(), 200);
+        let decoded = decode_expression_with_sources(&payload, 4).unwrap();
+        assert!(decoded.display().contains('π'));
+        assert_eq!(
+            decoded.source_kinds(4).unwrap(),
+            [
+                Some(crate::table_records::CalculationSourceKind::Function),
+                Some(crate::table_records::CalculationSourceKind::Numeric),
+                Some(crate::table_records::CalculationSourceKind::Numeric),
+                Some(crate::table_records::CalculationSourceKind::Numeric),
+            ]
+        );
+        let suffix = 92 + 19 * 2;
+        assert_eq!(&payload[suffix..suffix + 2], &0x0100u16.to_le_bytes());
+        for replacement in [0x0101u16, 0x0201, 0x0000] {
+            let mut malformed = payload.clone();
+            malformed[suffix..suffix + 2].copy_from_slice(&replacement.to_le_bytes());
+            assert!(decode_expression_with_sources(&malformed, 4).is_err());
+        }
     }
 
     #[test]

@@ -140,6 +140,25 @@ Scalar x/y coordinate measurements now preserve a Native empty marker after thei
 
 An intrinsic sector boundary can now be fixed-rotated as a live analytic element. Native 180°/90° controls and an upstream move verify the [strict transform case](dev/sector_transform79_implementation.md), while the parser still preserves unproved sector operations as unsupported records.
 
+The same element now supports a proved [Segment reflection and chained rotation](dev/sector_transform80_implementation.md), keeping both source references live through the matrix sequence.
+
+[Repeated sector rotations](dev/sector_transform81_implementation.md) replay their live matrices in construction order; the strict Native-backed decoder restores long chains without adding shape-specific operation variants.
+
+[Imported polygon-walk points](dev/polygon_walk82_implementation.md) now follow the source's ordered stored edges, including repeated vertex references, with strict subtype and record-layout guards.
+
+[Circular-segment boundaries](dev/circular_segment83_implementation.md) now evaluate a live Arc and its endpoint chord as one filled region, retaining strict native record admission and dependency order.
+
+[Directed three-point angle values](dev/angle_values84_implementation.md) now retain separate positive and reversed 360° conventions while sharing one live point-based calculation.
+[Named angle aliases](dev/angle_alias85_implementation.md) bind a displayed Degrees value to either verified angle source; default and explicit names follow the live parent without duplicating its angle convention.
+[Colorized filled disks](dev/colorized_disk86_implementation.md) reuse the shared live color evaluator over an intrinsic circle interior, with strict source and packet admission.
+[Three-point angle markers](dev/angle_marker87_implementation.md) derive one or two live arc strokes from a single object, and their generic numeric aliases display signed values in the page's degree or radian unit.
+[Mapped colorized disks](dev/colorized_iteration88_implementation.md) reuse the scoped iteration evaluator to draw an independently colored, analytic filled disk at each generation.
+[Colorized polygon regions](dev/colorized_polygon89_implementation.md) now use the same live geometry/color evaluation, including a distinct fill color for each mapped generation.
+[Imported URL buttons](dev/url_suffix90_implementation.md) now preserve opaque native bytes after the URL terminator in the observed action records, restoring their linked text without discarding those bytes on ordinary edits.
+[Multi-resource PNG documents](dev/image_objects91_implementation.md) now show independently indexed pictures using the existing image renderer; these imported resource tables remain read-only.
+[Native colored text runs](dev/rich_style92_implementation.md) now retain ordered R/G/L colors on individual spans in canvas and SVG output.
+[Referenced functions with π suffixes](dev/referenced_function93_implementation.md) now decode through the shared expression evaluator, restoring live dependencies in the imported music examples.
+
 ## Verification
 
 Run `cargo test --workspace` to include every implementation crate. Tests cover record parsing and byte preservation, dependency updates, geometry, undo/redo, and save/reopen. All 1,599 `.gsp` files in the sibling project and the bundled 523-object Example Tools document pass unedited byte-preservation verification; many remain partial views and are guarded against unsafe edits. Generated constructions, measurements, text, action buttons, styles, bounded number/table files, and arithmetic and sine/cosine/tangent plots have been opened and saved in the supplied Windows Sketchpad 5 through Wine. Native KDE screenshots confirm geometry and style rendering; full command and interaction verification remains open.

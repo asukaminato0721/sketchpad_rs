@@ -134,6 +134,7 @@ mod markedpolar_source_custom_point77;
 mod coordinate_marker78;
 mod sector_transform79;
 mod sector_chain80;
+mod sector_rotation_chain81;
 mod referenced_token71;
 mod referenced_shared64;
 
@@ -179,6 +180,16 @@ mod round_intersections57;
 mod point_curves58;
 
 mod polygon_identity;
+mod polygon_walk82;
+mod circular_segment83;
+mod angle_values84;
+mod angle_alias85;
+mod colorized_disk86;
+mod colorized_iteration88;
+mod colorized_polygon89;
+mod image_objects91;
+mod rich_style92;
+mod angle_marker87;
 
 mod plot_value_flags;
 

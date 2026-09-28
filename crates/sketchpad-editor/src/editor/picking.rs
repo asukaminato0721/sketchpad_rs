@@ -273,6 +273,16 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
+                        Kind::AngleMarker(..) => self.doc.angle_marker_strokes(o.id)?
+                            .into_iter()
+                            .flat_map(|path| path.windows(2).map(|pair| {
+                                let a = v.screen(pair[0]);
+                                let b = v.screen(pair[1]);
+                                let ab = b - a;
+                                let t = ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.);
+                                (p - (a + ab * t)).length()
+                            }).collect::<Vec<_>>())
+                            .min_by(f32::total_cmp)?,
                         ref kind if kind.is_filled_region() => {
                             let points = self.doc.filled_region_points(o.id)?;
                             let points: Vec<_> =

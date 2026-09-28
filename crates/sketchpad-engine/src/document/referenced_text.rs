@@ -47,6 +47,7 @@ impl ReferencedStyle {
                 underline: child.font.underline.or(self.font.underline),
                 size_code: child.font.size_code.or(self.font.size_code),
                 family_index: child.font.family_index.or(self.font.family_index),
+                rgb: child.font.rgb.or(self.font.rgb),
             },
             red: child.red.or(self.red),
             green: child.green.or(self.green),

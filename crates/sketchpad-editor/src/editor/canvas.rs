@@ -262,7 +262,9 @@ impl Editor {
                                     let underline = run.style.underline.unwrap_or_else(|| {
                                         style.as_ref().is_some_and(|style| style.underline)
                                     });
-                                    let color = egui::Color32::from_gray(35);
+                                    let color = run.style.rgb_color()
+                                        .map(|[red, green, blue]| egui::Color32::from_rgb(red, green, blue))
+                                        .unwrap_or_else(|| egui::Color32::from_gray(35));
                                     let format = egui::text::TextFormat {
                                         font_id: run_font_id,
                                         color,
@@ -384,7 +386,8 @@ impl Editor {
                     if let Some(label) = &object.label
                         && label.visible()
                         && let Ok(name) = label.name_utf8()
-                        && let Some(point) = self.doc.position(object.id)
+                        && let Some(point) = self.doc.position(object.id).or_else(||
+                            self.doc.angle_marker_strokes(object.id)?.into_iter().next()?.get(12).copied())
                     {
                         let at = vp.screen(point);
                         let offset = label.offset();

@@ -1,5 +1,5 @@
-// Native preserves the generic Polygon identity for nine-reference walks, including
-// repeated vertices. Keep canonical identities for newly authored polygon sources.
+// Native's generic Polygon subtype 15 is an imported wire identity, not a
+// vertex-count encoding. Keep canonical identities for newly authored sources.
 pub(super) fn polygon_constraint_subtype(
     objects: &[super::Object],
     bytes: &[u8],
@@ -7,10 +7,12 @@ pub(super) fn polygon_constraint_subtype(
     count: usize,
 ) -> Option<u16> {
     let object = objects.get(host.checked_sub(1)?)?;
-    if count == 9 && matches!(&object.kind, super::Kind::Polygon(vertices) if vertices.len() == 9) {
+    if matches!(&object.kind, super::Kind::Polygon(vertices) if vertices.len() == count) {
         if let Some(at) = object.header_offset {
             if bytes.get(at..at + 2) == Some(&[8, 0])
                 && bytes.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])
+                && (count == 9
+                    || matches!(bytes.get(at + 2..at + 4), Some([0, 0] | [1, 0])))
             {
                 return Some(15);
             }
@@ -350,6 +352,15 @@ impl Document {
             .transpose()
             .ok()
             .flatten();
+        let imported_images = if has_picture_resource && image_file.is_none() {
+            crate::image_records::imported_image_catalog(b)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|image| (image.group_offset, image))
+                .collect::<BTreeMap<_, _>>()
+        } else {
+            BTreeMap::new()
+        };
         let image_read_only =
             has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../../../../assets/point_template.gsp"))?;
@@ -413,7 +424,8 @@ impl Document {
             let group_start = rs[i].start;
             let is_image = image_file
                 .as_ref()
-                .is_some_and(|picture| picture.picture_group_offset() == group_start);
+                .is_some_and(|picture| picture.picture_group_offset() == group_start)
+                || imported_images.contains_key(&group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let tool_input = tool_inputs.get(&(objects.len() + 1)).copied();
@@ -433,6 +445,7 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
+            let angle_marker_label = code == 113 && h[6..10] == [18, 0, 95, 0];
             let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0]))
                 || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                     && matches!(
@@ -496,6 +509,7 @@ impl Document {
                     | 86
                     | 87
                     | 94
+                    | 120
             );
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
@@ -524,6 +538,7 @@ impl Document {
                         if matches!(code, 0 | 15)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
+                            || angle_marker_label
                             || numeric_label =>
                     {
                         match LabelAux::parse(d) {
@@ -531,6 +546,7 @@ impl Document {
                                 if matches!(code, 0 | 15)
                                     || (code == 71 && h[6..10] == [11, 0, 57, 0])
                                     || numeric_label
+                                    || angle_marker_label
                                     || h[6..8] == [1, 0] =>
                             {
                                 label = Some(value)
@@ -544,11 +560,13 @@ impl Document {
                     0x07d8
                         if matches!(code, 0 | 15)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
-                            || labeled_shape =>
+                            || labeled_shape
+                            || angle_marker_label =>
                     {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
                         if (labeled_shape
+                            || angle_marker_label
                             || code == 15
                             || (code == 71 && h[6..10] == [11, 0, 57, 0]))
                             && !text_style
@@ -564,7 +582,7 @@ impl Document {
                         point_offset = Some(r.data.start);
                     }
                     0x0903
-                        if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47) =>
+                        if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120) =>
                     {
                         let sample: &[u8] = match code {
                             36 => {
@@ -584,7 +602,7 @@ impl Document {
                             40 => &include_bytes!(
                                 "../../../../assets/circumference_measurement_group.bin"
                             )[60..92],
-                            41 => &include_bytes!("../../../../assets/angle_measurement_group.bin")
+                            41 | 120 => &include_bytes!("../../../../assets/angle_measurement_group.bin")
                                 [68..100],
                             42 => &include_bytes!("../../../../assets/area_measurement_group.bin")
                                 [60..92],
@@ -708,8 +726,8 @@ impl Document {
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !((code == 15 || (code == 71 && h[6..10] == [11, 0, 57, 0]))
                         && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !((labeled_shape || numeric_label) && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47)
+                    && !((labeled_shape || numeric_label || angle_marker_label) && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120)
                         && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
@@ -735,6 +753,10 @@ impl Document {
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
+                    && !(matches!(code, 115 | 116) && r.kind == 0x090e && d == [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0])
+                    && !(code == 113 && r.kind == 0x090e && d.len() == 12
+                        && matches!(u16::from_le_bytes([d[0], d[1]]), 1 | 2)
+                        && d[2..] == [0, 0, 0, 0, 0, 0, 254, 254, 254, 0])
                 {
                     safe = false;
                 }
@@ -1089,7 +1111,21 @@ impl Document {
                 constraint_payload
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
-            ) {
+            ).filter(|definition| {
+                if definition.element() == super::transform_model::ElementType::Disk {
+                    rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                        .map(|r| (r.kind, r.data.len()))
+                        .eq([(0x07d0, 28), (0x07d2, 12), (0x07d3, 24), (0x07d7, 0)])
+                } else if definition.element() == super::transform_model::ElementType::Polygon
+                    && h[6..10] == [4, 0, 15, 0] {
+                    let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                        .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
+                    matches!(group.as_slice(),
+                        [(0x07d0, 28), (0x07d2, 12 | 20), (0x07d3, 24), (0x07d7, 0)])
+                } else {
+                    true
+                }
+            }) {
                 Kind::Colorized(definition)
             } else if let Some(definition) = super::mapped_element::decode_mapped_element(
                 &objects,
@@ -1383,8 +1419,12 @@ impl Document {
                         Kind::CoordinateMeasurement { kind: CoordinateMeasureKind::CoordinateDistance, first: *first, second: Some(*second), frame: *frame }
                     }
                     (0, None, []) if is_image => {
-                        let picture = image_file.as_ref().unwrap();
-                        Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
+                        if let Some(picture) = imported_images.get(&group_start) {
+                            Kind::Image { png: picture.png.clone(), transform: picture.transform }
+                        } else {
+                            let picture = image_file.as_ref().unwrap();
+                            Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
+                        }
                     }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
                         let group = &b[group_start..rs[i].data.end];
@@ -1633,6 +1673,57 @@ impl Document {
                     {
                         Kind::AngleMeasurement(*a, *b, *c)
                     }
+                    (115 | 116, None, [a, vertex, c])
+                        if h.len() == 28 && h[6..10] == [18, 0, 95, 0]
+                            && constraint_payload.is_none()
+                            && [a, vertex, c].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind)))
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                                .map(|r| (r.kind, r.data.len()))
+                                .eq([(0x07d0, 28), (0x07d2, 16), (0x090e, 12), (0x07d7, 0)])
+                            && rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e)
+                                .is_some_and(|r| b[r.data.clone()] == [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0]) => {
+                        if code == 115 { Kind::PolarAngleValue(*a, *vertex, *c) }
+                        else { Kind::VertexAngleValue(*a, *vertex, *c) }
+                    }
+                    (113, None, [a, vertex, c])
+                        if h.len() == 28 && h[6..10] == [18, 0, 95, 0]
+                            && constraint_payload.is_none()
+                            && [a, vertex, c].iter().all(|&&id| id.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind)))
+                            && {
+                                let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                                    .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
+                                group == [(0x07d0, 28), (0x07d2, 16), (0x090e, 12), (0x07d7, 0)]
+                                    || (group.len() == 6
+                                        && group[0..3] == [(0x07d0, 28), (0x07d2, 16), (0x090e, 12)]
+                                        && group[3].0 == 0x07d5 && matches!(group[3].1, 26 | 28 | 30)
+                                        && label.is_some()
+                                        && group[4..] == [(0x07d8, 2), (0x07d7, 0)])
+                            }
+                            && rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e)
+                                .is_some_and(|r| {
+                                    let payload = &b[r.data.clone()];
+                                    matches!(u16::from_le_bytes([payload[0], payload[1]]), 1 | 2)
+                                        && payload[2..] == [0, 0, 0, 0, 0, 0, 254, 254, 254, 0]
+                                }) => {
+                        let marker = rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e).unwrap();
+                        Kind::AngleMarker(*a, *vertex, *c, u16::from_le_bytes(b[marker.data.start..marker.data.start + 2].try_into().unwrap()))
+                    }
+                    (120, None, [source])
+                        if h.len() == 28 && h[6..10] == [7, 0, 49, 0]
+                            && measurement_format && measurement_style
+                            && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o|
+                                !o.deleted && o.page == page
+                                    && matches!(o.kind, Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) | Kind::AngleMarker(..)))
+                            && {
+                                let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                                    .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
+                                group == [(0x07d0, 28), (0x07d2, 8), (0x0903, 32), (0x07d8, 2), (0x07d7, 0)]
+                                    || (group.len() == 6
+                                        && group[0..3] == [(0x07d0, 28), (0x07d2, 8), (0x0903, 32)]
+                                        && group[3].0 == 0x07d5 && matches!(group[3].1, 26 | 28 | 30 | 40)
+                                        && label.is_some()
+                                        && group[4..] == [(0x07d8, 2), (0x07d7, 0)])
+                            } => Kind::NumericAlias { source: *source, unit: NumericUnit::Degrees },
                     (42, _, [host])
                         if measurement_format && measurement_style
                             && objects.get(host - 1).is_some_and(|o| o.kind.is_circle()) =>
@@ -1742,6 +1833,18 @@ impl Document {
                                     && point_curve_constraint_count == 1
                                     && payload.len() == 20
                                     && polygon_vertex_count(&objects, *host).and_then(|count| polygon_constraint_subtype(&objects, b, *host, count)).is_some_and(|subtype| payload[..4] == [15, 0, subtype as u8, (subtype >> 8) as u8])
+                                    && (payload[..4] != [15, 0, 15, 0]
+                                        || polygon_vertex_count(&objects, *host) == Some(9)
+                                        || {
+                                            let exact_layout = |expected: &[u32]| {
+                                                rs.iter()
+                                                    .filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                                                    .map(|record| record.kind)
+                                                    .eq(expected.iter().copied())
+                                            };
+                                            exact_layout(&[0x07d0, 0x07d2, 0x07d3, 0x07d7])
+                                                || exact_layout(&[0x07d0, 0x07d2, 0x07d3, 0x07d5, 0x07d8, 0x07d7])
+                                        })
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
                                     && polygon_vertex_count(&objects, *host).is_some_and(|count| (u16::from_le_bytes([payload[12], payload[13]]) as usize) < count) => {
@@ -2148,6 +2251,13 @@ impl Document {
                                 0x232e => r.data.is_empty(),
                                 _ => false,
                             }) => Kind::SectorBoundary(*arc),
+                    (83, None, [arc])
+                        if h.len() == 28 && h[6..10] == [13, 0, 69, 0]
+                            && constraint_payload.is_none()
+                            && super::sector_boundary::supported_circular_segment_source(&objects, *arc, page, objects.len() + 1)
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                                .map(|r| (r.kind, r.data.len()))
+                                .eq([(0x07d0, 28), (0x07d2, 8), (0x07d7, 0)]) => Kind::CircularSegmentBoundary(*arc),
                     (79, None, [circle, start, end])
                         if h.len() == 28 && h[6..10] == [12, 0, 67, 0]
                             && constraint_payload.is_none()
@@ -2233,6 +2343,7 @@ impl Document {
                         || o.kind.is_circle()
                         || o.kind.is_polygon()
                         || matches!(o.kind, Kind::CircleInterior(_))
+                        || matches!(&o.kind, Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Disk)
                         || is_arc_kind(&o.kind)
                         || super::kind::is_straight_locus(&objects, &o.kind)
                         || super::locus::is_point_locus(&objects, &o.kind)
@@ -2243,6 +2354,7 @@ impl Document {
                     h,
                     objects.get(source.saturating_sub(1)).is_some_and(|o| {
                         o.kind.is_polygon() || matches!(o.kind, Kind::CircleInterior(_))
+                            || matches!(&o.kind, Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Disk)
                     }),
                 )
             } else if super::kind::is_straight_locus(&objects, &kind) {
@@ -2269,7 +2381,7 @@ impl Document {
                 label,
                 visual_style,
                 interior_order: (h.len() == 28
-                    && (h[6..8] == [4, 0] || matches!(h[6..10], [13, 0, 68, 0] | [5, 0, 16, 0])))
+                    && (h[6..8] == [4, 0] || matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0] | [5, 0, 16, 0])))
                 .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,

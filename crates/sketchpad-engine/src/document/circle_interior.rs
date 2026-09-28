@@ -37,8 +37,12 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let Kind::CircleInterior(source) = object.kind else {
-            return None;
+        let source = match &object.kind {
+            Kind::CircleInterior(source) => *source,
+            Kind::Colorized(definition)
+                if definition.element() == super::transform_model::ElementType::Disk =>
+                    return self.circle_interior_geometry(definition.source()),
+            _ => return None,
         };
         if let Some(value) = self.evaluation_circle(id) {
             return value;

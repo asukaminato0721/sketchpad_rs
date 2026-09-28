@@ -24,6 +24,15 @@ pub struct RichRunStyle {
     pub underline: Option<bool>,
     pub size_code: Option<u16>,
     pub family_index: Option<u16>,
+    /// Native R/G/L channels, each encoded as one plus an 8-bit component.
+    pub rgb: Option<[u16; 3]>,
+}
+
+impl RichRunStyle {
+    pub fn rgb_color(self) -> Option<[u8; 3]> {
+        self.rgb.filter(|channels| channels.iter().all(|value| (1..=256).contains(value)))
+            .map(|channels| channels.map(|value| (value - 1) as u8))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +101,12 @@ pub fn encode_rich_runs(
                 }
                 if let Some(index) = run.style.family_index {
                     markup.extend_from_slice(format!("P{index:X}").as_bytes());
+                }
+                if let Some([red, green, blue]) = run.style.rgb {
+                    if ![red, green, blue].iter().all(|channel| (1..=256).contains(channel)) {
+                        return Err("Unsupported rich-text color channel".into());
+                    }
+                    markup.extend_from_slice(format!("R{red:X}G{green:X}L{blue:X}").as_bytes());
                 }
                 for (attribute, value) in [
                     (b'W', run.style.bold),
@@ -371,12 +386,17 @@ impl MarkupParser<'_> {
         if rest.starts_with(b"<S") {
             self.pos += 2;
             let mut attributes = 0;
+            let mut channels = [None; 3];
+            let mut next_channel = 0;
             while self.markup.get(self.pos) != Some(&b'<') {
                 let attribute = *self
                     .markup
                     .get(self.pos)
                     .ok_or("Unterminated rich-text style")?;
-                if matches!(attribute, b'#' | b'P') {
+                if matches!(attribute, b'#' | b'P' | b'R' | b'G' | b'L') {
+                    if next_channel > 0 && !matches!(attribute, b'G' | b'L') {
+                        return Err("Unsupported style after rich-text color channels".into());
+                    }
                     self.pos += 1;
                     let start = self.pos;
                     while self.markup.get(self.pos).is_some_and(u8::is_ascii_hexdigit) {
@@ -389,13 +409,18 @@ impl MarkupParser<'_> {
                         .map_err(|error| error.to_string())?;
                     let value = u16::from_str_radix(hex, 16)
                         .map_err(|_| "Invalid rich-text numeric style value")?;
-                    if attribute == b'#' {
-                        if !(8..=512).contains(&value) {
-                            return Err("Unsupported rich-text size".into());
+                    match attribute {
+                        b'#' if (8..=512).contains(&value) => style.size_code = Some(value),
+                        b'P' => style.family_index = Some(value),
+                        b'R' | b'G' | b'L' if (1..=256).contains(&value) => {
+                            let index = match attribute { b'R' => 0, b'G' => 1, _ => 2 };
+                            if index != next_channel {
+                                return Err("Unsupported rich-text color channel order".into());
+                            }
+                            channels[index] = Some(value);
+                            next_channel += 1;
                         }
-                        style.size_code = Some(value);
-                    } else {
-                        style.family_index = Some(value);
+                        _ => return Err("Unsupported rich-text numeric style value".into()),
                     }
                     attributes += 1;
                     continue;
@@ -405,6 +430,9 @@ impl MarkupParser<'_> {
                     Some(b'2') => true,
                     _ => return Err("Unsupported rich-text style value".into()),
                 };
+                if next_channel > 0 {
+                    return Err("Unsupported style after rich-text color channels".into());
+                }
                 match attribute {
                     b'W' => style.bold = Some(enabled),
                     b'S' => style.italic = Some(enabled),
@@ -416,6 +444,12 @@ impl MarkupParser<'_> {
             }
             if attributes == 0 {
                 return Err("Empty rich-text style".into());
+            }
+            if channels.iter().any(Option::is_some) {
+                let [Some(red), Some(green), Some(blue)] = channels else {
+                    return Err("Incomplete rich-text color".into());
+                };
+                style.rgb = Some([red, green, blue]);
             }
             return self.group(false, style);
         }
@@ -713,6 +747,21 @@ mod tests {
     fn markup(rich: &[u8]) -> &[u8] {
         let len = u16::from_le_bytes(rich[16..18].try_into().unwrap()) as usize;
         &rich[18..18 + len]
+    }
+
+    #[test]
+    fn colored_run_round_trips_through_safe_move_encoding() {
+        let rect = TextRect { left: 10, top: 20, right: 100, bottom: 40 };
+        let style = RichRunStyle { rgb: Some([1, 2, 256]), ..Default::default() };
+        let rows = vec![vec![RichTextRun { text: "Blue".into(), style }]];
+        let template = encode_rich_runs(&rows, rect).unwrap();
+        assert!(markup(&template.rich).windows(b"R1G2L100".len()).any(|window| window == b"R1G2L100"));
+        assert_eq!(template.decode().unwrap().2, rows);
+        let moved = TextRect { left: 50, right: 140, ..rect };
+        let (edited_rich, edited_bbox) = template.encode_parts("Blue", moved).unwrap();
+        let edited = RichTextTemplate::from_parts(&edited_rich, &edited_bbox).unwrap();
+        assert_eq!(edited.decode().unwrap().2[0][0].style.rgb_color(), Some([0, 1, 255]));
+        assert!(template.encode_parts("Bluer", rect).is_err());
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub mod mapped_element;
 mod sampled_mapped;
 pub use sampled_mapped::SampledMappedDefinition;
 mod measurements;
+mod angle_marker;
 mod point_numeric_labels;
 mod pages;
 mod parameter_names;
@@ -70,7 +71,7 @@ use crate::plot_points_records::PlotPointsMode;
 use crate::style_records::VisualStyle;
 use crate::table_records::{
     CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup,
-    ParameterCalculationGroup, ParameterGroup, TableGroup,
+    NumericUnit, ParameterCalculationGroup, ParameterGroup, TableGroup,
 };
 use crate::text_object;
 use crate::text_object::TextRect;
@@ -170,6 +171,8 @@ pub enum Kind {
     PointOnArc(usize, f64),
     /// Closed sector boundary retains its live Arc dependency.
     SectorBoundary(usize),
+    /// Arc and its endpoint chord form a live circular-segment boundary.
+    CircularSegmentBoundary(usize),
     CircleInterior(usize),
     /// Normalized physical perimeter parameter on a closed sector boundary.
     PointOnSector(usize, f64),
@@ -219,6 +222,14 @@ pub enum Kind {
     ArcAngle(usize),
     ArcLength(usize),
     AngleMeasurement(usize, usize, usize),
+    /// Positive Cartesian turn from vertex→first to vertex→last, in [0,360).
+    PolarAngleValue(usize, usize, usize),
+    /// Reverse Cartesian turn from vertex→first to vertex→last, in [0,360).
+    VertexAngleValue(usize, usize, usize),
+    /// A displayed three-point angle mark with a native arc count.
+    AngleMarker(usize, usize, usize, u16),
+    /// A named numeric display whose value remains bound to its source.
+    NumericAlias { source: usize, unit: NumericUnit },
     PointDistance(usize, usize),
     PointLineDistance(usize, usize),
     PointNumericLabel(usize, usize),
@@ -524,7 +535,7 @@ impl Document {
             None
         };
         let measurement_precision = kind.has_measurement_precision().then_some(2);
-        let interior_order = if matches!(kind, Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
+        let interior_order = if matches!(kind, Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)) || kind.is_circle_interior() {
             Some(0)
         } else if kind.is_polygon() {
             Some(1)

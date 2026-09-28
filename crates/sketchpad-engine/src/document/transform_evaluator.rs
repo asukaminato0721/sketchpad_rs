@@ -395,6 +395,7 @@ mod tests {
                 ),
                 None => assert_eq!(result, Err(Error::Undefined)),
             },
+            ElementType::Disk => panic!("Disk transforms are not supported"),
         }
     }
     #[test]

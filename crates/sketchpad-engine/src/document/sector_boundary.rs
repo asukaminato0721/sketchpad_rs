@@ -12,6 +12,17 @@ pub(super) fn supported_source(objects: &[Object], arc: usize, page: usize, befo
         .and_then(|i| objects.get(i))
         .is_some_and(|o| arc < before && !o.deleted && o.page == page && is_arc_kind(&o.kind))
 }
+pub(super) fn supported_circular_segment_source(
+    objects: &[Object],
+    arc: usize,
+    page: usize,
+    before: usize,
+) -> bool {
+    supported_source(objects, arc, page, before)
+        && objects.get(arc - 1).is_some_and(|source| {
+            matches!(source.kind, Kind::CenterArc(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..))
+        })
+}
 pub(super) fn supported_host(objects: &[Object], host: usize, page: usize, before: usize) -> bool {
     host.checked_sub(1)
         .and_then(|i| objects.get(i))
@@ -198,10 +209,20 @@ impl Document {
     }
     /// Sampled presentation outline for filled shapes; this does not change path typing.
     pub fn filled_region_points(&self, id: usize) -> Option<Vec<Point>> {
+        if let Some(object) = self.objects.get(id.checked_sub(1)?) {
+            if let Kind::CircularSegmentBoundary(arc) = object.kind {
+                if object.deleted {
+                    return None;
+                }
+                // The closing edge is the chord from arc end back to arc start.
+                // The fill tessellator closes the returned outline itself.
+                return self.arc_points(arc, 192);
+            }
+        }
         if self
             .objects
             .get(id.checked_sub(1)?)
-            .is_some_and(|o| matches!(o.kind, Kind::CircleInterior(_)))
+            .is_some_and(|o| o.kind.is_circle_interior())
         {
             return self.circle_interior_points(id, 192);
         }

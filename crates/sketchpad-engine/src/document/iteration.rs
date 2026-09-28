@@ -9,6 +9,7 @@ use super::transform_model::{
 };
 use super::{Document, IterationDepth, Kind, Object, Point};
 use crate::style_records;
+use crate::style_records::RgbColor;
 use crate::table_records::NumericUnit;
 use std::collections::BTreeSet;
 
@@ -111,7 +112,7 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
         ElementType::Circle => source.kind.is_circle(),
         ElementType::Arc => is_arc_kind(&source.kind),
         ElementType::Polygon => source.kind.is_polygon(),
-        ElementType::Sector => false,
+        ElementType::Sector | ElementType::Disk => false,
     };
     !source.deleted && source_matches && iteration_transform_inputs_supported(objects, definition)
 }
@@ -140,6 +141,7 @@ fn mapped_value_construction(kind: &Kind) -> bool {
             || kind.numeric_unit().is_some()
             || kind.is_function()
             || mapped_reference_value(kind)
+            || matches!(kind, Kind::Colorized(definition) if definition.element() == ElementType::Disk)
             || matches!(
                 kind,
                 Kind::CoordinateSystem(..)
@@ -154,6 +156,7 @@ fn mapped_value_construction(kind: &Kind) -> bool {
 
 pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
     matches!(kind, Kind::PointNumericLabel(..) | Kind::CircleInterior(_) | Kind::Locus(..) | Kind::SampledMapped(..))
+        || matches!(kind, Kind::Colorized(definition) if definition.element() == ElementType::Disk)
         || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
         || is_point_kind(kind)
         || is_straight_kind(kind)
@@ -902,23 +905,24 @@ impl Document {
         if object.deleted || !carried.contains(&source) {
             return None;
         }
+        let mapped_value_depth = |id, minimum: f64| {
+            let raw = self.unitless_numeric_value(id)?;
+            if !raw.is_finite() || raw < 0. {
+                return None;
+            }
+            let value = raw.trunc();
+            (minimum..=4096.).contains(&value).then_some(value as u32)
+        };
         let depth = if terminal_only {
             match *depth {
                 IterationDepth::Fixed(value) => (1..=128).contains(&value).then_some(value)?,
-                IterationDepth::Value(id) => {
-                    let raw = self.unitless_numeric_value(id)?;
-                    if raw < 0. {
-                        return None;
-                    }
-                    let value = raw.trunc();
-                    if !(0. ..=128.).contains(&value) {
-                        return None;
-                    }
-                    value as u32
-                }
+                IterationDepth::Value(id) => mapped_value_depth(id, 0.)?,
             }
         } else {
-            self.numeric_iteration_depth(*depth)?
+            match *depth {
+                IterationDepth::Fixed(value) => self.numeric_iteration_depth(IterationDepth::Fixed(value))?,
+                IterationDepth::Value(id) => mapped_value_depth(id, 1.)?,
+            }
         };
         let initial: Vec<_> = seeds
             .iter()
@@ -1114,6 +1118,44 @@ impl Document {
         }
         self.mapped_iteration_images(source, iteration, |sample, id| {
             sample.circle_interior_geometry(id)
+        })
+    }
+
+    /// Per-generation analytic disks and colors from one carried color binding.
+    pub fn colorized_disk_iteration_images(&self, id: usize) -> Option<Vec<(Point, f64, RgbColor)>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = object.kind else {
+            return None;
+        };
+        if object.deleted
+            || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,
+                Kind::Colorized(ref definition) if definition.element() == ElementType::Disk)
+            || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind, Kind::MappedPointIteration { .. })
+        {
+            return None;
+        }
+        self.mapped_iteration_images(source, iteration, |sample, id| {
+            let (center, radius) = sample.circle_interior_geometry(id)?;
+            let color = sample.colorized_color(id)?;
+            Some((center, radius, color))
+        })
+    }
+
+    /// Filled polygons and their colors evaluated in the same mapped state.
+    pub fn colorized_polygon_iteration_images(&self, id: usize) -> Option<Vec<(Vec<Point>, RgbColor)>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = object.kind else {
+            return None;
+        };
+        if object.deleted
+            || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,
+                Kind::Colorized(ref definition) if definition.element() == ElementType::Polygon)
+            || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind, Kind::MappedPointIteration { .. })
+        {
+            return None;
+        }
+        self.mapped_iteration_images(source, iteration, |sample, id| {
+            Some((sample.filled_region_points(id)?, sample.colorized_color(id)?))
         })
     }
 

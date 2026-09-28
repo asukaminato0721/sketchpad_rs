@@ -376,7 +376,7 @@ impl Document {
                     .to_le_bytes(),
             );
         }
-        if matches!(object.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
+        if matches!(object.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_) | Kind::CircleInterior(_)) {
             object_header[20..24].copy_from_slice(&object.interior_order.ok_or("Missing sector drawing order")?.to_le_bytes());
         }
         put_record(groups, 0x07d0, &object_header);
@@ -980,6 +980,13 @@ impl Document {
                         }
                         let reference = self.multi_page_local_reference(page, object.id, *arc)?;
                         Self::append_multi_page_reference_group(&mut groups, object, 82, &[reference])?;
+                    }
+                    Kind::CircularSegmentBoundary(arc) => {
+                        if !super::sector_boundary::supported_circular_segment_source(&self.objects, *arc, page, object.id) {
+                            return Err("Circular segment needs a live arc on this page".into());
+                        }
+                        let reference = self.multi_page_local_reference(page, object.id, *arc)?;
+                        Self::append_multi_page_reference_group(&mut groups, object, 83, &[reference])?;
                     }
                     Kind::Polygon(vertices) => {
                         if vertices.len() < 3

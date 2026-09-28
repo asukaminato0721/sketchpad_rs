@@ -41,15 +41,28 @@ impl Document {
             ElementType::Point => 0, ElementType::Segment => 2,
             ElementType::Ray => 64, ElementType::Line => 63,
             ElementType::Circle => 3, ElementType::Arc => 80, ElementType::Polygon => 8,
-            ElementType::Sector => 82,
+            ElementType::Sector => 82, ElementType::Disk => 10,
         });
         h[..2].copy_from_slice(&75u16.to_le_bytes());
         h[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
         h[4] = u8::from(object.tracing);
+        if definition.element() == ElementType::Disk {
+            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing disk drawing order")?.to_le_bytes());
+        }
         if definition.element() == ElementType::Polygon {
             let count = polygon_vertex_count_for_encoding(&self.objects, definition.source())
                 .ok_or("Colorized polygon has no supported source vertices")?;
-            h[8..10].copy_from_slice(&polygon_subtype(count).ok_or("Polygon has too many vertices")?.to_le_bytes());
+            let native_polygon_profile = matches!(self.objects[definition.source() - 1].kind, Kind::Polygon(_))
+                && matches!(definition.native_operation(), 0x12 | 0x22 | 0x32 | 0x42)
+                && definition.range().0 == 0.
+                && (definition.range().1 == 1.
+                    || (definition.native_operation() == 0x12 && definition.range().1 == 2.));
+            let subtype = if native_polygon_profile {
+                15
+            } else {
+                polygon_subtype(count).ok_or("Polygon has too many vertices")?
+            };
+            h[8..10].copy_from_slice(&subtype.to_le_bytes());
             h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing polygon drawing order")?.to_le_bytes());
         }
         if let Some(style) = object.visual_style { crate::style_records::set_visual_style(&mut h, style)?; }
@@ -1604,6 +1617,7 @@ impl Document {
                 Kind::ArcOnCircle(a, b, c) => (79, vec![a, b, c]),
                 Kind::CenterArc(a, b, c) => (80, vec![a, b, c]),
                 Kind::SectorBoundary(arc) => (82, vec![arc]),
+                Kind::CircularSegmentBoundary(arc) => (83, vec![arc]),
                 Kind::CircleInterior(circle) => (10, vec![circle]),
                 _ => return Err("Unsupported new object".into()),
             };
@@ -1621,7 +1635,7 @@ impl Document {
             if o.presentation_suppressed {
                 h[2] |= 2;
             }
-            if o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
+            if o.kind.is_filled_region() {
                 h[20..24].copy_from_slice(
                     &o.interior_order
                         .ok_or("Missing polygon drawing order")?

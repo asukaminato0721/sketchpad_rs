@@ -61,7 +61,9 @@ pub(super) fn decode_native_transform(
                 || (code == 27
                     && matches!(source_kind, super::Kind::Transformed(definition)
                         if definition.element() == ElementType::Sector
-                            && definition.wire_flavor() == NativeTransformFlavor::Reflection))
+                            && matches!(definition.wire_flavor(),
+                                NativeTransformFlavor::Reflection
+                                    | NativeTransformFlavor::FixedRotation)))
         }
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
         ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),

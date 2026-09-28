@@ -357,6 +357,7 @@ impl Document {
                 return Err(format!("Invalid circle interior {}", o.id));
             }
             if matches!(o.kind, Kind::SectorBoundary(source) if !super::sector_boundary::supported_source(&self.objects, source, o.page, o.id))
+                || matches!(o.kind, Kind::CircularSegmentBoundary(source) if !super::sector_boundary::supported_circular_segment_source(&self.objects, source, o.page, o.id))
                 || matches!(o.kind, Kind::PointOnSector(host, _) if !super::sector_boundary::supported_host(&self.objects, host, o.page, o.id)) {
                 return Err(format!("Invalid sector dependency in object {}", o.id));
             }

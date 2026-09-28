@@ -194,6 +194,9 @@ pub(super) fn geometry_element(kind: &Kind) -> Option<ElementType> {
     if kind.is_circle() {
         return Some(ElementType::Circle);
     }
+    if kind.is_circle_interior() {
+        return Some(ElementType::Disk);
+    }
     if kind.is_polygon() {
         return Some(ElementType::Polygon);
     }
@@ -244,6 +247,19 @@ pub(super) fn decode_colorized(
         _ => return None,
     };
     let element = geometry_element(&objects.get(source.checked_sub(1)?)?.kind)?;
+    if element == ElementType::Disk {
+        let [source, value] = refs else { return None; };
+        if !matches!(objects.get(source.checked_sub(1)?)?.kind, Kind::CircleInterior(_))
+            || !matches!(&objects.get(value.checked_sub(1)?)?.kind,
+                Kind::ParameterCalculation(_, group) if group.unit() == NumericUnit::Scalar)
+            || p[8..16] != [0; 8]
+            || !matches!(operation, 0x10 | 0x12 | 0x22)
+            || !(p[16..24] == 1f64.to_le_bytes()
+                || (operation == 0x12 && p[16..24] == 4f64.to_le_bytes()))
+        {
+            return None;
+        }
+    }
     let class = u16::from_le_bytes(header[6..8].try_into().ok()?);
     let subtype = u16::from_le_bytes(header[8..10].try_into().ok()?);
     let matches_header = match element {
@@ -254,10 +270,17 @@ pub(super) fn decode_colorized(
         ElementType::Circle => (class, subtype) == (3, 28),
         ElementType::Arc => (class, subtype) == (12, 67),
         ElementType::Sector => false,
+        ElementType::Disk => (class, subtype) == (5, 16),
         ElementType::Polygon => {
             class == 4
-                && super::records::polygon_subtype(polygon_vertex_count(objects, source)?)?
+                && (super::records::polygon_subtype(polygon_vertex_count(objects, source)?)?
                     == subtype
+                    || (subtype == 15
+                        && matches!(objects.get(source.checked_sub(1)?)?.kind, Kind::Polygon(_))
+                        && matches!(operation, 0x12 | 0x22 | 0x32 | 0x42)
+                        && p[8..16] == 0f64.to_le_bytes()
+                        && (p[16..24] == 1f64.to_le_bytes()
+                            || (operation == 0x12 && p[16..24] == 2f64.to_le_bytes()))))
         }
     };
     if !matches_header {
@@ -428,6 +451,9 @@ impl Document {
             .get(source.checked_sub(1).ok_or("Invalid source geometry")?)
             .and_then(|o| geometry_element(&o.kind))
             .ok_or("Select supported source geometry")?;
+        if element == ElementType::Disk {
+            return Err("Colorized disk authoring has no verified native writer".into());
+        }
         let definition =
             ColorizedDefinition::new(source, element, binding, range_start, range_end, behavior)?;
         if self.partial_view

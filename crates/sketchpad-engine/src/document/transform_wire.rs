@@ -37,6 +37,7 @@ pub(super) fn encode_group(
         E::Arc => 80,
         E::Polygon => 8,
         E::Sector => 82,
+        E::Disk => return Err("Disk transforms are not supported".into()),
     });
     h[..2].copy_from_slice(&code.to_le_bytes());
     let modern_stroke = matches!(

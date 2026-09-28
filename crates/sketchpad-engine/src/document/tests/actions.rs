@@ -804,3 +804,19 @@ fn original_multi_pair_and_optional_movement_layouts_remain_lossless() {
     );
     assert_eq!(doc.encode().unwrap(), bytes);
 }
+
+#[test]
+fn native_url_buttons_with_opaque_action_suffix_decode_as_buttons() {
+    for (bytes, id, url, visible) in [
+        (include_bytes!("../../../../../tests/fixtures/url_suffix90_small_original_native_saved.gsp").as_slice(), 14, "https://www.kejianyuan.net", false),
+        (include_bytes!("../../../../../tests/fixtures/url_suffix90_small_tail_zero_native_saved.gsp").as_slice(), 14, "https://www.kejianyuan.net", false),
+        (include_bytes!("../../../../../tests/fixtures/url_suffix90_visible_original_native_saved.gsp").as_slice(), 37, "http://exjh.com", true),
+        (include_bytes!("../../../../../tests/fixtures/url_suffix90_visible_tail_zero_native_saved.gsp").as_slice(), 37, "http://exjh.com", true),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert!(matches!(&doc.objects[id - 1].kind,
+            Kind::LinkUrlButton { url: actual, .. } if actual == url));
+        assert_eq!(doc.is_displayed(id), visible);
+        assert_eq!(doc.encode().unwrap(), bytes);
+    }
+}

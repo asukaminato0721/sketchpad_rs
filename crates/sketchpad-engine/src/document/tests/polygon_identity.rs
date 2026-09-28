@@ -146,7 +146,7 @@ fn polygon_identity_keeps_constraint_role_and_range_guards() {
 }
 
 #[test]
-fn generic_polygon_identity_is_bounded_to_proved_nine_reference_source() {
+fn generic_polygon_identity_follows_imported_subtype_on_longer_stored_walks() {
     let mut doc = Document::new();
     for i in 0..12 {
         let a = (i as f64) * std::f64::consts::TAU / 12.;
@@ -164,8 +164,8 @@ fn generic_polygon_identity_is_bounded_to_proved_nine_reference_source() {
     let constraint = d.objects[13].constraint_offset.unwrap();
     bytes[source + 8..source + 10].copy_from_slice(&15u16.to_le_bytes());
     bytes[constraint + 2..constraint + 4].copy_from_slice(&15u16.to_le_bytes());
-    let unsupported = Document::from_bytes(&bytes, None).unwrap();
-    assert!(matches!(unsupported.objects[12].kind, Kind::Polygon(_)));
-    assert_eq!(unsupported.objects[13].kind, Kind::Unsupported(15));
-    assert_eq!(unsupported.encode().unwrap(), bytes);
+    let imported = Document::from_bytes(&bytes, None).unwrap();
+    assert!(matches!(imported.objects[12].kind, Kind::Polygon(ref vertices) if vertices.len() == 12));
+    assert_eq!(imported.objects[13].kind, Kind::PointOnPolygon(13, 4, 0.25));
+    assert_eq!(imported.encode().unwrap(), bytes);
 }

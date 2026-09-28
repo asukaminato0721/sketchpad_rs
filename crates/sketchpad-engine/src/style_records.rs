@@ -151,8 +151,10 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     code == 8
-        || (code == 10 && payload.len() == 28 && payload[6..10] == [5, 0, 16, 0])
+        || (matches!(code, 10 | 75) && payload.len() == 28 && payload[6..10] == [5, 0, 16, 0])
+        || (code == 75 && payload.len() == 28 && payload[6..10] == [4, 0, 15, 0])
         || (code == 82 && payload.len() == 28 && payload[6..10] == [13, 0, 68, 0])
+        || (code == 83 && payload.len() == 28 && payload[6..10] == [13, 0, 69, 0])
         || (matches!(
             code,
             75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
@@ -299,7 +301,8 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
         return false;
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
-    (payload.len() == 28 && code == 75
+    (payload.len() == 28 && code == 113 && payload[6..10] == [18, 0, 95, 0])
+        || (payload.len() == 28 && code == 75
         && (payload[6..10] == [12, 0, 67, 0]
             || (payload[6..8] == [2,0] && matches!(u16::from_le_bytes([payload[8],payload[9]]),12|13))))
         || matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)

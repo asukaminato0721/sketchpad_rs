@@ -42,6 +42,110 @@ pub struct CroppedPicture {
     pub visible: bool,
 }
 
+/// A strictly decoded imported picture. Multi-picture documents retain their
+/// original resource table and are not structurally writable yet.
+#[derive(Clone, Debug)]
+pub struct ReadOnlyImage {
+    pub group_offset: usize,
+    pub png: Vec<u8>,
+    pub transform: [f64; 6],
+}
+
+pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String> {
+    let records = records(bytes)?;
+    let resources = records
+        .iter()
+        .filter(|record| record.kind == RESOURCE)
+        .collect::<Vec<_>>();
+    if resources.is_empty() || resources.len() > 64 {
+        return Err("Unsupported picture resource count".into());
+    }
+    let mut pngs = Vec::with_capacity(resources.len());
+    let mut dimensions = Vec::with_capacity(resources.len());
+    for resource in resources {
+        let payload = &bytes[resource.payload.clone()];
+        if payload.len() < 8 {
+            return Err("Picture resource header is truncated".into());
+        }
+        let png = &payload[8..];
+        let size = png_dimensions(png)?;
+        if (u32_at(payload, 0), u32_at(payload, 4)) != size {
+            return Err("Picture resource dimensions disagree with PNG".into());
+        }
+        pngs.push(png);
+        dimensions.push(size);
+    }
+    let mut images = Vec::new();
+    for (index, header) in records.iter().enumerate() {
+        let h = &bytes[header.payload.clone()];
+        if header.kind != OBJECT_HEADER
+            || h.len() != 28
+            || h[..2] != [0, 0]
+            || h[6..10] != [16, 0, 78, 0]
+        {
+            continue;
+        }
+        let Some(size) = records.get(index + 1) else {
+            continue;
+        };
+        let Some(transform) = records.get(index + 2) else {
+            continue;
+        };
+        let marker = records
+            .get(index + 3)
+            .filter(|record| record.kind == 0x232e);
+        let resource_index = index + if marker.is_some() { 4 } else { 3 };
+        let Some(resource_ref) = records.get(resource_index) else {
+            continue;
+        };
+        let Some(terminator) = records.get(resource_index + 1) else {
+            continue;
+        };
+        if size.kind != IMAGE_SIZE
+            || size.payload.len() != 16
+            || transform.kind != IMAGE_TRANSFORM
+            || transform.payload.len() != 48
+            || marker.is_some_and(|record| !record.payload.is_empty())
+            || resource_ref.kind != IMAGE_RESOURCE
+            || resource_ref.payload.len() != 2
+            || terminator.kind != OBJECT_END
+            || !terminator.payload.is_empty()
+        {
+            continue;
+        }
+        let resource_id =
+            u16::from_le_bytes(bytes[resource_ref.payload.clone()].try_into().unwrap()) as usize;
+        let Some(&expected) = dimensions.get(resource_id) else {
+            continue;
+        };
+        let size_payload = &bytes[size.payload.clone()];
+        if (0..4)
+            .map(|at| u32_at(size_payload, at * 4))
+            .collect::<Vec<_>>()
+            != [expected.0, expected.1, expected.0, expected.1]
+        {
+            continue;
+        }
+        let mut matrix = [0.; 6];
+        for (at, value) in matrix.iter_mut().enumerate() {
+            *value = f64::from_le_bytes(
+                bytes[transform.payload.start + at * 8..transform.payload.start + (at + 1) * 8]
+                    .try_into()
+                    .unwrap(),
+            );
+        }
+        if matrix.iter().any(|value| !value.is_finite()) {
+            continue;
+        }
+        images.push(ReadOnlyImage {
+            group_offset: header.start,
+            png: pngs[resource_id].to_vec(),
+            transform: matrix,
+        });
+    }
+    Ok(images)
+}
+
 fn u32_at(data: &[u8], start: usize) -> u32 {
     u32::from_le_bytes(data[start..start + 4].try_into().unwrap())
 }
@@ -259,7 +363,9 @@ impl ImageFile {
     }
 
     pub fn independent_from_png(png: &[u8], transform: [f64; 6]) -> Result<Self, String> {
-        let mut picture = Self::parse(include_bytes!("../../../tests/fixtures/image_port_tiny.gsp"))?;
+        let mut picture = Self::parse(include_bytes!(
+            "../../../tests/fixtures/image_port_tiny.gsp"
+        ))?;
         picture.replace_png(png)?;
         picture.set_transform(transform)?;
         Ok(picture)
