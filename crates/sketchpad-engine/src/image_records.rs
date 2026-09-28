@@ -51,8 +51,23 @@ pub struct ReadOnlyImage {
     pub transform: [f64; 6],
 }
 
-pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String> {
-    let records = records(bytes)?;
+/// One picture positioned by a live point. The stored scale and rotation are
+/// relative to that point; the document resolves the point at evaluation time.
+#[derive(Clone, Debug)]
+pub struct ReadOnlyAnchoredImage {
+    pub group_offset: usize,
+    pub point_ref: u32,
+    pub png: Vec<u8>,
+    pub dimensions: (u32, u32),
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub rotation: f64,
+}
+
+fn validated_resources<'a>(
+    bytes: &'a [u8],
+    records: &[Record],
+) -> Result<(Vec<&'a [u8]>, Vec<(u32, u32)>), String> {
     let resources = records
         .iter()
         .filter(|record| record.kind == RESOURCE)
@@ -75,6 +90,79 @@ pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String
         pngs.push(png);
         dimensions.push(size);
     }
+    Ok((pngs, dimensions))
+}
+
+pub fn imported_anchored_image_catalog(
+    bytes: &[u8],
+) -> Result<Vec<ReadOnlyAnchoredImage>, String> {
+    let records = records(bytes)?;
+    let (pngs, dimensions) = validated_resources(bytes, &records)?;
+    let mut images = Vec::new();
+    for group in records.windows(6) {
+        let [header, refs, operation, size, resource, end] = group else {
+            unreachable!()
+        };
+        let h = &bytes[header.payload.clone()];
+        if header.kind != OBJECT_HEADER
+            || h.len() != 28
+            || u16::from_le_bytes([h[0], h[1]]) != 99
+            || h[6..10] != [16, 0, 78, 0]
+            || refs.kind != 0x07d2
+            || refs.payload.len() != 8
+            || operation.kind != 0x07d3
+            || operation.payload.len() != 28
+            || size.kind != IMAGE_SIZE
+            || size.payload.len() != 16
+            || resource.kind != IMAGE_RESOURCE
+            || resource.payload.len() != 2
+            || end.kind != OBJECT_END
+            || !end.payload.is_empty()
+        {
+            continue;
+        }
+        let refs = &bytes[refs.payload.clone()];
+        let op = &bytes[operation.payload.clone()];
+        let resource_id = u16::from_le_bytes(bytes[resource.payload.clone()].try_into().unwrap())
+            as usize;
+        let Some(&expected) = dimensions.get(resource_id) else {
+            continue;
+        };
+        let dimensions = &bytes[size.payload.clone()];
+        if u32_at(refs, 0) != 1
+            || u32_at(refs, 4) == 0
+            || u32_at(op, 0) != 99
+            || (0..4).map(|at| u32_at(dimensions, at * 4)).collect::<Vec<_>>()
+                != [expected.0, expected.1, expected.0, expected.1]
+        {
+            continue;
+        }
+        let values = (0..3)
+            .map(|at| f64::from_le_bytes(op[4 + at * 8..12 + at * 8].try_into().unwrap()))
+            .collect::<Vec<_>>();
+        if values.iter().any(|value| !value.is_finite())
+            || values[0] <= 0.
+            || values[1] <= 0.
+            || values[2] != 0.
+        {
+            continue;
+        }
+        images.push(ReadOnlyAnchoredImage {
+            group_offset: header.start,
+            point_ref: u32_at(refs, 4),
+            png: pngs[resource_id].to_vec(),
+            dimensions: expected,
+            scale_x: values[0],
+            scale_y: values[1],
+            rotation: values[2],
+        });
+    }
+    Ok(images)
+}
+
+pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String> {
+    let records = records(bytes)?;
+    let (pngs, dimensions) = validated_resources(bytes, &records)?;
     let mut images = Vec::new();
     for (index, header) in records.iter().enumerate() {
         let h = &bytes[header.payload.clone()];

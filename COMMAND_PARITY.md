@@ -539,3 +539,11 @@ Ordered native `R/G/L` channel triples with values1..256 now color individual te
 ## Checkpoint93 referenced-function π suffix
 
 The shared expression parser now accepts the exact native `π,0x0100` pair, restoring 216 code71 function objects across the corpus without a new object variant. Six Native controls preserve whole files byte-for-byte and show that the ordinary upstream numeric chain changes while the function caption remains symbolically displayed. The engine predicts a changing `f97(1)` value; no direct Native function-value readout was available. Unsupported falls9,644→9,428 across 1,599 exact originals. This example remains a partial document with expression edits guarded. See [implementation](dev/referenced_function93_implementation.md).
+
+## Checkpoint94 point-anchored pictures
+
+Strict zero-rotation code99 images use their live point parent and stored positive scales around the PNG center. Free and constructed parent changes update canvas, SVG, selection geometry, and picking through the existing image object. Sixteen Native controls save whole-file exact; an isolated coin PNG moves (+40,+20) exactly with its point. The compiled scan restores 97 image objects across 44 files, lowering unsupported9,428→9,331 while all1,599 originals stay byte exact. Resource-table structural editing remains guarded. See [implementation](dev/anchored_image94_implementation.md).
+
+## Checkpoint95 nested polar point transforms
+
+Strict code26 point transforms now accept an already decoded `DualMarkedPolar` point as their source. Their own angle and length operands remain live, and both transforms compose in the shared DAG evaluator. Ten Native movement, length and angle controls save whole-file exact. The compiled scan restores 105 drawing slots including 38 direct roots across six files, lowering unsupported9,331→9,226 while all1,599 originals stay byte exact. Other source point flavors remain outside the verified admission. See [implementation](dev/point26_dual95_implementation.md).

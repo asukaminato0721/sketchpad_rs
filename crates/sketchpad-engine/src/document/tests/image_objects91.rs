@@ -64,6 +64,7 @@ fn native_two_resource_images_keep_distinct_pngs_transforms_and_visibility() {
         let Kind::Image {
             png: first,
             transform: first_transform,
+            ..
         } = &doc.objects[19].kind
         else {
             panic!("object20 image missing")
@@ -71,6 +72,7 @@ fn native_two_resource_images_keep_distinct_pngs_transforms_and_visibility() {
         let Kind::Image {
             png: second,
             transform: second_transform,
+            ..
         } = &doc.objects[20].kind
         else {
             panic!("object21 image missing")
@@ -97,7 +99,7 @@ fn native_two_resource_images_keep_distinct_pngs_transforms_and_visibility() {
 fn empty_native_marker_keeps_single_resource_image_as_read_only_object() {
     let bytes = include_bytes!("../../../../../tests/fixtures/image_objects91_marker_original.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();
-    let Kind::Image { png, transform } = &doc.objects[80].kind else {
+    let Kind::Image { png, transform, .. } = &doc.objects[80].kind else {
         panic!("marked image missing")
     };
     assert_eq!(

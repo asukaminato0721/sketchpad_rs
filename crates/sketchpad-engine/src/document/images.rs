@@ -24,7 +24,26 @@ impl Document {
         Ok(self.add(Kind::Image {
             png: png.to_vec(),
             transform: [1., 0., at.x, 0., 1., at.y],
+            anchor: None,
         }))
+    }
+    /// Resolve an imported point-anchored picture through its current parent.
+    pub fn image_transform(&self, id: usize) -> Option<[f64; 6]> {
+        let Kind::Image {
+            transform,
+            anchor,
+            ..
+        } = &self.objects.get(id.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let mut result = *transform;
+        if let Some(anchor) = anchor {
+            let point = self.position(*anchor)?;
+            result[2] += point.x;
+            result[5] += point.y;
+        }
+        Some(result)
     }
     pub fn move_image(&mut self, id: usize, at: Point) -> Result<(), String> {
         self.move_image_inner(id, at, true)

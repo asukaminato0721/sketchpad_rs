@@ -158,6 +158,8 @@ The same element now supports a proved [Segment reflection and chained rotation]
 [Multi-resource PNG documents](dev/image_objects91_implementation.md) now show independently indexed pictures using the existing image renderer; these imported resource tables remain read-only.
 [Native colored text runs](dev/rich_style92_implementation.md) now retain ordered R/G/L colors on individual spans in canvas and SVG output.
 [Referenced functions with π suffixes](dev/referenced_function93_implementation.md) now decode through the shared expression evaluator, restoring live dependencies in the imported music examples.
+[Point-anchored PNG pictures](dev/anchored_image94_implementation.md) now follow free or constructed points using the shared image renderer and SVG/picking transform.
+[Nested polar point transforms](dev/point26_dual95_implementation.md) now compose through the existing object DAG when a code26 point uses an already decoded polar point as its source.
 
 ## Verification
 

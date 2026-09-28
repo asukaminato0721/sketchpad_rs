@@ -210,6 +210,9 @@ impl Kind {
         }
     }
     pub fn dependencies(&self) -> Vec<usize> {
+        if let Kind::Image { anchor: Some(id), .. } = self {
+            return vec![*id];
+        }
         if let Kind::CoordinatePoint(d) = self { return d.native_references(); }
         if let Kind::ReferencedText { parents, .. } = self {
             return parents.clone();
@@ -631,9 +634,10 @@ impl Kind {
         }
         match *self {
             Kind::Free(p) => Kind::Free(p),
-            Kind::Image { ref png, transform } => Kind::Image {
+            Kind::Image { ref png, transform, anchor } => Kind::Image {
                 png: png.clone(),
                 transform,
+                anchor: anchor.map(m),
             },
             Kind::PlainText { ref text, rect } => Kind::PlainText {
                 text: text.clone(),

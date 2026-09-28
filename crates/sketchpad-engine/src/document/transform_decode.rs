@@ -50,10 +50,12 @@ pub(super) fn decode_native_transform(
             matches!(source_kind, super::Kind::Free(_))
                 || matches!(source_kind, super::Kind::Transformed(definition)
                     if definition.element() == ElementType::Point
-                        && matches!(definition.wire_flavor(),
+                        && (matches!(definition.wire_flavor(),
                             NativeTransformFlavor::Vector
                                 | NativeTransformFlavor::FixedPolar
-                                | NativeTransformFlavor::MarkedPolar))
+                                | NativeTransformFlavor::MarkedPolar)
+                            || (code == 26
+                                && definition.wire_flavor() == NativeTransformFlavor::DualMarkedPolar)))
         }
         ElementType::Arc => is_arc_kind(source_kind),
         ElementType::Sector => {

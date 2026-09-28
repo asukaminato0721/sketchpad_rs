@@ -990,7 +990,8 @@ pub fn svg_page_with_button_offset(
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
-        if let Kind::Image { png, transform } = &object.kind {
+        if let Kind::Image { png, .. } = &object.kind {
+            let Some(transform) = doc.image_transform(object.id) else { continue };
             let (width, height) = crate::image_records::ImageFile::png_size(png)?;
             let origin = vp.screen(Point {
                 x: transform[2],
@@ -3456,7 +3457,7 @@ mod tests {
             scale: 2.,
             center: Point { x: 150., y: 150. },
         };
-        let Kind::Image { png, transform } = &doc.objects[0].kind else {
+        let Kind::Image { png, transform, .. } = &doc.objects[0].kind else {
             unreachable!()
         };
         let corners = picture_screen_quad(&vp, png, *transform).unwrap();
@@ -3475,6 +3476,50 @@ mod tests {
         let svg = svg_page(&doc, &vp).unwrap();
         assert!(svg.contains("data:image/png;base64,iVBORw0KGgo"));
         assert!(svg.contains("<image width=\"16\" height=\"16\""));
+    }
+    #[test]
+    fn imported_point_anchored_picture_moves_in_svg_and_picking() {
+        let original = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/anchored_image94_coin_original_input.gsp"),
+            None,
+        )
+        .unwrap();
+        let moved = Document::from_bytes(
+            include_bytes!("../../../tests/fixtures/anchored_image94_coin_move_input.gsp"),
+            None,
+        )
+        .unwrap();
+        let vp = Viewport {
+            rect: Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.)),
+            scale: 1.,
+            center: Point { x: 500., y: 400. },
+        };
+        let Kind::Image { png, .. } = &original.objects[28].kind else {
+            panic!("native picture is not decoded")
+        };
+        let original_quad = picture_screen_quad(&vp, png, original.image_transform(29).unwrap()).unwrap();
+        let moved_quad = picture_screen_quad(&vp, png, moved.image_transform(29).unwrap()).unwrap();
+        for (before, after) in original_quad.into_iter().zip(moved_quad) {
+            assert_eq!(after, before + egui::vec2(40., 20.));
+        }
+        assert!(picture_hit(&vp, png, moved.image_transform(29).unwrap(), moved_quad[0] + egui::vec2(10., 10.)));
+        let Kind::Image { transform, .. } = &original.objects[28].kind else {
+            unreachable!()
+        };
+        let isolated = |point: Point| {
+            let mut document = Document::new();
+            let anchor = document.add(Kind::Free(point));
+            document.add(Kind::Image {
+                png: png.clone(),
+                transform: *transform,
+                anchor: Some(anchor),
+            });
+            document
+        };
+        let before = svg_page(&isolated(Point { x: 686., y: 341. }), &vp).unwrap();
+        let after = svg_page(&isolated(Point { x: 726., y: 361. }), &vp).unwrap();
+        assert_eq!(before.matches("<image ").count(), after.matches("<image ").count());
+        assert_ne!(before, after);
     }
     #[test]
     fn imported_multi_resource_pictures_export_their_own_pngs() {

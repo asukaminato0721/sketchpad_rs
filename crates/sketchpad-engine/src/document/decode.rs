@@ -361,6 +361,15 @@ impl Document {
         } else {
             BTreeMap::new()
         };
+        let anchored_images = if has_picture_resource {
+            crate::image_records::imported_anchored_image_catalog(b)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|image| (image.group_offset, image))
+                .collect::<BTreeMap<_, _>>()
+        } else {
+            BTreeMap::new()
+        };
         let image_read_only =
             has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../../../../assets/point_template.gsp"))?;
@@ -426,6 +435,7 @@ impl Document {
                 .as_ref()
                 .is_some_and(|picture| picture.picture_group_offset() == group_start)
                 || imported_images.contains_key(&group_start);
+            let is_anchored_image = anchored_images.contains_key(&group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let tool_input = tool_inputs.get(&(objects.len() + 1)).copied();
@@ -750,6 +760,7 @@ impl Document {
                     && !(matches!(code, 73 | 90) && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
+                    && !(is_anchored_image && matches!(r.kind, 0x090c | 0x1f44))
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
@@ -1420,10 +1431,25 @@ impl Document {
                     }
                     (0, None, []) if is_image => {
                         if let Some(picture) = imported_images.get(&group_start) {
-                            Kind::Image { png: picture.png.clone(), transform: picture.transform }
+                            Kind::Image { png: picture.png.clone(), transform: picture.transform, anchor: None }
                         } else {
                             let picture = image_file.as_ref().unwrap();
-                            Kind::Image { png: picture.png().to_vec(), transform: picture.transform() }
+                            Kind::Image { png: picture.png().to_vec(), transform: picture.transform(), anchor: None }
+                        }
+                    }
+                    (99, None, [anchor]) if h[6..10] == [16, 0, 78, 0]
+                        && objects.get(anchor.saturating_sub(1)).is_some_and(|object| object.page == page && is_point_kind(&object.kind))
+                        && anchored_images.get(&group_start).is_some_and(|image| image.point_ref == (*anchor - page_base) as u32) => {
+                        let image = &anchored_images[&group_start];
+                        let width = image.dimensions.0 as f64;
+                        let height = image.dimensions.1 as f64;
+                        Kind::Image {
+                            png: image.png.clone(),
+                            transform: [
+                                image.scale_x, 0., -image.scale_x * width / 2.,
+                                0., image.scale_y, -image.scale_y * height / 2.,
+                            ],
+                            anchor: Some(*anchor),
                         }
                     }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {

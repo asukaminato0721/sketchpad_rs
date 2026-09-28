@@ -847,7 +847,10 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::Image { png, transform } = &o.kind {
+            if let Kind::Image { png, transform, anchor } = &o.kind {
+                if anchor.is_some() {
+                    return Err("Adding a point-anchored picture is not supported".into());
+                }
                 let picture = ImageFile::independent_from_png(png, *transform)?;
                 let mut group = picture.picture_group().to_vec();
                 if !o.visible {

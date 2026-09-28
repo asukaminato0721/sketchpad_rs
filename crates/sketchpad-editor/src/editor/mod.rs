@@ -395,7 +395,8 @@ impl Editor {
                     y: anchor.1 as f64,
                 });
             }
-            if let Kind::Image { png, transform } = &object.kind
+            if let Kind::Image { png, .. } = &object.kind
+                && let Some(transform) = self.doc.image_transform(object.id)
                 && let Some(corners) = crate::render::picture_screen_quad(
                     &Viewport {
                         rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO),
@@ -403,7 +404,7 @@ impl Editor {
                         center: Point { x: 0., y: 0. },
                     },
                     png,
-                    *transform,
+                    transform,
                 )
             {
                 // The zero-sized viewport places world positions at the origin.

@@ -188,6 +188,8 @@ mod colorized_disk86;
 mod colorized_iteration88;
 mod colorized_polygon89;
 mod image_objects91;
+mod anchored_images94;
+mod point26_dual95;
 mod rich_style92;
 mod angle_marker87;
 

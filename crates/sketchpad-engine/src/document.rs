@@ -152,6 +152,8 @@ pub enum Kind {
     Image {
         png: Vec<u8>,
         transform: [f64; 6],
+        /// A live point anchor; `transform` is then relative to that point.
+        anchor: Option<usize>,
     },
     PlainText {
         text: String,

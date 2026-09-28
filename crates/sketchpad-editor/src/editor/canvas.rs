@@ -177,7 +177,7 @@ impl Editor {
                 for object in self.doc.objects.iter().filter(|object| {
                     object.page == self.doc.active_page && object.visible && !object.deleted
                 }) {
-                    if let Kind::Image { png, transform } = &object.kind {
+                    if let Kind::Image { png, .. } = &object.kind {
                         if !self.image_textures.contains_key(&object.id) {
                             if let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -196,8 +196,9 @@ impl Editor {
                             }
                         }
                         if let Some(texture) = self.image_textures.get(&object.id)
+                            && let Some(transform) = self.doc.image_transform(object.id)
                             && let Some(corners) =
-                                crate::render::picture_screen_quad(&vp, png, *transform)
+                                crate::render::picture_screen_quad(&vp, png, transform)
                         {
                             let mut mesh = egui::Mesh::with_texture(texture.id());
                             for (position, uv) in corners.into_iter().zip([

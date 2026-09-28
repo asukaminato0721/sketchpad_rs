@@ -324,7 +324,7 @@ impl Document {
                 }
                 _ => {}
             }
-            if let Kind::Image { png, transform } = &o.kind {
+            if let Kind::Image { png, transform, .. } = &o.kind {
                 ImageFile::png_size(png)?;
                 if transform.iter().any(|value| !value.is_finite()) {
                     return Err(format!("Non-finite picture transform in object {}", o.id));

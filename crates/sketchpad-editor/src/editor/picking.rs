@@ -124,8 +124,9 @@ impl Editor {
     pub(super) fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && matches!(&object.kind, Kind::Image { png, transform }
-                    if crate::render::picture_hit(v, png, *transform, p))
+                && matches!(&object.kind, Kind::Image { png, .. }
+                    if self.doc.image_transform(object.id).is_some_and(|transform|
+                        crate::render::picture_hit(v, png, transform, p)))
         }) {
             return Some(object.id);
         }
