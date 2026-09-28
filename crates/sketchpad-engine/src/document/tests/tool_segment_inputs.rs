@@ -99,6 +99,7 @@ fn native_transformed_midpoint_and_hidden_helper_decode_without_visibility_norma
     );
     assert_eq!(document.encode().unwrap(), bytes);
     let clipboard = {
+        document.selected.insert(11);
         document.selected.insert(19);
         document.copy_selected().unwrap()
     };

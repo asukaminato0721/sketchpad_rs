@@ -86,16 +86,19 @@ fn native_colorized_disk_retains_live_fill_identity_and_source_order() {
 }
 
 #[test]
-fn unproved_disk_color_packet_stays_opaque() {
+fn disk_color_cycle_uses_shared_color_binding() {
     let bytes =
         include_bytes!("../../../../../tests/fixtures/colorized_disk86_original_native_saved.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();
     let at = doc.objects[16].constraint_offset.unwrap();
     let mut changed = bytes.to_vec();
     changed[at + 4] = 0x11;
-    let guarded = Document::from_bytes(&changed, None).unwrap();
-    assert_eq!(guarded.objects[16].kind, Kind::Unsupported(75));
-    assert_eq!(guarded.encode().unwrap(), changed);
+    let cycled = Document::from_bytes(&changed, None).unwrap();
+    let Kind::Colorized(definition) = &cycled.objects[16].kind else { panic!("expected colorized disk") };
+    assert_eq!(definition.behavior(), ColorRangeBehavior::Cycle);
+    assert_eq!(cycled.circle_interior_geometry(17), doc.circle_interior_geometry(17));
+    assert!(cycled.colorized_color(17).is_some());
+    assert_eq!(cycled.encode().unwrap(), changed);
 }
 
 #[test]
@@ -129,7 +132,7 @@ fn native_grayscale_disk_uses_same_live_carrier() {
 }
 
 #[test]
-fn disk_color_support_does_not_enable_unverified_disk_transforms() {
+fn disk_transforms_use_shared_transform_definitions() {
     assert!(
         crate::document::transform_model::TransformDefinition::new(
             1,
@@ -137,6 +140,6 @@ fn disk_color_support_does_not_enable_unverified_disk_transforms() {
             crate::document::transform_model::Transform::Reflect { mirror: 2 },
             NativeTransformFlavor::Reflection,
         )
-        .is_err()
+        .is_ok()
     );
 }

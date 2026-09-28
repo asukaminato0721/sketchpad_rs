@@ -4,9 +4,9 @@ use super::iteration::{
     supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    locus_refs_match, expected_parameter_locus_refs, is_arc_kind, is_point_kind,
+    locus_refs_match, parameter_locus_refs_match, is_arc_kind, is_point_kind,
     is_segment_kind, is_straight_kind, literal_plot_path_accepts, polygon_vertex_count,
-    straight_kind_mode, value_plot_path_accepts,
+    straight_kind_mode,
 };
 use super::records::records;
 use super::{Document, IterationDepth, Kind, LineMode, Object};
@@ -35,6 +35,10 @@ impl Document {
         if !self.dirty {
             return Ok(());
         }
+        if self.image_read_only {
+            self.encode_existing_state()?;
+            return Ok(());
+        }
         if self.page_count
             > records(&self.original)?
                 .iter()
@@ -50,12 +54,9 @@ impl Document {
             } else if self.has_pending_multi_page_additions() {
                 self.encode_multi_page_additions()?;
             } else {
-                self.encode_multi_page_state()?;
+                self.encode_existing_state()?;
             }
             return Ok(());
-        }
-        if self.image_read_only && self.dirty {
-            return Err("Cropped or multi-resource picture content is read-only".into());
         }
         if self.snap_points.len() != self.page_count
             || self.grid_dotted.len() != self.page_count
@@ -341,7 +342,7 @@ impl Document {
                 && o.kind.numeric_unit().is_none()
                 && !matches!(
                     o.kind,
-                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. } | Kind::PlainText { .. }
                 )
             {
                 return Err(format!("Invalid object label in object {}", o.id));
@@ -501,15 +502,8 @@ impl Document {
                 if !min.is_finite()
                     || !max.is_finite()
                     || min >= max
-                    || !(2..=4096).contains(&samples)
-                    || refs
-                        .first()
-                        .zip(refs.get(1))
-                        .and_then(|(&target, &driver)| {
-                            expected_parameter_locus_refs(&self.objects, driver, target)
-                        })
-                        .as_ref()
-                        != Some(refs)
+                    || samples < 2
+                    || !parameter_locus_refs_match(&self.objects, refs)
                 {
                     return Err(format!("Invalid parameter locus {}", o.id));
                 }
@@ -520,7 +514,7 @@ impl Document {
                 }
             }
             if let Kind::Locus(ref refs, samples) = o.kind {
-                if !(2..=10_000).contains(&samples)
+                if samples < 2
                     || !locus_refs_match(&self.objects, refs)
                     || self.locus_segments(o.id, 2).is_none()
                 {
@@ -695,11 +689,8 @@ impl Document {
                                 && host.page == o.page
                                 && path < o.id
                                 && (super::curve_points::supported(&self.objects, path, o.page, o.id)
-                                    || self.numeric_value(source).is_some_and(|value| value_plot_path_accepts(&host.kind, value)))
+                                    || super::kind::is_value_plot_path_kind(&host.kind))
                         })
-                    || (self.position(o.id).is_none()
-                        && !super::curve_points::supported(&self.objects, path, o.page, o.id)
-                        && !self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)))
                 {
                     return Err(format!("Invalid path value point {}", o.id));
                 }
@@ -780,8 +771,6 @@ impl Document {
                             .map(|object| &object.kind),
                         Some(Kind::CoordinateSystem(_, _))
                     )
-                    || (self.coordinate_measure_value(o.id).is_none()
-                        && !self.coordinate_geometry_undefined(frame))
                 {
                     return Err(format!("Invalid coordinate measurement {}", o.id));
                 }
@@ -1151,42 +1140,54 @@ impl Document {
                     ),
                     _ => object.kind.remap_checked(&ids)?,
                 };
-                let visibility = |bytes: &[u8]| {
+                let presentation = |bytes: &[u8]| -> Result<Vec<u8>, String> {
                     let mut bytes = bytes.to_vec();
                     bytes[10] = (bytes[10] & !3)
                         | u8::from(!object.visible)
                         | (u8::from(object.presentation_suppressed) << 1);
-                    bytes
+                    if let Some(style) = &object.text_style_override {
+                        let mut framed = b"GSP4".to_vec();
+                        framed.extend_from_slice(&bytes);
+                        let font = records(&framed)?.into_iter().find(|r| r.kind == 0x07d8)
+                            .ok_or("Missing numeric caption font")?;
+                        bytes[font.data.start - 4..font.data.end - 4]
+                            .copy_from_slice(&reparsed.imported_caption_font_index(style)?.to_le_bytes());
+                    }
+                    Ok(bytes)
                 };
                 Ok(match kind {
                     Kind::Parameter(group) => {
-                        Kind::Parameter(ParameterGroup::parse(&visibility(group.as_bytes()))?)
+                        Kind::Parameter(ParameterGroup::parse(&presentation(group.as_bytes())?)?)
                     }
                     Kind::Calculation(group) => {
-                        Kind::Calculation(CalculationGroup::parse(&visibility(group.as_bytes()))?)
+                        Kind::Calculation(CalculationGroup::parse(&presentation(group.as_bytes())?)?)
                     }
-                    Kind::ParameterCalculation(source, group) => Kind::ParameterCalculation(
-                        source,
-                        group.with_presentation(object.visible, object.presentation_suppressed)?,
-                    ),
+                    Kind::ParameterCalculation(source, group) => {
+                        let group = if let Some(style) = &object.text_style_override {
+                            // Copied captions use the destination document's font table.
+                            group.with_caption_font(reparsed.imported_caption_font_index(style)?)?
+                        } else { group };
+                        Kind::ParameterCalculation(source,
+                            group.with_presentation(object.visible, object.presentation_suppressed)?)
+                    }
                     Kind::MeasuredCalculation(source, group) => Kind::MeasuredCalculation(
                         source,
-                        MeasuredCalculationGroup::parse(&visibility(group.as_bytes()))?,
+                        MeasuredCalculationGroup::parse(&presentation(group.as_bytes())?)?,
                     ),
                     Kind::LengthPairCalculation(first, second, group) => {
                         Kind::LengthPairCalculation(
                             first,
                             second,
-                            LengthPairCalculationGroup::parse(&visibility(group.as_bytes()))?,
+                            LengthPairCalculationGroup::parse(&presentation(group.as_bytes())?)?,
                         )
                     }
                     Kind::ValueTable(source, group) => {
-                        Kind::ValueTable(source, TableGroup::parse(&visibility(group.as_bytes()))?)
+                        Kind::ValueTable(source, TableGroup::parse(&presentation(group.as_bytes())?)?)
                     }
                     Kind::ValueTablePair(first, second, group) => Kind::ValueTablePair(
                         first,
                         second,
-                        TableGroup::parse_pair(&visibility(group.as_bytes()))?,
+                        TableGroup::parse_pair(&presentation(group.as_bytes())?)?,
                     ),
                     other => other,
                 })
@@ -1230,8 +1231,11 @@ impl Document {
                         || saved.presentation_suppressed != current.presentation_suppressed
                         || saved.label != current.label
                         || saved.visual_style != current.visual_style
+                        || saved.angle_marker_style != current.angle_marker_style
                         || saved.interior_order != current.interior_order
                         || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
+                        || current.locus_interval.is_some()
+                            && saved.locus_interval != current.locus_interval
                         || current.function_anchor.is_some()
                             && saved.function_anchor != current.function_anchor
                         || current.function_name.is_some()

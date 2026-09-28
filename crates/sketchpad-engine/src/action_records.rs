@@ -348,22 +348,34 @@ pub struct LinkUrlButtonGroup {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkPageButtonGroup {
-    records: [Record; 6],
+    records: Vec<Record>,
 }
 
 impl LinkPageButtonGroup {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let records = parse_records(
-            bytes,
-            [
+        let records = parse_record_list(bytes, 7)?;
+        let kinds = records.iter().map(|record| record.kind).collect::<Vec<_>>();
+        if kinds
+            != [
                 OBJECT_HEADER,
                 ACTION_PAYLOAD,
                 BUTTON_LABEL,
                 BUTTON_AUX,
                 0x08a2,
                 OBJECT_END,
-            ],
-        )?;
+            ]
+            && kinds != [
+                OBJECT_HEADER,
+                ACTION_PAYLOAD,
+                BUTTON_LABEL,
+                BUTTON_AUX,
+                0x08a2,
+                BUTTON_METADATA,
+                OBJECT_END,
+            ]
+        {
+            return Err("Unexpected Page Link record order".into());
+        }
         let group = Self { records };
         group.validate()?;
         Ok(group)
@@ -396,18 +408,17 @@ impl LinkPageButtonGroup {
         {
             return Err("Unsupported Page Link action".into());
         }
-        let broken_link_label =
-            if label.len() >= 26 && self.target_page() == BROKEN_PAGE_LINK_TARGET {
-                let end = 24 + u16_at(label, 22) as usize;
-                end < label.len() && label[end] == 0 && label.len() == (end + 2) & !1
-            } else {
-                false
-            };
-        if label.len() < 26
-            || !(valid_zero_terminated_text(label, 22) || broken_link_label)
+        // The alignment byte after the NUL may contain native allocation data.
+        let valid_label = if label.len() >= 26 {
+            let end = 24 + u16_at(label, 22) as usize;
+            end < label.len() && label[end] == 0 && label.len() == (end + 2) & !1
+        } else {
+            false
+        };
+        if !valid_label
             || self.records[3].payload.len() != 2
             || self.records[4].payload.len() != 8
-            || !self.records[5].payload.is_empty()
+            || self.records[5..].iter().any(|record| !record.payload.is_empty())
         {
             return Err("Page Link label or auxiliary records are invalid".into());
         }
@@ -455,6 +466,9 @@ impl LinkPageButtonGroup {
     }
 
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        if self.label_utf8().is_ok_and(|current| current == label) {
+            return Ok(());
+        }
         set_zero_terminated_text(&mut self.records[2], 22, label)
     }
 
@@ -657,21 +671,6 @@ fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize, action: 
         && [2usize, 4]
             .iter()
             .any(|alignment| payload.len() == (end + alignment) & !(alignment - 1))
-}
-
-fn valid_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
-    if payload.len() < length_offset + 4 {
-        return false;
-    }
-    let length = u16_at(payload, length_offset) as usize;
-    let start = length_offset + 2;
-    let Some(end) = start.checked_add(length) else {
-        return false;
-    };
-    end < payload.len()
-        && payload[end] == 0
-        && payload[end + 1..].iter().all(|&byte| byte == 0)
-        && payload.len() == (end + 2) & !1
 }
 
 fn set_zero_terminated_text(

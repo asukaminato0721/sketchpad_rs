@@ -131,6 +131,18 @@ pub(super) fn decode_group(
 }
 
 impl Document {
+    pub fn text_math_nodes(&self, id: usize) -> Option<Vec<super::referenced_text::ReferencedNode>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted { return None; }
+        match &object.kind {
+            Kind::PlainText { .. } => self.text_rich_template(id)?.math_nodes(),
+            Kind::ReferencedText { parents, text } if text.nodes().iter().any(super::referenced_text::ReferencedNode::has_math_layout) => {
+                Some(text.resolved_nodes(|slot, role| self.referenced_source_text(*parents.get(slot - 1)?, role)))
+            }
+            _ => None,
+        }
+    }
+
     pub fn referenced_text_runs(&self, id: usize) -> Option<Vec<Vec<ReferencedRun>>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {

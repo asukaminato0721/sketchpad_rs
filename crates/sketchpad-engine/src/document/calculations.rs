@@ -824,23 +824,7 @@ impl Document {
             return None;
         }
         let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
-        if matches!(source_kind, Kind::LengthPairCalculation(_, _, group) if group.length_power() != 1)
-        {
-            return None;
-        }
-        if !matches!(
-            source_kind,
-            Kind::SegmentLength(_)
-                | Kind::PointDistance(_, _)
-                | Kind::PointLineDistance(_, _)
-                | Kind::PolygonPerimeter(_)
-                | Kind::CircleCircumference(_)
-                | Kind::CircleRadius(_)
-                | Kind::ArcLength(_)
-                | Kind::MeasuredCalculation(_, _)
-                | Kind::LengthPairCalculation(_, _, _)
-        ) && !matches!(source_kind, Kind::ParameterCalculation(_, group) if group.unit() == NumericUnit::Length)
-        {
+        if !source_kind.is_distance_value() {
             return None;
         }
         // Resolve the source as a construction value so a frozen measurement

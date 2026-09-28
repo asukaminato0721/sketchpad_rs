@@ -28,7 +28,7 @@ use super::iteration::{
     supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    expected_parameter_locus_refs, is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind,
+    parameter_locus_refs_match, is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind,
     is_locus_polygon_kind, is_locus_straight_kind, is_point_kind, is_segment_kind,
     is_straight_kind, is_value_plot_path_kind, polygon_vertex_count, straight_kind_mode,
 };
@@ -455,7 +455,8 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
-            let angle_marker_label = code == 113 && h[6..10] == [18, 0, 95, 0];
+            let mut angle_marker_style = None;
+            let angle_marker_label = h.len() == 28 && matches!(code, 113 | 115 | 116) && h[6..10] == [18, 0, 95, 0];
             let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0]))
                 || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                     && matches!(
@@ -542,6 +543,12 @@ impl Document {
                 }
                 if matches!(code, 76 | 89) && r.kind == 0x090a {
                     iteration_definition = Some(d.to_vec());
+                }
+                if angle_marker_label && r.kind == 0x090e && d.len() == 12 {
+                    angle_marker_style = Some(super::AngleMarkerStyle {
+                        arrow: d[2] != 0,
+                        opacity: u16::from_le_bytes([h[16], h[17]]),
+                    });
                 }
                 match r.kind {
                     0x07d5
@@ -764,10 +771,12 @@ impl Document {
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
-                    && !(matches!(code, 115 | 116) && r.kind == 0x090e && d == [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0])
-                    && !(code == 113 && r.kind == 0x090e && d.len() == 12
+                    && !(angle_marker_label && r.kind == 0x232e && d.is_empty())
+                    && !(angle_marker_label && r.kind == 0x090e && d.len() == 12
                         && matches!(u16::from_le_bytes([d[0], d[1]]), 1 | 2)
-                        && d[2..] == [0, 0, 0, 0, 0, 0, 254, 254, 254, 0])
+                        && (code == 113 || d[0] == 1)
+                        && matches!(u16::from_le_bytes([d[2], d[3]]), 0 | 1)
+                        && d[4..] == [0, 0, 0, 0, 254, 254, 254, 0])
                 {
                     safe = false;
                 }
@@ -1123,11 +1132,7 @@ impl Document {
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
             ).filter(|definition| {
-                if definition.element() == super::transform_model::ElementType::Disk {
-                    rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
-                        .map(|r| (r.kind, r.data.len()))
-                        .eq([(0x07d0, 28), (0x07d2, 12), (0x07d3, 24), (0x07d7, 0)])
-                } else if definition.element() == super::transform_model::ElementType::Polygon
+                if definition.element() == super::transform_model::ElementType::Polygon
                     && h[6..10] == [4, 0, 15, 0] {
                     let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
                         .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
@@ -1165,18 +1170,6 @@ impl Document {
                         .filter(|record| record.start >= group_start && record.start <= rs[i].start)
                         .map(|record| record.kind)
                         .eq([0x07d0, 0x07d2, 0x07d7]),
-                matches!(code, 27 | 34)
-                    && rs
-                        .iter()
-                        .filter(|record| record.start >= group_start && record.start <= rs[i].start)
-                        .map(|record| record.kind)
-                        .eq(if code == 27 {
-                            &[0x07d0, 0x07d2, 0x07d3, 0x07d7][..]
-                        } else {
-                            &[0x07d0, 0x07d2, 0x07d7][..]
-                        }
-                        .iter()
-                        .copied()),
             ) {
                 Kind::Transformed(definition)
             } else if matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
@@ -1321,7 +1314,7 @@ impl Document {
                             && constraint_payload.is_none()
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x0902).count() == 1
-                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| matches!(r.kind, 0x07d0 | 0x07d2 | 0x0902 | 0x07d7)) => {
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| matches!(r.kind, 0x07d0 | 0x07d2 | 0x0902 | 0x07d5 | 0x07d8 | 0x07d7) || (r.kind == 0x232e && r.data.is_empty())) => {
                         locus_range.as_ref()
                             .and_then(|range| super::sampled_mapped::decode_sampled_mapped(
                                 &objects, page, objects.len() + 1, h, &refs, range,
@@ -1332,15 +1325,17 @@ impl Document {
                     }
                     (97, None, _)
                         if h[6..10] == [6, 0, 42, 0]
-                            && refs.first().zip(refs.get(1)).and_then(|(&target, &driver)| expected_parameter_locus_refs(&objects, driver, target)).as_ref() == Some(&refs)
+                            && parameter_locus_refs_match(&objects, &refs)
                             && locus_range.as_ref().is_some_and(|data| data.len() == 40
                                 && f64_at(data, 0).is_finite() && f64_at(data, 8).is_finite()
                                 && f64_at(data, 0) < f64_at(data, 8)
-                                && (2..=4096).contains(&u32_at(data, 16))
+                                && u32_at(data, 16) >= 2
                                 && u32_at(data, 20) == 0x00030004
                                 && f64_at(data, 24).is_finite()
                                 && refs.get(1).and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|driver| match &driver.kind {
-                                    Kind::Parameter(group) => group.locus_unit_tag() == Some(u32_at(data, 32)),
+                                    Kind::Parameter(group) => group.locus_unit_tag().is_some_and(|tag|
+                                        tag >> 16 == u32_at(data, 32) >> 16
+                                            && u32_at(data, 32) & 0xffff <= 1),
                                     _ => false,
                                 })
                                 && u32_at(data, 36) == 0) => {
@@ -1358,11 +1353,10 @@ impl Document {
                             && super::kind::locus_refs_match(&objects, &refs)
                             && locus_range.as_ref().is_some_and(|data| {
                                 data.len() == 40
-                                    && f64_at(data, 0) == 0.0
-                                    && (2..=10_000).contains(&u32_at(data, 16))
-                                    && (u32_at(data, 20) == 4 || u32_at(data, 20) == 0x10004)
+                                    && u32_at(data, 16) >= 2
+                                    && u32_at(data, 20) & 0xffff == 4
                                     && refs.get(2).is_some_and(|id| super::locus::locus_driver_range_matches(
-                                        &objects, *id, f64_at(data, 8), u32_at(data, 20) >> 16))
+                                        &objects, *id, f64_at(data, 0), f64_at(data, 8), u32_at(data, 20) >> 16))
                                     && refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
                                         if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
                                             data[32..] == [0; 8]
@@ -1649,7 +1643,7 @@ impl Document {
                     }
                     (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
                     (0, None, []) if rich_text.is_some() && text_box.is_some()
-                        && text_style && label.is_none() => {
+                        && text_style => {
                         match text_object::decode_rich_text(rich_text.as_ref().unwrap(), text_box.as_ref().unwrap()) {
                             Ok((text, rect, runs)) if runs.iter().flatten().all(|run| run.style.family_index.is_none_or(|index| usize::from(index) < font_family_count)) => Kind::PlainText { text, rect },
                             _ => Kind::Unsupported(code),
@@ -1699,40 +1693,25 @@ impl Document {
                     {
                         Kind::AngleMeasurement(*a, *b, *c)
                     }
-                    (115 | 116, None, [a, vertex, c])
-                        if h.len() == 28 && h[6..10] == [18, 0, 95, 0]
-                            && constraint_payload.is_none()
-                            && [a, vertex, c].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind)))
-                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
-                                .map(|r| (r.kind, r.data.len()))
-                                .eq([(0x07d0, 28), (0x07d2, 16), (0x090e, 12), (0x07d7, 0)])
-                            && rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e)
-                                .is_some_and(|r| b[r.data.clone()] == [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0]) => {
-                        if code == 115 { Kind::PolarAngleValue(*a, *vertex, *c) }
-                        else { Kind::VertexAngleValue(*a, *vertex, *c) }
-                    }
-                    (113, None, [a, vertex, c])
-                        if h.len() == 28 && h[6..10] == [18, 0, 95, 0]
+                    (113 | 115 | 116, None, [a, vertex, c])
+                        if angle_marker_label
                             && constraint_payload.is_none()
                             && [a, vertex, c].iter().all(|&&id| id.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind)))
                             && {
-                                let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                                let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind != 0x232e)
                                     .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
                                 group == [(0x07d0, 28), (0x07d2, 16), (0x090e, 12), (0x07d7, 0)]
                                     || (group.len() == 6
                                         && group[0..3] == [(0x07d0, 28), (0x07d2, 16), (0x090e, 12)]
-                                        && group[3].0 == 0x07d5 && matches!(group[3].1, 26 | 28 | 30)
-                                        && label.is_some()
+                                        && group[3].0 == 0x07d5 && label.is_some()
                                         && group[4..] == [(0x07d8, 2), (0x07d7, 0)])
-                            }
-                            && rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e)
-                                .is_some_and(|r| {
-                                    let payload = &b[r.data.clone()];
-                                    matches!(u16::from_le_bytes([payload[0], payload[1]]), 1 | 2)
-                                        && payload[2..] == [0, 0, 0, 0, 0, 0, 254, 254, 254, 0]
-                                }) => {
+                            } => {
                         let marker = rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e).unwrap();
-                        Kind::AngleMarker(*a, *vertex, *c, u16::from_le_bytes(b[marker.data.start..marker.data.start + 2].try_into().unwrap()))
+                        match code {
+                            115 => Kind::PolarAngleValue(*a, *vertex, *c),
+                            116 => Kind::VertexAngleValue(*a, *vertex, *c),
+                            _ => Kind::AngleMarker(*a, *vertex, *c, u16::from_le_bytes(b[marker.data.start..marker.data.start + 2].try_into().unwrap())),
+                        }
                     }
                     (120, None, [source])
                         if h.len() == 28 && h[6..10] == [7, 0, 49, 0]
@@ -2335,7 +2314,7 @@ impl Document {
                 && kind.numeric_unit().is_none()
                 && !matches!(
                     kind,
-                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. }
+                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. } | Kind::PlainText { .. }
                 )
                 && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_)))
             {
@@ -2394,8 +2373,14 @@ impl Document {
                 } else {
                     0x1_0000
                 } == 0;
+            let angle_marker_style = super::AngleMarkerStyle::for_kind(&kind).and(angle_marker_style);
             objects.push(Object {
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
+                locus_interval: (matches!(kind, Kind::Locus(..))
+                    && matches!(objects[refs[2] - 1].kind, Kind::PointOnRay(..) | Kind::PointOnLine(..))).then(|| {
+                    let data = locus_range.as_ref().unwrap();
+                    [f64_at(data, 0), f64_at(data, 8)]
+                }),
                 node: sketchpad_ir::ObjectNode::new(objects.len() + 1, page, kind),
                 visible,
                 presentation_suppressed: raw & 0x20000 != 0,
@@ -2406,6 +2391,7 @@ impl Document {
                 header_offset: Some(header_offset),
                 label,
                 visual_style,
+                angle_marker_style,
                 interior_order: (h.len() == 28
                     && (h[6..8] == [4, 0] || matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0] | [5, 0, 16, 0])))
                 .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),

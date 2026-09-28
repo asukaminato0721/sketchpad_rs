@@ -718,8 +718,8 @@ fn mapped_calculated_angle_authored_typed_measurement_inputs_and_live_depth() {
         assert!(a.distance(*c) < 1e-9 && b.distance(*d) < 1e-9);
     }
     doc.verify_roundtrip().unwrap();
-    // Scalar inputs do not satisfy a degree rotation's source contract.
-    let wrong_image = doc.add(Kind::CalculatedAngleRotatedPoint(a, b, n));
+    // A point cannot supply a numeric angle.
+    let wrong_image = doc.add(Kind::CalculatedAngleRotatedPoint(a, b, a));
     let count = doc.objects.len();
     assert!(
         doc.add_mapped_point_iteration_with_bindings(

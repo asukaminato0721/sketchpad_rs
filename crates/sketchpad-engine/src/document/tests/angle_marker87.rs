@@ -39,6 +39,15 @@ fn native_triangle_angle_marks_keep_distinct_live_arc_counts() {
         assert_eq!(doc.objects[13].construction_dependencies(), vec![4, 2, 1]);
         assert_eq!(doc.angle_marker_strokes(13).unwrap().len(), 1);
         assert_eq!(doc.angle_marker_strokes(14).unwrap().len(), 2);
+        for (id, vertex) in [(13, 1), (14, 2)] {
+            let center = doc.position(vertex).unwrap();
+            let geometry = doc.angle_marker_geometry(id).unwrap();
+            for (ring, path) in geometry.strokes.iter().enumerate() {
+                let start = path[0];
+                assert!(((start.x - center.x).hypot(start.y - center.y) - (24. + ring as f64 * 6.)).abs() < 1e-9);
+            }
+            assert_eq!(geometry.sector[0], center);
+        }
         assert_eq!(doc.is_displayed(13), show_a);
         assert_eq!(doc.is_displayed(14), show_b);
         assert_eq!(doc.encode().unwrap(), bytes);
@@ -64,7 +73,7 @@ fn native_triangle_angle_marks_keep_distinct_live_arc_counts() {
 }
 
 #[test]
-fn unproved_angle_marker_flag_stays_opaque() {
+fn angle_marker_class_is_independent_of_the_high_word_flag() {
     let bytes =
         include_bytes!("../../../../../tests/fixtures/angle_marker87_original_native_saved.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();
@@ -77,7 +86,10 @@ fn unproved_angle_marker_flag_stays_opaque() {
     let mut changed = bytes.to_vec();
     changed[marker.data.start + 2] = 1;
     let guarded = Document::from_bytes(&changed, None).unwrap();
-    assert_eq!(guarded.objects[12].kind, Kind::Unsupported(113));
+    assert_eq!(guarded.objects[12].kind, doc.objects[12].kind);
+    assert_eq!(guarded.angle_marker_strokes(13), doc.angle_marker_strokes(13));
+    assert!(doc.angle_marker_geometry(13).unwrap().arrows.is_empty());
+    assert_eq!(guarded.angle_marker_geometry(13).unwrap().arrows.len(), 1);
     assert_eq!(guarded.encode().unwrap(), changed);
 }
 

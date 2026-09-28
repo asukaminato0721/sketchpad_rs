@@ -320,6 +320,8 @@ impl Document {
                             object.midpoint_host
                         },
                         visual_style: object.visual_style,
+                        angle_marker_style: object.angle_marker_style,
+                        locus_interval: object.locus_interval,
                         interior_order: object.interior_order,
                         text_style: self.text_font_state(id),
                         label: object.label.clone(),
@@ -359,7 +361,9 @@ impl Document {
             visible,
             tracing,
             midpoint_host,
+            locus_interval,
             visual_style,
+            angle_marker_style,
             interior_order,
             text_style,
             label,
@@ -451,11 +455,13 @@ impl Document {
                 tracing: *tracing,
                 deleted: false,
                 midpoint_host: midpoint_host.map(|host| ids[host]),
+                locus_interval: *locus_interval,
                 point_offset: None,
                 constraint_offset: None,
                 header_offset: None,
                 label: label.clone(),
                 visual_style: *visual_style,
+                angle_marker_style: *angle_marker_style,
                 interior_order,
                 text_style_override: text_style.clone(),
                 rich_text_override: rich_text.clone(),
@@ -476,6 +482,12 @@ impl Document {
             }
             ids[*old_id] = id;
             created.push(id);
+        }
+        if let Some((form, dotted)) = candidate.active_coordinate_system()
+            .and_then(|frame| candidate.frame_styles.get(&frame).copied())
+        {
+            candidate.grid_form[candidate.active_page] = form;
+            candidate.grid_dotted[candidate.active_page] = dotted;
         }
         candidate.selected.extend(created.iter().copied());
         let encoded = candidate.encode()?;

@@ -109,7 +109,7 @@ impl Document {
         let bytes = if unmarked.has_pending_multi_page_additions() {
             unmarked.encode_multi_page_additions()?
         } else {
-            unmarked.encode_multi_page_state()?
+            unmarked.encode_existing_state()?
         };
         let mut ordered: Vec<_> = self.objects.iter().collect();
         ordered.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
@@ -417,7 +417,7 @@ impl Document {
         {
             return Err("Multi-page edit contains unsupported additions".into());
         }
-        let mut out = self.encode_multi_page_source_state()?;
+        let mut out = self.encode_existing_source_state()?;
         let rs = records(&out)?;
         let source_headers: Vec<_> = document_record_indices(&rs)
             .into_iter()
@@ -495,6 +495,7 @@ impl Document {
                         } else {
                             crate::text_object::encode_plain_text_group(text, *rect)?
                         };
+                        group = Self::caption_group_with_label(&group, object.label.as_ref())?;
                         if !object.visible {
                             group[10] |= 1;
                         }
@@ -1340,11 +1341,11 @@ impl Document {
         records(&out)?;
         self.patch_multi_page_text(out)
     }
-    pub(super) fn encode_multi_page_state(&self) -> Result<Vec<u8>, String> {
+    pub(super) fn encode_existing_state(&self) -> Result<Vec<u8>, String> {
         if self.source_count != self.objects.len() {
             return Err("Multi-page state edit cannot add objects".into());
         }
-        self.patch_multi_page_text(self.encode_multi_page_source_state()?)
+        self.patch_multi_page_text(self.encode_existing_source_state()?)
     }
     fn patch_multi_page_text(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         // Serialized groups are ordered by page, while additions have global IDs.
@@ -1412,11 +1413,9 @@ impl Document {
         }
         ordered.patch_text_font_overrides(bytes)
     }
-    fn encode_multi_page_source_state(&self) -> Result<Vec<u8>, String> {
+    fn encode_existing_source_state(&self) -> Result<Vec<u8>, String> {
         let original = Self::from_bytes(&self.original, None)?;
-        if self.page_count < 2
-            || self.image_read_only
-            || self.source_count > self.objects.len()
+        if self.source_count > self.objects.len()
             || original.objects.len() != self.source_count
             || original.page_count != self.page_count
             || original.snap_points != self.snap_points

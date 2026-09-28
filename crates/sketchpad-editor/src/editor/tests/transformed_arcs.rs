@@ -2,13 +2,19 @@ use super::*;
 
 #[test]
 fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurements() {
+    use sketchpad_engine::document::transform_model::ElementType;
+    for element in [ElementType::Arc, ElementType::Disk, ElementType::Sector] {
     for operation in 0..14 {
         let mut doc = Document::new();
         for point in [
             Point { x: 100., y: 180. }, Point { x: 140., y: 180. },
             Point { x: 100., y: 140. },
         ] { doc.add(Kind::Free(point)); }
-        let source = doc.add(Kind::CenterArc(1, 2, 3));
+        let source = match element {
+            ElementType::Disk => { let circle = doc.add(Kind::Circle(1, 2)); doc.add(Kind::CircleInterior(circle)) },
+            ElementType::Sector => { let arc = doc.add(Kind::CenterArc(1, 2, 3)); doc.add(Kind::SectorBoundary(arc)) },
+            _ => doc.add(Kind::CenterArc(1, 2, 3)),
+        };
         let origin = doc.add(Kind::Free(Point { x: 0., y: 0. }));
         let vector_start = doc.add(Kind::Free(Point { x: 10., y: 10. }));
         let vector_end = doc.add(Kind::Free(Point { x: 30., y: 10. }));
@@ -57,7 +63,7 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
         let image = *editor.doc.selected.iter().next().unwrap();
         assert_ne!(image, source, "operation{operation}: {}", editor.status);
         let definition = editor.doc.objects[image - 1].kind.transform_definition().unwrap();
-        assert_eq!(definition.element(), sketchpad_engine::document::transform_model::ElementType::Arc);
+        assert_eq!(definition.element(), element);
         assert_eq!(definition.source(), source);
         assert_eq!(definition.wire_flavor().code(), [21,17,24,20,18,19,16,34,27,28,29,30,32,33][operation]);
         assert_eq!(editor.doc.objects[image - 1].visual_style, editor.doc.objects[source - 1].visual_style);
@@ -66,6 +72,18 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
         assert_eq!(editor.doc.encode().unwrap(), before);
         editor.doc.redo();
         for object in &mut editor.doc.objects { object.visible = object.id == image; }
+        if element != ElementType::Arc {
+            let outline = editor.doc.filled_region_points(image).unwrap();
+            let interior = Point {
+                x: outline.iter().map(|p| p.x).sum::<f64>() / outline.len() as f64,
+                y: outline.iter().map(|p| p.y).sum::<f64>() / outline.len() as f64,
+            };
+            let viewport = Viewport { rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)), scale: 1., center: interior };
+            assert_eq!(editor.hit(&viewport, viewport.screen(interior)), Some(image), "{element:?} operation{operation}");
+            let svg = crate::render::svg_page(&editor.doc, &viewport).unwrap();
+            assert_eq!(svg.matches("<polygon").count(), 1);
+            continue;
+        }
         let middle = editor.doc.point_on_arc(image, 0.5).unwrap();
         let viewport = Viewport { rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400., 300.)), scale: 1., center: middle };
         assert_eq!(editor.hit(&viewport, viewport.screen(middle)), Some(image), "operation{operation}");
@@ -85,4 +103,5 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
         assert_ne!(*editor.doc.selected.iter().next().unwrap(), image);
         editor.doc.verify_roundtrip().unwrap();
     }
+}
 }

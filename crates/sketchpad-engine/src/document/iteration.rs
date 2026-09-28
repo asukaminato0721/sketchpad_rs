@@ -50,11 +50,7 @@ fn iteration_transform_inputs_supported(
     let numeric = |expression: &NumericExpr| match *expression {
         NumericExpr::Literal { .. } => true,
         NumericExpr::ObjectValue { id, unit } => get(id).is_some_and(|object| {
-            if unit == NumericUnit::Length {
-                object.kind.is_marked_distance_value()
-            } else {
-                object.kind.numeric_unit() == Some(unit)
-            }
+            object.kind.is_transform_operand(unit)
         }),
         NumericExpr::DirectedAngle {
             first,
@@ -112,7 +108,8 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
         ElementType::Circle => source.kind.is_circle(),
         ElementType::Arc => is_arc_kind(&source.kind),
         ElementType::Polygon => source.kind.is_polygon(),
-        ElementType::Sector | ElementType::Disk => false,
+        ElementType::Sector => source.kind.is_sector(),
+        ElementType::Disk => source.kind.is_circle_interior(),
     };
     !source.deleted && source_matches && iteration_transform_inputs_supported(objects, definition)
 }
@@ -136,7 +133,7 @@ fn mapped_value_construction(kind: &Kind) -> bool {
         && (is_point_kind(kind)
             || is_straight_kind(kind)
             || kind.is_circle()
-            || kind.is_polygon()
+            || kind.is_filled_region()
             || is_arc_kind(kind)
             || kind.numeric_unit().is_some()
             || kind.is_function()
@@ -146,22 +143,22 @@ fn mapped_value_construction(kind: &Kind) -> bool {
                 kind,
                 Kind::CoordinateSystem(..)
                     | Kind::PointNumericLabel(..)
-                    | Kind::CircleInterior(_)
                     | Kind::PlainText { .. }
+                    | Kind::Image { .. }
                     | Kind::Locus(..)
                     | Kind::SampledMapped(..)
                     | Kind::FunctionPlot(..)
+                    | Kind::MappedPointIteration { .. }
             ))
 }
 
 pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::PointNumericLabel(..) | Kind::CircleInterior(_) | Kind::Locus(..) | Kind::SampledMapped(..))
-        || matches!(kind, Kind::Colorized(definition) if definition.element() == ElementType::Disk)
+    matches!(kind, Kind::PointNumericLabel(..) | Kind::Image { .. } | Kind::Locus(..) | Kind::SampledMapped(..))
         || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
         || is_point_kind(kind)
         || is_straight_kind(kind)
         || kind.is_circle()
-        || kind.is_polygon()
+        || kind.is_filled_region()
         || is_arc_kind(kind)
 }
 
@@ -252,7 +249,7 @@ pub(super) fn supported_mapped_point_iteration(
         || carried.iter().copied().collect::<BTreeSet<_>>().len() != carried.len()
         || !seeds.iter().all(|id| {
             get(*id).is_some_and(|o| {
-                is_point_kind(&o.kind) || o.kind.numeric_unit() == Some(NumericUnit::Scalar)
+                is_point_kind(&o.kind) || o.kind.numeric_unit().is_some()
             })
         })
         || branches.iter().any(|b| {
@@ -264,8 +261,8 @@ pub(super) fn supported_mapped_point_iteration(
                         (Some(image), Some(seed)) if is_point_kind(&seed.kind) => {
                             is_point_kind(&image.kind)
                         }
-                        (Some(image), Some(_)) => {
-                            image.kind.numeric_unit() == Some(NumericUnit::Scalar)
+                        (Some(image), Some(seed)) => {
+                            image.kind.numeric_unit() == seed.kind.numeric_unit()
                         }
                         _ => false,
                     })
@@ -334,7 +331,7 @@ pub(super) fn supported_mapped_point_iteration(
 #[derive(Clone, Copy)]
 pub(super) enum MappedValue {
     Point(Point),
-    Scalar(f64),
+    Number(f64),
 }
 
 impl MappedValue {
@@ -344,22 +341,22 @@ impl MappedValue {
             let point = document.position(id)?;
             (point.x.is_finite() && point.y.is_finite()).then_some(Self::Point(point))
         } else {
-            let value = document.unitless_numeric_value(id)?;
-            value.is_finite().then_some(Self::Scalar(value))
+            let value = document.numeric_value(id)?;
+            value.is_finite().then_some(Self::Number(value))
         }
     }
 
     pub(super) fn substitute(self, document: &mut Document, id: usize) -> Option<()> {
         match self {
             Self::Point(point) => document.set_evaluation_point(id, point),
-            Self::Scalar(value) => document.set_evaluation_scalar(id, value),
+            Self::Number(value) => document.set_evaluation_number(id, value),
         }
     }
 
     fn key(self) -> (u8, u64, u64) {
         match self {
             Self::Point(point) => (0, point.x.to_bits(), point.y.to_bits()),
-            Self::Scalar(value) => (1, value.to_bits(), 0),
+            Self::Number(value) => (1, value.to_bits(), 0),
         }
     }
 }
@@ -524,7 +521,7 @@ impl Document {
                 include_bytes!("../../../../assets/locus_iteration_binding_group.bin")
             } else if matches!(source, Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }) {
                 include_bytes!("../../../../assets/point_parameter_iteration_label_binding.bin")
-            } else if source.is_polygon() || matches!(source, Kind::CircleInterior(_)) {
+            } else if source.is_filled_region() {
                 include_bytes!("../../../../assets/branch_polygon_iteration_polygon_binding.bin")
             } else if is_point_kind(source) {
                 if matches!(
@@ -1109,10 +1106,7 @@ impl Document {
             return None;
         };
         if object.deleted
-            || !matches!(
-                self.objects.get(source.checked_sub(1)?)?.kind,
-                Kind::CircleInterior(_)
-            )
+            || !self.objects.get(source.checked_sub(1)?)?.kind.is_circle_interior()
         {
             return None;
         }
@@ -1149,7 +1143,7 @@ impl Document {
         };
         if object.deleted
             || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,
-                Kind::Colorized(ref definition) if definition.element() == ElementType::Polygon)
+                Kind::Colorized(ref definition) if matches!(definition.element(), ElementType::Polygon | ElementType::Sector))
             || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind, Kind::MappedPointIteration { .. })
         {
             return None;
@@ -1164,12 +1158,10 @@ impl Document {
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
         };
+        let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
         if !o.deleted
-            && (self.objects.get(source.checked_sub(1)?)?.kind.is_polygon()
-                || matches!(
-                    self.objects.get(source.checked_sub(1)?)?.kind,
-                    Kind::CircleInterior(_)
-                ))
+            && source_kind.is_filled_region()
+            && !matches!(source_kind, Kind::Colorized(definition) if definition.element() == ElementType::Disk)
             && matches!(
                 self.objects.get(iteration.checked_sub(1)?)?.kind,
                 Kind::MappedPointIteration { .. }
@@ -1484,8 +1476,7 @@ impl Document {
                 } => Some(magnitude * scale),
                 NumericExpr::ObjectValue { id, unit } => match unit {
                     NumericUnit::Length => self.marked_distance_value_pixels(id),
-                    NumericUnit::Degrees => self.numeric_value(id),
-                    NumericUnit::Scalar => self.unitless_numeric_value(id),
+                    NumericUnit::Degrees | NumericUnit::Scalar => self.numeric_value(id),
                     _ => None,
                 },
                 NumericExpr::DistanceRatio {

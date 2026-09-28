@@ -965,7 +965,9 @@ pub fn svg_page_with_button_offset(
     vp: &Viewport,
     button_offset: egui::Vec2,
 ) -> Result<String, String> {
-    if doc.partial_view {
+    if doc.partial_view && doc.objects.iter().any(|object|
+        object.page == doc.active_page && !object.deleted
+            && matches!(object.kind, Kind::Unsupported(_))) {
         return Err("This document contains objects that cannot be exported yet".into());
     }
     let r = vp.rect;
@@ -990,18 +992,19 @@ pub fn svg_page_with_button_offset(
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
-        if let Kind::Image { png, .. } = &object.kind {
-            let Some(transform) = doc.image_transform(object.id) else { continue };
+        if let Some((_, png, transforms)) = doc.image_instances(object.id) {
             let (width, height) = crate::image_records::ImageFile::png_size(png)?;
-            let origin = vp.screen(Point {
-                x: transform[2],
-                y: transform[5],
-            });
-            writeln!(svg,
-                "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/>",
-                transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
-                transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
-                origin.x, origin.y, base64(png)).unwrap();
+            for transform in transforms {
+                let origin = vp.screen(Point {
+                    x: transform[2],
+                    y: transform[5],
+                });
+                writeln!(svg,
+                    "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/>",
+                    transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
+                    transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
+                    origin.x, origin.y, base64(png)).unwrap();
+            }
         }
     }
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
@@ -1153,14 +1156,20 @@ pub fn svg_page_with_button_offset(
                 svg.push_str("\"/>\n");
             }
         }
-        if let Some(paths) = doc.angle_marker_strokes(o.id) {
-            for points in paths {
-                let values = points.into_iter().map(|point| {
-                    let at = vp.screen(point);
-                    format!("{},{}", at.x, at.y)
-                }).collect::<Vec<_>>().join(" ");
-                writeln!(svg, "<polyline points=\"{}\"{}/>", values,
-                    svg_stroke(doc.effective_visual_style(o.id))).unwrap();
+        if let Some(marker) = doc.angle_marker_geometry(o.id) {
+            let style = doc.effective_visual_style(o.id);
+            let color = match style { Some(VisualStyle::Stroke { color, .. }) => css_color(color), _ => "#404040".into() };
+            let vertices = |points: &[Point]| points.iter().map(|point| {
+                let at = vp.screen(*point);
+                format!("{},{}", at.x, at.y)
+            }).collect::<Vec<_>>().join(" ");
+            writeln!(svg, "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                vertices(&marker.sector), color, f64::from(o.angle_marker_style.unwrap().opacity) / 65535.).unwrap();
+            for path in marker.strokes {
+                writeln!(svg, "<polyline points=\"{}\" fill=\"none\"{}/>", vertices(&path), svg_stroke(style)).unwrap();
+            }
+            for arrow in marker.arrows {
+                writeln!(svg, "<polygon points=\"{}\" fill=\"{}\" stroke=\"none\"/>", vertices(&arrow), color).unwrap();
             }
         }
         let polygon_object = if o.kind.is_filled_region() {
@@ -1459,12 +1468,18 @@ pub fn svg_page_with_button_offset(
                         let run_color = run.style.rgb_color().map(|[red, green, blue]| {
                             format!(" fill=\"#{red:02x}{green:02x}{blue:02x}\"")
                         }).unwrap_or_default();
+                        let (run_size, baseline_shift) = run.style.script_metrics(
+                            f32::from(run.style.size_code.unwrap_or(size)));
+                        let script = if baseline_shift == 0. { String::new() } else {
+                            format!(" baseline-shift=\"{baseline_shift}px\"")
+                        };
                         write!(
                             svg,
-                            "<tspan{}{} font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</tspan>",
+                            "<tspan{}{}{} font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</tspan>",
                             run_family,
                             run_color,
-                            run.style.size_code.unwrap_or(size),
+                            script,
+                            run_size,
                             if bold { "bold" } else { "normal" },
                             if slanted { "italic" } else { "normal" },
                             if underlined { "underline" } else { "none" },
@@ -1529,7 +1544,7 @@ pub fn svg_page_with_button_offset(
             && label.visible()
             && let Ok(name) = label.name_utf8()
             && let Some(point) = doc.position(object.id).or_else(||
-                doc.angle_marker_strokes(object.id)?.into_iter().next()?.get(12).copied())
+                doc.angle_marker_label_anchor(object.id))
         {
             let at = vp.screen(point);
             let offset = label.offset();
@@ -1543,9 +1558,10 @@ pub fn svg_page_with_button_offset(
                 .replace('<', "&lt;");
             writeln!(
                 svg,
-                "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
+                "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
                 at.x + offset.0 as f32,
                 at.y + offset.1 as f32 + size as f32 * 0.85,
+                if object.angle_marker_style.is_some() { "middle" } else { "start" },
                 family,
                 size,
                 if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
@@ -2238,11 +2254,16 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                Kind::AngleMarker(..) => {
-                    if let Some(paths) = doc.angle_marker_strokes(o.id) {
-                        for path in paths {
+                Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
+                    if let Some(marker) = doc.angle_marker_geometry(o.id) {
+                        let screen = marker.sector.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
+                        mesh.polygon(&screen, [col[0], col[1], col[2], f32::from(o.angle_marker_style.unwrap().opacity) / 65535.]);
+                        for path in marker.strokes {
                             let screen = path.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
                             mesh.styled_path(&screen, false, stroke, col);
+                        }
+                        for arrow in marker.arrows {
+                            mesh.tri(vp.screen(arrow[0]), vp.screen(arrow[1]), vp.screen(arrow[2]), col);
                         }
                     }
                 }
@@ -3643,6 +3664,8 @@ mod tests {
         doc.set_selected_visibility(false);
         assert!(!svg_page(&doc, &vp).unwrap().contains("r=\"70\""));
         doc.partial_view = true;
+        assert!(svg_page(&doc, &vp).is_ok());
+        doc.add(Kind::Unsupported(999));
         assert!(svg_page(&doc, &vp).is_err());
     }
     #[test]

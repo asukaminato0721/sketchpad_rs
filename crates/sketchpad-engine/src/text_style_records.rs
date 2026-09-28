@@ -200,11 +200,9 @@ pub(crate) fn decode_font_family_payload(family_record: &[u8]) -> Result<String,
 pub fn encode_font_family_payload(name: &str) -> Result<Vec<u8>, String> {
     if name.is_empty()
         || name.len() > 255
-        || !name
-            .bytes()
-            .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+        || name.chars().any(char::is_control)
     {
-        return Err("Font family must be 1–255 printable ASCII characters".into());
+        return Err("Font family is empty, too long, or contains control characters".into());
     }
     let len = (2 + name.len() + 1 + 2).max(12);
     let mut payload = vec![0; len + len % 2];

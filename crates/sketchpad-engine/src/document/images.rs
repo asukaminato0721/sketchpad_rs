@@ -29,6 +29,9 @@ impl Document {
     }
     /// Resolve an imported point-anchored picture through its current parent.
     pub fn image_transform(&self, id: usize) -> Option<[f64; 6]> {
+        if let Some(original) = self.frozen_evaluation_document(id) {
+            return original.image_transform(id);
+        }
         let Kind::Image {
             transform,
             anchor,
@@ -45,6 +48,37 @@ impl Document {
         }
         Some(result)
     }
+    /// Shared pixel source and live placement of a picture or its iterated images.
+    pub fn image_instances(&self, id: usize) -> Option<(usize, &[u8], Vec<[f64; 6]>)> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        let (source, iteration) = match object.kind {
+            Kind::Image { .. } => (id, None),
+            Kind::IterationBinding(source, iteration) => (source, Some(iteration)),
+            _ => return None,
+        };
+        let source_object = self.objects.get(source.checked_sub(1)?)?;
+        let Kind::Image { png, .. } = &source_object.kind else {
+            return None;
+        };
+        if source_object.deleted {
+            return None;
+        }
+        let transforms = if let Some(iteration) = iteration {
+            self.mapped_scoped_outputs(source, iteration, false, |sample, id| {
+                sample.image_transform(id)
+            })?
+            .into_iter()
+            .flatten()
+            .collect()
+        } else {
+            vec![self.image_transform(source)?]
+        };
+        Some((source, png, transforms))
+    }
+
     pub fn move_image(&mut self, id: usize, at: Point) -> Result<(), String> {
         self.move_image_inner(id, at, true)
     }

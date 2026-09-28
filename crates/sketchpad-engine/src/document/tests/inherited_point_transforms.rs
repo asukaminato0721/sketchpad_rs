@@ -148,7 +148,7 @@ fn inherited_point_vectors_live_source_anchor_style_edits_undo_delete_and_reopen
     reopened.verify_roundtrip().unwrap();
 }
 #[test]
-fn inherited_point_vector_identity_guard_rejects_unproved_source_and_constraint_roles() {
+fn inherited_point_vector_accepts_point_sources_and_rejects_invalid_operand_roles() {
     let bytes = include_bytes!(
         "../../../../../tests/fixtures/inherited_point_transform53_baseline_native_saved.gsp"
     );
@@ -160,7 +160,8 @@ fn inherited_point_vector_identity_guard_rejects_unproved_source_and_constraint_
     let mut wrong = bytes.to_vec();
     wrong[r.start + 4..r.start + 8].copy_from_slice(&1u32.to_le_bytes());
     let pd = Document::from_bytes(&wrong, None).unwrap();
-    assert_eq!(pd.objects[14].kind, Kind::Unsupported(16));
+    assert_eq!(pd.objects[14].kind, Kind::VectorTranslatedPoint(1, 13, 14));
+    near(pd.position(15).unwrap(), expected_vector(&pd, 1, 13, 14));
     let mut wrong = bytes.to_vec();
     wrong[at + 6..at + 8].copy_from_slice(&2u16.to_le_bytes());
     let pd = Document::from_bytes(&wrong, None).unwrap();

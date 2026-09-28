@@ -174,11 +174,9 @@ impl Editor {
                         _ => {}
                     }
                 }
-                for object in self.doc.objects.iter().filter(|object| {
-                    object.page == self.doc.active_page && object.visible && !object.deleted
-                }) {
-                    if let Kind::Image { png, .. } = &object.kind {
-                        if !self.image_textures.contains_key(&object.id) {
+                for object in self.doc.objects.iter().filter(|object| self.doc.is_displayed(object.id)) {
+                    if let Some((source, png, transforms)) = self.doc.image_instances(object.id) {
+                        if !self.image_textures.contains_key(&source) {
                             if let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
                             {
@@ -188,33 +186,34 @@ impl Editor {
                                     rgba.as_raw(),
                                 );
                                 let texture = ui.ctx().load_texture(
-                                    format!("picture-{}", object.id),
+                                    format!("picture-{source}"),
                                     color,
                                     egui::TextureOptions::LINEAR,
                                 );
-                                self.image_textures.insert(object.id, texture);
+                                self.image_textures.insert(source, texture);
                             }
                         }
-                        if let Some(texture) = self.image_textures.get(&object.id)
-                            && let Some(transform) = self.doc.image_transform(object.id)
-                            && let Some(corners) =
-                                crate::render::picture_screen_quad(&vp, png, transform)
-                        {
-                            let mut mesh = egui::Mesh::with_texture(texture.id());
-                            for (position, uv) in corners.into_iter().zip([
-                                egui::pos2(0., 0.),
-                                egui::pos2(1., 0.),
-                                egui::pos2(1., 1.),
-                                egui::pos2(0., 1.),
-                            ]) {
-                                mesh.vertices.push(egui::epaint::Vertex {
-                                    pos: position,
-                                    uv,
-                                    color: egui::Color32::WHITE,
-                                });
+                        for transform in transforms {
+                            if let Some(texture) = self.image_textures.get(&source)
+                                && let Some(corners) =
+                                    crate::render::picture_screen_quad(&vp, png, transform)
+                            {
+                                let mut mesh = egui::Mesh::with_texture(texture.id());
+                                for (position, uv) in corners.into_iter().zip([
+                                    egui::pos2(0., 0.),
+                                    egui::pos2(1., 0.),
+                                    egui::pos2(1., 1.),
+                                    egui::pos2(0., 1.),
+                                ]) {
+                                    mesh.vertices.push(egui::epaint::Vertex {
+                                        pos: position,
+                                        uv,
+                                        color: egui::Color32::WHITE,
+                                    });
+                                }
+                                mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+                                ui.painter().add(egui::Shape::mesh(mesh));
                             }
-                            mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-                            ui.painter().add(egui::Shape::mesh(mesh));
                         }
                     }
                     if let Some((text, rect)) = self.doc.text_content(object.id) {
@@ -244,7 +243,8 @@ impl Editor {
                                     .fold(size, f32::max);
                                 let mut x = at.x;
                                 for run in row {
-                                    let run_size = run.style.size_code.map_or(size, f32::from);
+                                    let (run_size, baseline_shift) = run.style.script_metrics(
+                                        run.style.size_code.map_or(size, f32::from));
                                     let run_family = run
                                         .style
                                         .family_index
@@ -284,7 +284,7 @@ impl Editor {
                                         ),
                                     );
                                     let width = galley.rect.width();
-                                    let position = egui::pos2(x, line_y + line_size - run_size);
+                                    let position = egui::pos2(x, line_y + line_size - run_size - baseline_shift);
                                     ui.painter().galley(position, galley.clone(), color);
                                     if bold {
                                         ui.painter().galley(
@@ -388,11 +388,12 @@ impl Editor {
                         && label.visible()
                         && let Ok(name) = label.name_utf8()
                         && let Some(point) = self.doc.position(object.id).or_else(||
-                            self.doc.angle_marker_strokes(object.id)?.into_iter().next()?.get(12).copied())
+                            self.doc.angle_marker_label_anchor(object.id))
                     {
                         let at = vp.screen(point);
                         let offset = label.offset();
                         let position = at + egui::vec2(offset.0 as f32, offset.1 as f32);
+                        let alignment = if object.angle_marker_style.is_some() { egui::Align2::CENTER_TOP } else { egui::Align2::LEFT_TOP };
                         let style = self.doc.text_font_state(object.id);
                         let size = style.as_ref().map_or(13., |style| style.size_code as f32);
                         let font_id = self.canvas_font_id(
@@ -401,7 +402,7 @@ impl Editor {
                         );
                         let bounds = ui.painter().text(
                             position,
-                            egui::Align2::LEFT_TOP,
+                            alignment,
                             name,
                             font_id.clone(),
                             egui::Color32::from_gray(35),
@@ -409,7 +410,7 @@ impl Editor {
                         if style.as_ref().is_some_and(|style| style.bold) {
                             ui.painter().text(
                                 position + egui::vec2(0.7, 0.),
-                                egui::Align2::LEFT_TOP,
+                                alignment,
                                 name,
                                 font_id.clone(),
                                 egui::Color32::from_gray(35),

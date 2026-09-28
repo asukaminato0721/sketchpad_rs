@@ -809,6 +809,11 @@ impl<'a> SymbolicParser<'a> {
                     });
                     self.index += 1;
                 }
+                // Function operands use the literal's magnitude; native unit
+                // suffixes terminate the number before the next operator.
+                if matches!(self.words.get(self.index), Some(0x0100 | 0x0101 | 0x0201)) {
+                    self.index += 1;
+                }
                 SymbolicExpr::Number(text.parse().map_err(|_| "Invalid symbolic number")?)
             }
             _ => return Err("Invalid symbolic operand".into()),

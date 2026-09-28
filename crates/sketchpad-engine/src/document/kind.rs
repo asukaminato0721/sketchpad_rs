@@ -1,5 +1,5 @@
 use super::calculations::calculation_source_ids;
-use super::transform_model::{ElementType, NativeTransformFlavor};
+use super::transform_model::ElementType;
 use super::{EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object};
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::style_records::{
@@ -78,6 +78,15 @@ impl Kind {
             Some(NumericUnit::Length | NumericUnit::Scalar)
         )
     }
+    /// Transform angle and ratio slots consume numeric magnitudes. Distance
+    /// slots retain their signed-centimeter convention.
+    pub(super) fn is_transform_operand(&self, unit: NumericUnit) -> bool {
+        match unit {
+            NumericUnit::Scalar | NumericUnit::Degrees => self.numeric_unit().is_some(),
+            NumericUnit::Length => self.is_marked_distance_value(),
+            _ => false,
+        }
+    }
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
     }
@@ -101,6 +110,7 @@ impl Kind {
     }
     pub fn is_sector(&self) -> bool {
         matches!(self, Kind::SectorBoundary(_))
+            || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Sector)
             || self
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Sector)
@@ -112,6 +122,7 @@ impl Kind {
     pub fn is_circle_interior(&self) -> bool {
         matches!(self, Kind::CircleInterior(_))
             || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Disk)
+            || self.transform_definition().is_some_and(|d| d.element() == ElementType::Disk)
     }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
@@ -1031,6 +1042,18 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
         )
 }
 
+pub(super) fn parameter_locus_refs_match(objects: &[Object], refs: &[usize]) -> bool {
+    let Some((&target, &driver)) = refs.first().zip(refs.get(1)) else {
+        return false;
+    };
+    let Some(expected) = expected_parameter_locus_refs(objects, driver, target) else {
+        return false;
+    };
+    let mut captured = refs[2..].to_vec();
+    captured.sort_unstable();
+    captured == expected[2..]
+}
+
 pub(super) fn expected_parameter_locus_refs(
     objects: &[Object],
     driver: usize,
@@ -1125,7 +1148,11 @@ pub(super) fn expected_locus_refs(
         driver: usize,
         current: usize,
         page: usize,
+        memo: &mut std::collections::BTreeMap<usize, Option<BTreeSet<usize>>>,
     ) -> Option<BTreeSet<usize>> {
+        if let Some(found) = memo.get(&current) {
+            return found.clone();
+        }
         if current == driver {
             return Some(BTreeSet::from([driver]));
         }
@@ -1143,15 +1170,7 @@ pub(super) fn expected_locus_refs(
                 return None;
             }
             vec![host]
-        } else if is_locus_straight_kind(&object.kind) {
-            locus_straight_source_mode(objects, current)?;
-            object.kind.dependencies()
-        } else if is_point_kind(&object.kind)
-            || object.kind.is_circle()
-            || is_arc_kind(&object.kind)
-            || is_locus_polygon_kind(&object.kind)
-            || object.kind.numeric_unit().is_some()
-        {
+        } else if !matches!(object.kind, Kind::Unsupported(_)) {
             object.kind.dependencies()
         } else {
             return None;
@@ -1161,15 +1180,16 @@ pub(super) fn expected_locus_refs(
             if parent >= current {
                 return None;
             }
-            if let Some(found) = ancestry(objects, driver, parent, page) {
+            if let Some(found) = ancestry(objects, driver, parent, page, memo) {
                 descendants.extend(found);
             }
         }
-        if descendants.is_empty() {
-            return None;
-        }
-        descendants.insert(current);
-        Some(descendants)
+        let found = (!descendants.is_empty()).then(|| {
+            descendants.insert(current);
+            descendants
+        });
+        memo.insert(current, found.clone());
+        found
     }
     if driver == 0 || target <= driver {
         return None;
@@ -1191,6 +1211,10 @@ pub(super) fn expected_locus_refs(
         locus_straight_source_mode(objects, target)?;
     }
     let path = match moving.kind {
+        Kind::PointOnRay(path, _)
+            if locus_straight_source_mode(objects, path) == Some(LineMode::Ray) => path,
+        Kind::PointOnLine(path, _)
+            if locus_straight_source_mode(objects, path) == Some(LineMode::Line) => path,
         Kind::PointOnSegment(path, _)
             if locus_straight_source_mode(objects, path) == Some(LineMode::Segment) =>
         {
@@ -1214,7 +1238,7 @@ pub(super) fn expected_locus_refs(
     };
     let host = objects.get(path.checked_sub(1)?)?;
     if path >= driver || host.deleted || host.page != moving.page { return None; }
-    let ancestors = ancestry(objects, driver, target, moving.page)?;
+    let ancestors = ancestry(objects, driver, target, moving.page, &mut Default::default())?;
     let mut refs = vec![target, path];
     refs.extend(ancestors);
     Some(refs)
@@ -1228,16 +1252,7 @@ pub(super) fn is_arc_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn is_locus_polygon_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Polygon) || matches!(kind, Kind::Polygon(_))
-        || kind.transform_definition().is_some_and(|definition| {
-            definition.element() == ElementType::Polygon
-                && matches!(
-                    definition.wire_flavor(),
-                    NativeTransformFlavor::Vector
-                        | NativeTransformFlavor::FixedPolar
-                        | NativeTransformFlavor::FixedCartesian
-                )
-        })
+    kind.is_polygon()
 }
 
 pub(super) fn is_locus_straight_kind(kind: &Kind) -> bool {
@@ -1479,6 +1494,10 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 green: 0,
                 blue: 128,
             },
+        }),
+        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
+            color: RgbColor { red: 64, green: 64, blue: 64 },
         }),
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
         Kind::SampledMapped(_) => Some(VisualStyle::Stroke {

@@ -478,7 +478,7 @@ fn nested_locus_sampling_clears_local_frozen_dependents_and_retains_external_inp
     scoped
         .set_evaluation_point(seed, Point { x: 610., y: 510. })
         .unwrap();
-    scoped.set_evaluation_scalar(parameter, 7.).unwrap();
+    scoped.set_evaluation_number(parameter, 7.).unwrap();
     assert_eq!(scoped.locus_segments(23, 9), Some(baseline));
     drivers61_close(scoped.position(frozen), original.position(frozen));
     drivers61_close(scoped.position(seed), Some(Point { x: 610., y: 510. }));

@@ -258,7 +258,7 @@ fn malformed_sampled_mapped_range_source_and_carried_roles_remain_opaque() {
     for (offset, value) in [
         (range.data.start + 16, 1u32),
         (range.data.start + 20, 4),
-        (range.data.start + 32, 1),
+        (range.data.start + 32, 2),
         (range.data.start + 36, 1),
         (refs.data.start + 8, 1),
         (refs.data.start + 12, 5),

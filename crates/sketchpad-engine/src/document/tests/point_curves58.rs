@@ -153,7 +153,7 @@ fn point_curve_definitions_keep_interactive_and_numeric_roles_live_and_scoped() 
                 .set_evaluation_point(driver, Point { x: 330., y: 350. })
                 .unwrap();
         } else {
-            scoped.set_evaluation_scalar(driver, 0.9).unwrap();
+            scoped.set_evaluation_number(driver, 0.9).unwrap();
         }
         // A trace samples its own local driver even when the caller froze its
         // dependent target; external substitutions remain caller-owned.

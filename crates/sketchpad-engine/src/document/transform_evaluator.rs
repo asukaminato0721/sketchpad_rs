@@ -135,6 +135,10 @@ impl Document {
                 let (center, radius) = self.circle_points(source).ok_or(Error::Undefined)?;
                 TransformGeometry::Circle { center, radius }
             }
+            ElementType::Disk if kind.is_circle_interior() => {
+                let (center, radius) = self.circle_interior_geometry(source).ok_or(Error::Undefined)?;
+                TransformGeometry::Circle { center, radius }
+            }
             ElementType::Arc if is_arc_kind(kind) => {
                 if let Some((start, end)) = self.linear_three_point_arc(source) {
                     TransformGeometry::Straight { start, end, mode: LineMode::Segment }
@@ -167,17 +171,11 @@ impl Document {
                 } => Some(magnitude * scale),
                 NumericExpr::ObjectValue { id, unit } => {
                     let parent = &self.objects[id - 1].kind;
-                    let compatible = if unit == NumericUnit::Length {
-                        parent.is_marked_distance_value()
-                    } else {
-                        parent.numeric_unit() == Some(unit)
-                    };
-                    if !compatible {
+                    if !parent.is_transform_operand(unit) {
                         return Err(Error::WrongUnit { id, expected: unit });
                     }
                     match unit {
-                        NumericUnit::Scalar => self.unitless_numeric_value(id),
-                        NumericUnit::Degrees => self.numeric_value(id),
+                        NumericUnit::Scalar | NumericUnit::Degrees => self.numeric_value(id),
                         NumericUnit::Length => self.marked_distance_value_pixels(id),
                         _ => None,
                     }
@@ -395,7 +393,10 @@ mod tests {
                 ),
                 None => assert_eq!(result, Err(Error::Undefined)),
             },
-            ElementType::Disk => panic!("Disk transforms are not supported"),
+            ElementType::Disk => match document.circle_interior_geometry(id) {
+                Some((center, radius)) => assert_eq!(result, Ok(TransformGeometry::Circle { center, radius })),
+                None => assert_eq!(result, Err(Error::Undefined)),
+            },
         }
     }
     #[test]
@@ -598,11 +599,11 @@ mod tests {
         let bytes =
             include_bytes!("../../../../tests/fixtures/mixed_chain_writer_fresh_native_verified.gsp");
         let mut d = Document::from_bytes(bytes, None).unwrap();
-        d.objects[50].kind = Kind::CalculatedRatioScaledLine(19, 1, 10);
+        d.objects[50].kind = Kind::CalculatedRatioScaledLine(19, 1, 1);
         assert_eq!(
             d.evaluate_transform(51),
             Err(Error::WrongUnit {
-                id: 10,
+                id: 1,
                 expected: NumericUnit::Scalar
             })
         );

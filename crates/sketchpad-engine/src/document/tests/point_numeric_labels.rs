@@ -73,7 +73,7 @@ fn point_numeric_labels_reuse_mapped_evaluation_values_without_changing_stored_r
         let (bytes, original, label) = native_numeric_label(state);
         let mut mapped = original.clone();
         mapped.freeze_evaluation_inputs(&original, &[]).unwrap();
-        mapped.set_evaluation_scalar(source, 8.).unwrap();
+        mapped.set_evaluation_number(source, 8.).unwrap();
         let anchor = Point { x: 410., y: 250. };
         mapped.set_evaluation_point(3, anchor).unwrap();
         assert_eq!(

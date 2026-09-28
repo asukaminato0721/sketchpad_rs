@@ -22,13 +22,13 @@ use crate::{
 };
 
 impl Document {
-    fn measurement_group_with_label(group: &[u8], label: Option<&crate::text_records::LabelAux>) -> Result<Vec<u8>, String> {
+    pub(super) fn caption_group_with_label(group: &[u8], label: Option<&crate::text_records::LabelAux>) -> Result<Vec<u8>, String> {
         let Some(label) = label else { return Ok(group.to_vec()); };
         let mut framed = b"GSP4".to_vec();
         framed.extend_from_slice(group);
         let entries = records(&framed)?;
         let font = entries.iter().find(|r| r.kind == 0x07d8)
-            .ok_or("Measurement is missing its font reference")?;
+            .ok_or("Caption is missing its font reference")?;
         let mut encoded = Vec::new();
         encoded.extend_from_slice(&group[..font.start - 4]);
         put_record(&mut encoded, 0x07d5, label.payload());
@@ -46,8 +46,8 @@ impl Document {
         h[..2].copy_from_slice(&75u16.to_le_bytes());
         h[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
         h[4] = u8::from(object.tracing);
-        if definition.element() == ElementType::Disk {
-            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing disk drawing order")?.to_le_bytes());
+        if matches!(definition.element(), ElementType::Disk | ElementType::Sector) {
+            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing region drawing order")?.to_le_bytes());
         }
         if definition.element() == ElementType::Polygon {
             let count = polygon_vertex_count_for_encoding(&self.objects, definition.source())
@@ -80,11 +80,14 @@ impl Document {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
         let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
-        self.encode_page_names(self.patch_active_page(self.patch_measurement_precisions(bytes)?)?)
+        self.encode_page_names(self.patch_active_page(self.patch_measurement_precisions(self.patch_angle_marker_styles(bytes)?)?)?)
     }
     fn encode_core(&self) -> Result<Vec<u8>, String> {
         if !self.dirty {
             return Ok(self.original.clone());
+        }
+        if self.image_read_only {
+            return self.encode_existing_state();
         }
         if self.page_count
             > records(&self.original)?
@@ -101,7 +104,7 @@ impl Document {
             return self.encode_multi_page_additions();
         }
         if self.page_count > 1 {
-            return self.encode_multi_page_state();
+            return self.encode_existing_state();
         }
         self.can_save()?;
         let rs = records(&self.original)?;
@@ -866,6 +869,7 @@ impl Document {
                 } else {
                     text_object::encode_plain_text_group(text, *rect)?
                 };
+                group = Self::caption_group_with_label(&group, o.label.as_ref())?;
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -1185,6 +1189,9 @@ impl Document {
                 for id in refs { references.extend_from_slice(&(id as u32).to_le_bytes()); }
                 put_record(&mut added, 0x07d2, &references);
                 put_record(&mut added, 0x0902, definition.range_payload());
+                if let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
@@ -1284,10 +1291,12 @@ impl Document {
                 }
                 put_record(&mut added, 0x07d2, &references);
                 let driver = *refs.get(2).ok_or("Locus has no moving point")?;
-                let (maximum, closure) = super::locus::locus_driver_range_info(&self.objects, driver)
+                let (_, closure) = super::locus::locus_driver_range_info(&self.objects, driver)
                     .ok_or("Unsupported locus moving point")?;
+                let [minimum, maximum] = self.locus_sampling_interval(o.id)
+                    .ok_or("Invalid locus interval")?;
                 let mut range = Vec::with_capacity(40);
-                range.extend_from_slice(&0f64.to_le_bytes());
+                range.extend_from_slice(&minimum.to_le_bytes());
                 range.extend_from_slice(&maximum.to_le_bytes());
                 range.extend_from_slice(&samples.to_le_bytes());
                 range.extend_from_slice(&[
@@ -1326,7 +1335,7 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::CoordinateMeasurement {
@@ -1353,7 +1362,7 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::ValueEquation {
@@ -1417,7 +1426,7 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::SegmentLength(segment) = o.kind {
@@ -1427,7 +1436,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&Self::measurement_group_with_label(&group, o.label.as_ref())?);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PointDistance(a, b) | Kind::PointLineDistance(a, b) = o.kind {
@@ -1442,7 +1451,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PointRatio(a, b, c) = o.kind {
@@ -1454,7 +1463,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&Self::measurement_group_with_label(&group, o.label.as_ref())?);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PolygonPerimeter(polygon) = o.kind {
@@ -1464,7 +1473,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::CircleCircumference(circle) = o.kind {
@@ -1474,7 +1483,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::CircleRadius(circle) = o.kind {
@@ -1484,7 +1493,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::CircleArea(circle) = o.kind {
@@ -1494,7 +1503,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PolygonArea(polygon) = o.kind {
@@ -1504,7 +1513,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::ArcAngle(arc) = o.kind {
@@ -1514,7 +1523,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::ArcLength(arc) = o.kind {
@@ -1524,7 +1533,47 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
+                continue;
+            }
+            if let Kind::PolarAngleValue(a, b, c) | Kind::VertexAngleValue(a, b, c)
+                | Kind::AngleMarker(a, b, c, _) = o.kind {
+                let code = match o.kind {
+                    Kind::PolarAngleValue(..) => 115,
+                    Kind::VertexAngleValue(..) => 116,
+                    _ => 113,
+                };
+                let mut h = header(code);
+                if !o.visible { h[2] |= 1; }
+                if let Some(style) = o.visual_style { crate::style_records::set_visual_style(&mut h, style)?; }
+                let presentation = o.angle_marker_style.unwrap();
+                h[16..18].copy_from_slice(&presentation.opacity.to_le_bytes());
+                put_record(&mut added, 0x07d0, &h);
+                let mut refs = 3_u32.to_le_bytes().to_vec();
+                for id in [a, b, c] { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                put_record(&mut added, 0x07d2, &refs);
+                let mut marker = [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0];
+                if let Kind::AngleMarker(_, _, _, style) = o.kind {
+                    marker[..2].copy_from_slice(&style.to_le_bytes());
+                }
+                marker[2..4].copy_from_slice(&u16::from(presentation.arrow).to_le_bytes());
+                put_record(&mut added, 0x090e, &marker);
+                if let Some(label) = &o.label {
+                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
+            if let Kind::NumericAlias { source, unit: crate::table_records::NumericUnit::Degrees } = o.kind {
+                let mut group = include_bytes!("../../../../assets/angle_measurement_group.bin").to_vec();
+                group[8..10].copy_from_slice(&120_u16.to_le_bytes());
+                group[36..40].copy_from_slice(&8_u32.to_le_bytes());
+                group[44..48].copy_from_slice(&1_u32.to_le_bytes());
+                group[48..52].copy_from_slice(&(source as u32).to_le_bytes());
+                group.drain(52..60);
+                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
+                if !o.visible { group[10] = 1; }
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::AngleMeasurement(a, b, c) = o.kind {
@@ -1536,7 +1585,7 @@ impl Document {
                 if !o.visible {
                     group[10] = 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Some(definition) = o.kind.transform_definition() {
@@ -1566,8 +1615,8 @@ impl Document {
                         visible: o.visible,
                         label: o.label.as_ref(),
                         polygon,
-                        sector_order: if definition.element() == ElementType::Sector {
-                            Some(o.interior_order.ok_or("Missing sector drawing order")?)
+                        region_order: if matches!(definition.element(), ElementType::Sector | ElementType::Disk) {
+                            Some(o.interior_order.ok_or("Missing region drawing order")?)
                         } else {
                             None
                         },

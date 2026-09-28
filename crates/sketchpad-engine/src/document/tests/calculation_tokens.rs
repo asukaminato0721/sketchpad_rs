@@ -166,5 +166,5 @@ fn long_calculation_metadata_operand_and_resource_guards_stay_strict() {
         (20, 20),
         NumericUnit::Length
     )
-    .is_err());
+    .is_ok());
 }

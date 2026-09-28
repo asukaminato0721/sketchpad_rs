@@ -1,8 +1,8 @@
 //! Shared native transform schemas with independently validated output typing.
 //! Appearance, caches and unknown auxiliary records remain in the preserving serializer.
 use super::decode::{polar_distance_scale, transform_angle_degrees};
-use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
-use super::records::{f64_at, u32_at};
+use super::kind::{is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count};
+use super::records::{f64_at, polygon_subtype, u32_at};
 use super::transform_model::{
     DisplacementExpr, ElementType, NativeTransformFlavor, NumericExpr, Transform,
     TransformDefinition,
@@ -18,16 +18,19 @@ pub(super) fn decode_native_transform(
     references: &[usize],
     constraint: Option<&[u8]>,
     standalone_custom_point: bool,
-    sector_layout: bool,
 ) -> Option<TransformDefinition> {
     if header.len() != 28 {
         return None;
     }
     let code = u16::from_le_bytes(header[..2].try_into().ok()?);
     let element = match header[6..10] {
-        [1, 0, 4, 0] if code == 26 => ElementType::Point,
+        [1, 0, 4 | 89, 0] => ElementType::Point,
+        [2, 0, 14, 0] => ElementType::Segment,
+        [3, 0, 28, 0] => ElementType::Circle,
+        [5, 0, 16, 0] => ElementType::Disk,
+        [4, 0, _, _] => ElementType::Polygon,
         [12, 0, 67, 0] => ElementType::Arc,
-        [13, 0, 68, 0] if matches!(code, 27 | 34) => ElementType::Sector,
+        [13, 0, 68, 0] => ElementType::Sector,
         [2, 0, 13, 0] => ElementType::Ray,
         [2, 0, 12, 0] => ElementType::Line,
         _ => return None,
@@ -42,40 +45,25 @@ pub(super) fn decode_native_transform(
     }
     let source = *references.first()?;
     let source_kind = &get(source)?.kind;
-    if element == ElementType::Sector && !sector_layout {
-        return None;
-    }
     let source_matches = match element {
-        ElementType::Point => {
-            matches!(source_kind, super::Kind::Free(_))
-                || matches!(source_kind, super::Kind::Transformed(definition)
-                    if definition.element() == ElementType::Point
-                        && (matches!(definition.wire_flavor(),
-                            NativeTransformFlavor::Vector
-                                | NativeTransformFlavor::FixedPolar
-                                | NativeTransformFlavor::MarkedPolar)
-                            || (code == 26
-                                && definition.wire_flavor() == NativeTransformFlavor::DualMarkedPolar)))
-        }
+        ElementType::Point => is_point_kind(source_kind),
         ElementType::Arc => is_arc_kind(source_kind),
-        ElementType::Sector => {
-            matches!(source_kind, super::Kind::SectorBoundary(_))
-                || (code == 27
-                    && matches!(source_kind, super::Kind::Transformed(definition)
-                        if definition.element() == ElementType::Sector
-                            && matches!(definition.wire_flavor(),
-                                NativeTransformFlavor::Reflection
-                                    | NativeTransformFlavor::FixedRotation)))
-        }
+        ElementType::Segment => is_segment_kind(source_kind),
+        ElementType::Circle => source_kind.is_circle(),
+        ElementType::Disk => source_kind.is_circle_interior(),
+        ElementType::Polygon => source_kind.is_polygon()
+            && polygon_vertex_count(objects, source).and_then(polygon_subtype)
+                == Some(u16::from_le_bytes([header[8], header[9]])),
+        ElementType::Sector => source_kind.is_sector(),
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
         ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),
-        _ => false,
     };
     if !source_matches {
         return None;
     }
     let point = |id: usize| get(id).is_some_and(|o| is_point_kind(&o.kind));
     let numeric = |id: usize, unit| get(id).is_some_and(|o| o.kind.numeric_unit() == Some(unit));
+    let quantity = |id: usize| get(id).is_some_and(|o| o.kind.numeric_unit().is_some());
     let distance = |id: usize| get(id).is_some_and(|o| o.kind.is_marked_distance_value());
     let literal = |magnitude, unit, scale| NumericExpr::Literal {
         magnitude,
@@ -185,11 +173,7 @@ pub(super) fn decode_native_transform(
                 F::MarkedPolar,
             )
         }
-        (27, [_, center])
-            if point(*center)
-                && (element != ElementType::Sector
-                    || matches!(get(*center)?.kind, super::Kind::Free(_))) =>
-        {
+        (27, [_, center]) if point(*center) => {
             let p = payload(36)?;
             (
                 Transform::Rotate {
@@ -215,7 +199,7 @@ pub(super) fn decode_native_transform(
             )
         }
         (29, [_, center, angle])
-            if constraint.is_none() && point(*center) && numeric(*angle, NumericUnit::Degrees) =>
+            if constraint.is_none() && point(*center) && quantity(*angle) =>
         {
             (
                 Transform::Rotate {
@@ -256,7 +240,7 @@ pub(super) fn decode_native_transform(
             )
         }
         (33, [_, center, ratio])
-            if constraint.is_none() && point(*center) && numeric(*ratio, NumericUnit::Scalar) =>
+            if constraint.is_none() && point(*center) && quantity(*ratio) =>
         {
             (
                 Transform::Dilate {
@@ -268,13 +252,7 @@ pub(super) fn decode_native_transform(
         }
         (34, [_, mirror])
             if constraint.is_none()
-                && get(*mirror).is_some_and(|o| {
-                    if element == ElementType::Sector {
-                        matches!(o.kind, super::Kind::Segment(..))
-                    } else {
-                        is_straight_kind(&o.kind)
-                    }
-                }) =>
+                && get(*mirror).is_some_and(|o| is_straight_kind(&o.kind)) =>
         {
             (Transform::Reflect { mirror: *mirror }, F::Reflection)
         }

@@ -60,7 +60,7 @@ fn native_two_resource_images_keep_distinct_pngs_transforms_and_visibility() {
             [1., 0., 280., 0., 1., 418.],
         ),
     ] {
-        let doc = Document::from_bytes(bytes, None).unwrap();
+        let mut doc = Document::from_bytes(bytes, None).unwrap();
         let Kind::Image {
             png: first,
             transform: first_transform,
@@ -92,6 +92,12 @@ fn native_two_resource_images_keep_distinct_pngs_transforms_and_visibility() {
         assert_eq!(doc.is_displayed(21), visible21);
         assert!(doc.partial_view);
         assert_eq!(doc.encode().unwrap(), bytes);
+        doc.checkpoint();
+        doc.objects[19].visible = !visible20;
+        let mut expected = bytes.to_vec();
+        expected[doc.objects[19].header_offset.unwrap() + 2] ^= 1;
+        doc.can_save().unwrap();
+        assert_eq!(doc.encode().unwrap(), expected);
     }
 }
 

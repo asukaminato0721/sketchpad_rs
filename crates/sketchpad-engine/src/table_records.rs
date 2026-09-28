@@ -251,9 +251,8 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
         Some(index) => (&digits[..index], &digits[index + 1..]),
         None => (digits, &[][..]),
     };
-    if !(1..=32).contains(&whole.len())
+    if whole.is_empty() && fraction.is_empty()
         || fraction.len() > 30
-        || decimal.is_some() && fraction.is_empty()
         || whole.iter().chain(fraction).any(|digit| *digit > 9)
         || whole.len() > 1 && whole[0] == 0
     {
@@ -281,85 +280,76 @@ fn value_from_words(words: &[u16]) -> Result<f64, String> {
 struct ParameterLiteral {
     value: f64,
     suffix: Option<u16>,
-    scientific: bool,
+    exponent: Option<i32>,
 }
 
 fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLiteral, String> {
-    if unit == NumericUnit::Scalar {
-        return Ok(ParameterLiteral {
-            value: value_from_words(words)?,
-            suffix: None,
-            scientific: false,
-        });
-    }
-    let at = words
-        .iter()
-        .position(|word| matches!(word, 0x0100..=0x0102 | 0x0201))
-        .ok_or("Parameter value units disagree with its header")?;
-    let suffix = words[at];
-    if !matches!(
-        (unit, suffix),
-        (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)
-    ) {
-        return Err("Parameter value units disagree with its header".into());
-    }
-    // Actual native parameter words [13, 0x0100] encode pi radians,
-    // displayed as 180 degrees. Other constant/unit combinations and
-    // expressions have not been established as parameter literals.
-    let mut value = if suffix == 0x0100 && words[..at] == [13] {
-        CALCULATOR_PI
+    let scientific = words.windows(4).position(|part| part == [0x1002, 1, 0, 0x1004]);
+    let (mantissa, exponent) = if let Some(at) = scientific {
+        let tail = &words[at + 4..];
+        let negative = tail.first() == Some(&0x1001);
+        let digits = &tail[usize::from(negative)..];
+        if digits.is_empty() || digits.iter().any(|digit| *digit > 9) {
+            return Err("Invalid parameter exponent".into());
+        }
+        let exponent = digits.iter().try_fold(0_i32, |value, digit|
+            value.checked_mul(10)?.checked_add(i32::from(*digit)))
+            .ok_or("Parameter exponent is out of range")?;
+        (&words[..at], Some(if negative { -exponent } else { exponent }))
     } else {
-        value_from_words(&words[..at])?
+        (words, None)
     };
-    let scientific = match &words[at + 1..] {
-        [] => false,
-        // The three observed native typed scientific literals put the unit
-        // before multiplication by 10^-5. This is a number representation,
-        // not a general calculation or an inferred cache value.
-        [0x1002, 1, 0, 0x1004, 0x1001, 5] if matches!(suffix, 0x0101 | 0x0201) => true,
-        _ => return Err("Unsupported parameter scientific literal".into()),
+    let (magnitude, suffix) = if unit == NumericUnit::Scalar {
+        (mantissa, None)
+    } else {
+        let (&suffix, magnitude) = mantissa.split_last()
+            .ok_or("Parameter is missing its value")?;
+        if !matches!((unit, suffix),
+            (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)) {
+            return Err("Parameter value units disagree with its header".into());
+        }
+        (magnitude, Some(suffix))
     };
-    if scientific {
-        value = format!("{value}e-5")
-            .parse()
-            .map_err(|_| "Invalid scientific parameter value")?;
-    }
-    Ok(ParameterLiteral {
-        value,
-        suffix: Some(suffix),
-        scientific,
-    })
+    let value = match magnitude {
+        [13] => CALCULATOR_PI,
+        [14] => std::f64::consts::E,
+        [0x1001, 13] => -CALCULATOR_PI,
+        [0x1001, 14] => -std::f64::consts::E,
+        _ => value_from_words(magnitude)?,
+    };
+    let value = if let Some(exponent) = exponent {
+        format!("{value}e{exponent}").parse::<f64>()
+            .map_err(|_| "Invalid scientific parameter value")?
+    } else { value };
+    if !value.is_finite() { return Err("Parameter value must be finite".into()); }
+    Ok(ParameterLiteral { value, suffix, exponent })
 }
 
-fn shift_decimal_words(words: &[u16], places: usize) -> Vec<u16> {
+fn shift_decimal_words(words: &[u16], places: i32) -> Result<Vec<u16>, String> {
     let negative = words.first() == Some(&4097);
     let words = &words[usize::from(negative)..];
-    let decimal = words
-        .iter()
-        .position(|word| *word == 10)
-        .unwrap_or(words.len());
-    let mut digits = words
-        .iter()
-        .copied()
-        .filter(|word| *word != 10)
-        .collect::<Vec<_>>();
-    let split = decimal + places;
+    let decimal = words.iter().position(|word| *word == 10).unwrap_or(words.len());
+    let mut digits = words.iter().copied().filter(|word| *word != 10).collect::<Vec<_>>();
+    let split = decimal as i64 + i64::from(places);
+    if !(-31..=32).contains(&split) {
+        return Err("Parameter mantissa exceeds 32 native numeric tokens".into());
+    }
+    let split = if split <= 0 {
+        digits.splice(..0, std::iter::repeat_n(0, (1 - split) as usize));
+        1
+    } else { split as usize };
     digits.resize(digits.len().max(split), 0);
     let mut whole = digits[..split].to_vec();
-    while whole.len() > 1 && whole[0] == 0 {
-        whole.remove(0);
-    }
+    while whole.len() > 1 && whole[0] == 0 { whole.remove(0); }
     let mut fraction = digits[split..].to_vec();
-    while fraction.last() == Some(&0) {
-        fraction.pop();
-    }
+    while fraction.last() == Some(&0) { fraction.pop(); }
     let mut result = if negative { vec![4097] } else { Vec::new() };
     result.extend(whole);
     if !fraction.is_empty() {
         result.push(10);
         result.extend(fraction);
     }
-    result
+    Ok(result)
 }
 
 impl ParameterGroup {
@@ -466,7 +456,7 @@ impl ParameterGroup {
         let display_mode_supported = matches!(display_mode, 1 | 3)
             || display_mode == 0
                 && unit == NumericUnit::Length
-                && !literal.scientific
+                && literal.exponent.is_none()
                 && label_record.is_some()
                 && kinds.len() == 6;
         let precision = u16::from_le_bytes(payload[28..30].try_into().unwrap());
@@ -561,7 +551,7 @@ impl ParameterGroup {
             || font.bold
             || font.italic
             || font.underline
-            || self.literal().scientific
+            || self.literal().exponent.is_some()
         {
             return Err(
                 "Generated parameter captions need a verified font and literal layout".into(),
@@ -720,14 +710,14 @@ impl ParameterGroup {
             .position(|word| *word == 10)
             .map_or(0, |at| words.len() - at - 1);
         let precision = self.precision().max(fractional_digits.min(5));
-        if literal.scientific {
+        if literal.suffix == Some(0x0100) {
+            // Public values are degrees; the native literal may use radians.
+            words = decimal_words(value * self.native_unit_scale())?;
+        }
+        if let Some(exponent) = literal.exponent {
             // Shift decimal digits rather than dividing floats: 0.000025 must
             // retain the exact mantissa 2.5, not 2.4999999999999996.
-            words = shift_decimal_words(&words, 5);
-        } else if literal.suffix == Some(0x0100) {
-            // Public parameter values and display precision are degrees. Only
-            // the preserved literal encoding uses radians.
-            words = decimal_words(value * self.native_unit_scale())?;
+            words = shift_decimal_words(&words, -exponent)?;
         }
         let old_value = self.value();
         let extra = |value: f64| {
@@ -753,8 +743,9 @@ impl ParameterGroup {
             NumericUnit::Degrees => words.push(literal.suffix.unwrap()),
             _ => {}
         }
-        if literal.scientific {
-            words.extend_from_slice(&[0x1002, 1, 0, 0x1004, 0x1001, 5]);
+        if let Some(exponent) = literal.exponent {
+            words.extend_from_slice(&[0x1002, 1, 0, 0x1004]);
+            words.extend(decimal_words(f64::from(exponent))?);
         }
         for word in &words {
             payload.extend_from_slice(&word.to_le_bytes());
@@ -1196,8 +1187,10 @@ impl ParameterExpr {
             Self::Call(function, argument) => {
                 let unit = argument.units(sources)?;
                 match *function {
-                    0x2000..=0x2002 if matches!(unit, Scalar | Degrees) => Ok(Scalar),
-                    0x2003..=0x2005 if unit == Scalar => Ok(Degrees),
+                    // Native trigonometric calls use the argument's magnitude,
+                    // discarding its units; forward calls interpret it as degrees.
+                    0x2000..=0x2002 => Ok(Scalar),
+                    0x2003..=0x2005 => Ok(Degrees),
                     0x2006 => Ok(unit),
                     0x2007 => {
                         let (length, degrees) = unit.dimensions();
@@ -1836,7 +1829,7 @@ impl ParameterCalculationGroup {
         };
         let payload = &bytes[rs[2].payload..rs[2].end];
         let token_count = payload.len().saturating_sub(92) / 2;
-        if rs[0].end - rs[0].payload != 28
+        if !matches!(rs[0].end - rs[0].payload, 16 | 28)
             || rs[1].end - rs[1].payload != 8
             || !(1..=MAX_CALCULATION_TOKENS).contains(&token_count)
             || payload.len() != 92 + 2 * token_count
@@ -2006,23 +1999,10 @@ impl ParameterCalculationGroup {
 
     pub fn with_source_units(mut self, units: &[NumericUnit]) -> Result<Self, String> {
         let inferred = self.units_for_sources(units)?;
-        if inferred == self.unit() {
-            return Ok(self);
-        }
-        let subtype = u16::from_le_bytes(self.bytes[16..18].try_into().unwrap());
-        // Native squared angles use subtype 50 too; the expression supplies
-        // the actual base unit rather than the quantity category in the header.
-        // Native can retain an older physical category after a formula becomes
-        // unitless (the retained length-minus-decimal control has subtype48 but
-        // no native result suffix). Expression units govern its live value.
-        if subtype == 51
-            || (inferred == NumericUnit::Scalar && units.contains(&self.unit()))
-            || (subtype == 50 && inferred.dimensions() == (0, 2))
-        {
-            self.inferred_unit = (inferred != self.unit()).then_some(inferred);
-        } else if inferred != self.unit() {
-            return Err("Calculation result units disagree with its header".into());
-        }
+        // The saved header can retain a previous formula's quantity category.
+        // Live operands and expression tokens determine the current units.
+        self.inferred_unit = None;
+        self.inferred_unit = (inferred != self.unit()).then_some(inferred);
         Ok(self)
     }
 
@@ -3075,6 +3055,11 @@ fn canonical_named_table(
 }
 
 impl TableGroup {
+    pub(crate) fn font_reference(&self) -> u16 {
+        let rs = records(&self.bytes, 0).unwrap();
+        u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().unwrap())
+    }
+
     pub(crate) fn with_font_reference(mut self, font: u16) -> Result<Self, String> {
         let rs = records(&self.bytes, 0)?;
         let record = rs
@@ -3968,16 +3953,15 @@ mod tests {
             assert!(group.value(-1.01).is_none());
             assert!(group.value(1.).is_some());
             assert!(group.value(-1.).is_some());
-            assert!(
-                ParameterCalculationGroup::from_expression_with_source_unit(
+            let quantity = ParameterCalculationGroup::from_expression_with_source_unit(
                     1,
                     "v",
                     &format!("{function}(v)"),
                     (10, 30),
                     NumericUnit::Degrees
-                )
-                .is_err()
-            );
+                ).unwrap();
+            assert_eq!(quantity.unit(), NumericUnit::Degrees);
+            assert_eq!(quantity.value_with_source_unit(0.5, NumericUnit::Degrees), group.value(0.5));
         }
         let prefix = ParameterCalculationGroup::from_expression(1, "p", "p+pi", (10, 30)).unwrap();
         assert_eq!(prefix.value(2.), Some(2. + CALCULATOR_PI));
@@ -4072,18 +4056,11 @@ mod tests {
             length.value_with_source_unit(3., NumericUnit::Length),
             Some(3.)
         );
-        for expression in ["sin(v)"] {
-            assert!(
-                ParameterCalculationGroup::from_expression_with_source_unit(
-                    1,
-                    "v",
-                    expression,
-                    (10, 30),
-                    NumericUnit::Length
-                )
-                .is_err()
-            );
-        }
+        let sine_length = ParameterCalculationGroup::from_expression_with_source_unit(
+            1, "v", "sin(v)", (10, 30), NumericUnit::Length,
+        ).unwrap();
+        assert_eq!(sine_length.unit(), NumericUnit::Scalar);
+        assert!((sine_length.value_with_source_unit(30., NumericUnit::Length).unwrap() - 0.5).abs() < 1e-12);
         for (expression, expected) in [("round(n*0.15)", -4.), ("trunc(n*0.15)", -4.)] {
             let group =
                 ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
@@ -4246,14 +4223,13 @@ mod tests {
             source_power.value_for_sources(&[3., 2.], &[Length, Scalar]),
             Some(9.)
         );
-        let mut wrong_header = negative.as_bytes().to_vec();
-        wrong_header[16..18].copy_from_slice(&49u16.to_le_bytes());
-        assert!(
-            ParameterCalculationGroup::parse(&wrong_header)
-                .unwrap()
-                .with_source_units(&[Area])
-                .is_err()
-        );
+        let mut retained_header = negative.as_bytes().to_vec();
+        retained_header[16..18].copy_from_slice(&49u16.to_le_bytes());
+        let restored = ParameterCalculationGroup::parse(&retained_header)
+            .unwrap().with_source_units(&[Area]).unwrap();
+        assert_eq!(restored.unit(), Length);
+        assert_eq!(restored.value_for_sources(&[9.], &[Area]), Some(3.));
+        assert_eq!(restored.as_bytes(), retained_header);
         let literal = CalculationGroup::from_expression("90°^2").unwrap();
         assert_eq!(literal.value_text(), "8100.00°²");
     }

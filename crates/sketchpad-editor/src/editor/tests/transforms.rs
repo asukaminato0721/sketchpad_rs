@@ -599,7 +599,7 @@ fn calculated_ratio_dilation_commands_keep_ray_and_line_extents_and_domains() {
         editor.doc.verify_roundtrip().unwrap();
         let before = editor.doc.encode().unwrap();
         editor.select_only(4);
-        editor.marked_ratio_value = Some(6);
+        editor.marked_ratio_value = Some(2);
         editor.dilate_selected();
         assert_eq!(editor.doc.encode().unwrap(), before);
         editor.marked_ratio_value = None;

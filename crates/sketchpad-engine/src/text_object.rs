@@ -9,6 +9,21 @@ const OBJECT_HEADER: [u8; 28] = [
     0, 0,
 ];
 
+/// Native symbol-font tokens, shared by literal and live captions.
+pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
+    Some(match code {
+        0x70 => "π",
+        0x7e => "∼",
+        0xb0 => "°",
+        0xd0 => "∠",
+        0xd7 => "*",
+        0xde => "⇒",
+        0x102 => "△",
+        0x103 => "·",
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextRect {
     pub left: i16,
@@ -26,9 +41,19 @@ pub struct RichRunStyle {
     pub family_index: Option<u16>,
     /// Native R/G/L channels, each encoded as one plus an 8-bit component.
     pub rgb: Option<[u16; 3]>,
+    pub superscript_depth: u8,
+    /// Explicit native `+` script-size level, independent of baseline placement.
+    pub script_size: Option<u8>,
 }
 
 impl RichRunStyle {
+    pub fn script_metrics(self, base_size: f32) -> (f32, f32) {
+        let level = i32::from(self.script_size.unwrap_or(self.superscript_depth));
+        (
+            base_size * 0.75_f32.powi(level),
+            base_size * 0.35 * f32::from(self.superscript_depth),
+        )
+    }
     pub fn rgb_color(self) -> Option<[u8; 3]> {
         self.rgb.filter(|channels| channels.iter().all(|value| (1..=256).contains(value)))
             .map(|channels| channels.map(|value| (value - 1) as u8))
@@ -54,6 +79,12 @@ impl RichTextTemplate {
             rich: rich.to_vec(),
             bbox: bbox.try_into().unwrap(),
         })
+    }
+
+    pub fn math_nodes(&self) -> Option<Vec<crate::document::referenced_text::ReferencedNode>> {
+        let text = crate::document::referenced_text::ReferencedText::from_rich(&self.rich, 0).ok()?;
+        text.nodes().iter().any(crate::document::referenced_text::ReferencedNode::has_math_layout)
+            .then(|| text.nodes().to_vec())
     }
 
     pub fn decode(&self) -> Result<(String, TextRect, Vec<Vec<RichTextRun>>), String> {
@@ -91,7 +122,11 @@ pub fn encode_rich_runs(
             markup.extend_from_slice(b"<H");
         }
         for run in row {
-            if run.style != RichRunStyle::default() {
+            let font_style = RichRunStyle { superscript_depth: 0, ..run.style };
+            for _ in 0..run.style.superscript_depth {
+                markup.extend_from_slice(b"<+<0>");
+            }
+            if font_style != RichRunStyle::default() {
                 markup.extend_from_slice(b"<S");
                 if let Some(size) = run.style.size_code {
                     if !(8..=512).contains(&size) {
@@ -101,6 +136,9 @@ pub fn encode_rich_runs(
                 }
                 if let Some(index) = run.style.family_index {
                     markup.extend_from_slice(format!("P{index:X}").as_bytes());
+                }
+                if let Some(level) = run.style.script_size {
+                    markup.extend_from_slice(format!("+{level:X}").as_bytes());
                 }
                 if let Some([red, green, blue]) = run.style.rgb {
                     if ![red, green, blue].iter().all(|channel| (1..=256).contains(channel)) {
@@ -125,9 +163,10 @@ pub fn encode_rich_runs(
             markup.extend_from_slice(format!("<T{:X}x", run.text.len()).as_bytes());
             markup.extend_from_slice(run.text.as_bytes());
             markup.push(b'>');
-            if run.style != RichRunStyle::default() {
+            if font_style != RichRunStyle::default() {
                 markup.push(b'>');
             }
+            markup.extend(std::iter::repeat_n(b'>', usize::from(run.style.superscript_depth)));
         }
         if horizontal {
             markup.push(b'>');
@@ -343,7 +382,38 @@ impl MarkupParser<'_> {
     }
 
     fn node(&mut self, mut style: RichRunStyle) -> Result<Vec<Vec<RichTextRun>>, String> {
+        if self.depth > 64 {
+            return Err("Text markup is nested too deeply".into());
+        }
         let rest = &self.markup[self.pos..];
+        if rest.starts_with(b"<0>") {
+            self.pos += 3;
+            return Ok(vec![vec![RichTextRun { text: String::new(), style }]]);
+        }
+        if rest.starts_with(b"<+") {
+            self.pos += 2;
+            self.depth += 1;
+            let mut base = self.node(style)?;
+            style.superscript_depth += 1;
+            let exponent = self.node(style)?;
+            if self.markup.get(self.pos) != Some(&b'>') {
+                return Err("Unterminated superscript".into());
+            }
+            self.pos += 1;
+            self.depth -= 1;
+            base.last_mut().unwrap().extend(exponent.into_iter().flatten());
+            return Ok(base);
+        }
+        if rest.starts_with(b"<!") {
+            let end = rest.iter().position(|byte| *byte == b'>')
+                .ok_or("Unterminated rich-text symbol")?;
+            let code = usize::from_str_radix(
+                std::str::from_utf8(&rest[2..end]).map_err(|_| "Invalid rich-text symbol")?, 16,
+            ).map_err(|_| "Invalid rich-text symbol")?;
+            let text = markup_symbol(code).ok_or("Unsupported rich-text symbol")?;
+            self.pos += end + 1;
+            return Ok(vec![vec![RichTextRun { text: text.into(), style }]]);
+        }
         if rest.starts_with(b"<T") {
             self.pos += 2;
             let start = self.pos;
@@ -393,7 +463,7 @@ impl MarkupParser<'_> {
                     .markup
                     .get(self.pos)
                     .ok_or("Unterminated rich-text style")?;
-                if matches!(attribute, b'#' | b'P' | b'R' | b'G' | b'L') {
+                if matches!(attribute, b'#' | b'P' | b'+' | b'R' | b'G' | b'L') {
                     if next_channel > 0 && !matches!(attribute, b'G' | b'L') {
                         return Err("Unsupported style after rich-text color channels".into());
                     }
@@ -412,6 +482,8 @@ impl MarkupParser<'_> {
                     match attribute {
                         b'#' if (8..=512).contains(&value) => style.size_code = Some(value),
                         b'P' => style.family_index = Some(value),
+                        b'+' => style.script_size = Some(u8::try_from(value)
+                            .map_err(|_| "Invalid script-size level")?),
                         b'R' | b'G' | b'L' if (1..=256).contains(&value) => {
                             let index = match attribute { b'R' => 0, b'G' => 1, _ => 2 };
                             if index != next_channel {
@@ -457,7 +529,7 @@ impl MarkupParser<'_> {
     }
 }
 
-/// Decode literal and mixed-format text while rejecting expression markup.
+/// Decode literal and mixed-format text, including symbols and superscripts.
 pub fn decode_rich_text(
     rich: &[u8],
     bbox: &[u8],
@@ -484,10 +556,15 @@ pub fn decode_rich_text(
         pos: 0,
         depth: 0,
     };
-    let lines = parser.sequence(true, RichRunStyle::default())?;
-    if parser.pos != markup.len() {
-        return Err("Unsupported rich-text markup".into());
-    }
+    let lines = match parser.sequence(true, RichRunStyle::default()) {
+        Ok(lines) if parser.pos == markup.len() => lines,
+        _ => crate::document::referenced_text::ReferencedText::from_rich(rich, 0)?
+            .evaluate(|_, _| None).into_iter().map(|row| row.into_iter().map(|run| {
+                let mut style = run.style.font;
+                if let (Some(r), Some(g), Some(b)) = (run.style.red, run.style.green, run.style.blue) { style.rgb = Some([r,g,b]); }
+                RichTextRun { text: run.text, style }
+            }).collect()).collect(),
+    };
     let word = |at| i16::from_le_bytes(bbox[at..at + 2].try_into().unwrap());
     let rect = TextRect {
         left: word(0),

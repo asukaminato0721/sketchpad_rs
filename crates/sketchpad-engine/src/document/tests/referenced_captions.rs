@@ -87,7 +87,7 @@ fn authored_referenced_caption_uses_live_point_parameter_and_action_sources() {
     doc.verify_roundtrip().unwrap();
     let mut mapped = reopened.clone();
     mapped.freeze_evaluation_inputs(&reopened, &[]).unwrap();
-    mapped.set_evaluation_scalar(parameter, 8.).unwrap();
+    mapped.set_evaluation_number(parameter, 8.).unwrap();
     assert_eq!(displayed_rows(&mapped, caption)[1], "8.0");
     assert_eq!(mapped.encode().unwrap(), before);
 }

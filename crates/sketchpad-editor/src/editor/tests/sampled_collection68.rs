@@ -69,14 +69,14 @@ fn native_sampled_collection_and_circle_binding_have_separate_green_geometry() {
                 .all(|s| s.style == sampled_only.doc.effective_visual_style(23).unwrap())
         );
         assert!(
-            crate::render::svg_page(&sampled_only.doc, &view).is_err(),
-            "partial original cannot export SVG"
+            crate::render::svg_page(&sampled_only.doc, &view).unwrap().matches("<line ").count() > 100,
+            "sampled collection exports its strokes"
         );
 
         // A hidden sampled source produces no painted collection by itself.
         let source_only = native_editor(state, &[19]);
         assert!(!source_only.doc.is_displayed(19));
-        assert!(crate::render::svg_page(&source_only.doc, &view).is_err());
+        assert!(!crate::render::svg_page(&source_only.doc, &view).unwrap().contains("<line "));
     }
 
     let circle_only = native_editor("original", &[22]);
@@ -114,9 +114,7 @@ fn sampled_collection_binding_visibility_and_undo_preserve_native_roles() {
 
 #[test]
 fn clean_public_sampled_collection_exports_styled_svg_lines() {
-    // The original Native file has an unrelated partial-view export guard.
-    // Author the same 102→89→77 relationship in a clean document to exercise
-    // the SVG path without weakening that guard.
+    // Author the same 102→89→77 relationship in a clean document.
     let mut doc = Document::new();
     let center = doc.add(Kind::Free(Point { x: 300., y: 300. }));
     let radius = doc.add(Kind::Free(Point { x: 340., y: 300. }));

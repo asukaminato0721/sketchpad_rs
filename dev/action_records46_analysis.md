@@ -41,7 +41,8 @@ isolates action records while the root implements the new document pair model.
 The shared parser's other families use the same structural convention without
 relaxing their settings/action payload validators.
 
-Native validation of six authored/imported even, odd, and empty captions is
-running separately. Generated groups come directly from the current public
-record API via `/tmp/movement46_label_groups.rs`; the wire acceptance claim for
-those new captions remains pending until that probe finishes.
+Native validation of all six authored/imported even, odd, and empty captions
+completed successfully: each full input opened and saved exactly. Generated
+groups came directly from the public record API; the reproducible generator is
+`dev/movement_labels46_generate.rs`. Inputs, independently compared Native
+saves, and screenshots are retained as `tests/fixtures/movement46_*_label_*`.

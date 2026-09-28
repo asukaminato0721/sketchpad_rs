@@ -40,6 +40,7 @@ mod sampled_mapped;
 pub use sampled_mapped::SampledMappedDefinition;
 mod measurements;
 mod angle_marker;
+pub use angle_marker::{AngleMarkerGeometry, AngleMarkerStyle};
 mod point_numeric_labels;
 mod pages;
 mod parameter_names;
@@ -307,11 +308,14 @@ pub struct Object {
     pub tracing: bool,
     pub deleted: bool,
     pub midpoint_host: Option<usize>,
+    /// Saved geometric-locus driver interval, in the host's native parameter units.
+    pub locus_interval: Option<[f64; 2]>,
     pub point_offset: Option<usize>,
     pub constraint_offset: Option<usize>,
     pub header_offset: Option<usize>,
     pub label: Option<LabelAux>,
     pub visual_style: Option<VisualStyle>,
+    pub angle_marker_style: Option<AngleMarkerStyle>,
     pub interior_order: Option<i32>,
     pub text_style_override: Option<FontState>,
     pub rich_text_override: Option<text_object::RichTextTemplate>,
@@ -333,7 +337,9 @@ struct ClipboardObject {
     visible: bool,
     tracing: bool,
     midpoint_host: Option<usize>,
+    locus_interval: Option<[f64; 2]>,
     visual_style: Option<VisualStyle>,
+    angle_marker_style: Option<AngleMarkerStyle>,
     interior_order: Option<i32>,
     text_style: Option<FontState>,
     label: Option<LabelAux>,
@@ -468,6 +474,8 @@ impl Document {
                 matches!(
                     definition.element(),
                     transform_model::ElementType::Polygon
+                        | transform_model::ElementType::Disk
+                        | transform_model::ElementType::Sector
                         | transform_model::ElementType::Arc
                         | transform_model::ElementType::Ray
                         | transform_model::ElementType::Line
@@ -539,12 +547,13 @@ impl Document {
         let measurement_precision = kind.has_measurement_precision().then_some(2);
         let interior_order = if matches!(kind, Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)) || kind.is_circle_interior() {
             Some(0)
-        } else if kind.is_polygon() {
+        } else if kind.is_filled_region() {
             Some(1)
         } else {
             None
         };
         self.objects.push(Object {
+            angle_marker_style: AngleMarkerStyle::for_kind(&kind),
             node: ObjectNode::new(id, self.active_page, kind),
             visual_style,
             interior_order,
@@ -553,6 +562,7 @@ impl Document {
             tracing: false,
             deleted: false,
             midpoint_host,
+            locus_interval: None,
             point_offset: None,
             constraint_offset: None,
             header_offset: None,

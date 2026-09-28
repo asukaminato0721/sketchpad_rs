@@ -146,7 +146,7 @@ fn imported_picture_moves_undoes_and_survives_save() {
 }
 
 #[test]
-fn picture_import_rejects_bad_png_and_read_only_sources() {
+fn picture_import_rejects_bad_png_and_preserves_existing_resources() {
     let mut document = Document::new();
     assert!(
         document
@@ -165,7 +165,9 @@ fn picture_import_rejects_bad_png_and_read_only_sources() {
         let mut read_only = Document::from_bytes(source, None).unwrap();
         assert_eq!(read_only.encode().unwrap(), source);
         read_only.checkpoint();
-        assert!(read_only.can_save().unwrap_err().contains("read-only"));
+        read_only.can_save().unwrap();
+        assert!(read_only.import_png(png, Point { x: 20., y: 20. }).is_err());
+        assert_eq!(read_only.encode().unwrap(), source);
     }
 }
 
@@ -518,7 +520,10 @@ fn selected_text_can_use_new_font_families_independently() {
     );
     assert_eq!(reopened.encode().unwrap(), encoded);
     assert!(doc.set_selected_text_family("").is_err());
-    assert!(doc.set_selected_text_family("Noto 日本語").is_err());
+    doc.set_selected_text_family("Noto 日本語").unwrap();
+    let unicode = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert_eq!(unicode.text_font_state(2).unwrap().family, "Noto 日本語");
+    doc.undo();
     doc.undo();
     assert_eq!(doc.text_font_state(2).unwrap().family, "Tahoma");
 }

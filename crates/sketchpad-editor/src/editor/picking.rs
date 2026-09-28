@@ -124,8 +124,8 @@ impl Editor {
     pub(super) fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && matches!(&object.kind, Kind::Image { png, .. }
-                    if self.doc.image_transform(object.id).is_some_and(|transform|
+                && self.doc.image_instances(object.id).is_some_and(|(_, png, transforms)|
+                    transforms.into_iter().any(|transform|
                         crate::render::picture_hit(v, png, transform, p)))
         }) {
             return Some(object.id);
@@ -274,16 +274,27 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
-                        Kind::AngleMarker(..) => self.doc.angle_marker_strokes(o.id)?
-                            .into_iter()
-                            .flat_map(|path| path.windows(2).map(|pair| {
-                                let a = v.screen(pair[0]);
-                                let b = v.screen(pair[1]);
-                                let ab = b - a;
-                                let t = ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.);
-                                (p - (a + ab * t)).length()
-                            }).collect::<Vec<_>>())
-                            .min_by(f32::total_cmp)?,
+                        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
+                            let marker = self.doc.angle_marker_geometry(o.id)?;
+                            let inside = o.angle_marker_style?.opacity != 0 && marker.sector.iter()
+                                .zip(marker.sector.iter().cycle().skip(1)).take(marker.sector.len())
+                                .fold(false, |inside, (a, b)| {
+                                    let (a, b) = (v.screen(*a), v.screen(*b));
+                                    inside ^ ((a.y > p.y) != (b.y > p.y)
+                                        && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+                                });
+                            if inside { 0. } else {
+                                marker.strokes.into_iter()
+                                    .flat_map(|path| path.windows(2).map(|pair| {
+                                        let a = v.screen(pair[0]);
+                                        let b = v.screen(pair[1]);
+                                        let ab = b - a;
+                                        let t = ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.);
+                                        (p - (a + ab * t)).length()
+                                    }).collect::<Vec<_>>())
+                                    .min_by(f32::total_cmp)?
+                            }
+                        }
                         ref kind if kind.is_filled_region() => {
                             let points = self.doc.filled_region_points(o.id)?;
                             let points: Vec<_> =

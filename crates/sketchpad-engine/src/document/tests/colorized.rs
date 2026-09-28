@@ -316,11 +316,11 @@ fn colorized_context_freezes_omitted_wrapper_but_carried_wrapper_uses_substituti
         .unwrap();
     let mut carried = d.clone();
     carried.freeze_evaluation_inputs(&d, &[]).unwrap();
-    carried.set_evaluation_scalar(10, 0.75).unwrap();
+    carried.set_evaluation_number(10, 0.75).unwrap();
     assert_eq!(carried.colorized_color(id), Some(rgb(191, 191, 191)));
     let mut frozen = d.clone();
     frozen.freeze_evaluation_inputs(&d, &[id]).unwrap();
-    frozen.set_evaluation_scalar(10, 0.75).unwrap();
+    frozen.set_evaluation_number(10, 0.75).unwrap();
     assert_eq!(frozen.colorized_color(id), Some(rgb(127, 127, 127)));
     assert_eq!(frozen.polygon_points(id), d.polygon_points(8));
     assert_eq!(carried.encode().unwrap(), d.encode().unwrap());

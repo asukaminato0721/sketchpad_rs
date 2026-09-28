@@ -3,8 +3,8 @@
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::CoordinateFrame;
-use crate::table_records::NumericUnit;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc as Shared;
 
 type Straight = (Point, Point, LineMode);
 type Arc = (Point, f64, f64, f64, bool);
@@ -21,7 +21,7 @@ pub(super) struct EvaluationContext {
     seed_points: BTreeMap<usize, Point>,
     seed_numbers: BTreeMap<usize, f64>,
     frozen: BTreeSet<usize>,
-    original: Box<Document>,
+    original: Shared<Document>,
 }
 
 impl Document {
@@ -66,7 +66,7 @@ impl Document {
             seed_points: BTreeMap::new(),
             seed_numbers: BTreeMap::new(),
             frozen: BTreeSet::new(),
-            original: Box::new(baseline),
+            original: Shared::new(baseline),
         };
         for &id in external_ids {
             let object = context.original.objects.get(id.checked_sub(1)?)?;
@@ -93,7 +93,7 @@ impl Document {
                     .circles
                     .insert(id, context.original.circle_points(id));
             }
-            if matches!(kind, Kind::CircleInterior(_)) {
+            if kind.is_circle_interior() {
                 context
                     .circles
                     .insert(id, context.original.circle_interior_geometry(id));
@@ -103,7 +103,7 @@ impl Document {
                     .polygons
                     .insert(id, context.original.polygon_points(id));
             }
-            if matches!(kind, Kind::SectorBoundary(_)) {
+            if kind.is_sector() {
                 context
                     .arcs
                     .insert(id, context.original.sector_arc_geometry(id));
@@ -136,6 +136,9 @@ impl Document {
     /// Re-evaluate a local trace driver and its descendants while preserving
     /// unrelated frozen inputs and caller substitutions.
     pub(super) fn invalidate_evaluation_dependents(&mut self, driver: usize) {
+        if self.evaluation_context.is_none() {
+            return;
+        }
         let affected: BTreeSet<_> = match self.dependency_index() {
             Ok(index) => index.affected_by(driver).into_iter().collect(),
             // Imported partial documents may have unresolved construction edges.
@@ -197,10 +200,10 @@ impl Document {
         Some(())
     }
 
-    pub(super) fn set_evaluation_scalar(&mut self, id: usize, value: f64) -> Option<()> {
+    pub(super) fn set_evaluation_number(&mut self, id: usize, value: f64) -> Option<()> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted
-            || object.kind.numeric_unit() != Some(NumericUnit::Scalar)
+            || object.kind.numeric_unit().is_none()
             || !value.is_finite()
         {
             return None;

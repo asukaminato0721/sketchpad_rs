@@ -2,25 +2,29 @@ use super::Editor;
 use super::system_fonts::{add_cjk_fallbacks, system_font};
 use std::sync::Arc;
 
+pub(crate) fn system_font_data(family: &str) -> Option<egui::FontData> {
+    system_font(family.strip_prefix('@').unwrap_or(family)).and_then(|font| font.data())
+}
+
 impl Editor {
     pub(super) fn sync_document_fonts(&mut self, ctx: &egui::Context) {
         if !self.font_definitions_applied {
             add_cjk_fallbacks(&mut self.font_definitions);
         }
-        let families = self
+        let mut families = self
             .doc
             .objects
             .iter()
             .filter(|object| !object.deleted)
             .filter_map(|object| self.doc.text_font_state(object.id).map(|font| font.family))
             .collect::<Vec<_>>();
+        families.extend(self.doc.text_font_families().unwrap_or_default());
         let mut changed = !self.font_definitions_applied;
         for family in families {
             if self.loaded_fonts.contains_key(&family) {
                 continue;
             }
-            let lookup = family.strip_prefix('@').unwrap_or(&family);
-            let Some(data) = system_font(lookup).and_then(|font| font.data()) else {
+            let Some(data) = system_font_data(&family) else {
                 self.loaded_fonts.insert(family, false);
                 continue;
             };

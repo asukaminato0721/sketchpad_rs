@@ -25,8 +25,9 @@ impl Document {
             .map(|o| o.id)
     }
     pub fn coordinate_system_for_object(&self, id: usize) -> Option<usize> {
+        let page = self.objects.get(id.checked_sub(1)?)?.page;
         self.objects.iter().rev().find_map(|frame| {
-            if frame.page != self.active_page || frame.deleted {
+            if frame.page != page || frame.deleted {
                 return None;
             }
             let Kind::CoordinateSystem(x_axis, y_axis) = frame.kind else {

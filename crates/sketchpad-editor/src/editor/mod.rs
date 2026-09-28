@@ -12,7 +12,7 @@ mod referenced_captions;
 mod custom_tools;
 mod document_dialogs;
 mod files;
-mod fonts;
+pub(crate) mod fonts;
 mod system_fonts;
 mod function_dialogs;
 mod measurements;

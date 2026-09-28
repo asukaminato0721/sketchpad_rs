@@ -74,7 +74,7 @@ fn public_pi_suffix_caption_tracks_live_value_in_canvas_svg_and_picking() {
 }
 
 #[test]
-fn original_pi_caption_is_readable_while_partial_view_still_blocks_svg() {
+fn original_pi_caption_exports_from_a_fully_decoded_page() {
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../gsp-rs/tests/Samples/个人专栏/向忠作品/函数图象描点法作图演示平台.gsp"
@@ -90,7 +90,7 @@ fn original_pi_caption_is_readable_while_partial_view_still_blocks_svg() {
         document.text_content(216).unwrap().0,
         format!("{}π", document.text_content(217).unwrap().0)
     );
-    assert!(crate::render::svg_page(&document, &viewport()).is_err());
+    assert!(crate::render::svg_page(&document, &viewport()).unwrap().contains('π'));
     assert_eq!(document.encode().unwrap(), bytes);
 }
 

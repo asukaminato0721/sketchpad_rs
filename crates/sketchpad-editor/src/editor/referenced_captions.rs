@@ -32,7 +32,8 @@ impl Editor {
                     .fold(size, f32::max);
                 let mut x = origin.x;
                 for run in row {
-                    let run_size = run.style.font.size_code.map_or(size, f32::from);
+                    let (run_size, shift) = run.style.font.script_metrics(
+                        run.style.font.size_code.map_or(size, f32::from));
                     let width = run.text.chars().count() as f32 * run_size * 0.65;
                     if let Some(target) = run
                         .reference
@@ -45,7 +46,7 @@ impl Editor {
                             .get(target - 1)
                             .is_some_and(|object| !object.deleted && object.kind.is_action_button())
                             && egui::Rect::from_min_size(
-                                egui::pos2(x, y),
+                                egui::pos2(x, y - shift),
                                 egui::vec2(width, height * 1.1),
                             )
                             .contains(p)

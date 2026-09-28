@@ -17,11 +17,11 @@ impl Document {
             || !self
                 .objects
                 .get(angle.saturating_sub(1))
-                .is_some_and(|o| !o.deleted && o.kind.numeric_unit() == Some(NumericUnit::Degrees))
+                .is_some_and(|o| !o.deleted && o.kind.numeric_unit().is_some())
             || self.numeric_value(angle).is_none()
         {
             return Err(
-                "Select a shape, rotation center, and a degree-valued measurement or calculation"
+                "Select a shape, rotation center, and a numeric angle"
                     .into(),
             );
         }
@@ -49,8 +49,11 @@ impl Document {
             {
                 Kind::CalculatedAngleRotatedLine(source, center, angle)
             }
-            Some(kind) if kind.is_arc() && self.arc_points(source, 1).is_some() => {
-                Kind::Transformed(TransformDefinition::new(source, ElementType::Arc,
+            Some(kind) if (kind.is_arc() && self.arc_points(source, 1).is_some())
+                || ((kind.is_circle_interior() || kind.is_sector()) && self.filled_region_points(source).is_some()) => {
+                let element = if kind.is_circle_interior() { ElementType::Disk }
+                    else if kind.is_sector() { ElementType::Sector } else { ElementType::Arc };
+                Kind::Transformed(TransformDefinition::new(source, element,
                     Transform::Rotate { center, angle: NumericExpr::ObjectValue { id: angle, unit: NumericUnit::Degrees } },
                     NativeTransformFlavor::NumericRotation)?)
             }
@@ -83,10 +86,10 @@ impl Document {
             || !self
                 .objects
                 .get(ratio.saturating_sub(1))
-                .is_some_and(|o| !o.deleted && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
+                .is_some_and(|o| !o.deleted && o.kind.numeric_unit().is_some())
             || self.numeric_value(ratio).is_none()
         {
-            return Err("Select a shape, dilation center, and a scalar value".into());
+            return Err("Select a shape, dilation center, and a numeric ratio".into());
         }
         let kind = match self
             .objects
@@ -112,8 +115,11 @@ impl Document {
             {
                 Kind::CalculatedRatioScaledLine(source, center, ratio)
             }
-            Some(kind) if kind.is_arc() && self.arc_points(source, 1).is_some() => {
-                Kind::Transformed(TransformDefinition::new(source, ElementType::Arc,
+            Some(kind) if (kind.is_arc() && self.arc_points(source, 1).is_some())
+                || ((kind.is_circle_interior() || kind.is_sector()) && self.filled_region_points(source).is_some()) => {
+                let element = if kind.is_circle_interior() { ElementType::Disk }
+                    else if kind.is_sector() { ElementType::Sector } else { ElementType::Arc };
+                Kind::Transformed(TransformDefinition::new(source, element,
                     Transform::Dilate { center, ratio: NumericExpr::ObjectValue { id: ratio, unit: NumericUnit::Scalar } },
                     NativeTransformFlavor::NumericDilation)?)
             }

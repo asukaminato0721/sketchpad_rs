@@ -1,6 +1,5 @@
 use super::calculations::calculation_source_ids;
 use super::embedded_tools::{document_record_indices, document_records};
-use super::kind::is_point_kind;
 use super::records::{put_record, records};
 use super::{Document, Kind, Object};
 use crate::plot_points_records::PlotPointsMode;
@@ -8,7 +7,7 @@ use crate::{function_records, style_records, text_object, text_style_records};
 
 impl Document {
     pub(super) fn patch_marked_coordinate_link(&self, mut out: Vec<u8>) -> Result<Vec<u8>, String> {
-        let Some(frame) = self.active_coordinate_system() else {
+        let Some(frame) = self.marked_coordinate_system[self.active_page] else {
             return Ok(out);
         };
         let frame = u32::try_from(frame).map_err(|_| "Too many objects")?;
@@ -227,7 +226,7 @@ impl Document {
         }
         if overrides.iter().any(|(_, object, _)| {
             !matches!(object.kind, Kind::PlainText { .. })
-                && !(is_point_kind(&object.kind) && object.label.is_some())
+                && object.label.is_none()
                 && object.kind.numeric_unit().is_none()
                 && !matches!(
                     object.kind,
@@ -424,7 +423,8 @@ impl Document {
             } else if let Some(order) = object.interior_order {
                 let payload = &bytes[record.data.clone()];
                 if payload.len() != 28
-                    || payload[6..8] != [4, 0]
+                    || !(payload[6..8] == [4, 0]
+                        || matches!(payload[6..10], [5, 0, 16, 0] | [13, 0, 68, 0] | [13, 0, 69, 0]))
                     || payload[20..24] != order.to_le_bytes()
                 {
                     return Err("Cannot change drawing order of an unsupported interior".into());
@@ -480,20 +480,27 @@ impl Document {
                 continue;
             }
             let group = &rs[start_index..=index];
-            if let Kind::ParameterLocus(_, min, max, samples) = object.kind {
+            let locus_range = match object.kind {
+                Kind::ParameterLocus(_, min, max, samples) => Some((Some([min, max]), samples)),
+                Kind::Locus(_, samples) => Some((object.locus_interval, samples)),
+                _ => None,
+            };
+            if let Some((interval, samples)) = locus_range {
                 let range = group
                     .iter()
                     .find(|record| record.kind == 0x0902)
-                    .ok_or("Missing saved parameter locus range")?;
+                    .ok_or("Missing saved locus range")?;
                 let original = &bytes[range.data.clone()];
                 if original.len() != 40
-                    || u32::from_le_bytes(original[20..24].try_into().unwrap()) != 0x0003_0004
+                    || u32::from_le_bytes(original[20..24].try_into().unwrap()) & 0xffff != 4
                 {
-                    return Err("Unsupported saved parameter locus descriptor".into());
+                    return Err("Unsupported saved locus descriptor".into());
                 }
                 let mut payload = original.to_vec();
-                payload[..8].copy_from_slice(&min.to_le_bytes());
-                payload[8..16].copy_from_slice(&max.to_le_bytes());
+                if let Some([min, max]) = interval {
+                    payload[..8].copy_from_slice(&min.to_le_bytes());
+                    payload[8..16].copy_from_slice(&max.to_le_bytes());
+                }
                 payload[16..20].copy_from_slice(&samples.to_le_bytes());
                 if payload != original {
                     let mut replacement = Vec::new();

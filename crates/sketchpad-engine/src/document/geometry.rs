@@ -2,13 +2,33 @@ use super::kind::{
     is_arc_kind, is_point_kind, is_straight_kind, plot_straight_mode, plot_path_accepts,
 };
 use super::transform_evaluator::TransformGeometry;
-use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
 use super::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use std::collections::BTreeSet;
 
 pub(super) use sketchpad_ir::affine::{reflect_point, rotate_point_about, scale_point_about};
+
+pub(super) fn polygon_path_point(vertices: &[Point], parameter: f64) -> Option<Point> {
+    if !parameter.is_finite() { return None; }
+    let lengths = vertices.iter().zip(vertices.iter().cycle().skip(1)).take(vertices.len())
+        .map(|(a, b)| a.distance(*b)).collect::<Vec<_>>();
+    let perimeter: f64 = lengths.iter().sum();
+    if perimeter <= 1e-9 { return None; }
+    let mut remaining = parameter * perimeter;
+    for (edge, length) in lengths.into_iter().enumerate() {
+        if length <= 1e-9 { continue; }
+        if remaining <= length {
+            let (a, b) = (vertices[edge], vertices[(edge + 1) % vertices.len()]);
+            let t = remaining / length;
+            return Some(Point { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+        }
+        remaining -= length;
+    }
+    // Native sampled polygon paths extrapolate the first edge below zero and
+    // return the origin after the closing edge, rather than wrapping.
+    Some(Point { x: 0., y: 0. })
+}
 
 pub(super) fn ratio_of_points(a: Point, b: Point, c: Point) -> Option<f64> {
     let (bx, by) = (b.x - a.x, b.y - a.y);
@@ -816,65 +836,6 @@ impl Document {
             _ => None,
         }
     }
-    pub(super) fn straight_transform_has_suppressed_ancestor(&self, mut id: usize) -> bool {
-        let mut seen = BTreeSet::new();
-        while seen.insert(id) {
-            let Some(definition) = self
-                .objects
-                .get(id.saturating_sub(1))
-                .and_then(|object| object.kind.transform_definition())
-            else {
-                return false;
-            };
-            if !matches!(definition.element(), ElementType::Ray | ElementType::Line) {
-                return false;
-            }
-            match (definition.wire_flavor(), definition.transform()) {
-                (
-                    NativeTransformFlavor::FixedDilation,
-                    Transform::Dilate {
-                        ratio: NumericExpr::Literal { magnitude, .. },
-                        ..
-                    },
-                ) if *magnitude == 0. => return true,
-                (
-                    NativeTransformFlavor::NumericDilation,
-                    Transform::Dilate {
-                        ratio: NumericExpr::ObjectValue { id: ratio, .. },
-                        ..
-                    },
-                ) => {
-                    if self
-                        .unitless_numeric_value(*ratio)
-                        .is_none_or(|value| value == 0.)
-                    {
-                        return true;
-                    }
-                }
-                (
-                    NativeTransformFlavor::NumericRotation,
-                    Transform::Rotate {
-                        angle: NumericExpr::ObjectValue { id: angle, .. },
-                        ..
-                    },
-                ) => {
-                    if self.numeric_value(*angle).is_none() {
-                        return true;
-                    }
-                }
-                (
-                    NativeTransformFlavor::FixedDilation | NativeTransformFlavor::FixedRotation
-                        | NativeTransformFlavor::Vector | NativeTransformFlavor::FixedPolar
-                        | NativeTransformFlavor::Reflection,
-                    _,
-                ) => {}
-                _ => return false,
-            }
-            id = definition.source();
-        }
-        false
-    }
-
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
             d: &Document,
@@ -1012,12 +973,12 @@ impl Document {
         go(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted || !object.kind.is_circle() {
+            return None;
+        }
         if let Some(value) = self.evaluation_circle(id) {
             return value;
-        }
-        let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted {
-            return None;
         }
         if let Kind::Colorized(definition) = &object.kind {
             return (definition.element() == super::transform_model::ElementType::Circle)
@@ -1366,32 +1327,9 @@ impl Document {
             .then(|| (lengths[..edge].iter().sum::<f64>() + lengths[edge] * t) / perimeter)
     }
     pub fn point_at_polygon_parameter(&self, host: usize, parameter: f64) -> Option<Point> {
-        if !parameter.is_finite() {
-            return None;
-        }
-        let vertices = self.polygon_points(host)?;
-        let lengths = vertices
-            .iter()
-            .zip(vertices.iter().cycle().skip(1))
-            .take(vertices.len())
-            .map(|(a, b)| (b.x - a.x).hypot(b.y - a.y))
-            .collect::<Vec<_>>();
-        let perimeter: f64 = lengths.iter().sum();
-        if perimeter <= 1e-9 {
-            return None;
-        }
-        let mut remaining = parameter.rem_euclid(1.) * perimeter;
-        for (edge, length) in lengths.iter().copied().enumerate() {
-            if length <= 1e-9 {
-                continue;
-            }
-            if remaining <= length {
-                return self.point_on_polygon(host, edge, remaining / length);
-            }
-            remaining -= length;
-        }
-        vertices.first().copied()
+        polygon_path_point(&self.polygon_points(host)?, parameter.rem_euclid(1.))
     }
+
     /// Native axis constraints parameterize a fixed 200-pixel span centered
     /// on the origin. Coordinate unit vectors still govern equations and plots.
     pub(super) fn point_constraint_line_points(&self, host: usize) -> Option<(Point, Point, LineMode)> {

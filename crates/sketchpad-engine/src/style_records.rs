@@ -158,8 +158,8 @@ fn is_polygon_header(payload: &[u8]) -> bool {
         || (matches!(
             code,
             75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
-        ) && subtype >= 52
-            && payload[6..8] == [4, 0])
+        ) && ((subtype >= 52 && payload[6..8] == [4, 0])
+            || (payload.len() == 28 && matches!(payload[6..10], [5, 0, 16, 0] | [13, 0, 68, 0]))))
 }
 
 pub fn polygon_color(payload: &[u8]) -> Option<RgbColor> {
@@ -301,7 +301,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
         return false;
     }
     let code = u16::from_le_bytes([payload[0], payload[1]]);
-    (payload.len() == 28 && code == 113 && payload[6..10] == [18, 0, 95, 0])
+    (payload.len() == 28 && matches!(code, 113 | 115 | 116) && payload[6..10] == [18, 0, 95, 0])
         || (payload.len() == 28 && code == 75
         && (payload[6..10] == [12, 0, 67, 0]
             || (payload[6..8] == [2,0] && matches!(u16::from_le_bytes([payload[8],payload[9]]),12|13))))

@@ -25,6 +25,7 @@ enum Source {
         path: usize,
         target: usize,
         kind: Kind,
+        interval: [f64; 2],
     },
 }
 pub(super) struct PointCurve<'a> {
@@ -38,6 +39,7 @@ impl<'a> PointCurve<'a> {
     }
 
     pub(super) fn new(doc: &'a Document, id: usize) -> Option<Self> {
+        let doc = doc.frozen_evaluation_document(id).unwrap_or(doc);
         let object = doc.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
             return None;
@@ -97,6 +99,7 @@ impl<'a> PointCurve<'a> {
                     || !matches!(
                         kind,
                         Kind::PointOnSegment(..) | Kind::PointOnCircle(..) | Kind::PointOnArc(..)
+                            | Kind::PointOnRay(..) | Kind::PointOnLine(..)
                             | Kind::PointOnCurve(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..)
                     )
                 {
@@ -111,6 +114,7 @@ impl<'a> PointCurve<'a> {
                         path,
                         target,
                         kind,
+                        interval: doc.locus_sampling_interval(id)?,
                     },
                     *samples as usize,
                 )
@@ -133,7 +137,7 @@ impl<'a> PointCurve<'a> {
                 ..
             } => Some(value.rem_euclid(1.)),
             Source::Geometric {
-                kind: Kind::PointOnSegment(..),
+                kind: Kind::PointOnSegment(..) | Kind::PointOnRay(..) | Kind::PointOnLine(..),
                 ..
             } => Some(value.clamp(0., 1.)),
             Source::Geometric {
@@ -226,9 +230,11 @@ impl<'a> PointCurve<'a> {
                 path,
                 target,
                 kind: _,
+                interval: [minimum, maximum],
             } => {
                 // Use the original host geometry, retaining unrelated scoped inputs.
-                sample.objects[*driver - 1].kind = self.original.locus_driver_kind_at(*driver, *path, fraction)?;
+                let parameter = *minimum + (*maximum - *minimum) * fraction;
+                sample.objects[*driver - 1].kind = self.original.locus_driver_kind_at(*driver, *path, parameter)?;
                 sample.position(*target)?
             }
         };

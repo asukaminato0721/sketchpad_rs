@@ -1273,7 +1273,7 @@ fn fixed_straight_transform_chains_preserve_native_modes_styles_and_zero_ancesto
 }
 
 #[test]
-fn calculated_angle_ray_and_line_require_degrees_and_preserve_live_modes() {
+fn calculated_angle_ray_and_line_require_numeric_values_and_preserve_live_modes() {
     for (ray, bytes) in [
         (
             true,
@@ -1339,7 +1339,7 @@ fn calculated_angle_ray_and_line_require_degrees_and_preserve_live_modes() {
         doc.set_selected_line_pattern(LinePattern::Dashed).unwrap();
         let before = doc.encode().unwrap();
         assert!(
-            doc.add_calculated_angle_rotation(source, center, n)
+            doc.add_calculated_angle_rotation(source, center, a)
                 .is_err()
         );
         assert_eq!(doc.encode().unwrap(), before);
@@ -1611,7 +1611,7 @@ fn calculated_ratio_ray_and_line_preserve_native_modes_and_live_domains() {
 
         let mut doc = numeric_ratio_straight_document(ray, false);
         let before = doc.encode().unwrap();
-        assert!(doc.add_calculated_ratio_dilation(4, 1, 6).is_err());
+        assert!(doc.add_calculated_ratio_dilation(4, 1, 2).is_err());
         assert_eq!(doc.encode().unwrap(), before);
         let image = doc.add_calculated_ratio_dilation(4, 1, 7).unwrap();
         assert_eq!(image, 8);

@@ -388,7 +388,7 @@ fn scoped_point_curve_sampling_invalidates_only_local_driver_dependents() {
         scoped
             .freeze_scoped_evaluation_inputs(&original, &frozen)
             .unwrap();
-        scoped.set_evaluation_scalar(external, 7.).unwrap();
+        scoped.set_evaluation_number(external, 7.).unwrap();
         let external_seed = Point { x: 610., y: 510. };
         scoped
             .set_evaluation_point(seeded_point, external_seed)
@@ -396,7 +396,7 @@ fn scoped_point_curve_sampling_invalidates_only_local_driver_dependents() {
         // A caller seed and frozen descendants would otherwise pin the entire
         // local trace to a single point instead of allowing its own sweep.
         if name == "parameter_h0" {
-            scoped.set_evaluation_scalar(driver, 2.).unwrap();
+            scoped.set_evaluation_number(driver, 2.).unwrap();
         } else {
             scoped
                 .set_evaluation_point(driver, curve_root(2., 0.))
@@ -421,7 +421,7 @@ fn scoped_point_curve_sampling_invalidates_only_local_driver_dependents() {
         let mut sample = scoped.clone();
         sample.invalidate_evaluation_dependents(driver);
         if name == "parameter_h0" {
-            sample.set_evaluation_scalar(driver, 1.).unwrap();
+            sample.set_evaluation_number(driver, 1.).unwrap();
         } else {
             sample
                 .set_evaluation_point(driver, curve_root(1., 0.))

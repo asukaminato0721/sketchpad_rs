@@ -2,7 +2,7 @@
 //! Ordinary stored sampled substitutions; no tool authoring or invocation.
 use super::iteration::supported_mapped_point_iteration;
 use super::kind::{is_arc_kind, is_point_kind};
-use super::{Document, Kind, Object, Point};
+use super::{Document, Kind, LineMode, Object, Point};
 use std::collections::BTreeSet;
 #[derive(Clone, Debug, PartialEq)]
 pub struct SampledMappedDefinition {
@@ -107,15 +107,13 @@ impl SampledMappedDefinition {
         }
         let path = &objects[self.path - 1].kind;
         let flag = u32::from_le_bytes(self.native_range[20..24].try_into().unwrap());
-        // Initial bounded proof classes only. Unbounded line/ray and alternative
-        // circle/partial-range flags require their own Native profile proof.
-        let path_ok = if path.is_circle() {
-            flag == 4 && self.native_range[32..36] == [0; 4]
-        } else {
-            (path.is_segment() || is_arc_kind(path))
-                && flag == 0x10004
-                && self.native_range[32..36] == [0; 4]
-        };
+        let closure = if path.is_circle() || path.is_polygon() { Some(0) }
+            else if is_arc_kind(path) { Some(1) }
+            else { super::kind::locus_straight_source_mode(objects, self.path).map(|mode| match mode {
+                LineMode::Segment => 1, LineMode::Ray => 2, LineMode::Line => 3,
+            }) };
+        let path_ok = closure.is_some_and(|closure| flag == (4 | (closure << 16)))
+            && u32::from_le_bytes(self.native_range[32..36].try_into().unwrap()) <= 1;
         path_ok
             && supported_mapped_point_iteration(
                 objects,
@@ -148,7 +146,8 @@ pub(super) fn decode_sampled_mapped(
 }
 #[derive(Clone)]
 enum PathGeometry {
-    Segment(Point, Point),
+    Straight(Point, Point),
+    Polygon(Vec<Point>),
     Circle(Point, f64),
     LinearArc(Point, Point),
     Arc(Point, f64, f64, f64, bool),
@@ -159,8 +158,11 @@ impl PathGeometry {
         if !value.is_finite() {
             return None;
         }
+        if let Self::Polygon(vertices) = self {
+            return super::geometry::polygon_path_point(vertices, value);
+        }
         let p = match *self {
-            Self::Segment(a, b) => Point {
+            Self::Straight(a, b) => Point {
                 x: a.x + (b.x - a.x) * value,
                 y: a.y + (b.y - a.y) * value,
             },
@@ -192,6 +194,7 @@ impl PathGeometry {
                         },
                 }
             }
+            Self::Polygon(_) => unreachable!(),
             Self::Undefined => return None,
         };
         (p.x.is_finite() && p.y.is_finite()).then_some(p)
@@ -214,9 +217,11 @@ impl SampledMappedEvaluator {
         let path = if kind.is_circle() {
             doc.circle_points(d.path)
                 .map(|(c, r)| PathGeometry::Circle(c, r))
-        } else if kind.is_segment() {
-            doc.line_points(d.path)
-                .map(|(a, b, _)| PathGeometry::Segment(a, b))
+        } else if kind.is_polygon() {
+            doc.polygon_points(d.path).map(PathGeometry::Polygon)
+        } else if super::kind::locus_straight_source_mode(&doc.objects, d.path).is_some() {
+            doc.point_constraint_line_points(d.path)
+                .map(|(a, b, _)| PathGeometry::Straight(a, b))
         } else {
             doc.arc_geometry(d.path)
                 .map(|(c, r, a, s, y)| PathGeometry::Arc(c, r, a, s, y))
@@ -241,14 +246,14 @@ impl SampledMappedEvaluator {
             max: d.maximum(),
         })
     }
-    /// Native literal child parameters extend segment paths, wrap circle paths,
+    /// Native literal child parameters extend straight and polygon paths, wrap circles,
     /// and remain bounded on curved or linear arcs.
     pub(super) fn literal_fraction(&self, fraction: f64) -> Option<f64> {
         if !fraction.is_finite() {
             return None;
         }
         match self.path {
-            PathGeometry::Segment(..) => Some(fraction),
+            PathGeometry::Straight(..) | PathGeometry::Polygon(..) => Some(fraction),
             PathGeometry::Circle(..) => Some(fraction.rem_euclid(1.)),
             PathGeometry::Arc(..) | PathGeometry::LinearArc(..) => {
                 (0.0..=1.0).contains(&fraction).then_some(fraction)
@@ -259,7 +264,9 @@ impl SampledMappedEvaluator {
     /// PointValue reads the logical parameter rather than extrapolated position.
     pub(super) fn logical_point_value(&self, fraction: f64) -> Option<f64> {
         match self.path {
-            PathGeometry::Segment(..) => fraction.is_finite().then(|| fraction.clamp(0., 1.)),
+            PathGeometry::Straight(..) => fraction.is_finite().then(|| fraction.clamp(0., 1.)),
+            PathGeometry::Polygon(..) => fraction.is_finite()
+                .then(|| fraction.clamp(0., 1.).rem_euclid(1.)),
             _ => self.literal_fraction(fraction),
         }
     }
@@ -292,8 +299,14 @@ impl Document {
             .kind;
         let (max, flags) = if kind.is_circle() {
             (std::f64::consts::TAU, 4u32)
+        } else if kind.is_polygon() {
+            (1., 4)
         } else {
-            (1., 0x10004)
+            match super::kind::locus_straight_source_mode(&self.objects, path) {
+                Some(LineMode::Ray) => (1., 0x20004),
+                Some(LineMode::Line) => (1., 0x30004),
+                _ => (1., 0x10004),
+            }
         };
         let mut range = [0u8; 40];
         range[8..16].copy_from_slice(&max.to_le_bytes());

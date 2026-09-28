@@ -121,7 +121,7 @@ fn iteration_endpoint_retains_callers_depth_seed_and_external_overrides() {
     scoped
         .set_evaluation_point(6, Point { x: 140., y: 180. })
         .unwrap();
-    scoped.set_evaluation_scalar(8, 1.).unwrap();
+    scoped.set_evaluation_number(8, 1.).unwrap();
     close(scoped.position(11), 480., 180.);
     // The intrinsic point also participates as a point seed of an existing
     // stored single-application mapping without enabling nested root decoding.

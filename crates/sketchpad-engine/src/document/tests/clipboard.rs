@@ -456,7 +456,14 @@ fn paste_refusal_leaves_unsupported_document_unchanged() {
     let point = source.add(Kind::Free(Point { x: 10., y: 20. }));
     source.selected.insert(point);
     let clipboard = source.copy_selected().unwrap();
-    let mut dest = Document::open(Path::new("../../tests/fixtures/example_tools.gsp")).unwrap();
+    let mut bytes = include_bytes!("../../../../../tests/fixtures/point.gsp").to_vec();
+    let header = records(&bytes)
+        .unwrap()
+        .into_iter()
+        .find(|record| record.kind == 0x07d0)
+        .unwrap();
+    bytes[header.data.start..header.data.start + 2].copy_from_slice(&0x7fffu16.to_le_bytes());
+    let mut dest = Document::from_bytes(&bytes, None).unwrap();
     let before = dest.encode().unwrap();
     assert!(dest.paste(&clipboard).is_err());
     assert_eq!(dest.encode().unwrap(), before);

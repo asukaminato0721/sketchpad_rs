@@ -27,8 +27,8 @@ pub enum NumericExpr {
         unit: NumericUnit,
         scale: f64,
     },
-    /// Expected operation unit. Length operands in marked translations also
-    /// accept unitless values interpreted as signed centimeters by Native.
+    /// Operation unit: angles and ratios consume numeric magnitudes regardless
+    /// of source units. Marked lengths also accept unitless signed centimeters.
     ObjectValue { id: usize, unit: NumericUnit },
     DirectedAngle {
         first: usize,
@@ -407,23 +407,7 @@ impl TransformDefinition {
             (Transform::Reflect { .. }, F::Reflection) => true,
             _ => false,
         };
-        let straight = matches!(element, ElementType::Ray | ElementType::Line);
-        if !valid
-            || element == ElementType::Disk
-            || (element == ElementType::Sector
-                && !matches!(flavor, F::FixedRotation | F::Reflection))
-            || (straight
-                && !matches!(
-                    flavor,
-                    F::Vector
-                        | F::FixedPolar
-                        | F::Reflection
-                        | F::FixedRotation
-                        | F::NumericRotation
-                        | F::FixedDilation
-                        | F::NumericDilation
-                ))
-        {
+        if !valid {
             return Err("Unsupported transform element/expression/wire flavor".into());
         }
         let result = Self {

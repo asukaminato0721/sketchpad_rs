@@ -32,6 +32,8 @@ pub(super) fn locus_driver_range_info(objects: &[Object], driver: usize) -> Opti
     let moving = objects.get(driver.checked_sub(1)?)?;
     let (path, maximum, flags) = match moving.kind {
         Kind::PointOnSegment(path, _) | Kind::PointOnArc(path, _) => (path, 1., 1),
+        Kind::PointOnRay(path, _) => (path, 1., 2),
+        Kind::PointOnLine(path, _) => (path, 1., 3),
         Kind::PointOnCircle(path, ..) => (path, std::f64::consts::TAU, 0),
         Kind::PointOnPolygon(path, ..) | Kind::PointOnSector(path, _) => (path, 1., 0),
         Kind::PointOnCurve(path, _) => {
@@ -59,6 +61,8 @@ pub(super) fn locus_driver_range_info(objects: &[Object], driver: usize) -> Opti
     let host = objects.get(path.checked_sub(1)?)?;
     let supported = match moving.kind {
         Kind::PointOnSegment(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Segment),
+        Kind::PointOnRay(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Ray),
+        Kind::PointOnLine(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Line),
         Kind::PointOnCircle(..) => host.kind.is_circle(),
         Kind::PointOnArc(..) => is_arc_kind(&host.kind),
         Kind::PointOnPolygon(..) => host.kind.is_polygon(),
@@ -77,12 +81,20 @@ pub(super) fn locus_driver_range_info(objects: &[Object], driver: usize) -> Opti
 /// Imported sampled-circle drivers also retain a proved open display profile.
 /// This metadata does not change the driver's periodic parameter domain.
 pub(super) fn locus_driver_range_matches(
-    objects: &[Object], driver: usize, maximum: f64, closure: u32,
+    objects: &[Object], driver: usize, minimum: f64, maximum: f64, closure: u32,
 ) -> bool {
     let Some((expected_maximum, expected_closure)) = locus_driver_range_info(objects, driver) else {
         return false;
     };
-    if !maximum.is_finite() || (maximum - expected_maximum).abs() >= 1e-12 { return false; }
+    if !minimum.is_finite() || !maximum.is_finite() || minimum >= maximum {
+        return false;
+    }
+    match objects[driver - 1].kind {
+        Kind::PointOnRay(..) => return minimum >= 0. && closure == 2,
+        Kind::PointOnLine(..) => return closure == 3,
+        _ => {}
+    }
+    if minimum != 0. || (maximum - expected_maximum).abs() >= 1e-12 { return false; }
     if closure == expected_closure { return true; }
     closure == 1 && objects.get(driver.saturating_sub(1)).is_some_and(|moving| {
         let Kind::PointOnCurve(host, _) = moving.kind else { return false; };
@@ -94,6 +106,15 @@ pub(super) fn locus_driver_range_matches(
 }
 
 impl Document {
+    pub(super) fn locus_sampling_interval(&self, id: usize) -> Option<[f64; 2]> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::Locus(refs, _) = &object.kind else { return None; };
+        let driver = *refs.get(2)?;
+        let (maximum, _) = locus_driver_range_info(&self.objects, driver)?;
+        let minimum = if matches!(self.objects[driver - 1].kind, Kind::PointOnLine(..)) { -1. } else { 0. };
+        Some(object.locus_interval.unwrap_or([minimum, maximum]))
+    }
+
     pub fn construct_locus(&mut self, driver: usize, target: usize) -> Result<usize, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot construct a locus in this sketch safely".into());
@@ -135,7 +156,7 @@ impl Document {
             || !min.is_finite()
             || !max.is_finite()
             || min >= max
-            || !(2..=4096).contains(&samples)
+            || samples < 2
         {
             return Err("Invalid parameter locus range or sketch".into());
         }
@@ -165,11 +186,12 @@ impl Document {
         let Kind::Parameter(parameter) = &self.objects.get(driver.checked_sub(1)?)?.kind else {
             return None;
         };
-        if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+        if !min.is_finite() || !max.is_finite() || min >= max || samples < 2 {
             return None;
         }
         let count = subdivisions.clamp(2, 4096).min(samples as usize);
         let mut sample = self.clone();
+        sample.invalidate_evaluation_dependents(driver);
         let mut parameter = parameter.clone();
         let mut points = Vec::with_capacity(count);
         for index in 0..count {
@@ -203,7 +225,7 @@ impl Document {
         };
         let (&target, &path, &driver) = (refs.first()?, refs.get(1)?, refs.get(2)?);
         self.objects.get(target.checked_sub(1)?)?;
-        locus_driver_range_info(&self.objects, driver)?;
+        let [minimum, maximum] = self.locus_sampling_interval(id)?;
         if samples < 2 {
             return None;
         }
@@ -213,7 +235,8 @@ impl Document {
         let mut values = Vec::with_capacity(steps + 1);
         for step in 0..=steps {
             let fraction = step as f64 / steps as f64;
-            let Some(kind) = self.locus_driver_kind_at(driver, path, fraction) else {
+            let parameter = minimum + (maximum - minimum) * fraction;
+            let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
                 values.push(None);
                 continue;
             };
@@ -228,26 +251,27 @@ impl Document {
         &self,
         driver: usize,
         path: usize,
-        fraction: f64,
+        parameter: f64,
     ) -> Option<Kind> {
-        if !fraction.is_finite() {
+        if !parameter.is_finite() {
             return None;
         }
         let kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
         match kind {
             Kind::PointOnSegment(host, _) if *host == path => {
-                Some(Kind::PointOnSegment(path, fraction))
+                Some(Kind::PointOnSegment(path, parameter))
             }
+            Kind::PointOnRay(host, _) if *host == path => Some(Kind::PointOnRay(path, parameter)),
+            Kind::PointOnLine(host, _) if *host == path => Some(Kind::PointOnLine(path, parameter)),
             Kind::PointOnCircle(host, ..) if *host == path => {
-                let angle = fraction * std::f64::consts::TAU;
-                Some(Kind::PointOnCircle(path, angle.cos(), angle.sin()))
+                Some(Kind::PointOnCircle(path, parameter.cos(), parameter.sin()))
             }
-            Kind::PointOnArc(host, _) if *host == path => Some(Kind::PointOnArc(path, fraction)),
+            Kind::PointOnArc(host, _) if *host == path => Some(Kind::PointOnArc(path, parameter)),
             Kind::PointOnCurve(host, _) if *host == path => {
-                Some(Kind::PointOnCurve(path, fraction))
+                Some(Kind::PointOnCurve(path, parameter))
             }
             Kind::PointOnSector(host, _) if *host == path => {
-                Some(Kind::PointOnSector(path, fraction))
+                Some(Kind::PointOnSector(path, parameter))
             }
             Kind::PointOnPolygon(host, ..) if *host == path => {
                 let vertices = self.polygon_points(path)?;
@@ -260,7 +284,7 @@ impl Document {
                 if !perimeter.is_finite() || perimeter <= 1e-9 {
                     return None;
                 }
-                let mut remaining = fraction.rem_euclid(1.) * perimeter;
+                let mut remaining = parameter.rem_euclid(1.) * perimeter;
                 for (edge, length) in lengths.into_iter().enumerate() {
                     if length <= 1e-9 {
                         continue;

@@ -48,6 +48,8 @@ impl ReferencedStyle {
                 size_code: child.font.size_code.or(self.font.size_code),
                 family_index: child.font.family_index.or(self.font.family_index),
                 rgb: child.font.rgb.or(self.font.rgb),
+                superscript_depth: self.font.superscript_depth + child.font.superscript_depth,
+                script_size: child.font.script_size.or(self.font.script_size),
             },
             red: child.red.or(self.red),
             green: child.green.or(self.green),
@@ -67,6 +69,8 @@ pub enum ReferencedNode {
         style: ReferencedStyle,
         children: Vec<Self>,
     },
+    Radical(Box<Self>),
+    Delimited { open: char, close: char, body: Box<Self> },
     Fraction {
         numerator: Box<Self>,
         denominator: Box<Self>,
@@ -76,6 +80,10 @@ pub enum ReferencedNode {
         base: Box<Self>,
         index: Box<Self>,
     },
+    Superscript {
+        base: Box<Self>,
+        exponent: Box<Self>,
+    },
     Reference {
         slot: usize,
         role: ReferenceRole,
@@ -83,6 +91,17 @@ pub enum ReferencedNode {
         /// separately from the value supplied by the live resolver.
         cached: Option<Vec<Self>>,
     },
+}
+
+impl ReferencedNode {
+    pub fn has_math_layout(&self) -> bool {
+        match self {
+            Self::Fraction { .. } | Self::Subscript { .. } | Self::Radical(_) | Self::Delimited { .. } => true,
+            Self::Horizontal(children) | Self::Vertical(children) | Self::Styled { children, .. } => children.iter().any(Self::has_math_layout),
+            Self::Superscript { base, exponent } => base.has_math_layout() || exponent.has_math_layout(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,10 +201,15 @@ impl ReferencedText {
                     | ReferencedNode::Subscript {
                         base: numerator,
                         index: denominator,
+                    }
+                    | ReferencedNode::Superscript {
+                        base: numerator,
+                        exponent: denominator,
                     } => {
                         visit(std::slice::from_ref(numerator), out);
                         visit(std::slice::from_ref(denominator), out);
                     }
+                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => visit(std::slice::from_ref(body), out),
                     ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
                 }
             }
@@ -215,10 +239,15 @@ impl ReferencedText {
                     | ReferencedNode::Subscript {
                         base: numerator,
                         index: denominator,
+                    }
+                    | ReferencedNode::Superscript {
+                        base: numerator,
+                        exponent: denominator,
                     } => {
                         visit(std::slice::from_ref(numerator), slots);
                         visit(std::slice::from_ref(denominator), slots);
                     }
+                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => visit(std::slice::from_ref(body), slots),
                     ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
                 }
             }
@@ -226,6 +255,26 @@ impl ReferencedText {
         let mut slots = std::collections::BTreeSet::new();
         visit(&self.nodes, &mut slots);
         slots.into_iter().collect()
+    }
+
+    pub fn resolved_nodes(&self, mut resolver: impl FnMut(usize, ReferenceRole) -> Option<String>) -> Vec<ReferencedNode> {
+        fn resolve(node: &mut ReferencedNode, resolver: &mut dyn FnMut(usize, ReferenceRole) -> Option<String>) {
+            match node {
+                ReferencedNode::Reference { slot, role, cached } => {
+                    *cached = Some(vec![ReferencedNode::Literal(resolver(*slot, *role).unwrap_or_else(|| "undefined".into()))]);
+                }
+                ReferencedNode::Horizontal(children) | ReferencedNode::Vertical(children)
+                | ReferencedNode::Styled { children, .. } => for child in children { resolve(child, resolver); },
+                ReferencedNode::Fraction { numerator: a, denominator: b }
+                | ReferencedNode::Subscript { base: a, index: b }
+                | ReferencedNode::Superscript { base: a, exponent: b } => { resolve(a, resolver); resolve(b, resolver); }
+                ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => resolve(body, resolver),
+                ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
+            }
+        }
+        let mut nodes = self.nodes.clone();
+        for node in &mut nodes { resolve(node, &mut resolver); }
+        nodes
     }
 
     /// Evaluate without modifying the original cache. The resolver receives a
@@ -287,6 +336,12 @@ fn evaluate_node(
         ReferencedNode::Styled { style, children } => {
             horizontal(children, &inherited.inherited(style), resolver)
         }
+        ReferencedNode::Radical(body) => horizontal(&[
+            ReferencedNode::Literal("√(".into()), (**body).clone(), ReferencedNode::Literal(")".into())
+        ], inherited, resolver),
+        ReferencedNode::Delimited { open, close, body } => horizontal(&[
+            ReferencedNode::Literal(open.to_string()), (**body).clone(), ReferencedNode::Literal(close.to_string())
+        ], inherited, resolver),
         ReferencedNode::Fraction {
             numerator,
             denominator,
@@ -313,6 +368,16 @@ fn evaluate_node(
                     run.text = run.text.chars().map(subscript_character).collect();
                     run
                 }));
+            }
+            rows
+        }
+        ReferencedNode::Superscript { base, exponent } => {
+            let mut rows = evaluate_node(base, inherited, resolver);
+            let mut style = inherited.clone();
+            style.font.superscript_depth += 1;
+            let exponent = evaluate_node(exponent, &style, resolver);
+            if let Some(row) = rows.last_mut() {
+                row.extend(exponent.into_iter().flatten());
             }
             rows
         }
@@ -381,7 +446,7 @@ impl<'a> Parser<'a> {
         closed: bool,
         in_cache: bool,
         depth: usize,
-        vertical_parent: bool,
+        _vertical_parent: bool,
     ) -> Result<Vec<ReferencedNode>, String> {
         if depth > 128 {
             return Err("Referenced markup nesting is too deep".into());
@@ -398,12 +463,9 @@ impl<'a> Parser<'a> {
             if in_cache && self.bytes[self.at..].starts_with(b"<T''>") {
                 self.at += 5;
                 nodes.push(ReferencedNode::Literal(String::new()));
-            } else if in_cache && self.bytes[self.at..].starts_with(b"<0>") {
+            } else if self.bytes[self.at..].starts_with(b"<0>") {
                 self.at += 3;
                 nodes.push(ReferencedNode::Literal(String::new()));
-            } else if in_cache && self.bytes[self.at..].starts_with(b"<!103>") {
-                self.at += 6;
-                nodes.push(ReferencedNode::Literal("·".into()));
             } else if !in_cache
                 && self.bytes[self.at..].starts_with(b"<!70>")
                 && matches!(
@@ -417,45 +479,35 @@ impl<'a> Parser<'a> {
             {
                 self.at += 5;
                 nodes.push(ReferencedNode::PiSuffix);
-            } else if in_cache
-                && [b"<-".as_slice(), b"<+", b"<("]
-                    .iter()
-                    .any(|prefix| self.bytes[self.at..].starts_with(prefix))
-            {
+            } else if self.bytes[self.at..].starts_with(b"<!") {
+                self.at += 2;
+                let code = self.hex()?;
+                self.expect(b'>')?;
+                let symbol = crate::text_object::markup_symbol(code)
+                    .ok_or("Unsupported rich-text symbol")?;
+                nodes.push(ReferencedNode::Literal(symbol.into()));
+            } else if self.bytes[self.at..].starts_with(b"<+") {
+                self.at += 2;
+                let children = self.sequence(true, in_cache, depth + 1, false)?;
+                let [base, exponent]: [ReferencedNode; 2] = children.try_into()
+                    .map_err(|_| "A superscript requires two operands")?;
+                nodes.push(ReferencedNode::Superscript { base: Box::new(base), exponent: Box::new(exponent) });
+            } else if self.bytes[self.at..].starts_with(b"<-") {
+                self.at += 2;
+                let children = self.sequence(true, in_cache, depth + 1, false)?;
+                let [base, index]: [ReferencedNode; 2] = children.try_into()
+                    .map_err(|_| "A subscript requires two operands")?;
+                nodes.push(ReferencedNode::Subscript { base: Box::new(base), index: Box::new(index) });
+            } else if [b"<R".as_slice(), b"<(", b"<|"].iter().any(|prefix| self.bytes[self.at..].starts_with(prefix)) {
                 let marker = self.bytes[self.at + 1];
                 self.at += 2;
-                let children = self.sequence(true, true, depth + 1, false)?;
-                let expected = if marker == b'(' { 1 } else { 2 };
-                if children.len() != expected {
-                    return Err("Invalid cached math operand count".into());
-                }
-                // These original layout tokens occur only in presentation caches.
-                // Live fields are still resolved from the document, never these nodes.
-                nodes.push(ReferencedNode::Horizontal(children));
-            } else if vertical_parent && !in_cache && self.bytes[self.at..].starts_with(b"<-") {
-                if !nodes.is_empty() {
-                    return Err("Active subscript must be the vertical label's only child".into());
-                }
-                self.at += 2;
-                let children = self.sequence(true, false, depth + 1, false)?;
-                let [base, index]: [ReferencedNode; 2] = children
-                    .try_into()
-                    .map_err(|_| "An active subscript requires two operands")?;
-                if !matches!(&base, ReferencedNode::Literal(text) if text.chars().count() == 1)
-                    || !matches!(
-                        &index,
-                        ReferencedNode::Reference {
-                            slot: 1,
-                            role: ReferenceRole::Value,
-                            cached: Some(_)
-                        }
-                    )
-                {
-                    return Err("Unsupported active subscript operands".into());
-                }
-                nodes.push(ReferencedNode::Subscript {
-                    base: Box::new(base),
-                    index: Box::new(index),
+                let children = self.sequence(true, in_cache, depth + 1, false)?;
+                let [body]: [ReferencedNode; 1] = children.try_into()
+                    .map_err(|_| "A radical or delimiter requires one operand")?;
+                nodes.push(match marker {
+                    b'R' => ReferencedNode::Radical(Box::new(body)),
+                    b'(' => ReferencedNode::Delimited { open: '(', close: ')', body: Box::new(body) },
+                    _ => ReferencedNode::Delimited { open: '|', close: '|', body: Box::new(body) },
                 });
             } else if self.bytes[self.at..].starts_with(b"<T") {
                 self.at += 2;
@@ -486,15 +538,6 @@ impl<'a> Parser<'a> {
                 let children = self.sequence(true, in_cache, depth + 1, vertical)?;
                 if children.is_empty() {
                     return Err("Empty rich-text layout".into());
-                }
-                if vertical
-                    && children
-                        .iter()
-                        .any(|node| matches!(node, ReferencedNode::Subscript { .. }))
-                    && (children.len() != 1
-                        || !matches!(&children[0], ReferencedNode::Subscript { .. }))
-                {
-                    return Err("Active subscript must be the vertical label's only child".into());
                 }
                 nodes.push(if vertical {
                     ReferencedNode::Vertical(children)
@@ -596,12 +639,15 @@ impl<'a> Parser<'a> {
         while self.bytes.get(self.at) != Some(&b'<') {
             let attr = *self.bytes.get(self.at).ok_or("Truncated rich-text style")?;
             self.at += 1;
-            let value = u16::try_from(self.hex()?).map_err(|_| "Rich-text style value overflow")?;
+            let value = if attr == b'P' && !self.bytes.get(self.at).is_some_and(u8::is_ascii_hexdigit) { 0 }
+                else { u16::try_from(self.hex()?).map_err(|_| "Rich-text style value overflow")? };
             match attr {
                 b'#' if (8..=512).contains(&value) && out.font.size_code.is_none() => {
                     out.font.size_code = Some(value)
                 }
                 b'P' if out.font.family_index.is_none() => out.font.family_index = Some(value),
+                b'+' if out.font.script_size.is_none() => out.font.script_size = Some(
+                    u8::try_from(value).map_err(|_| "Invalid script-size level")?),
                 b'O' if in_cache && (1..=2).contains(&value) && !cache_overbar => {
                     cache_overbar = true
                 }
@@ -716,7 +762,6 @@ mod tests {
             "<SW3<T1xx>>",
             "<SW2W1<T1xx>>",
             "<SO2<T1xx>>",
-            "<H<?x1><!70>>",
         ] {
             assert!(
                 ReferencedText::from_markup(markup, (0, 0), 1).is_err(),
@@ -816,7 +861,7 @@ mod tests {
             "<?1x1<SO2O1<T1xx>>>",
             "<?1x1<Q<T1xx>>>",
             "<-<T1xm><T1x1>>",
-            "<!103>",
+            "<!FFFF>",
         ] {
             assert!(
                 ReferencedText::from_markup(markup, (0, 0), 1).is_err(),
@@ -845,7 +890,7 @@ mod tests {
             );
         }
         assert_eq!(&text.rich_bytes()[18..18 + markup.len()], markup.as_bytes());
-        for invalid in ["<!70>", "<H<?x1><!70>>", "<H<?1x1<H<T1x1>>><!71>>"] {
+        for invalid in ["<!>", "<H<?x1><!FFFF>>", "<H<?1x1<H<T1x1>>><!71>>"] {
             assert!(ReferencedText::from_markup(invalid, (0, 0), 1).is_err());
         }
     }

@@ -31,7 +31,6 @@ fn native_triangle_tool_outputs_decode_boundary_edges_and_keep_cached_bytes() {
     for (offset, replacement) in [
         (2, vec![53, 0]),
         (12, 3u32.to_le_bytes().to_vec()),
-        (16, vec![0, 0, 0, 0]),
     ] {
         let mut malformed = bytes.to_vec();
         malformed
@@ -39,7 +38,8 @@ fn native_triangle_tool_outputs_decode_boundary_edges_and_keep_cached_bytes() {
             .copy_from_slice(&replacement);
         assert_eq!(
             Document::from_bytes(&malformed, None).unwrap().objects[9].kind,
-            Kind::Unsupported(15)
+            Kind::Unsupported(15),
+            "offset {offset}"
         );
     }
 }

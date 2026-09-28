@@ -34,8 +34,17 @@ impl Document {
     /// Analytic disk geometry; source visibility does not control the interior.
     pub fn circle_interior_geometry(&self, id: usize) -> Option<(Point, f64)> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted {
+        if object.deleted || !object.kind.is_circle_interior() {
             return None;
+        }
+        if let Some(value) = self.evaluation_circle(id) {
+            return value;
+        }
+        if object.kind.transform_definition().is_some_and(|d| d.element() == super::transform_model::ElementType::Disk) {
+            return match self.evaluate_transform(id).ok()? {
+                super::transform_evaluator::TransformGeometry::Circle { center, radius } => Some((center, radius)),
+                _ => None,
+            };
         }
         let source = match &object.kind {
             Kind::CircleInterior(source) => *source,
@@ -44,9 +53,6 @@ impl Document {
                     return self.circle_interior_geometry(definition.source()),
             _ => return None,
         };
-        if let Some(value) = self.evaluation_circle(id) {
-            return value;
-        }
         let (center, radius) = self.circle_points(source)?;
         (center.x.is_finite() && center.y.is_finite() && radius.is_finite() && radius > 0.)
             .then_some((center, radius))

@@ -5,7 +5,11 @@ impl Editor {
     fn append_transformed_selection(&mut self, source: usize, kind: Kind) {
         let element = self.doc.objects.get(source.saturating_sub(1)).and_then(|object| {
             use sketchpad_engine::document::transform_model::ElementType;
-            if object.kind.is_arc() {
+            if object.kind.is_circle_interior() {
+                Some(ElementType::Disk)
+            } else if object.kind.is_sector() {
+                Some(ElementType::Sector)
+            } else if object.kind.is_arc() {
                 Some(ElementType::Arc)
             } else {
                 match object.kind.fixed_transform_straight_mode() {
@@ -62,7 +66,7 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
-            Some(kind) if matches!(kind, Kind::Polygon(_))
+            Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
                 || (self.translation_mode == TranslationMode::MarkedVector && kind.is_polygon())
         );
         if self.doc.position(source).is_none()
@@ -358,7 +362,7 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
-            Some(Kind::Polygon(_))
+            Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
         ) {
             Kind::ReflectedPolygon(source, mirror)
         } else {
@@ -449,8 +453,7 @@ impl Editor {
     }
     pub(super) fn mark_angle_selected(&mut self) {
         if let [id] = self.selection_order.as_slice()
-            && self.doc.objects[*id - 1].kind.numeric_unit()
-                == Some(sketchpad_engine::table_records::NumericUnit::Degrees)
+            && self.doc.objects[*id - 1].kind.numeric_unit().is_some()
             && self.doc.numeric_value(*id).is_some()
         {
             let id = *id;
@@ -469,7 +472,7 @@ impl Editor {
             .collect::<Vec<_>>();
         if points.len() < 3 {
             self.status =
-                "Select three points or a degree-valued measurement or calculation to mark an angle".into();
+                "Select three points or one numeric value to mark an angle".into();
             return;
         }
         let angle = [
@@ -495,8 +498,7 @@ impl Editor {
     }
     pub(super) fn mark_ratio_selected(&mut self) {
         if let [id] = self.selection_order.as_slice()
-            && self.doc.objects[*id - 1].kind.numeric_unit()
-                == Some(sketchpad_engine::table_records::NumericUnit::Scalar)
+            && self.doc.objects[*id - 1].kind.numeric_unit().is_some()
             && self.doc.numeric_value(*id).is_some()
         {
             let id = *id;
@@ -516,7 +518,7 @@ impl Editor {
             .collect::<Vec<_>>();
         if points.len() < 3 {
             self.status =
-                "Select three collinear points or one scalar value to mark a ratio".into();
+                "Select three collinear points or one numeric value to mark a ratio".into();
             return;
         }
         let ratio = [
@@ -640,7 +642,7 @@ impl Editor {
                     .objects
                     .get(source.saturating_sub(1))
                     .map(|o| &o.kind),
-                Some(Kind::Polygon(_))
+                Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
             ) {
                 Kind::RatioScaledPolygon(source, center, origin, base, target)
             } else {
@@ -675,7 +677,7 @@ impl Editor {
                 .objects
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
-            Some(Kind::Polygon(_))
+            Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
         ) {
             Kind::ScaledPolygon(source, center, self.dilation_factor)
         } else {
@@ -746,11 +748,11 @@ impl Editor {
                 && kind.fixed_transform_straight_mode() == Some(LineMode::Line)
         }) && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| {
-            matches!(kind, Kind::Polygon(_))
+            matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
                 || (self.rotation_use_marked
                     && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
                     && kind.is_polygon())
-        }) && self.doc.polygon_points(source).is_some();
+        }) && self.doc.filled_region_points(source).is_some();
         if !(source_point
             || source_segment
             || source_circle

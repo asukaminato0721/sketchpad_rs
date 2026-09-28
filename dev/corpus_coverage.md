@@ -1,20 +1,22 @@
 # Corpus decoding coverage
 
-Checkpoint 48 snapshot on 2026-09-27, generated with `gsp_probe coverage ../gsp-rs`.
+Latest snapshot, 2026-09-28: **993/1,599** documents have all object kinds decoded; **1,013** have all drawing kinds decoded. All **1,599** round trips are byte-exact, with zero failures. There are **4,937** unsupported slots (4,319 drawing slots and 618 prototype slots), and 606 documents still contain unsupported objects. Embedded tools contain 5,356 slots across 103 definitions: 4,738 decoded, 618 undecoded. See [angle marker presentation and verification](angle_marker_presentation.md). The older detailed snapshot below is retained for comparison.
 
-Documents: 1599 total, 96 with all object kinds decoded, 1503 with unsupported objects, 0 failed.
+Checkpoint 95 snapshot on 2026-09-28, generated with `gsp_probe coverage ../gsp-rs/tests`.
+
+Documents: 1599 total, 838 with all object kinds decoded, 761 with unsupported objects, 0 failed.
 
 Byte-preserving round trips: 1599/1599; object slots: 285703.
 
-Partial views: 1512/1599 (includes multi-page structural edit restrictions).
+Partial views: 1032/1599 (includes multi-page structural edit restrictions).
 
-Drawing objects: 280347 slots; 97 documents with all drawing kinds decoded.
+Drawing objects: 280347 slots; 853 documents with all drawing kinds decoded.
 
-Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 4284 decoded, 1072 undecoded.
+Embedded tool prototypes: 103 definitions in 65 documents; 5356 slots, 4548 decoded, 808 undecoded.
 
-Isolated tool views: 33 complete, 70 partial, 0 failed, with separate object and font namespaces.
+Isolated tool views: 34 complete, 69 partial, 0 failed, with separate object and font namespaces.
 
-Unsupported object slots including tool prototypes: 50075 (49003 drawing slots and 1072 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
+Unsupported object slots including tool prototypes: 9226 (8418 drawing slots and 808 prototype slots). Object decoding does not establish editing, interaction, or command parity. The release requirements remain in `COMMAND_PARITY.md`.
 
 Embedded tool prototypes are decoded through isolated documents. Declared point placeholders receive neutral coordinates; declared path, finite-segment, and generic-numeric placeholders retain typed abstract inputs. Other unknown prototype constructions remain unsupported. The drawing and prototype histograms retain separate namespaces. Complete isolated decoding does not establish invocation or authoring support for every tool. This snapshot is not directly comparable to earlier drawing histograms that mixed tool prototypes with scene objects, or to snapshots that counted every prototype slot as undecoded.
 
@@ -23,16 +25,256 @@ Inspect complete groups and parent payloads before selecting a target.
 
 | Native code | Unsupported objects | Documents | First example |
 | --- | ---: | ---: | --- |
-| 77 | 5809 | 622 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 48 | 5139 | 430 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 73 | 3298 | 1350 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 75 | 2879 | 445 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
-| 90 | 2708 | 399 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 16 | 2674 | 315 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 89 | 1956 | 606 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/【教程】用迭代构造平面直角坐标系.gsp` |
-| 35 | 1901 | 401 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
-| 15 | 1711 | 352 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
-| 101 | 1441 | 80 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 77 | 1371 | 191 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
+| 48 | 625 | 97 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 0 | 545 | 177 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 73 | 413 | 176 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/09年潍坊17题答案（蚂蚁制作）.gsp` |
+| 35 | 393 | 159 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/10福建宁德26题2(蚂蚁).gsp` |
+| 16 | 323 | 94 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 89 | 328 | 186 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/化圆为方(蚂蚁制作).gsp` |
+| 90 | 303 | 104 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/2010湖南衡阳(蚂蚁制作).gsp` |
+| 27 | 297 | 68 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/关于分段函数的参数取值范围讨论一例.gsp` |
+| 62 | 293 | 132 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/时钟(蚂蚁制作).gsp` |
+| 29 | 235 | 63 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/n叶草系列迭代.gsp` |
+| 102 | 231 | 53 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/六棱鼓.gsp` |
+| 97 | 233 | 61 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/12T.gsp` |
+| 26 | 143 | 33 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 33 | 181 | 50 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/n叶草系列迭代.gsp` |
+| 17 | 178 | 10 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱面的展开图.gsp` |
+| 75 | 137 | 51 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/三个参数控制颜色(蚂蚁).gsp` |
+| 95 | 135 | 49 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱的交线在侧面展开图中是什么曲线.gsp` |
+| 24 | 132 | 18 | `../gsp-rs/tests/Samples/个人专栏/周维波作品/三角转子的滚动-雪山飞狐.gsp` |
+| 98 | 130 | 46 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/关于分段函数的参数取值范围讨论一例.gsp` |
+| 15 | 126 | 58 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/12T.gsp` |
+| 34 | 114 | 33 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/时钟(蚂蚁制作).gsp` |
+| 8 | 97 | 38 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 100 | 106 | 28 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/计时器4.gsp` |
+| 30 | 100 | 41 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 28 | 81 | 32 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/关于分段函数的参数取值范围讨论一例.gsp` |
+| 19 | 73 | 5 | `../gsp-rs/tests/Samples/个人专栏/庞坤生作品/动量守恒之摆球小车模型.gsp` |
+| 88 | 70 | 37 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 94 | 65 | 32 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱的交线在侧面展开图中是什么曲线.gsp` |
+| 21 | 49 | 15 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱的交线在侧面展开图中是什么曲线.gsp` |
+| 113 | 43 | 22 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/双曲线的判定实验.gsp` |
+| 92 | 42 | 28 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/用迭代演示动态反比例函数作图（蚂蚁制作）.gsp` |
+| 91 | 40 | 14 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/光的折射(蚂蚁制作).gsp` |
+| 108 | 39 | 4 | `../gsp-rs/tests/Samples/个人专栏/周维波作品/2010年四川眉山中考数学试题最后一题.gsp` |
+| 80 | 36 | 18 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/关于分段函数的参数取值范围讨论一例.gsp` |
+| 37 | 37 | 20 | `../gsp-rs/tests/Samples/个人专栏/况永胜作品/正方体的展开（3D效果）.gsp` |
+| 66 | 37 | 19 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱的交线在侧面展开图中是什么曲线.gsp` |
+| 71 | 36 | 20 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/六棱鼓.gsp` |
+| 65 | 35 | 14 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/正n棱柱(圆柱)的表面展开.gsp` |
+| 69 | 34 | 17 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/六棱鼓.gsp` |
+| 101 | 27 | 9 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/六棱鼓.gsp` |
+| 85 | 30 | 11 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/计时器3.gsp` |
+| 121 | 28 | 8 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/椭圆、双曲线第一定义系列练习.gsp` |
+| 72 | 27 | 20 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/关于分段函数的参数取值范围讨论一例.gsp` |
+| 99 | 26 | 9 | `../gsp-rs/tests/Samples/个人专栏/周维波作品/不变面积（雪山飞狐）(津华园修改).gsp` |
+| 32 | 23 | 13 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 47 | 23 | 14 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/π日话π.gsp` |
+| 52 | 22 | 7 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/平面截圆柱的交线在侧面展开图中是什么曲线.gsp` |
+| 49 | 21 | 19 | `../gsp-rs/tests/Samples/个人专栏/周维波作品/2010年湖南衡阳数学中考.gsp` |
+| 123 | 21 | 8 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/六棱鼓.gsp` |
+| 23 | 20 | 7 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/双曲极限圆[三分线].gsp` |
+| 12 | 18 | 8 | `../gsp-rs/tests/Samples/个人专栏/孟令岩作品/※圆锥，圆柱，圆台展开.gsp` |
+| 82 | 18 | 7 | `../gsp-rs/tests/Samples/个人专栏/孙禄京作品/转盘.gsp` |
+| 96 | 18 | 4 | `../gsp-rs/tests/Samples/个人专栏/唐家军作品/课时9笔记.gsp` |
+| 76 | 17 | 12 | `../gsp-rs/tests/Samples/个人专栏/庞坤生作品/多普勒效应.gsp` |
+| 120 | 17 | 12 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/n叶草系列迭代.gsp` |
+| 41 | 16 | 11 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/n叶草系列迭代.gsp` |
+| 44 | 16 | 2 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/圆的滚动全解(inRm).gsp` |
+| 119 | 13 | 4 | `../gsp-rs/tests/Samples/个人专栏/唐家军作品/课后反思10.gsp` |
+| 25 | 10 | 4 | `../gsp-rs/tests/Samples/个人专栏/李有贵作品/凸四边形的滚动（含七个）（yougui).gsp` |
+| 55 | 10 | 1 | `../gsp-rs/tests/Samples/个人专栏/汪志平作品/100以内两位数加一位数小棒图.gsp` |
+| 115 | 10 | 8 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/n叶草系列迭代.gsp` |
+| 11 | 8 | 6 | `../gsp-rs/tests/Samples/个人专栏/孟令岩作品/※圆锥，圆柱，圆台展开.gsp` |
+| 31 | 8 | 4 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/勾股定理证明及应用实验素材.gsp` |
+| 93 | 8 | 6 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/(inRm)万花规.gsp` |
+| 42 | 7 | 6 | `../gsp-rs/tests/Samples/个人专栏/孙禄京作品/2005年南京中考题.gsp` |
+| 110 | 7 | 5 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/正弦函数、余弦函数的图象.gsp` |
+| 46 | 6 | 5 | `../gsp-rs/tests/Samples/个人专栏/周维波作品/三角转子的滚动-雪山飞狐.gsp` |
+| 70 | 6 | 3 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 83 | 6 | 4 | `../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/滑块(蚂蚁).gsp` |
+| 87 | 5 | 4 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/线性规划作图一例.gsp` |
+| 20 | 4 | 3 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/2010攀枝花中考题.gsp` |
+| 79 | 4 | 4 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/割圆为方详解(inRm).gsp` |
+| 109 | 4 | 2 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/2010攀枝花中考题.gsp` |
+| 124 | 3 | 2 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 10 | 2 | 1 | `../gsp-rs/tests/Samples/未分类档/时钟 (2).gsp` |
+| 22 | 2 | 2 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/四圆极限集[31].gsp` |
+| 58 | 2 | 1 | `../gsp-rs/tests/Samples/个人专栏/郑飞宇作品/广告片断.gsp` |
+| 59 | 2 | 1 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/2010攀枝花中考题.gsp` |
+| 61 | 2 | 2 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/2010攀枝花中考题.gsp` |
+| 78 | 2 | 1 | `../gsp-rs/tests/Samples/未分类档/过笛卡尔心形线外一点的切线.gsp` |
+| 112 | 2 | 2 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 114 | 2 | 2 | `../gsp-rs/tests/Samples/个人专栏/方小庆作品/(inRm)摆线.gsp` |
+| 125 | 2 | 1 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp` |
+| 1 | 1 | 1 | `../gsp-rs/tests/Samples/未分类档/机械的连动.gsp` |
+| 18 | 1 | 1 | `../gsp-rs/tests/Samples/个人专栏/庞坤生作品/机械波的形成和传播.gsp` |
+| 43 | 1 | 1 | `../gsp-rs/tests/Samples/个人专栏/方益初作品/犹抱琵琶半遮面（温州小刀）.gsp` |
+| 54 | 1 | 1 | `../gsp-rs/tests/Samples/个人专栏/郑飞宇作品/广告片断.gsp` |
+| 86 | 1 | 1 | `../gsp-rs/tests/Samples/个人专栏/向忠作品/正方形总面积不变.gsp` |
+| 116 | 1 | 1 | `../gsp-rs/tests/Samples/个人专栏/孙禄京作品/时钟.gsp` |
+| 122 | 1 | 1 | `../gsp-rs/tests/fixtures/未实现的系统功能/绘图函数.gsp` |
+
+## Checkpoint 95: nested polar point transforms
+
+The strict code26 point-transform reader now accepts an already decoded `DualMarkedPolar` point as its source. Each object's own `[point, Degrees, Length]` references remain live in the DAG and evaluate through the existing polar translation; no new transform enum or rendering branch is needed. Ten Native states verify source movement, length cancellation and rebinding, and angle changes, with whole-file exact saves. Other source point flavors remain outside this narrow admission.
+
+The compiled scan restores **105 drawing slots**, including **38** direct code26 roots in six files: unsupported **9,331→9,226**, all-kind complete **836→838**, drawing-complete **851→853**. All **1,599** originals remain byte exact with zero failed parses. The prior 119 sole-root count was only a structural upper bound. See [implementation](point26_dual95_implementation.md), [Native analysis](point26_dual94_native_analysis.md), and [frontier audit](frontier93_analysis.md). Corpus log: `/tmp/point26_dual95_corpus.log`.
+
+## Checkpoint 94: point-anchored PNG images
+
+Native code99/class16/subtype78 images with the strict six-record layout now reuse the existing PNG-backed image object. Their `07d2` parent is a live point and their positive `07d3` scale factors place the image around that point; the admitted corpus profile stores zero rotation. The PNG resource catalog validates signatures, dimensions, chunks and CRCs. The shared image renderer, SVG path and picking derive the current transform from the point at evaluation time. Nonzero rotation, labels and empty-marker layouts remain separate. Sixteen Native open/save controls across a free anchor, a constructed anchor, and scale changes are whole-file exact. Isolated image masks prove exact (+40,+20) movement for the free parent; the constructed parent moves the image with its changed polar distance. Pixel-perfect scaling is not claimed.
+
+The compiled scan restores **97 code99 drawing slots in 44 files**, lowering unsupported **9,428→9,331**. All-kind complete rises **826→836**, drawing-complete **841→851**. All **1,599** originals remain byte-exact, and the scope-aware workspace gate passes **1,443** tests. The earlier 276 sole-root descendant count was a structural upper bound; downstream parsers still block those objects, so actual recovery is the 97 images. Native resource tables remain read-only for structural edits. See [implementation](anchored_image94_implementation.md), [Native analysis](anchored_image94_native_analysis.md), and [frontier audit](frontier93_analysis.md). Logs: `/tmp/anchored_image94_corpus_trial.log`, `/tmp/anchored_image94_workspace_final.log`.
+
+## Checkpoint 93: native π suffix in referenced functions
+
+The shared function parser now treats `000d,0100` as one π operand in native token streams. The evaluator and formula display accept this exact suffix; isolated, duplicate, and unrelated-operand suffixes remain invalid. Thirteen parent-ready code71 roots share this 54-word expression and strict four-source role profile. The existing object DAG and dependency evaluator decode them without a new function or transformation enum. The original 25,260-byte demonstration and five controlled variants open/save byte-exact in Native; the displayed formula is isolated by a hide control, and an upstream geometric change moves the ordinary scalar chain from 392 Hz to 440 Hz. Native did not display a direct `f97(x)` value, so numeric results remain engine predictions.
+
+The compiled corpus scan restores **216 drawing code71 slots**, including the 13 audited roots and later functions that depend on them. Unsupported falls **9,644→9,428**; all-kind complete stays 826 and drawing-complete stays 841. All 1,599 originals round-trip byte-exactly with zero failures. The scope-aware workspace gate executes **1,437 passing tests**. This demonstration is still a partial document, and public expression editing there is refused by the existing structural guard. See [implementation](referenced_function93_implementation.md), [Native analysis](referenced_function93_native_analysis.md), and [cohort audit](frontier92_function71_audit.md). Logs: `/tmp/referenced_function93_corpus.log`, `/tmp/referenced_function93_workspace_final.log`.
+
+## Checkpoint 92: R/G/L free-text run colors
+
+The shared rich-run style now carries complete ordered native `R/G/L` channels with values1..256. SVG and canvas color individual runs, and the existing mixed-format content-edit guard remains in place. Native seven-state controls verify the date subspan changes from blue to green+1 or darker blue while preceding text and geometry remain fixed; an independently shifted text box moves all pixels +40. Zero-channel probes exhibit extra inheritance semantics and stay outside the admitted range.
+
+The compiled scan restores 83 code0 text slots: 72 initially rejected at the R/G/L style attribute and 11 whose earlier diagnostic hid the same color syntax. Another 32 no-label color candidates still fail independent markup rules, not the color gate. Unsupported9,727→9,644; all-kind complete806→826 and drawing-complete821→841. All1,599 originals remain byte exact with zero failures; the scope-aware workspace gate passes1,435 test executions. See [implementation](rich_style92_implementation.md), [Native analysis](rich_style92_native_analysis.md), [cohort audit](frontier91_text_audit.md), and [recovery audit](frontier91_rgb_recovery.md). Logs: `/tmp/rich_style92_corpus_final.log`, `/tmp/rich_style92_workspace_final.log`.
+
+## Checkpoint 91: multiple imported PNG objects
+
+Native multi-picture documents now decode each independent code0/class16/sub78 object through a validated PNG resource catalog. The `1f44` index selects its own PNG; the image's saved affine transform and visibility remain separate. The strict importer covers five-record image groups and the otherwise identical six-record group with an empty `232e` marker. Two groups with an additional label record remain opaque. Multi-picture documents stay structurally read-only; this expands semantic viewing without assuming a safe resource-table writer. Native six-state controls isolate two images and their independent translations, all whole-file exact.
+
+The compiled scan restores 146 code0 drawing slots, lowering unsupported9,873→9,727; all-kind complete797→806 and drawing-complete812→821. All1,599 originals remain byte exact with zero failures; the scope-aware workspace gate passes1,430 test executions. See [implementation](image_objects91_implementation.md), [Native analysis](image_objects91_native_analysis.md), and [frontier audit](frontier90_analysis.md). Logs: `/tmp/image_objects91_corpus_final.log`, `/tmp/image_objects91_workspace_final.log`.
+
+## Checkpoint 90: opaque URL action suffixes
+
+Strict URL ActionButton parsing now retains opaque nonzero bytes after the NUL-terminated URL in observed 44- and 56-byte `0906` payloads; labels and all other action fields keep their existing validation. Imported URLs with opaque suffixes are read and saved intact, and same-length caption edits preserve the suffix. Replacing such a URL is refused until its suffix mutation rule is known. Eight Native passive-open/save controls are whole-file exact, with unchanged canvas after clearing the suffix; a safe local-link click did not establish suffix activation meaning.
+
+The compiled scan restores 408 code0 URL buttons and 241 code73 action-reference texts that decode through the already-supported Value role after their URL parent becomes semantic: 649 drawing slots total. Five more dependent texts in one file have a separate unsupported rich-text token. Unsupported10,522→9,873; all-kind complete678→797 and drawing-complete691→812. All1,599 originals remain byte exact, zero failures; the scope-aware workspace gate passes1,426 test executions. See [implementation](url_suffix90_implementation.md), [Native analysis](url_suffix90_native_analysis.md), and [cohort audit](frontier89_action_url_audit.md). Logs: `/tmp/url_suffix90_corpus_final.log`, `/tmp/url_suffix90_workspace_final.log`.
+
+## Checkpoint 89: colorized polygon regions and mapped copies
+
+The strict code75 class4/subtype15 packet now decodes a Polygon source with native Reflect Spectrum, Grayscale, RGB or HSV operands, including the independently verified Spectrum `0..2` range control. The generic Colorized node retains live polygon geometry and numeric color dependencies. Code89 mapped iteration evaluates each generation's vertices and color in the same scoped state; code77 renders each filled result with its own computed color. Source wrapper and mapped binding remain independently visible. Native direct-star isolation, color-range/point edits, and depth1–4 controls establish the behavior; all 11 successful Native controls save whole-file exact. The source12-hide control did not open and gives no visibility conclusion.
+
+The compiled scan restores 66 drawing slots: 19 code75, 15 code89 and 32 code77. Unsupported10,588→10,522; all-kind complete671→678 and drawing-complete684→691. All1,599 originals remain byte exact, zero failures; the scope-aware workspace gate passes1,424 test executions. See [implementation](colorized_polygon89_implementation.md), [Native analysis](colorized_polygon89_native_analysis.md), and [cohort audit](frontier88_analysis.md). Logs: `/tmp/colorized_polygon89_corpus_final.log`, `/tmp/colorized_polygon89_workspace_final.log`.
+
+## Checkpoint 88: mapped colorized disks
+
+Code89 mapped-point iterations now carry an intrinsic `Colorized(Disk)` through the existing scoped DAG evaluator. Code77 disk bindings render analytic disks with colors reevaluated for each generation and use the stored binding opacity; circle bindings remain independent. The mapped read path accepts value depth through 4096 with the existing 20,000-per-level and 100,000-total generation guards. Authoring keeps its separate depth limit. The six Native visibility states save byte exact, and the prior same-document scalar/movement controls establish per-generation colors and live positions. Source16 hide inputs did not open under Native and provide no visibility conclusion.
+
+The compiled scan restores 64 slots: 16 drawing code89, 43 drawing code77, one drawing code76, one prototype code89 and three prototype code77. Unsupported10,652→10,588; all-kind complete666→671 and drawing-complete679→684. All1,599 originals remain byte exact, zero failures. See [implementation](colorized_iteration88_implementation.md), [Native analysis](colorized_iteration88_native_analysis.md), and [cohort audit](frontier87_analysis.md). Corpus log `/tmp/colorized_iteration88_corpus.log`; scope-aware workspace gate `/tmp/colorized_iteration88_workspace_final2.log` passes 1,416 test executions.
+
+## Checkpoint 87: live three-point angle markers and aliases
+
+Strict code113 `AngleMarker` packets with one or two arc marks use three existing point objects. The marker remains one semantic object; sampled arc strokes are derived presentation geometry. A code120 alias reuses the shared numeric-alias node, reads a signed live angle, and formats degrees or radians according to page `0x273a`. Labeled marker text is retained independently of the live numeric value. Native controls cover hide/move, positive and negative values, and both unit-switch directions; all 23 complete saved files are byte exact. Unproved `090e` flags, code113 labels with extra marker records, and unrelated code120 parent types remain opaque.
+
+The compiled corpus recovers 160 drawing slots: 125 code113 markers, eight code120 aliases, and 27 dependent objects. Unsupported slots fall 10,812→10,652; all-kind complete documents rise 659→666 and drawing-complete 672→679. All 1,599 originals retain byte-exact round trips with zero failures. Scope-aware workspace tests pass 1,411 executions. See [implementation](angle_marker87_implementation.md), [Native proof](angle_marker87_native_analysis.md), and [alias audit](frontier86_analysis.md). Logs: `/tmp/angle_marker87_corpus.log`, `/tmp/angle_marker87_workspace_final2.log`.
+
+## Checkpoint 72: grouped unary referenced functions
+
+The shared expression parser accepts a unary call whose grouped operand is
+followed by an infix continuation before the call's final closing token. The
+calendar's original `trunc((Y−1)/x)` definition and downstream calculation
+decode through the existing DAG and live evaluator. The measured scan restores
+623 slots: unsupported13,794→13,171, including code71 425→271, code72
+132→27, and code48 1,199→1,135. All1,599 originals stay whole-byte exact;
+all-kind complete rises626→633 and drawing-complete637→646. This is actual
+recovery, separate from the prior109-root/585-reach grammar estimate.
+
+The headless build succeeds. The scope-aware workspace gate passes1,373 tests
+with seven copying/custom-tool tests explicitly excluded; the unrestricted
+gate fails those seven deferred tests. Native original and synthetic controls
+verify whole-file saves and the calendar's live numeric values. At `x=0`, Native
+displays infinity while the finite-value engine API returns `None`. See
+[implementation and gate details](referenced_function72_implementation.md).
+
+## Checkpoint 73: standalone custom-transform points
+
+The bounded code26 decoder admits only a three-reference Point with a Free
+source, a Degrees value, a Length value, no extra group records and no direct
+code102 trace association. It lowers to the existing generic polar transform
+expression, so source and numeric-parent edits update downstream dependencies.
+The imported native group remains byte-preserved; authoring this code is still
+blocked pending a separate writer proof. Linked trace programs, Segment outputs,
+Scalar operands and labelled extra-record groups remain unsupported.
+
+The final compiled scan restores129 slots: unsupported13,171→13,042, code26
+329→279 (50 directly recovered), code29 431→406, code77 1,808→1,791 and
+code89 540→530. All1,599 originals remain whole-byte exact with zero scan
+failures; all-kind complete rises633→636, drawing-complete646→649 and partial
+views fall1,135→1,132. The scope-aware workspace gate passes1,376 executions,
+with seven copying/custom-tool tests excluded under the user's deferred scope.
+See [implementation and Native
+evidence](code26_standalone73_implementation.md).
+
+## Checkpoint 74: Vector-transformed source for standalone code26
+
+The same typed code26 point operation now accepts a Vector-transformed Point
+source, after a separate Native original and isolated marker/source-move
+controls. The public edit of this partial original is blocked by an unrelated
+interior-order guard, so saved move controls are explicitly synthetic.
+All four Native states save whole-file exact. Code102-linked points and other
+transformed-source flavors remain opaque.
+
+The compiled scan restores96 slots: unsupported13,042→12,946, code26
+279→253, code16 387→357, polygons8 191→163 and code29 406→395. All1,599
+originals remain byte exact; complete-document and partial-view counts stay
+unchanged. The headless build and1,377 scope-aware tests pass. See
+[implementation and Native evidence](code26_transformed74_implementation.md).
+
+## Checkpoint 75: bounded code71 high-word wrappers
+
+The code71 expression count may carry upper word 1 or 2 while its lower word
+still gives the exact token count. The parser retains its wrapper, source and
+syntax checks; the writer preserves the high word on expression edits. Native
+high1 and high2 controls demonstrate live source behavior, subject to the
+partial-document and metadata-normalization limits in the [analysis](referenced_function75_native_analysis.md).
+
+The compiled scan restores28 slots: unsupported12,946→12,918, code71
+271→252, code48 1,135→1,130, code69 53→52 and code126 3→0. All1,599
+originals remain byte exact; complete and partial-view counts stay unchanged.
+The headless build and1,379 scope-aware tests pass. See [implementation](referenced_function75_implementation.md).
+
+## Checkpoint 76: FixedPolar source for standalone code26
+
+The existing code26 Point/Degrees/Length operation now follows a FixedPolar
+transformed Point source after four whole-byte-exact Native controls prove the
+marker and an upstream move. The partial original's saved move is explicitly
+field-level synthetic. Exact record layout and no-code102 guards remain.
+
+The compiled scan restores52 slots: unsupported12,918→12,866, code26
+253→202 and code21 51→50. All1,599 originals remain byte exact; complete and
+partial-view counts stay unchanged. The headless build and1,380 scope-aware
+tests pass. See [implementation and Native evidence](code26_fixedpolar76_implementation.md).
+
+## Checkpoint 77: MarkedPolar source and constrained segment values
+
+Standalone code26 Points now follow a MarkedPolar-transformed Point source.
+Fifteen Native controls preserve complete bytes and isolate source motion and
+angle changes. The angle proof required a bounded PointValue correction for a
+PointOnSegment measured against another Segment; independent Free-point
+projection remains unbounded.
+
+The compiled scan restores68 slots: unsupported12,866→12,798, including
+code26 202→186, polygons8 163→144, code16 357→339 and code29 395→387.
+All1,599 originals remain byte exact; all-kind complete rises636→637,
+drawing-complete649→650 and partial views fall1,132→1,131. The headless
+build and1,382 scope-aware tests pass. See [implementation and Native evidence](code26_markedpolar77_implementation.md).
+
+## Checkpoint 78: empty scalar coordinate marker
+
+Code65/66 now accept one empty `232e` after the exact label/style pair while
+retaining the original bytes. A visible code65 Native file proves live x values
+with two whole-file-exact saves. A paired hidden code65/66 original retains
+both markers and refs through Native normalization, but its ordinate caption
+is not independently readable.
+
+The compiled scan restores1,017 slots: unsupported12,798→11,781,
+code65 79→36, code66 79→37, code48 1,130→790, code77 1,791→1,455,
+code89 530→362 and code90 388→304. All1,599 originals remain byte exact;
+complete and partial-view counts stay unchanged. The headless build and1,385
+scope-aware tests pass. See [implementation and Native evidence](coordinate_measurements78_implementation.md).
 
 Run the command again for the current full report and all examples.
 
@@ -536,10 +778,460 @@ once per click. Caption format and visibility words are retained, custom format 
 is distinguished from automatically generated captions, and hidden Hide/Show
 children can execute through Presentation. Full-group caption patches handle
 changing byte lengths, optional label insertion and page-local references.
-This recovers 3,448 drawing slots and 46 prototype slots.
+This recovers 3,448 drawing slots and 46 prototype slots. See [visibility evidence](visibility_options48_analysis.md), including Native frame/font normalization boundaries.
 
 Combined unsupported slots fall from 54,072 to 50,075: 3,997 recovered slots.
 All 1,599 original files remain byte-exact, with 96 completely decoded documents
 and zero failures. Final scan: `/tmp/sketchpad_corpus_checkpoint48_final.log`.
 Copying and custom-tool support remain deferred. Exact raster matching is outside
 the requested scope; this checkpoint does not establish full command parity.
+
+
+Final scoped gates exited 0: 720 library, 124 editor, 34 numeric-import and four
+coverage tests (882 total). Copying and custom-tool checks remain excluded.
+Logs: `/tmp/sketchpad_checkpoint48_lib_final.log`,
+`/tmp/sketchpad_checkpoint48_editor_gate.log`,
+`/tmp/sketchpad_checkpoint48_numeric_gate.log`, and
+`/tmp/sketchpad_checkpoint48_coverage_gate.log`.
+The 13 analytic-arc tests and seven visibility tests are included in the library
+count; the editor count includes all fourteen arc commands and hidden-child /
+fixed / alternating Presentation dispatch. `git diff --check` is clean.
+
+## Checkpoint 49: shared dependency roots
+
+Stored Point construction application (code101), coordinate-axis constraints
+(code15/subtype38), and general point/polygon value measurements (code94) restore
+4,321 slots compared with checkpoint48: 4,315 drawing slots and six prototype
+slots. Root-code reductions are 865 code101, 285 code15 and 134 code94; shared
+parents also unlock 1,405 calculations, 94 iteration bindings and other dependents.
+These are actual full-scan changes, rather than overlapping reach estimates.
+All 1,599 original documents save byte-identically, with zero scan failures.
+
+The construction application is one generic definition with ordered dependency
+references and scoped input substitution. It preserves live dependencies and
+freezes omitted external nodes, including under an enclosing iteration context.
+Affine transforms continue to use the common element/matrix-sequence evaluator.
+Point seeds are Native-proved; numeric seeds and other output types remain held.
+No custom-tool authoring or invocation is introduced.
+
+Axis constraints use the independently measured fixed 200-pixel parameter span,
+with creation, dragging and Value of Point sharing that normalization. Coordinate
+equations and plots retain their coordinate-unit bases. Polygon point values use
+live boundary projection and perimeter; the editor accepts constrained points or
+a point/polygon pair in either selection order. Native controls and live edit,
+undo/redo, deletion/remapping, malformed-packet and save/reopen tests accompany
+these paths. See [mapped construction evidence](mapped_construction49_native_analysis.md),
+[axis evidence](graph_axis_point49_native_analysis.md), and
+[polygon value evidence](numeric_roots49_analysis.md).
+
+Final scoped validation: 907 passing checks (743 library, 126 editor, 34 numeric
+imports and four coverage tests). Copying/custom-tool cases are excluded. Scan
+log: `/tmp/sketchpad_corpus_checkpoint49_final.log`.
+
+
+## Checkpoint 52: shared path host identities and coordinate points
+
+The final compiled corpus scan restores 6,893 drawing slots relative to
+checkpoint51, with prototype support unchanged. Unsupported total decreases
+37,584→30,691 (29,843 drawing +848 prototype). All1,599 originals remain
+byte-exact, zero files fail, fully decoded documents increase340→355, and
+fully decoded drawing documents347→362. Partial views decrease1,321→1,310;
+that flag also retains multi-page structural editing restrictions. Final scan:
+`/tmp/sketchpad_corpus_checkpoint52_final.log`.
+
+Point-on-object constraints now recognize the proved native Parallel46 and
+Perpendicular47 host subtypes while using their existing live parameter frames.
+Polygon constraints validate the loweru16 edge index and preserve six opaque
+bytes rather than misreading style/cache remnants as a u32 edge. Single-page
+and multiple-page public dragging controls reopen in Native byte-exactly and
+place points at independently checked coordinates. Generic polygon subtype15
+and Bisector44 parameter frames remain deferred; Native bisector measurements
+contradict the current unit-direction approximation.
+
+Coordinate helpers109/110 use one CoordinatePointDefinition with shared
+NumericExpr operands and live coordinate-frame evaluation: fixedx/livey or
+livex/fixedy. Native original profiles and public authoring APIs prove nonzero
+fixed coordinates, negative live values and unequal rectangular frame scales.
+Source formatting, transforms and mapped iteration bindings reuse that same
+point type. Stored literals/roles and opaque records survive edits and strict
+save/reopen. The Scalar operand guard remains bounded; other units and rotated
+frames require independent evidence.
+
+Measured drawing reductions include calculations48:3,732→2,537 (1,195),
+iteration bindings77:4,213→2,883 (1,330), value-depth roots89:1,338→850 (488),
+helpers109:560→18 (542), helpers110:638→20 (618), and constrained points15:
+1,420→911 (509). These are actual full-scan differences, not sums of overlapping
+root-reach estimates. Final scoped gates all exited0:790 library,131 editor,34 numeric-import and
+four coverage checks (959 total), excluding deferred copying/custom-tool cases.
+Logs: `/tmp/sketchpad_checkpoint52_lib_final3.log`,
+`/tmp/sketchpad_checkpoint52_editor_final.log`,
+`/tmp/sketchpad_checkpoint52_numeric.log`, and
+`/tmp/sketchpad_checkpoint52_coverage.log`. `git diff --check` is clean.
+
+Evidence: [geometry prerequisites](geometry_roots52_analysis.md),
+[host identity and public dragging](path_host_subtypes52_native_analysis.md),
+[polygon constraint writer](polygon_constraint52_api_native_analysis.md),
+[coordinate API](coordinate_points52_api_native_analysis.md), and
+[coordinate model and dependency roots](mapped_iteration_roots52_analysis.md).
+Copying and custom tools remain deferred; object decoding does not establish
+complete command parity or pixel-identical output.
+
+
+## Checkpoint 53: numeric locus dependencies and inherited transformed points
+
+The compiled full corpus scan restores 466 drawing slots relative to checkpoint52:
+unsupported total30,691→30,225 (29,377 drawing +848 prototype). Prototype decoding
+is unchanged. All1,599 originals remain byte-exact, zero files fail, fully decoded
+documents355→365, fully decoded drawing documents362→374, partial views1,310→1,301.
+Log: `/tmp/sketchpad_corpus_checkpoint53_final.log`.
+
+Ordinary code35 locus ancestry now includes typed numeric nodes, preserving exact
+reference order and the duplicated target. PointValue→Calculation→numeric-dilation
+point curves and primitive-segment sweeps recompute under each driver sample.
+Independent Native controls verify full curves before/after source movement and
+sweep geometry. Target and driver families are otherwise unchanged. Typed numeric
+ancestry alone does not establish every code35/97 range or swept-element profile.
+
+Vector-transformed points inheriting native class1/subtype89 reuse the existing
+TransformDefinition and live evaluator. The decoder checks the source's actual
+saved subtype, exact roles and packet shape; it does not accept arbitrary points
+under that inherited header. Independent mapped-source and chained controls retain
+own styles and preserve packets across editing and undo.
+
+Bisector path geometry now uses the proved fixed coefficient15sqrt10 multiplying
+the sum of unit arms. Both canonical PointOnRay13 and native host44 share that
+parameter frame; dragging preserves each original subtype on single and multiple
+pages. Zero arms and opposite arms leave the path undefined. Valid PointDistance
+and straight-path PointValue observers retain their definitions when the geometry
+becomes undefined; invalid parent roles still fail edited-save validation.
+Native independent-marker calculations amplify geometric error by1e9 to distinguish
+the coefficient from the rejected1.25cm approximation. Actual public API
+Bisector single/multi-page dragging and undefined-source saves reopen in Native
+byte-exactly (2,728/4,000/2,728bytes). Public construct_locus controls for point,
+edited point and primitive-segment sweep also save exactly there
+(2,976/2,984/3,188bytes). Logs: `/tmp/bisector53_api_native.log`,
+`/tmp/bisector53_api_native_remaining.log`, `/tmp/locus_numeric53_api_native.log`.
+
+Measured drawing changes: loci35:1,886→1,714 (172), fixed dilations30:665→551 (114),
+vector translations16:1,840→1,769 (71), bindings77:2,883→2,835 (48), inherited roots89:
+850→828 (22), constrained points15:911→900 (11), calculations48:2,537→2,528 (9).
+These are full-scan differences, not sums of overlapping dependency estimates.
+Final scoped gates pass972 checks:803 library,131 editor,34 numeric import and4
+coverage, excluding copying/custom-tool work. Logs:
+`/tmp/sketchpad_checkpoint53_lib_final.log`,
+`/tmp/sketchpad_checkpoint53_editor.log`,
+`/tmp/sketchpad_checkpoint53_numeric.log`,
+`/tmp/sketchpad_checkpoint53_coverage.log`. `git diff --check` is clean.
+
+Evidence: [numeric locus](locus_numeric53_native_analysis.md),
+[inherited transformed points](inherited_point_transform53_native_analysis.md),
+[bisector parameters](bisector53_native_analysis.md),
+[remaining geometry prerequisites](geometry_roots53_analysis.md).
+Copying and custom tools remain deferred. This is a coverage checkpoint, not a
+complete command-parity or pixel-parity claim.
+
+
+## Checkpoint 54: retained locus metadata and shared straight transforms
+
+The final compiled full scan restores 1,120 slots relative to checkpoint53:
+1,118 drawing objects and two prototype objects through shared decoding. Total
+unsupported decreases 30,225→29,105 (28,259 drawing +846 prototype). All 1,599
+originals remain byte-exact, zero files fail, complete documents increase 365→377,
+and complete drawing documents 374→386. Partial views decrease 1,301→1,290.
+Log: `/tmp/sketchpad_corpus_checkpoint54_final2.log`.
+
+Ordinary point loci retain either proved word32 value (0 or1), with the final
+word zero. Captured ancestor lists preserve their original body order. A shared
+matcher in decoding and edited-save validation requires the exact target/path/
+driver prefix, final target, list length and complete ancestor multiset. Missing,
+duplicated, unrelated, forward and cross-page dependencies remain rejected.
+Canonical new authoring keeps its previous sorted references and flag1. Five
+field-only Native controls retain flags and order byte-exactly and positively
+paint the live baseline/edited curves; three actual public-move API files also
+cross-open byte-identically. These metadata guards restore exactly 636 loci
+(1,714→1,078), rather than the overlapping 2,087-slot potential reach estimate.
+
+Native ray/line vector translation, reflection and fixed-polar translation now
+reuse the generic TransformDefinition. Arc and straight outputs share operation
+packet parsing in `src/document/transform_decode.rs`, with strict output classes,
+canonical subtypes, source extent, backward live same-page references, payload
+lengths and literal/quantity guards. Primitive rays/lines, Parallel, Perpendicular,
+Bisector and supported transformed chains share source geometry and matrix
+sequences. Zero straight direction leaves the full chain undefined; valid typed
+records survive source edits and can recover after undo. A zero segment can still
+retain its finite segment geometry. Native point observers and separate support
+samples prove both parameter frames and directions. GraphAxis remains excluded:
+its eight-stage probe has no positive Native open/save result, so no geometry
+conclusion or source activation is claimed.
+
+Desktop fixed-polar/vector translation and reflection now retain ray/line extent
+through the common append path. Existing fixed and numeric rotation/dilation
+consumers accept the new supported straight chain sources. Other translation
+flavors and point-angle straight rotation remain guarded. No shape-by-operation
+Kind variants or constructor aliases were added.
+
+Measured drawing reductions include loci35:636; reflection34:106; center arcs80:
+64; calculations48:41; vector translation16:41; bindings77:37; intersections11/12:
+33 each; numeric rotation29:25; constrained points15:18; polar translation21:17.
+These are actual full-scan differences, not predicted descendant unions.
+Final scoped gates all pass: 811 library, 133 editor, 34 numeric import and four
+coverage checks (982 total), excluding copying/custom-tool work. Logs:
+`/tmp/sketchpad_checkpoint54_lib_final2.log`,
+`/tmp/sketchpad_checkpoint54_editor_final2.log`,
+`/tmp/sketchpad_checkpoint54_numeric_final2.log`,
+`/tmp/sketchpad_checkpoint54_coverage_final2.log`. `git diff --check` is clean.
+
+Evidence: [locus frontier](locus_frontier54_analysis.md),
+[Native retained metadata and public moves](locus_metadata54_native_analysis.md),
+[straight source packets](straight_transform_sources54_analysis.md),
+[Native straight chains](straight_transform54_native_analysis.md).
+Copying/custom tools remain deferred, and pixel-identical output is outside the
+current goal. This checkpoint does not establish full command parity.
+
+
+Final API proof: all eight generic straight author/edit controls reopen and save
+byte-identically in Native (4,178–4,198bytes). Independent checking passes28 point
+samples and56 support samples; the public source-degeneration control retains all
+records while suppressing paths, points and observer captions. Three locus metadata
+public edits/restoration controls likewise save exactly, preserving captured order
+and flags. Final strict schema rejection also prevents a malformed canonical
+ray/line output from falling through to a legacy point/circle interpretation.
+Native logs: `/tmp/straight_transform54_api_native.log`,
+`/tmp/locus_metadata54_api_native.log`. Detailed evidence includes the bounded
+GraphAxis failure and checker color/occlusion corrections, without pixel-parity claims.
+
+
+## Checkpoint55: terminal mapped points and analytic arc intersections
+
+The final rebuilt scan recovers2,560 drawing slots relative to checkpoint54,
+with no prototype count change. All1,599 originals retain byte-exact round trips;
+392 documents have all object kinds decoded (401 for drawing kinds), zero fail,
+and1,278 retain a partial-view restriction. Unsupported drawing slots are25,699;
+846 unsupported prototype slots remain separate. Final compiled log:
+`/tmp/sketchpad_corpus_checkpoint55_final2.log`.
+
+Actual drawing reductions include calculations48:458; vector transforms16:244;
+dilation30:243; terminal point aliases88:192; iteration bindings77:167; marked
+angle rotation32:109; reflection34:100; straight/arc intersections11:93 and12:47;
+polygons8:74; straight transforms27:72; center arcs80:71; numeric dilation33:69;
+numeric rotation29:68. These are final histogram deltas, not summed dependency
+reach predictions. The point and arc features share predecessors, so attribution
+by isolated family is not inferred from this combined scan.
+
+An intrinsic IterationPointAlias refers to a supported single-branch point
+binding. The common mapped executor retains undefined terminal values internally,
+while ordinary binding rendering continues to filter each undefined image.
+Numeric zero returns the original source output; negative depths are undefined.
+Terminal evaluation retains caller substitutions and freezes external boundaries
+in that scope. Styles, dependency remapping, main/multi-page saving and existing
+point consumers reuse the point model. Fresh API creation uses valid metadata;
+old cross-document wire controls retain their original invalid font selector
+and are correctly partial, without weakening font checks.
+
+Straight/arc intersections reuse LineCircleIntersection and the analytic circle
+root kernel. Native evidence distinguishes circle fixed branches from arc
+branches: arc sweep and straight extent filtering precede selection, signed
+orientation and ordered straight parameters select two hits, and a sole hit
+belongs to both codes. Linear three-point arc limits reuse bounded straight
+intersection. No shape-by-operation variants or sampled curve approximations
+were added. Desktop Intersection accepts straight/arc pairs in either order.
+Already typed13/14 arc-parent objects remain a documented geometry gap awaiting
+independent branch proof. General curve98 hints and polygon93 intersections
+remain next broad candidates; copying and custom tools stay deferred.
+
+Final scoped gates pass994 checks:821 library,135 editor,34 numeric import,
+and four coverage tests. Logs are `/tmp/sketchpad_checkpoint55_lib_final.log`,
+`/tmp/sketchpad_checkpoint55_editor_final.log`,
+`/tmp/sketchpad_checkpoint55_numeric_final.log`, and
+`/tmp/sketchpad_checkpoint55_coverage_final.log`. New focused tests cover Native
+positions, strict malformed roles/payloads, live edits, undefined recovery,
+undo/deletion, scoped evaluation and retained multi-page groups.
+
+Evidence: [fresh dependency frontier](numeric_shared_roots55_analysis.md),
+[terminal point controls](iteration_endpoint55_native_analysis.md),
+[analytic intersections](arc_intersections55_analysis.md),
+and [Native branch observers](arc_intersection55_native_analysis.md).
+
+
+All34 actual Native55 controls complete byte-exact saves:20 arc controls,
+seven retained original-layout endpoints and seven direct public API endpoints.
+The20 direct API arc documents match their independently Native-saved control
+bytes exactly. Separate observer checks establish both coincident branches and
+undefined endpoints. Seven API endpoint files use valid formatting and strict
+editable core reopens; their five aliases and two valid prefix samples match
+actual Native positions at0px. All Native and checker queues are complete.
+`git diff --check` is clean.
+
+
+## Checkpoint 56: directed polygon events and inherited scalar dilation
+
+The refreshed prerequisite audit selected code93 boundary points and inherited
+point-subtype89 Scalar dilation33. Their initial direct-ready cohorts reached
+1,520 and993 distinct unsupported descendants respectively; those overlapping
+unions are audit priorities, not additive recovery counts.
+
+One intrinsic `BoundaryIntersection(straight, polygon)` construction preserves
+the source Segment/Ray/Line identity. Native93 searches strictly forward along
+the ordered carrier, ignores its ordinary finite/negative extent, skips the
+origin, and chooses the nearest positive boundary event. Collinear spans
+contribute their endpoint events. Concave, repeated, retraced, reversed-winding,
+transformed and edited polygons use the shared straight intersection kernel.
+Typed undefined results and observer segments retain their definitions through
+save/reopen and undo; zero-ray geometry remains undefined. Unproved coordinate
+axis and abstract tool hosts remain guarded. Polygon authoring permits repeated
+vertex runs when at least three distinct IDs remain. The multi-page writer uses
+page-local parents and rejects cross-page references.
+
+Twenty-four actual Native controls save exactly, with20 defined red results
+matching at0px,60 observer samples within0.708px, and four independently painted
+undefined controls. Twenty-four independently authored public API documents
+match those complete Native files byte-for-byte, including repeated/retraced
+refs and zero geometry; no packet grafting is used in the API generator.
+See [payload and API evidence](polygon_boundary56_analysis.md) and
+[Native observations](polygon_boundary56_native_analysis.md).
+
+The inherited Scalar dilation adapter reuses the existing generic transform
+definition; no transform-product Kind or writer is added. Actual source
+subtype89, same-page backward live operands, Scalar coefficient and absence
+of07d3 are required. Canonical creation remains subtype4; imported subtype89
+records preserve their identity and point style through edits. Six actual
+Native controls prove canonical/inherited equivalence, edits, frozen inputs
+and positive/negative ratios. A seventh one-byte visibility discriminator
+shows the zero-ratio output as the red center point, independently of the
+blue center that previously occluded it. Quantity dilation and inherited
+rotation remain unproved. See [numeric frontier](numeric_shared_roots56_analysis.md)
+and [Scalar Native evidence](inherited_numeric_transform56_native_analysis.md).
+
+The fresh full scan recovers1,779 drawing slots and seven prototype slots
+incidentally through shared decoding:26,545→24,759 total unsupported. Drawing
+reductions include355 boundary points,233 vector transforms,194 calculations,
+187 numeric dilations,154 polygons and65 iteration bindings. Complete documents
+increase392→425 and complete drawing documents401→435. All1,599 originals
+remain byte-identical with zero failures. Prototype decoding improvements
+do not implement custom-tool invocation; copying and custom tools stay deferred.
+
+Final scoped gates pass1,004 tests:829 core,137 editor (including its PDF check),
+34 numeric imports and four coverage tests. Copying/custom-tool filters match
+the prior checkpoint. A separate public API check verifies new second-page
+boundary creation, local references and cross-page rejection. Logs are
+`/tmp/sketchpad_corpus_checkpoint56_final.log`,
+`/tmp/sketchpad_checkpoint56_{lib_final,editor_final2,numeric_final,coverage_final}.log`,
+and `/tmp/boundary56_multipage.log`. The release command gate remains unmet;
+code98 curve hints and the typed13/14 arc-parent geometry gap remain separate
+frontiers for new Native proof.
+
+## Checkpoint 57: point curves, round-pair arcs and long calculations
+
+The finalized56 fresh audit selected code98 point-curve intersections as a shared
+prerequisite:230 ready roots reached1,937 distinct unsupported slots, an ancestry
+estimate rather than a promised recovery count. The intrinsic ranked crossing
+construction now evaluates FunctionPlot and point-target geometric/parameter
+traces against straight, circular and arc carriers. Refinement evaluates actual
+source points, rejects pole bridges and tangencies, preserves undefined sources,
+and applies the separately proved source endpoint/carrier ordering rules. Strict
+native payload and page-local role guards remain in place. See
+[curve packets and tests](curve_intersections57_analysis.md) and
+[Native controls](curve_intersection57_native_analysis.md).
+
+Existing13/14 constructions additionally evaluate circular and linear arc
+parents through shared geometry kernels. No additional shape/operation variants
+are introduced. See [round-pair adapter](round_intersections57_analysis.md).
+The long calculation reader/writer resource bound is4,096 tokens; source count,
+exact metadata, expression schema and units remain guarded. See
+[numeric audit](numeric_shared_roots57_analysis.md) and
+[Native long calculations](calculation_tokens57_native_analysis.md).
+
+Native evidence covers65 curve saves (57 defined and eight undefined controls),
+18 round-pair saves and six long-calculation saves, all byte-identical. Direct
+public API reconstruction additionally matches61 canonical curve files and all
+18 round-pair files. Optional empty curve metadata remains preserved on import;
+three reversed-role curve negatives remain opaque, and two swept-Segment inputs
+remain unsupported (one crashed the Native application).
+
+The final scan reduces unsupported24,759→23,415, entirely within drawing objects:
+1,344 recovered, including code48 calculations304, code98 roots239, code33
+dilations220 and code16 coordinate points214. Drawing-complete documents435→444;
+all-kinds-complete425→434. The prototype namespace is unchanged at839 unknown.
+All1,599 originals still preserve their complete bytes. The scan log is
+`/tmp/sketchpad_corpus_checkpoint57_final.log`; API checks are
+`/tmp/curve_intersection57_api_generate.log` and
+`/tmp/circle_arc57_api_generate.log`. Copying and custom tools remain skipped.
+
+Final scoped checks pass1,019 tests:841 core,140 editor,34 numeric import and
+four corpus checks. Filters retain the requested copying/custom-tool exclusions.
+The newly authored second-page intersection test retains imported curve sources;
+it does not expand the existing single-page restriction on new plot authoring.
+Final logs are `/tmp/sketchpad_checkpoint57_{lib_final,editor_final,numeric_final,coverage_final}.log`;
+all complete with exit0. The library/probe build also completes with exit0 at
+`/tmp/sketchpad_checkpoint57_final_build.log`. These checks remain a progress
+checkpoint, not completion of the release command requirements.
+
+
+Checkpoint58 recovers 2,337 drawing slots through shared constrained and numeric
+points on point-target loci, the proved numeric-path hidden alias, and inherited
+nine-reference Polygon identities. The measured reductions include371 code95,
+368 code15,361 numeric coordinate points,302 numeric dilations,118 calculations
+and58 point values. All1,599 originals remain byte-identical with zero failures;
+embedded prototype counts are unchanged. Complete decoded documents rise434→445
+and complete drawing documents444→455. Scoped gates pass1,035 tests (856 core,
+141 editor,34 numeric andfour coverage). Copying and custom tools remain deferred.
+See [curve point implementation](path_curve_points58_analysis.md),
+[Native curve semantics](path_curve_points58_native_analysis.md),
+[header and polygon evidence](path_identity58_native_analysis.md), and
+[inherited polygon implementation](polygon_identity58_analysis.md).
+
+
+Checkpoint59 restores2,267 drawing slots and four prototype slots through shared geometry decoding, without custom-tool authoring changes. General ArcOnCircle endpoints, intrinsic SectorBoundary/Point68 and common straight path points account for the verified new prerequisites. Unsupported totals21,078→18,807; complete drawing documents455→475. All1,599 originals remain byte-identical with zero failures. Scoped gates pass1,052 tests (869 core,145 editor,34 numeric,four coverage), with copying and custom tools skipped. The final corpus log is `/tmp/sketchpad_corpus_checkpoint59_final.log`. Gate logs: `/tmp/sketchpad_checkpoint59_lib_final.log`, `/tmp/sketchpad_checkpoint59_editor.log`, `/tmp/sketchpad_checkpoint59_numeric.log`, `/tmp/sketchpad_checkpoint59_coverage.log`; the fresh public out-of-domain PointValue save regression and suffix guards also pass in `/tmp/sketchpad_checkpoint59_straight_final.log`.
+
+Native retained controls:14 ArcOnCircle,8 SectorBoundary and38 straight paths, all whole-file exact with independent geometry/observer checks. Public API14 arcs and36 ordinary straight controls match these independently saved files entirely; all eight fresh Sector API files also independently open/save byte-exact in Native with positive geometry checks, establishing the actual writer despite its different ordinary measurement template. See [arc evidence](arc_sources59_native_analysis.md), [sector implementation](sector_boundary59_analysis.md), and [straight evidence](value_straight_paths59_native_analysis.md). Pixel-identical rendering remains outside the requested scope, and decoding does not imply full command parity.
+
+The checkpoint has68 independently exact Native files (14 arcs,8 retained sectors,38 straight paths,8 fresh API sectors). Four actual HTM exports are retained as incomplete predecessor references: [export evidence](native_html59_export_analysis.md). A fresh read-only frontier audit is recorded in [next prerequisites](numeric_shared_roots60_analysis.md).
+
+
+## Checkpoint 60: intrinsic Circle fill and function-path points
+
+The final compiled scan restores516 drawing slots and five prototype slots. Unsupported totals18,807→18,286; drawing-complete documents475→484 and all-kind complete465→474. All1,599 originals retain entire file bytes, with zero failures. Main measured restorations: CircleInterior10=399, point15=48, calculation48=14, vector16=14, reflection34=9, numeric65=8. These are actual scan deltas, distinct from overlapping prerequisite reach counts.
+
+One intrinsic `CircleInterior(source)` retains its own identity/style/visibility/order and follows a live analytic Circle even when the source is hidden. Modern28-byte records, including page-local writes and shared fills/picking/snapshots, are supported; the two16-byte legacy interiors remain opaque because Native never reached a window/save/capture for that control. Function15/58 points reuse `PointOnCurve`, evaluate finite normalized stored parameters outside the displayed range, return canonical x for PointValue, and clamp nearest-curve interactive projection to the displayed interval. A12-byte constraint guard separates function subtype58 from the existing20-byte nine-vertex polygon subtype58. Numeric95/123 function points and disk transforms remain separate unproved work.
+
+Independent Native proof: Function13 static whole-file exact saves plus two interactive drags, Circle8 modern exact saves, and independent analytic paint/observer checks. Fresh public API generation matches all21 static goldens entirely. Scoped gates pass1,062 tests (877core,147editor,34numeric,fourcoverage), copying/custom tools skipped. Final logs: `/tmp/sketchpad_checkpoint60_lib_final2.log`, `/tmp/sketchpad_checkpoint60_editor_final3.log`, `/tmp/sketchpad_checkpoint60_numeric_final.log`, `/tmp/sketchpad_checkpoint60_coverage_final.log`, `/tmp/sketchpad_checkpoint60_final_build.log`, `/tmp/sketchpad_corpus_checkpoint60_final.log`; API proofs: `/tmp/function_points60_api_final.log`, `/tmp/circle_interior60_api_final.log`.
+
+Evidence: [Function rules](function_points60_native_analysis.md), [Circle wire/paired references](circle_interior60_analysis.md), [Circle Native identity/order](circle_interior60_native_analysis.md). The sampled mapped102 and expanded locus35 controls/design are separate pending work; no production admission is justified by this checkpoint's counts.
+
+
+## Checkpoint 61: shared sampled DAG and locus drivers
+
+Intrinsic code102 uses one `SampledMappedDefinition(output,path,seed,carried,native_range)` and the existing scoped dependency evaluator. Segment, Circle, curved Arc and collinear ThreePointArc profiles preserve omitted external constructions as frozen boundaries while carried constructions follow the seed. Literal15/90 children reuse PointOnCurve: finite Segment fractions extrapolate, Circle fractions wrap, and curved/linear Arc fractions remain bounded. Scalar95 and literal123 instead consume normalized fractions strictly within [0,1] on every proved sampled path. PointValue94 is established only for literal15/90 children; no inverse measurement policy is inferred for95/123. Samples above4096 remain valid;4096 limits only presentation.
+
+Code35 locus construction now accepts existing PointOnCurve, Polygon and Sector constrained drivers, using the same analytic/perimeter driver replay for rendering and path points. Coarse/dense off-grid controls rule out chord interpolation. The independently proved89 prefix word2=1 is admitted without widening other flags or iteration constraints. Copying and custom-tool authoring remain skipped.
+
+The final compiled full scan recovers1,386 drawing objects:102=406,35=249,16=112,98=73,8=72,15=71,48=67,77=46,95=40. Unsupported totals18,286→16,900, with the830 prototype unknowns unchanged. Complete drawings484→529; all-kind complete474→519. All1,599 originals retain entire file bytes and no scan fails. This is observed recovery, not overlapping descendant predictions. Log: `/tmp/sketchpad_corpus_checkpoint61_final.log`.
+
+Scoped gates pass1,077 tests (891 core,148 editor,34 numeric import,four coverage), excluding requested copying/custom-tool work. Final logs: `/tmp/sketchpad_checkpoint61_lib_final2.log`, `/tmp/sketchpad_checkpoint61_editor_final.log`, `/tmp/sketchpad_checkpoint61_numeric_final.log`, `/tmp/sketchpad_checkpoint61_coverage_final.log`, `/tmp/sketchpad_checkpoint61_final_build.log`.
+
+Independent Native evidence comprises8 sampled DAG controls,12 driver controls,4 prefix controls and12 numeric/literal follow-ups, all36 whole-file exact with analytic/observer checks. Public API8 DAG and12 locus files match their independently saved goldens entirely. The additional12 public numeric/literal files match every geometry record; their fresh94 measurement format defaults differ explicitly from the Arc-based donor templates, so whole-file equality against those older controls is not claimed. Four fresh combined API controls have now independently cross-opened and saved whole-file exactly in Native. Their decoded RGB images also equal the four previously proved combined controls entirely, including measurement captions; the separate queue and checker exit0. The checkpoint therefore retains40 independently exact Native files. API final logs: `/tmp/sampled_mapped61_api_final.log`, `/tmp/locus_drivers61_api_final.log`, `/tmp/sampled_mapped61_numeric_api.log`; fresh Native log: `/tmp/sampled_mapped61_numeric_api_native.log`. See [sampled implementation](sampled_mapped61_analysis.md), [sampled Native evidence](sampled_mapped60_native_analysis.md), [child parameters](sampled_mapped61_numeric_native_analysis.md), [locus implementation](locus_drivers61_analysis.md), [locus Native proof](locus_drivers60_native_analysis.md), [prefix proof](mapped_prefix60_native_analysis.md). These checks do not establish remaining release command parity.
+
+
+## Checkpoint 62: crate boundaries and shared point-curve drivers
+
+The authorized workspace split separates lossless format framing, generic object/transform IR and derived dependencies, the scoped document engine, and desktop editing/rendering. A headless probe omits production GUI dependencies. The migration-only scan retained checkpoint61 coverage exactly; the subsequent FunctionPlot58/SampledMapped90 locus-driver extension restores99 drawing slots, including57 loci (44 directly ready roots plus13 further shared-path constructions).
+
+Function source intervals and sampled carried/frozen graphs remain authoritative. Literal and numeric outer queries retain separately proved domains, including outer sampled-Circle numeric wrapping while direct95->102 remains bounded. Both open and closed Circle metadata preserve exact originals; authoring emits the independently proved closed profile. Ten Native controls are entire-file exact;120 independent query roles and identical open/closed RGB captures confirm evaluation. Nine public-API authored documents match Native saves entirely without record grafting.
+
+Final complete scan: `/tmp/locus_point_sources62_corpus.log`, exit0, all1,599 byte exact,524 all-kind complete,534 drawing complete,16,801 unsupported slots (15,971 drawing+830 prototypes). Workspace gates: `/tmp/locus_point_sources62_workspace_tests.log`, exit0,1,143 passing executions, including30 duplicated renderer assertions; seven new driver regressions pass. Headless build and both API checkers exit0. Copying/custom tools remain skipped; remaining release command parity is not established. See [implementation](locus_point_sources62_analysis.md), [Native evidence](locus_point_sources62_native_analysis.md), and [crate separation](crate_layers62_analysis.md).
+
+
+## Checkpoint 63: shared straight-family locus targets and hosts
+
+Geometric-driver loci accept transformed and Colorized Segment/Ray/Line targets and generic finite Segment hosts through the shared transform/scoped dependency evaluator. Independent sample strokes carry their pen and per-sample color into SVG and canvas; picking preserves carrier extent and leaves fan gaps empty. Direct Colorized targets override locus color per sample, while ordinary transformed Colorized ancestors retain the locus color, matching the independent Native control. Unknown axes/tool carriers and unproved shape profiles remain excluded. Unsaved dependent deletion now avoids evaluating removed constructions before compaction; unsupported surviving plot/function remapping remains an explicit atomic refusal.
+
+Actual compiled recovery is118 drawing slots, including94 loci. All1,599 originals remain whole-file exact, all-kind complete524→531, drawing complete534→542, zero failures, unsupported16,801→16,683 (15,853 drawing+830 prototypes). Static93-root/185-reach predictions are not recovery counts. Final scan: `/tmp/locus_generic_straights63_corpus.log`, exit0.
+
+Workspace gates pass1,155 executions (32 duplicated renderer assertions), headless build passes, and all12 final-library public API outputs match their actual Native saves entirely. Native independently opens/saves30 exact documents and checks two174-witness geometry/color sets plus pen/extent fields. Hints3/4/5 all draw four Native intervals; no general sampling formula or raster identity is claimed. Copying/custom tools remain skipped; full release command parity remains unproven. See [implementation and gates](locus_generic_straights63_implementation.md), [Native evidence](locus_generic_straights63_native_analysis.md), and [independent review](locus_generic_straights63_analysis.md).
+
+
+## Checkpoint64 live rich references and generated names
+
+Actual compiled recovery is1,378 drawing slots:379 code73 and999 code90. All1,599 originals remain whole-file exact; all-kind complete531→562, drawing complete542→573, zero failures, unsupported16,683→15,305 (14,475 drawing+830 prototypes). Final scan `/tmp/referenced_shared64_corpus_final.log` exits0. Initial2,654 overlapping reach is not a restoration count.
+
+The shared role-aware AST/evaluator supports selected live text/function/numeric A/B/E meanings, fraction content and generic point-anchored text. Native names use active demands in object/operand order and0967; runtime/history assignments survive hiding and dirty saves materialize07d5. All three final-library public text writer controls match Native saves entirely. Workspace1,172 executions and the headless build pass. Eight additional public Name controls pass strict physical-label/writer checks and independent Native whole-file exact saves with actual painted name/value witnesses. Copy/custom tools remain skipped and full release command parity stays open. See [implementation and gate evidence](referenced_shared64_implementation.md).

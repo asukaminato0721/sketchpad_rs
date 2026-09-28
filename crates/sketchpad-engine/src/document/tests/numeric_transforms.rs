@@ -251,8 +251,10 @@ fn measured_numeric_ratio_is_pinned_and_undefined_calculations_recover() {
     assert_eq!(doc.point_iteration_images(iteration).unwrap().len(), 3);
     let degrees = doc.add_calculation_expression("30°", (10, 130)).unwrap();
     let count = doc.objects.len();
-    assert!(doc.add_calculated_ratio_dilation(1, 2, degrees).is_err());
-    assert_eq!(doc.objects.len(), count);
+    let scaled = doc.add_calculated_ratio_dilation(1, 2, degrees).unwrap();
+    assert_eq!(doc.objects.len(), count + 1);
+    assert!((doc.position(scaled).unwrap().distance(doc.position(2).unwrap())
+        - 30. * doc.position(1).unwrap().distance(doc.position(2).unwrap())).abs() < 1e-8);
     assert!(
         !Document::from_bytes(&doc.encode().unwrap(), None)
             .unwrap()
@@ -444,11 +446,8 @@ fn calculated_angles_rotate_shapes_and_undefined_sources_recover() {
         );
         let scalar = doc.add_calculation_expression("2", (10, 120)).unwrap();
         let count = doc.objects.len();
-        assert!(
-            doc.add_calculated_angle_rotation(source, 1, scalar)
-                .is_err()
-        );
-        assert_eq!(doc.objects.len(), count);
+        doc.add_calculated_angle_rotation(source, 1, scalar).unwrap();
+        assert_eq!(doc.objects.len(), count + 1);
     }
 }
 

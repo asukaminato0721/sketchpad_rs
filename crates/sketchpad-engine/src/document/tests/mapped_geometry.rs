@@ -338,7 +338,7 @@ fn frozen_numeric_and_function_environments_keep_seed_types() {
     let original = doc.clone();
     doc.freeze_evaluation_inputs(&original, &[number, function])
         .unwrap();
-    doc.set_evaluation_scalar(scalar, 7.).unwrap();
+    doc.set_evaluation_number(scalar, 7.).unwrap();
     doc.set_evaluation_point(unit, Point { x: 90., y: 20. })
         .unwrap();
     assert_eq!(doc.numeric_value(number), Some(6.));

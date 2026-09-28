@@ -138,7 +138,7 @@ impl Document {
     pub fn text_font_state(&self, id: usize) -> Option<FontState> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if !matches!(object.kind, Kind::PlainText { .. })
-            && !(is_point_kind(&object.kind) && object.label.is_some())
+            && object.label.is_none()
             && object.kind.numeric_unit().is_none()
             && !matches!(
                 object.kind,
@@ -164,13 +164,20 @@ impl Document {
             let start = rs
                 .iter()
                 .position(|record| record.kind == 0x07d0 && record.data.start == header)?;
-            let record = rs[start + 1..]
+            let group = rs[start + 1..]
                 .iter()
-                .take_while(|record| record.kind != 0x07d7)
+                .take_while(|record| record.kind != 0x07d7);
+            let record = group.clone()
                 .find(|record| record.kind == 0x07d8 && record.data.len() == 2);
+            if record.is_none() && object.label.is_none() && !group.clone().any(|record|
+                matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907 | 0x090d)) {
+                return None;
+            }
             record.map_or(0, |record| {
                 u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
             })
+        } else if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &object.kind {
+            usize::from(group.font_reference())
         } else {
             0
         };
@@ -216,7 +223,7 @@ impl Document {
                         && object.page == self.active_page
                         && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }
                             | Kind::PointReferencedText { .. } | Kind::PointNumericLabel(..))
-                            || (is_point_kind(&object.kind) && object.label.is_some())
+                            || object.label.is_some()
                             || object.measurement_anchor.is_some())
                 })
             })
@@ -277,7 +284,7 @@ impl Document {
                         && object.page == self.active_page
                         && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }
                             | Kind::PointReferencedText { .. } | Kind::PointNumericLabel(..))
-                            || (is_point_kind(&object.kind) && object.label.is_some())
+                            || object.label.is_some()
                             || object.measurement_anchor.is_some())
                 })
             })

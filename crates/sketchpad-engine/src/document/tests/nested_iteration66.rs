@@ -182,7 +182,7 @@ fn scoped_mapping_reads_all_members_in_the_selected_entry_environment() {
     let (_, original) = fixture("nested_iteration65", "scalar_live");
     let mut caller = original.clone();
     caller.freeze_evaluation_inputs(&original, &[]).unwrap();
-    caller.set_evaluation_scalar(3, 2.).unwrap();
+    caller.set_evaluation_number(3, 2.).unwrap();
     let images = caller
         .mapped_scoped_outputs(9, 11, false, |sample, id| sample.position(id))
         .unwrap();
@@ -195,7 +195,7 @@ fn scoped_mapping_reads_all_members_in_the_selected_entry_environment() {
 
     let mut frozen = original.clone();
     frozen.freeze_evaluation_inputs(&original, &[11]).unwrap();
-    frozen.set_evaluation_scalar(3, 2.).unwrap();
+    frozen.set_evaluation_number(3, 2.).unwrap();
     let images = frozen
         .mapped_scoped_outputs(9, 11, false, |sample, id| sample.position(id))
         .unwrap();

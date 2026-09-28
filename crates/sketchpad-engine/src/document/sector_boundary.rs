@@ -101,9 +101,17 @@ impl Document {
         Ok(self.add(Kind::PointOnSector(host, t)))
     }
     pub(super) fn sector_arc_geometry(&self, id: usize) -> Option<SectorArc> {
+        if let Some(original) = self.frozen_evaluation_document(id) {
+            return original.sector_arc_geometry(id);
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
             return None;
+        }
+        if let Kind::Colorized(definition) = &object.kind
+            && definition.element() == ElementType::Sector
+        {
+            return self.sector_arc_geometry(definition.source());
         }
         if object
             .kind

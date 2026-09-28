@@ -39,7 +39,7 @@ fn native_polar_and_vertex_angle_values_keep_opposite_live_orientation() {
 }
 
 #[test]
-fn unproved_angle_marker_payload_stays_opaque() {
+fn angle_marker_arrow_flag_preserves_the_directed_value() {
     for (bytes, id) in [
         (
             include_bytes!(
@@ -66,10 +66,10 @@ fn unproved_angle_marker_payload_stays_opaque() {
         let mut changed = bytes.to_vec();
         changed[marker.data.start + 2] = 0;
         let guarded = Document::from_bytes(&changed, None).unwrap();
-        assert!(matches!(
-            guarded.objects[id - 1].kind,
-            Kind::Unsupported(115 | 116)
-        ));
+        assert_eq!(guarded.objects[id - 1].kind, doc.objects[id - 1].kind);
+        assert_eq!(guarded.numeric_value(id), doc.numeric_value(id));
+        assert_eq!(doc.angle_marker_geometry(id).unwrap().arrows.len(), 1);
+        assert!(guarded.angle_marker_geometry(id).unwrap().arrows.is_empty());
         assert_eq!(guarded.encode().unwrap(), changed);
     }
 }

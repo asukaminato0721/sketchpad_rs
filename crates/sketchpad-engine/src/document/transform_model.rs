@@ -403,7 +403,7 @@ mod tests {
         );
     }
     #[test]
-    fn checked_constructor_does_not_enable_unproved_element_flavor_or_units() {
+    fn checked_constructor_accepts_straight_transforms_and_checks_units() {
         let angle = NumericExpr::ObjectValue {
             id: 3,
             unit: NumericUnit::Scalar,
@@ -435,7 +435,7 @@ mod tests {
                 }),
                 NativeTransformFlavor::FixedCartesian
             )
-            .is_err()
+            .is_ok()
         );
         assert!(
             TransformDefinition::new(
@@ -451,7 +451,7 @@ mod tests {
                 },
                 NativeTransformFlavor::PointAngleRotation
             )
-            .is_err()
+            .is_ok()
         );
         assert!(
             TransformDefinition::new(

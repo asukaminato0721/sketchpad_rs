@@ -118,7 +118,7 @@ fn authored_anchored_text_tracks_sources_scopes_fonts_undo_and_dependency_deleti
 
     let mut scope = doc.clone();
     scope.freeze_evaluation_inputs(&doc, &[]).unwrap();
-    scope.set_evaluation_scalar(q, 8.).unwrap();
+    scope.set_evaluation_number(q, 8.).unwrap();
     scope
         .set_evaluation_point(point, Point { x: 300., y: 400. })
         .unwrap();
@@ -129,7 +129,7 @@ fn authored_anchored_text_tracks_sources_scopes_fonts_undo_and_dependency_deleti
     assert_eq!(scope.encode().unwrap(), original);
     let mut frozen = doc.clone();
     frozen.freeze_evaluation_inputs(&doc, &[source]).unwrap();
-    frozen.set_evaluation_scalar(q, 9.).unwrap();
+    frozen.set_evaluation_number(q, 9.).unwrap();
     assert_eq!(
         frozen.point_numeric_label(attached).unwrap().1,
         "[VALUE 2.0]"
@@ -175,7 +175,7 @@ fn shared_references_reject_unknown_roles_broken_fraction_and_invalid_attachment
         "</<T1x1>>",
         "</<T1x1><T1x2><T1x3>>",
         "<R<?x2>>",
-        "<H<?x2><!70>>",
+        "<H<?x2><!FFFF>>",
     ] {
         assert!(
             doc.add_point_referenced_text(point, text, markup).is_err(),

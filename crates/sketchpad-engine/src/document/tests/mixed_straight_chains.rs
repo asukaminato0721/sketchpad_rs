@@ -245,11 +245,11 @@ fn mixed_straight_writer_chains_follow_live_inputs_and_recover() {
 }
 
 #[test]
-fn mixed_straight_transform_guards_keep_unproved_hosts_and_units_closed() {
+fn mixed_straight_transform_guards_reject_unproved_hosts_and_nonnumeric_operands() {
     let mut d = build(false);
     let before = d.encode().unwrap();
-    assert!(d.add_calculated_angle_rotation(18, 1, 11).is_err());
-    assert!(d.add_calculated_ratio_dilation(16, 1, 10).is_err());
+    assert!(d.add_calculated_angle_rotation(18, 1, 1).is_err());
+    assert!(d.add_calculated_ratio_dilation(16, 1, 1).is_err());
     assert_eq!(d.encode().unwrap(), before);
     for kind in [
         Kind::GraphAxis(2, 3, 1),
