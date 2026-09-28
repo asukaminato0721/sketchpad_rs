@@ -2179,7 +2179,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
-name = "sketchpad_rs"
+name = "sketchpad-editor"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -2189,8 +2189,38 @@ dependencies = [
  "image",
  "pollster",
  "rfd",
+ "sketchpad-engine",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "sketchpad-engine"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "image",
+ "sketchpad-format",
+ "sketchpad-ir",
+ "wgpu",
+]
+
+[[package]]
+name = "sketchpad-format"
+version = "0.1.0"
+
+[[package]]
+name = "sketchpad-ir"
+version = "0.1.0"
+
+[[package]]
+name = "sketchpad_rs"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "sketchpad-editor",
+ "sketchpad-engine",
 ]
 
 [[package]]

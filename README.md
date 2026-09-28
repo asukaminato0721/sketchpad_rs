@@ -35,7 +35,8 @@ Removing a page leaves Page Links to that page visible with an unavailable desti
 ## Current scope
 
 Construct > Locus accepts a selected point constrained to a segment, circle,
-or arc and a dependent point, segment, ray, line, circle, arc, or polygon
+arc, polygon/sector boundary, or supported point curve (including function
+plots and intrinsic sampled mappings), and a dependent point, segment, ray, line, circle, arc, or polygon
 interior, including an interior translated by a marked vector. Point loci
 follow supported dependency graphs; other loci draw sampled object families.
 The line targets include lines constructed
@@ -84,25 +85,52 @@ The writer supports the constructions and measurements listed in [COMMAND_PARITY
 
 Other Sketchpad features are incomplete. In particular, many transformations, graphing commands, advanced image and table workflows, custom tools, action button variants, other import formats, page setup, print preview, and full multi-page editing are still pending. See [COMMAND_PARITY.md](COMMAND_PARITY.md) for the command inventory. This build is not ready as a Sketchpad 5 replacement.
 
-## Source layout
+## Workspace layers
 
-- `src/document.rs` holds the document data model and basic object creation.
-  `src/document/` groups editing operations by responsibility: geometry,
-  measurements, coordinates, functions, iterations, text, tables, actions,
-  selection, pages, and history. File handling lives in `records.rs`,
-  `decode.rs`, `encode*.rs`, `validation.rs`, and `save.rs`.
-- `src/main.rs` starts the desktop editor. `src/editor/mod.rs` holds editor
-  state; `runtime.rs` owns the window and render loop. Commands, picking,
-  animation, file operations, and fonts have separate modules.
-- `src/editor/ui.rs` coordinates menus, panels, canvas, and dialogs in render
-  order. Their implementations live in `menu.rs`, `panels.rs`, `canvas.rs`,
-  and the `*_dialogs.rs` modules.
-- `src/document/tests/` and `src/editor/tests/` group the existing unit tests
-  by feature. Binary fixtures remain in `tests/fixtures/`.
+The workspace has four implementation crates and the original application facade:
+
+- `sketchpad-format`: lossless native record framing and page boundaries, with no UI or model dependency.
+- `sketchpad-ir`: generic object nodes, semantic geometry/transform expressions, and the derived dependency index. It has no file-format or UI dependency.
+- `sketchpad-engine`: semantic decoding, document evaluation and scoped substitutions, editing/history, and byte-preserving saving. It depends on format and IR, and has no production GPU/window dependency.
+- `sketchpad-editor`: desktop commands, dialogs, animation, picking and rendering over the engine.
+- The root `sketchpad_rs` package preserves the previous public module paths and starts the desktop application.
+
+The IR object graph is authoritative. The dependency index derives forward and reverse edges and a topological order; it does not maintain a second editable graph. Element transforms retain live numeric/geometry references until evaluation. Native offsets and retained source bytes remain engine provenance.
+
+Sources live under `crates/<crate>/src/`. Binary fixtures remain in `tests/fixtures/`. Existing engine tests compile the shared renderer source as a test-only verification bridge; this does not add a production editor dependency to the engine.
+
+A headless coverage/inspection build omits the desktop dependencies:
+
+```sh
+cargo build --no-default-features --bin gsp_probe
+cargo run --no-default-features --bin gsp_probe -- coverage ../gsp-rs/tests
+```
+
+SVG export uses the default desktop feature. The GUI entry point remains `cargo run --bin sketchpad_rs`.
+
+Live referenced captions can show values, selected source names, definitions and expressions, including text/function sources and captions attached to points. Generated measurement names retain their assignment through hiding, undo and save/reopen. Rich fractions currently use grouped division in plain presentation. See [scope and evidence](dev/referenced_shared64_implementation.md).
+
+Mapped iterations also support filled Circle interiors through the shared scoped evaluator, with live or frozen Circle geometry, final-only output, picking, independent binding styles and undo. See [implementation and verification](dev/circle_interior_iteration65_implementation.md).
+
+Anchored Value-reference text can iterate with live or frozen numeric/text/function sources. Nested single-point terminals inherit outer substitutions when their descriptor is carried, and retain a frozen entry environment when it is omitted. Complete active capture, local seed shadowing and undefined terminals use shared validation and evaluation. See [scope implementation](dev/shared_scopes66_implementation.md).
+
+Carried straight-output Locus collections now replay their local sweep inside each outer iteration scope. Editing, styled rendering, picking, save/reopen and selection-based authoring use the same scoped result. See [collection implementation](dev/scoped_collection67_implementation.md).
+
+Carried sampled point-curve collections use that scoped path as well. A source curve is evaluated within each outer iteration generation, with unrelated parent substitutions preserved; editor picking and rendering consume its styled segments. An original circular-chain document and a public edit match Native saves byte-for-byte, and visibility controls isolate the curve binding's painted geometry. See [sampled collection implementation](dev/sampled_collection68_implementation.md). The imported example remains a partial view for separate structural reasons, so its SVG export is guarded.
+
+Function plots can also participate as upstream recipes in mapped point/shape constructions. Their function and coordinate frame are resolved separately against the carried outer scope; an omitted plot wrapper does not itself freeze a carried frame. An actual triangle-iteration sketch and public edit match Native saves and independently checked generated points and segments. See [mapped plot implementation](dev/mapped_function_plot69_implementation.md).
+
+Point-output Locus collections can be carried by an outer mapping. Each generation samples its own trace, while the direct source Locus remains a separate visible object. Editing a parameter can therefore reveal a source trace without adding a binding generation. Native original/edit/hide controls and public writer states are recorded in [point-Locus collection implementation](dev/scoped_point_locus70_implementation.md).
+
+Referenced text now evaluates Native π suffix and numeric subscript operators from live values while preserving their original rich records and cached text. The imported originals and public editor controls cover value changes, display precision, SVG, picking and save/reopen; unrelated partial-view guards remain in place. See [rich-token implementation](dev/referenced_token71_implementation.md).
+
+Referenced functions also parse grouped unary arguments with a following operator, such as `trunc((Y−1)/x)` in an original calendar. The decoded function and downstream calculation evaluate from live sources without changing the original file bytes; a clean authored control covers parent edits, undo and reopen. Native save and value checks, corpus gains, and the remaining nonfinite-value boundary are recorded in [the implementation notes](dev/referenced_function72_implementation.md).
+
+Standalone code26 custom-transform points with a Free source and live Degrees/Length operands now reuse the generic polar transform evaluator. Native controls from two originals verify source movement, angle and distance changes, including zero and negative distance; trace-linked and Segment forms remain separate. See [the bounded implementation](dev/code26_standalone73_implementation.md).
 
 ## Verification
 
-Run `cargo test`. Tests cover record parsing and byte preservation, dependency updates, geometry, undo/redo, and save/reopen. All 1,599 `.gsp` files in the sibling project and the bundled 523-object Example Tools document pass unedited byte-preservation verification; many remain partial views and are guarded against unsafe edits. Generated constructions, measurements, text, action buttons, styles, bounded number/table files, and arithmetic and sine/cosine/tangent plots have been opened and saved in the supplied Windows Sketchpad 5 through Wine. Native KDE screenshots confirm geometry and style rendering; full command and interaction verification remains open.
+Run `cargo test --workspace` to include every implementation crate. Tests cover record parsing and byte preservation, dependency updates, geometry, undo/redo, and save/reopen. All 1,599 `.gsp` files in the sibling project and the bundled 523-object Example Tools document pass unedited byte-preservation verification; many remain partial views and are guarded against unsafe edits. Generated constructions, measurements, text, action buttons, styles, bounded number/table files, and arithmetic and sine/cosine/tangent plots have been opened and saved in the supplied Windows Sketchpad 5 through Wine. Native KDE screenshots confirm geometry and style rendering; full command and interaction verification remains open.
 
 `bash dev/native_desktop_smoke.sh path/to/sketch.gsp /tmp/sketchpad_capture` launches the built binary and captures the current desktop. When Nix is available, the script enters the development shell automatically to load its Wayland libraries.
 
@@ -138,3 +166,5 @@ preservation alone does not establish editing support or command parity.
 Loci retain defined samples when their targets become undefined at some
 positions. Point curves break at missing samples; object families omit those
 members, and polygon sweeps leave gaps instead of connecting across them.
+
+Geometric-driver loci reuse shared affine/Colorized Segment, Ray and Line targets and generic finite Segment hosts. Evaluated samples carry their own pen/color to SVG, canvas and picking. Current evidence and supported boundaries are recorded in [the implementation notes](dev/locus_generic_straights63_implementation.md); corpus decoding does not establish complete command parity.

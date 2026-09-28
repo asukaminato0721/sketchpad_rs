@@ -1,0 +1,16 @@
+[package]
+name = "sketchpad-editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sketchpad-engine = { path = "../sketchpad-engine" }
+bytemuck = { version = "1.25", features = ["derive"] }
+egui.workspace = true
+egui-wgpu = "0.36.2"
+egui-winit = "0.36.2"
+image.workspace = true
+pollster = "0.4"
+rfd = "0.17.2"
+wgpu = "30.0.1"
+winit = "0.30.13"

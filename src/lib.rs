@@ -1,15 +1,4 @@
-pub mod action_records;
-pub mod coordinate_measure_records;
-pub mod document;
-pub mod function_records;
-pub mod graph;
-pub mod image_records;
-pub mod plot_axis_records;
-pub mod plot_points_records;
-pub mod render;
-pub mod style_records;
-pub mod table_records;
-pub mod text_object;
-pub mod text_records;
-pub mod text_style_records;
-pub mod value_equation_records;
+//! Compatibility facade for the workspace crates.
+pub use sketchpad_engine::*;
+#[cfg(feature = "desktop")]
+pub use sketchpad_editor::render;

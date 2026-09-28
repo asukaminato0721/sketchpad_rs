@@ -1,5 +1,1 @@
-mod editor;
-
-fn main() {
-    editor::run();
-}
+fn main() { sketchpad_editor::run(); }

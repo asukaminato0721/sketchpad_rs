@@ -1,0 +1,14 @@
+[package]
+name = "sketchpad-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sketchpad-format = { path = "../sketchpad-format" }
+sketchpad-ir = { path = "../sketchpad-ir" }
+image.workspace = true
+
+[dev-dependencies]
+egui.workspace = true
+bytemuck = { version = "1.25", features = ["derive"] }
+wgpu = "30.0.1"

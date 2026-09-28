@@ -10,6 +10,7 @@ use sketchpad_rs::document::{
 };
 use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
+#[cfg(feature = "desktop")]
 use sketchpad_rs::render::{Viewport, svg_page};
 use sketchpad_rs::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
 use sketchpad_rs::value_equation_records::ValueEquationKind;
@@ -2497,6 +2498,7 @@ fn replay(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 fn svg(input: &str, output: &str) -> Result<(), String> {
     let document = Document::open(Path::new(input))?;
     let mut bounds = (
@@ -2566,6 +2568,11 @@ fn svg(input: &str, output: &str) -> Result<(), String> {
     fs::write(output, content).map_err(|error| error.to_string())?;
     println!("exported {output}");
     Ok(())
+}
+
+#[cfg(not(feature = "desktop"))]
+fn svg(_input: &str, _output: &str) -> Result<(), String> {
+    Err("SVG export requires the desktop feature; rebuild without --no-default-features".into())
 }
 
 fn run() -> Result<(), String> {
