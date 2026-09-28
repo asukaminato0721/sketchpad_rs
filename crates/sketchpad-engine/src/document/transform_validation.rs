@@ -67,6 +67,28 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
             }
         }
         E::Arc => is_arc_kind(&source.kind),
+        E::Sector => match flavor {
+            F::Reflection => {
+                matches!(source.kind, Kind::SectorBoundary(_))
+                    && definition
+                        .native_references()
+                        .get(1)
+                        .and_then(|id| document.objects.get(id.saturating_sub(1)))
+                        .is_some_and(|mirror| matches!(mirror.kind, Kind::Segment(..)))
+            }
+            F::FixedRotation => {
+                (matches!(source.kind, Kind::SectorBoundary(_))
+                    || matches!(&source.kind, Kind::Transformed(parent)
+                        if parent.element() == E::Sector
+                            && parent.wire_flavor() == F::Reflection))
+                    && definition
+                        .native_references()
+                        .get(1)
+                        .and_then(|id| document.objects.get(id.saturating_sub(1)))
+                        .is_some_and(|center| matches!(center.kind, Kind::Free(_)))
+            }
+            _ => false,
+        },
         E::Polygon => {
             if matches!(
                 flavor,

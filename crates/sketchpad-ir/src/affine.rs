@@ -122,6 +122,15 @@ pub enum TransformGeometry {
         clockwise_y: bool,
     },
     Polygon(Vec<Point>),
+    /// Closed circular sector. The analytic arc remains available for path and
+    /// measurement evaluation; sampled vertices belong to presentation only.
+    Sector {
+        center: Point,
+        radius: f64,
+        start: f64,
+        sweep: f64,
+        clockwise_y: bool,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransformEvaluationError {

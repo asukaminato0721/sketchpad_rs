@@ -893,7 +893,13 @@ pub fn decode_expression_with_sources(
         || &data[18..22] != b"<0>\0"
         || u32_at(data, 32) != 0x0907
         || u32_at(data, 36) as usize != data.len() - 32
-        || u32_at(data, 44) as usize != (data.len() - 92) / 2
+        || {
+            let count_word = u32_at(data, 44);
+            let token_count = (data.len() - 92) / 2;
+            let high_word = count_word >> 16;
+            (count_word & 0xffff) as usize != token_count
+                || (high_word != 0 && (source_count == 0 || high_word > 2))
+        }
     {
         return Err("Unsupported function expression wrapper".into());
     }
@@ -938,7 +944,10 @@ pub fn encode_expression_record_with_sources(
     expression.source_kinds(source_count)?;
     let mut payload = data[..92].to_vec();
     payload[36..40].copy_from_slice(&((60 + expression.words().len() * 2) as u32).to_le_bytes());
-    payload[44..48].copy_from_slice(&(expression.words().len() as u32).to_le_bytes());
+    // Native referenced functions use the upper half of this field for
+    // additional wrapper state. Preserve it when replacing the token stream.
+    let count_word = (u32_at(data, 44) & 0xffff_0000) | expression.words().len() as u32;
+    payload[44..48].copy_from_slice(&count_word.to_le_bytes());
     for word in expression.words() {
         payload.extend_from_slice(&word.to_le_bytes());
     }
@@ -1847,6 +1856,56 @@ mod tests {
         let end = (start..rs.len()).find(|&i| rs[i].kind == 0x07d7).unwrap();
         let expression = rs[start..end].iter().find(|r| r.kind == 0x0907).unwrap();
         bytes[expression.data.clone()].to_vec()
+    }
+
+    #[test]
+    fn native_referenced_function_high_word_survives_expression_edits() {
+        for (native, id, high_word) in [
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/referenced_function75_high1_original_input.gsp"
+                )
+                .as_slice(),
+                87,
+                1,
+            ),
+            (
+                include_bytes!(
+                    "../../../tests/fixtures/referenced_function75_high2_original_input.gsp"
+                )
+                .as_slice(),
+                14,
+                2,
+            ),
+        ] {
+            let original = reference_fixture_payload(native, id);
+            let token_count = (original.len() - 92) / 2;
+            assert_eq!(
+                u32_at(&original, 44),
+                (high_word << 16) | token_count as u32
+            );
+            let expression = decode_expression_with_sources(&original, 1).unwrap();
+            assert!(decode_simple_expression(&original).is_err());
+            let edited = SimpleFunction::parse_with_sources("v1*x+1", 1).unwrap();
+            let record = encode_expression_record_with_sources(&original, edited, 1).unwrap();
+            let mut file = b"GSP4".to_vec();
+            file.extend_from_slice(&record);
+            let encoded = payload(&file, records(&file).unwrap()[0]);
+            assert_eq!(u32_at(encoded, 44) >> 16, high_word);
+            assert_eq!(u32_at(encoded, 44) & 0xffff, edited.words().len() as u32);
+            assert_eq!(decode_expression_with_sources(encoded, 1).unwrap(), edited);
+            assert_ne!(expression, edited);
+
+            let mut malformed = original.clone();
+            malformed[44..46].copy_from_slice(&((token_count + 1) as u16).to_le_bytes());
+            assert!(decode_expression_with_sources(&malformed, 1).is_err());
+            malformed[44..46].copy_from_slice(&(token_count as u16).to_le_bytes());
+            malformed[46..48].copy_from_slice(&3u16.to_le_bytes());
+            assert!(decode_expression_with_sources(&malformed, 1).is_err());
+            malformed[46..48].copy_from_slice(&(high_word as u16).to_le_bytes());
+            malformed[32] = 0;
+            assert!(decode_expression_with_sources(&malformed, 1).is_err());
+        }
     }
 
     #[test]

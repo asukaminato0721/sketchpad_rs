@@ -16,6 +16,7 @@ pub(super) struct TransformWirePresentation<'a> {
     pub visible: bool,
     pub label: Option<&'a LabelAux>,
     pub polygon: Option<PolygonWire>,
+    pub sector_order: Option<i32>,
 }
 
 pub(super) fn encode_group(
@@ -35,6 +36,7 @@ pub(super) fn encode_group(
         E::Circle => 3,
         E::Arc => 80,
         E::Polygon => 8,
+        E::Sector => 82,
     });
     h[..2].copy_from_slice(&code.to_le_bytes());
     let modern_stroke = matches!(
@@ -74,6 +76,14 @@ pub(super) fn encode_group(
             if flavor == F::Vector && polygon.vector_locus_target {
                 h[18..20].copy_from_slice(&[0x39, 0x20]);
             }
+        }
+        E::Sector => {
+            h[20..24].copy_from_slice(
+                &presentation
+                    .sector_order
+                    .ok_or("Missing sector transform drawing order")?
+                    .to_le_bytes(),
+            );
         }
         _ => {}
     }
@@ -224,6 +234,7 @@ mod tests {
                     interior_order: -3,
                     vector_locus_target: true,
                 }),
+                sector_order: None,
             },
         )
         .unwrap();

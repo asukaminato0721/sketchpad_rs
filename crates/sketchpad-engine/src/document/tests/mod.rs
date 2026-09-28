@@ -126,7 +126,14 @@ mod visibility_options;
 mod polygon_point_values;
 mod referenced_captions;
 mod referenced_function72;
+mod referenced_function75;
 mod standalone_custom_point73;
+mod transformed_source_custom_point74;
+mod fixedpolar_source_custom_point76;
+mod markedpolar_source_custom_point77;
+mod coordinate_marker78;
+mod sector_transform79;
+mod sector_chain80;
 mod referenced_token71;
 mod referenced_shared64;
 

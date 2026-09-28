@@ -96,6 +96,12 @@ impl Kind {
     }
     pub fn is_sector(&self) -> bool {
         matches!(self, Kind::SectorBoundary(_))
+            || self
+                .transform_definition()
+                .is_some_and(|definition| definition.element() == ElementType::Sector)
+    }
+    pub fn is_filled_region(&self) -> bool {
+        self.is_polygon() || self.is_sector() || self.is_circle_interior()
     }
     pub fn is_circle_interior(&self) -> bool {
         matches!(self, Kind::CircleInterior(_))
@@ -1381,7 +1387,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 VisualStyle::Stroke { line, color: navy }
             }
             ElementType::Circle | ElementType::Arc => VisualStyle::Stroke { line, color: green },
-            ElementType::Polygon => VisualStyle::Polygon {
+            ElementType::Polygon | ElementType::Sector => VisualStyle::Polygon {
                 opacity: 32767,
                 color: RgbColor {
                     red: 255,

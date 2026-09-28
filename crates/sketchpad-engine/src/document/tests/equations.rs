@@ -607,6 +607,42 @@ fn corpus_named_point_values_import_matching_and_independent_points() {
 }
 
 #[test]
+fn native_segment_point_value_clamps_before_start_and_updates_angle() {
+    let original = include_bytes!(
+        "../../../../../tests/fixtures/code26_markedpolar77_original_native_saved.gsp"
+    );
+    let document = Document::from_bytes(original, None).unwrap();
+    assert_eq!(
+        document.value_equation_value(23),
+        Some(EquationValue::PointValue(1.))
+    );
+    assert_eq!(document.numeric_value(24), Some(90.));
+    assert_eq!(document.encode().unwrap(), original);
+
+    let edited = include_bytes!(
+        "../../../../../tests/fixtures/code26_markedpolar77_angle_half_show23_synthetic_native_saved.gsp"
+    );
+    let document = Document::from_bytes(edited, None).unwrap();
+    assert_eq!(
+        document.value_equation_value(23),
+        Some(EquationValue::PointValue(0.))
+    );
+    assert_eq!(document.numeric_value(24), Some(0.));
+    assert_eq!(document.encode().unwrap(), edited);
+
+    let above_end = include_bytes!(
+        "../../../../../tests/fixtures/code26_markedpolar77_upper_rebind19_show23_synthetic_native_saved.gsp"
+    );
+    let document = Document::from_bytes(above_end, None).unwrap();
+    assert_eq!(
+        document.value_equation_value(23),
+        Some(EquationValue::PointValue(1.))
+    );
+    assert_eq!(document.numeric_value(24), Some(90.));
+    assert_eq!(document.encode().unwrap(), above_end);
+}
+
+#[test]
 fn corpus_point_value_empty_attribute_preserves_dependencies_and_bytes() {
     let bytes = include_bytes!("../../../../../tests/fixtures/point_value_empty_attribute_corpus.gsp");
     let doc = Document::from_bytes(bytes, None).unwrap();

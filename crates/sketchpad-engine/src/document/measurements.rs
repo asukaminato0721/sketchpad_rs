@@ -401,8 +401,23 @@ impl Document {
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
                     ref kind if is_straight_kind(kind) => {
-                        let (a, b, _) = self.point_constraint_line_points(second)?;
-                        value_equation_records::segment_point_value(point, screen(a), screen(b))
+                        let (a, b, mode) = self.point_constraint_line_points(second)?;
+                        let value = value_equation_records::segment_point_value(
+                            point,
+                            screen(a),
+                            screen(b),
+                        )?;
+                        match (mode, value) {
+                            (LineMode::Segment, EquationValue::PointValue(t))
+                                if matches!(
+                                    self.objects.get(first - 1)?.kind,
+                                    Kind::PointOnSegment(..)
+                                ) =>
+                            {
+                                Some(EquationValue::PointValue(t.clamp(0., 1.)))
+                            }
+                            _ => Some(value),
+                        }
                     }
                     ref kind if kind.is_circle() => {
                         if let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind {
@@ -636,7 +651,7 @@ impl Document {
         self.ratio_for_points(a, b, c)
     }
     pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
-        if self.objects.get(id.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+        if self.objects.get(id.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
             return self.sector_perimeter_pixels(id).map(|value| value / 37.79527559055118);
         }
         let points = self.polygon_points(id)?;
@@ -705,7 +720,7 @@ impl Document {
         let Kind::PolygonArea(polygon) = object.kind else {
             return None;
         };
-        if self.objects.get(polygon.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+        if self.objects.get(polygon.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
             return self.sector_area_pixels2(polygon).map(|value| value / 37.79527559055118_f64.powi(2));
         }
         let points = self.polygon_points(polygon)?;
@@ -743,7 +758,7 @@ impl Document {
         let Kind::ArcLength(arc) = object.kind else {
             return None;
         };
-        if self.objects.get(arc.checked_sub(1)?).is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_))) {
+        if self.objects.get(arc.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
             return self.sector_arc_length_pixels(arc).map(|value| value / 37.79527559055118);
         }
         if let Some((start, end)) = self.linear_three_point_arc(arc) {

@@ -18,6 +18,7 @@ pub(super) fn decode_native_transform(
     references: &[usize],
     constraint: Option<&[u8]>,
     standalone_custom_point: bool,
+    sector_layout: bool,
 ) -> Option<TransformDefinition> {
     if header.len() != 28 {
         return None;
@@ -26,6 +27,7 @@ pub(super) fn decode_native_transform(
     let element = match header[6..10] {
         [1, 0, 4, 0] if code == 26 => ElementType::Point,
         [12, 0, 67, 0] => ElementType::Arc,
+        [13, 0, 68, 0] if matches!(code, 27 | 34) => ElementType::Sector,
         [2, 0, 13, 0] => ElementType::Ray,
         [2, 0, 12, 0] => ElementType::Line,
         _ => return None,
@@ -40,9 +42,27 @@ pub(super) fn decode_native_transform(
     }
     let source = *references.first()?;
     let source_kind = &get(source)?.kind;
+    if element == ElementType::Sector && !sector_layout {
+        return None;
+    }
     let source_matches = match element {
-        ElementType::Point => matches!(source_kind, super::Kind::Free(_)),
+        ElementType::Point => {
+            matches!(source_kind, super::Kind::Free(_))
+                || matches!(source_kind, super::Kind::Transformed(definition)
+                    if definition.element() == ElementType::Point
+                        && matches!(definition.wire_flavor(),
+                            NativeTransformFlavor::Vector
+                                | NativeTransformFlavor::FixedPolar
+                                | NativeTransformFlavor::MarkedPolar))
+        }
         ElementType::Arc => is_arc_kind(source_kind),
+        ElementType::Sector => {
+            matches!(source_kind, super::Kind::SectorBoundary(_))
+                || (code == 27
+                    && matches!(source_kind, super::Kind::Transformed(definition)
+                        if definition.element() == ElementType::Sector
+                            && definition.wire_flavor() == NativeTransformFlavor::Reflection))
+        }
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
         ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),
         _ => false,
@@ -161,7 +181,11 @@ pub(super) fn decode_native_transform(
                 F::MarkedPolar,
             )
         }
-        (27, [_, center]) if point(*center) => {
+        (27, [_, center])
+            if point(*center)
+                && (element != ElementType::Sector
+                    || matches!(get(*center)?.kind, super::Kind::Free(_))) =>
+        {
             let p = payload(36)?;
             (
                 Transform::Rotate {
@@ -239,7 +263,14 @@ pub(super) fn decode_native_transform(
             )
         }
         (34, [_, mirror])
-            if constraint.is_none() && get(*mirror).is_some_and(|o| is_straight_kind(&o.kind)) =>
+            if constraint.is_none()
+                && get(*mirror).is_some_and(|o| {
+                    if element == ElementType::Sector {
+                        matches!(o.kind, super::Kind::Segment(..))
+                    } else {
+                        is_straight_kind(&o.kind)
+                    }
+                }) =>
         {
             (Transform::Reflect { mirror: *mirror }, F::Reflection)
         }

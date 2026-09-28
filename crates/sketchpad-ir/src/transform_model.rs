@@ -14,6 +14,7 @@ pub enum ElementType {
     Circle,
     Arc,
     Polygon,
+    Sector,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -406,6 +407,8 @@ impl TransformDefinition {
         };
         let straight = matches!(element, ElementType::Ray | ElementType::Line);
         if !valid
+            || (element == ElementType::Sector
+                && !matches!(flavor, F::FixedRotation | F::Reflection))
             || (straight
                 && !matches!(
                     flavor,

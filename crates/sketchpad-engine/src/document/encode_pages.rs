@@ -1535,7 +1535,7 @@ impl Document {
             if saved.visual_style.is_some() && current.visual_style.is_some() {
                 expected.visual_style = current.visual_style;
             }
-            if (saved.kind.is_polygon() || matches!(saved.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_))) && current.interior_order.is_some() {
+            if saved.kind.is_filled_region() && current.interior_order.is_some() {
                 expected.interior_order = current.interior_order;
             }
             if let (Kind::Free(_), Kind::Free(point)) = (&saved.kind, &current.kind) {
@@ -1620,7 +1620,7 @@ impl Document {
             }
             let header = current.header_offset.ok_or("Missing object header")?;
             if saved.interior_order != current.interior_order {
-                if !saved.kind.is_polygon() && !matches!(saved.kind, Kind::SectorBoundary(_) | Kind::CircleInterior(_)) {
+                if !saved.kind.is_filled_region() {
                     return Err("Cannot change drawing order of an unsupported interior".into());
                 }
                 if !rs.iter().any(|record| {

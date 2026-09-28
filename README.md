@@ -128,6 +128,18 @@ Referenced functions also parse grouped unary arguments with a following operato
 
 Standalone code26 custom-transform points with a Free source and live Degrees/Length operands now reuse the generic polar transform evaluator. Native controls from two originals verify source movement, angle and distance changes, including zero and negative distance; trace-linked and Segment forms remain separate. See [the bounded implementation](dev/code26_standalone73_implementation.md).
 
+The same standalone operation also follows a Vector-transformed Point source. A separate Native original isolates the output marker and verifies its movement; [the evidence](dev/code26_transformed74_implementation.md) keeps this source type distinct from unproved trace-linked and other transformed variants.
+
+Referenced functions also accept Native expression wrappers with a bounded high-word count field. The parser validates the low token count and full expression, while edits retain the original high word. Two Native originals exercise high1 and high2 live sources; [the implementation notes](dev/referenced_function75_implementation.md) record the byte-preservation and partial-document limits.
+
+Standalone code26 points also follow a FixedPolar-transformed Point source. A Native original and four byte-exact save states isolate its marker and live upstream motion; [the bounded extension](dev/code26_fixedpolar76_implementation.md) retains the earlier source and record guards.
+
+The same operation now follows a MarkedPolar-transformed Point source. Native controls also exposed a separate segment PointValue boundary rule; [the evidence and regression](dev/code26_markedpolar77_implementation.md) distinguish constrained points from free-point projection.
+
+Scalar x/y coordinate measurements now preserve a Native empty marker after their style record. A visible x-value changes live in a byte-exact Native original, while a paired x/y original verifies the marker's retention under Native normalization; [the bounded parser change](dev/coordinate_measurements78_implementation.md) restores their downstream calculations and mappings.
+
+An intrinsic sector boundary can now be fixed-rotated as a live analytic element. Native 180°/90° controls and an upstream move verify the [strict transform case](dev/sector_transform79_implementation.md), while the parser still preserves unproved sector operations as unsupported records.
+
 ## Verification
 
 Run `cargo test --workspace` to include every implementation crate. Tests cover record parsing and byte preservation, dependency updates, geometry, undo/redo, and save/reopen. All 1,599 `.gsp` files in the sibling project and the bundled 523-object Example Tools document pass unedited byte-preservation verification; many remain partial views and are guarded against unsafe edits. Generated constructions, measurements, text, action buttons, styles, bounded number/table files, and arithmetic and sine/cosine/tangent plots have been opened and saved in the supplied Windows Sketchpad 5 through Wine. Native KDE screenshots confirm geometry and style rendering; full command and interaction verification remains open.

@@ -1,6 +1,8 @@
 //! Intrinsic closed sector boundary. The live Arc dependency remains the model;
 //! sampled outlines are presentation values, not stored polygon vertices.
 use super::kind::is_arc_kind;
+use super::transform_model::ElementType;
+use super::transform_evaluator::TransformGeometry;
 use super::{Document, Kind, Object, Point};
 
 pub(super) type SectorArc = (Point, f64, f64, f64, bool);
@@ -17,7 +19,7 @@ pub(super) fn supported_host(objects: &[Object], host: usize, page: usize, befor
             host < before
                 && !o.deleted
                 && o.page == page
-                && matches!(o.kind, Kind::SectorBoundary(_))
+                && o.kind.is_sector()
         })
 }
 fn arc_at((center, radius, start, sweep, clockwise_y): SectorArc, t: f64) -> Point {
@@ -92,6 +94,22 @@ impl Document {
         if object.deleted {
             return None;
         }
+        if object
+            .kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::Sector)
+        {
+            return match self.evaluate_transform(id).ok()? {
+                TransformGeometry::Sector {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                    clockwise_y,
+                } => Some((center, radius, start, sweep, clockwise_y)),
+                _ => None,
+            };
+        }
         let Kind::SectorBoundary(source) = object.kind else {
             return None;
         };
@@ -112,7 +130,7 @@ impl Document {
     pub(super) fn undefined_sector(&self, id: usize) -> bool {
         self.objects
             .get(id.wrapping_sub(1))
-            .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::SectorBoundary(_)))
+            .is_some_and(|o| !o.deleted && o.kind.is_sector())
             && self.sector_arc_geometry(id).is_none()
     }
     /// Native Point68 traverses center→start→arc→center by physical perimeter.
@@ -190,7 +208,7 @@ impl Document {
         if self
             .objects
             .get(id.checked_sub(1)?)
-            .is_some_and(|o| matches!(o.kind, Kind::SectorBoundary(_)))
+            .is_some_and(|o| o.kind.is_sector())
         {
             let mut points = self.sector_boundary_points(id, 192)?;
             // Polygon ear clipping closes the vertex loop itself. A repeated center

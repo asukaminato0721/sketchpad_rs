@@ -146,6 +146,17 @@ impl Document {
             ElementType::Polygon if kind.is_polygon() => {
                 TransformGeometry::Polygon(self.polygon_points(source).ok_or(Error::Undefined)?)
             }
+            ElementType::Sector if kind.is_sector() => {
+                let (center, radius, start, sweep, clockwise_y) =
+                    self.sector_arc_geometry(source).ok_or(Error::Undefined)?;
+                TransformGeometry::Sector {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                    clockwise_y,
+                }
+            }
             _ => return Err(Error::WrongElement(source)),
         };
         let point = |id| self.position(id).ok_or(Error::Undefined);
@@ -282,7 +293,8 @@ impl Document {
                     return Err(Error::Undefined);
                 }
             }
-            TransformGeometry::Arc { center, radius, start, sweep, clockwise_y } => {
+            TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }
+            | TransformGeometry::Sector { center, radius, start, sweep, clockwise_y } => {
                 let first = Point {
                     x: center.x + *radius * start.cos(),
                     y: center.y + if *clockwise_y { -*radius * start.sin() } else { *radius * start.sin() },
@@ -368,6 +380,19 @@ mod tests {
                     }
                     other => panic!("polygon{id}: {other:?}"),
                 },
+                None => assert_eq!(result, Err(Error::Undefined)),
+            },
+            ElementType::Sector => match document.sector_arc_geometry(id) {
+                Some((center, radius, start, sweep, clockwise_y)) => assert_eq!(
+                    result,
+                    Ok(TransformGeometry::Sector {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                        clockwise_y,
+                    }),
+                ),
                 None => assert_eq!(result, Err(Error::Undefined)),
             },
         }
@@ -457,6 +482,15 @@ mod tests {
                                         .zip(points)
                                     {
                                         close(apply(source), expected);
+                                    }
+                                }
+                                TransformGeometry::Sector { center, .. } => {
+                                    close(apply(d.sector_arc_geometry(sequence.source).unwrap().0), center);
+                                    for t in [0., 0.25, 0.5, 1.] {
+                                        close(
+                                            apply(d.point_on_sector(sequence.source, t).unwrap()),
+                                            d.point_on_sector(object.id, t).unwrap(),
+                                        );
                                     }
                                 }
                             }

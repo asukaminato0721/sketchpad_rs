@@ -253,6 +253,7 @@ pub(super) fn decode_colorized(
         ElementType::Line => (class, subtype) == (2, 12),
         ElementType::Circle => (class, subtype) == (3, 28),
         ElementType::Arc => (class, subtype) == (12, 67),
+        ElementType::Sector => false,
         ElementType::Polygon => {
             class == 4
                 && super::records::polygon_subtype(polygon_vertex_count(objects, source)?)?

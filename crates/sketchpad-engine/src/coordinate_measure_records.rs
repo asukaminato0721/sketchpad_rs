@@ -166,6 +166,15 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
             .ok_or("Unsupported coordinate measurement code")?;
     let labeled = rs.get(3).is_some_and(|r| r.kind == 0x07d5);
     let style_index = if labeled { 4 } else { 3 };
+    let marker_index = rs.len().checked_sub(2).filter(|&index| {
+        matches!(
+            kind,
+            CoordinateMeasureKind::Abscissa | CoordinateMeasureKind::Ordinate
+        ) && labeled
+            && header[6..10] == [7, 0, 51, 0]
+            && rs[index].kind == 0x232e
+            && rs[index].payload.is_empty()
+    });
     let expected: &[u32] = match kind {
         CoordinateMeasureKind::Coordinates => &[0x07d0, 0x07d2, 0x08fc, 0x07d8, 0x07d7],
         _ => &[0x07d0, 0x07d2, 0x0903, 0x07d8, 0x07d7],
@@ -173,7 +182,7 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
     if rs
         .iter()
         .enumerate()
-        .filter(|(index, _)| !labeled || *index != 3)
+        .filter(|(index, _)| (!labeled || *index != 3) && Some(*index) != marker_index)
         .map(|(_, record)| record.kind)
         .collect::<Vec<_>>()
         != expected
@@ -433,6 +442,50 @@ mod tests {
         assert!(decode_group(&group).is_err());
         assert!(encode_group(CoordinateMeasureKind::Ordinate, &[0, 9]).is_err());
         assert!(encode_on_original_base(CoordinateMeasureKind::Coordinates, &[3, 9]).is_err());
+    }
+    #[test]
+    fn native_scalar_coordinate_marker_requires_one_empty_record_after_style() {
+        let bytes = include_bytes!(
+            "../../../tests/fixtures/coordinate_measurements78_liss_original_native_saved.gsp"
+        );
+        let document = crate::document::Document::from_bytes(bytes, None).unwrap();
+        let header = document.objects[17].header_offset.unwrap();
+        let file_records = records(bytes, 4).unwrap();
+        let first = file_records
+            .iter()
+            .position(|record| record.kind == 0x07d0 && record.payload.start == header)
+            .unwrap();
+        let last = (first..file_records.len())
+            .find(|&index| file_records[index].kind == 0x07d7)
+            .unwrap();
+        let group = &bytes[file_records[first].start..file_records[last].end];
+        assert_eq!(
+            decode_group(group).unwrap().kind,
+            CoordinateMeasureKind::Abscissa
+        );
+        let rs = records(group, 0).unwrap();
+        let marker = &rs[rs.len() - 2];
+        assert_eq!(marker.kind, 0x232e);
+        assert!(marker.payload.is_empty());
+
+        let mut duplicate = group.to_vec();
+        duplicate.splice(
+            marker.start..marker.start,
+            group[marker.start..marker.end].iter().copied(),
+        );
+        assert!(decode_group(&duplicate).is_err());
+
+        let mut nonempty = group.to_vec();
+        nonempty[marker.start..marker.start + 4].copy_from_slice(&2_u32.to_le_bytes());
+        nonempty.splice(marker.end..marker.end, [0, 0]);
+        assert!(decode_group(&nonempty).is_err());
+
+        let style = &rs[rs.len() - 3];
+        let mut misplaced = group[..style.start].to_vec();
+        misplaced.extend_from_slice(&group[marker.start..marker.end]);
+        misplaced.extend_from_slice(&group[style.start..marker.start]);
+        misplaced.extend_from_slice(&group[marker.end..]);
+        assert!(decode_group(&misplaced).is_err());
     }
     #[test]
     fn generated_documents_have_one_measurement_and_valid_footer() {

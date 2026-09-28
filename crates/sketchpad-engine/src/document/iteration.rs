@@ -111,6 +111,7 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
         ElementType::Circle => source.kind.is_circle(),
         ElementType::Arc => is_arc_kind(&source.kind),
         ElementType::Polygon => source.kind.is_polygon(),
+        ElementType::Sector => false,
     };
     !source.deleted && source_matches && iteration_transform_inputs_supported(objects, definition)
 }

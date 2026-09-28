@@ -41,6 +41,7 @@ impl Document {
             ElementType::Point => 0, ElementType::Segment => 2,
             ElementType::Ray => 64, ElementType::Line => 63,
             ElementType::Circle => 3, ElementType::Arc => 80, ElementType::Polygon => 8,
+            ElementType::Sector => 82,
         });
         h[..2].copy_from_slice(&75u16.to_le_bytes());
         h[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
@@ -1549,6 +1550,11 @@ impl Document {
                         visible: o.visible,
                         label: o.label.as_ref(),
                         polygon,
+                        sector_order: if definition.element() == ElementType::Sector {
+                            Some(o.interior_order.ok_or("Missing sector drawing order")?)
+                        } else {
+                            None
+                        },
                     },
                 )?;
                 if o.presentation_suppressed {

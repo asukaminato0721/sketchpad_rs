@@ -721,7 +721,7 @@ impl Document {
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(matches!(
                         code,
-                        10 | 48 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123
+                        10 | 48 | 65 | 66 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123
                     ) && r.kind == 0x232e
                         && d.is_empty())
                     && !(code == 0
@@ -1118,6 +1118,18 @@ impl Document {
                         .filter(|record| record.start >= group_start && record.start <= rs[i].start)
                         .map(|record| record.kind)
                         .eq([0x07d0, 0x07d2, 0x07d7]),
+                matches!(code, 27 | 34)
+                    && rs
+                        .iter()
+                        .filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                        .map(|record| record.kind)
+                        .eq(if code == 27 {
+                            &[0x07d0, 0x07d2, 0x07d3, 0x07d7][..]
+                        } else {
+                            &[0x07d0, 0x07d2, 0x07d7][..]
+                        }
+                        .iter()
+                        .copied()),
             ) {
                 Kind::Transformed(definition)
             } else if matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
