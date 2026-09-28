@@ -1,33 +1,12 @@
 use super::Editor;
-use std::process::Command;
+use super::system_fonts::{add_cjk_fallbacks, system_font};
 use std::sync::Arc;
-
-fn system_font_data(family: &str) -> Option<egui::FontData> {
-    let lookup = family.strip_prefix('@').unwrap_or(family);
-    let output = Command::new("fc-match")
-        .arg("-f")
-        .arg("%{file}\n%{index}\n")
-        .arg(lookup)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let result = std::str::from_utf8(&output.stdout).ok()?;
-    let mut lines = result.lines();
-    let path = lines.next()?;
-    let index = lines.next()?.parse::<u32>().ok()? & 0xffff;
-    if path.is_empty() {
-        return None;
-    }
-    let bytes = std::fs::read(path).ok()?;
-    let mut data = egui::FontData::from_owned(bytes);
-    data.index = index;
-    Some(data)
-}
 
 impl Editor {
     pub(super) fn sync_document_fonts(&mut self, ctx: &egui::Context) {
+        if !self.font_definitions_applied {
+            add_cjk_fallbacks(&mut self.font_definitions);
+        }
         let families = self
             .doc
             .objects
@@ -40,7 +19,8 @@ impl Editor {
             if self.loaded_fonts.contains_key(&family) {
                 continue;
             }
-            let Some(data) = system_font_data(&family) else {
+            let lookup = family.strip_prefix('@').unwrap_or(&family);
+            let Some(data) = system_font(lookup).and_then(|font| font.data()) else {
                 self.loaded_fonts.insert(family, false);
                 continue;
             };

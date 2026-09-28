@@ -2,6 +2,26 @@
 
 Experimental Linux editor for Sketchpad 5 `.gsp` documents. It uses winit and egui for the window and controls, and wgpu with a WGSL shader for sketch geometry.
 
+## CJK text
+
+Chinese (simplified and traditional), Japanese, and Korean text use system font
+fallbacks in the interface, text fields, and canvas, including captions with an
+explicit font family. Font lookup uses `fc-match` from fontconfig at startup;
+install CJK fonts such as Noto Sans CJK and restart the editor after installing
+fonts. The Nix development shell supplies fontconfig but uses your installed
+system fonts. Without fontconfig or suitable fonts, the editor still starts,
+but unsupported characters may appear as missing-glyph boxes.
+
+Text fields use the desktop input method through egui/winit. Configure and start
+your desktop IME (for example, Fcitx5 or IBus) to compose CJK text. Captions and
+point labels preserve Unicode when editing, copying, and saving `.gsp` files.
+
+To check actual CJK glyph coverage on a machine with the fonts installed:
+
+```sh
+cargo test -p sketchpad-editor --test cjk_support -- --include-ignored
+```
+
 ## Run
 
 ```sh

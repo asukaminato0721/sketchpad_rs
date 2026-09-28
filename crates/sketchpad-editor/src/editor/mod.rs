@@ -13,6 +13,7 @@ mod custom_tools;
 mod document_dialogs;
 mod files;
 mod fonts;
+mod system_fonts;
 mod function_dialogs;
 mod measurements;
 mod menu;
