@@ -75,7 +75,7 @@ pub enum ReferencedNode {
         numerator: Box<Self>,
         denominator: Box<Self>,
     },
-    /// Native active `<-base, value>` layout inside a vertical label.
+    /// Native `<-base, index>` mathematical subscript.
     Subscript {
         base: Box<Self>,
         index: Box<Self>,
@@ -96,9 +96,8 @@ pub enum ReferencedNode {
 impl ReferencedNode {
     pub fn has_math_layout(&self) -> bool {
         match self {
-            Self::Fraction { .. } | Self::Subscript { .. } | Self::Radical(_) | Self::Delimited { .. } => true,
+            Self::Fraction { .. } | Self::Subscript { .. } | Self::Superscript { .. } | Self::Radical(_) | Self::Delimited { .. } => true,
             Self::Horizontal(children) | Self::Vertical(children) | Self::Styled { children, .. } => children.iter().any(Self::has_math_layout),
-            Self::Superscript { base, exponent } => base.has_math_layout() || exponent.has_math_layout(),
             _ => false,
         }
     }
@@ -860,7 +859,6 @@ mod tests {
             "<?1x1<-<T1xm><?x1>>>",
             "<?1x1<SO2O1<T1xx>>>",
             "<?1x1<Q<T1xx>>>",
-            "<-<T1xm><T1x1>>",
             "<!FFFF>",
         ] {
             assert!(
@@ -915,13 +913,14 @@ mod tests {
             );
         }
         assert_eq!(&text.rich_bytes()[18..18 + markup.len()], markup.as_bytes());
-        for invalid in [
+        for markup in [
             "<-<T1xA><?1x1<H<T1x3>>>>",
             "<VL<-<T1xA><T1x3>>>",
             "<VL<-<T1xAB><?1x1<H<T1x3>>>>>",
             "<VL<-<T1xA><?x1>>>",
         ] {
-            assert!(ReferencedText::from_markup(invalid, (0, 0), 1).is_err());
+            let text = ReferencedText::from_markup(markup, (0, 0), 1).unwrap();
+            assert!(text.nodes().iter().any(ReferencedNode::has_math_layout));
         }
     }
 }

@@ -139,6 +139,10 @@ impl Document {
             Kind::ReferencedText { parents, text } if text.nodes().iter().any(super::referenced_text::ReferencedNode::has_math_layout) => {
                 Some(text.resolved_nodes(|slot, role| self.referenced_source_text(*parents.get(slot - 1)?, role)))
             }
+            Kind::PointReferencedText { point, source, text } if text.nodes().iter().any(super::referenced_text::ReferencedNode::has_math_layout) => {
+                let parents = [*point, *source];
+                Some(text.resolved_nodes(|slot, role| self.referenced_source_text(*parents.get(slot - 1)?, role)))
+            }
             _ => None,
         }
     }

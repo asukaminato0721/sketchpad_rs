@@ -20,6 +20,18 @@ impl Editor {
                 x: f64::from(rect.left),
                 y: f64::from(rect.top),
             });
+            if let Some(layout) = self.math_text_layout(object.id) {
+                for run in layout.runs {
+                    if let Some(target) = run.reference.and_then(|slot| parents.get(slot - 1)).copied() {
+                        if self.doc.objects.get(target - 1).is_some_and(|o| !o.deleted && o.kind.is_action_button())
+                            && egui::Rect::from_min_size(origin + run.position.to_vec2(), run.galley.size()).contains(p)
+                        {
+                            return Some(target);
+                        }
+                    }
+                }
+                continue;
+            }
             let size = self
                 .doc
                 .text_font_state(object.id)

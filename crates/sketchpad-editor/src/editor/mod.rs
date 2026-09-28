@@ -13,7 +13,6 @@ mod custom_tools;
 mod document_dialogs;
 mod files;
 pub(crate) mod fonts;
-mod system_fonts;
 mod function_dialogs;
 mod measurements;
 mod menu;
@@ -199,6 +198,7 @@ struct Editor {
     drag_offset: egui::Vec2,
     text_draft: String,
     font_definitions: egui::FontDefinitions,
+    font_context: Option<egui::Context>,
     font_definitions_applied: bool,
     loaded_fonts: HashMap<String, bool>,
     text_font_dialog: bool,
@@ -302,6 +302,7 @@ impl Editor {
             drag_offset: egui::Vec2::ZERO,
             text_draft: "Text".into(),
             font_definitions: egui::FontDefinitions::default(),
+            font_context: None,
             font_definitions_applied: false,
             loaded_fonts: HashMap::new(),
             text_font_dialog: false,

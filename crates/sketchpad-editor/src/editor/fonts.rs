@@ -1,5 +1,5 @@
 use super::Editor;
-use super::system_fonts::{add_cjk_fallbacks, system_font};
+use crate::render::system_fonts::{add_cjk_fallbacks, system_font};
 use std::sync::Arc;
 
 pub(crate) fn system_font_data(family: &str) -> Option<egui::FontData> {
@@ -8,6 +8,7 @@ pub(crate) fn system_font_data(family: &str) -> Option<egui::FontData> {
 
 impl Editor {
     pub(super) fn sync_document_fonts(&mut self, ctx: &egui::Context) {
+        self.font_context = Some(ctx.clone());
         if !self.font_definitions_applied {
             add_cjk_fallbacks(&mut self.font_definitions);
         }
@@ -50,6 +51,16 @@ impl Editor {
             ctx.set_fonts(self.font_definitions.clone());
             self.font_definitions_applied = true;
         }
+    }
+
+    pub(super) fn math_text_layout(&self, id: usize) -> Option<crate::render::math_text::Layout> {
+        self.doc.text_math_nodes(id)?;
+        let fallback;
+        let ctx = if let Some(ctx) = &self.font_context { ctx } else {
+            fallback = crate::render::math_text::font_context(&self.doc);
+            &fallback
+        };
+        crate::render::math_text::measured_layout(&self.doc, id, ctx)
     }
 
     pub(super) fn canvas_font_id(&self, family: Option<&str>, size: f32) -> egui::FontId {

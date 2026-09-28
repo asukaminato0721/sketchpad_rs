@@ -848,6 +848,25 @@ impl Document {
                 .point_numeric_label(source)
         })
     }
+    /// Preserve mathematical structure while reevaluating each anchored caption
+    /// in its own iteration environment.
+    pub fn point_math_labels(&self, id: usize) -> Option<Vec<(Point, Vec<super::referenced_text::ReferencedNode>)>> {
+        if let Kind::PointReferencedText { point, .. } = &self.objects.get(id.checked_sub(1)?)?.kind {
+            return Some(vec![(self.position(*point)?, self.text_math_nodes(id)?)]);
+        }
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = object.kind else { return None; };
+        if object.deleted || !matches!(self.objects.get(source.checked_sub(1)?)?.kind, Kind::PointReferencedText { .. }) {
+            return None;
+        }
+        self.text_math_nodes(source)?;
+        self.mapped_iteration_images(source, iteration, |sample, source| {
+            let sample = sample.frozen_evaluation_document(source).unwrap_or(sample);
+            let Kind::PointReferencedText { point, .. } = sample.objects.get(source - 1)?.kind else { return None; };
+            Some((sample.position(point)?, sample.text_math_nodes(source)?))
+        })
+    }
+
     pub(super) fn mapped_terminal_point(&self, source: usize, iteration: usize) -> Option<Point> {
         let outputs = self.mapped_scoped_outputs(source, iteration, true, |sample, id| {
             sample.position(id)

@@ -14,7 +14,7 @@ const CJK_PATTERNS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct SystemFont {
+pub(crate) struct SystemFont {
     path: PathBuf,
     index: u32,
 }
@@ -35,7 +35,7 @@ impl SystemFont {
         })
     }
 
-    pub(super) fn data(&self) -> Option<egui::FontData> {
+    pub(crate) fn data(&self) -> Option<egui::FontData> {
         let bytes = std::fs::read(&self.path).ok()?;
         let mut data = egui::FontData::from_owned(bytes);
         data.index = self.index;
@@ -43,7 +43,7 @@ impl SystemFont {
     }
 }
 
-pub(super) fn system_font(lookup: &str) -> Option<SystemFont> {
+pub(crate) fn system_font(lookup: &str) -> Option<SystemFont> {
     let output = Command::new("fc-match")
         .arg("-f")
         .arg("%{file}\n%{index}\n")
@@ -64,7 +64,7 @@ fn append_fallback(fonts: &mut egui::FontDefinitions, key: String, data: egui::F
     }
 }
 
-pub(super) fn add_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
+pub(crate) fn add_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
     let mut seen = HashSet::new();
     for pattern in CJK_PATTERNS {
         let Some(font) = system_font(pattern) else {

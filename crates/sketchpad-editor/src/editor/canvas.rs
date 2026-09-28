@@ -234,7 +234,9 @@ impl Editor {
                                 run.style != sketchpad_engine::text_object::RichRunStyle::default()
                             })
                         });
-                        if has_mixed_runs {
+                        if let Some(layout) = crate::render::math_text::measured_layout(&self.doc, object.id, ui.ctx()) {
+                            layout.paint(ui.painter(), at);
+                        } else if has_mixed_runs {
                             let mut line_y = at.y;
                             for row in rows.unwrap().iter() {
                                 let line_size = row
@@ -343,6 +345,13 @@ impl Editor {
                             );
                         }
                     }
+                    if let Some(labels) = self.doc.point_math_labels(object.id) {
+                        for (point, nodes) in labels {
+                            let layout = crate::render::math_text::measured_nodes(&self.doc, object.id, &nodes, ui.ctx());
+                            let at = vp.screen(point) - egui::vec2(layout.width, layout.height()) * 0.5;
+                            layout.paint(ui.painter(), at);
+                        }
+                    } else {
                     for (point, text) in self.doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| self.doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
                         let style = self.doc.numeric_label_font_state(object.id);
                         let size = style.as_ref().map_or(16, |style| style.size_code);
@@ -358,6 +367,7 @@ impl Editor {
                                 egui::Color32::BLACK
                             },
                         );
+                    }
                     }
                     if let Some((_, lines)) =
                         crate::render::number_lines_for_object(&self.doc, object.id)

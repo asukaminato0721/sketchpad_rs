@@ -164,7 +164,7 @@ fn public_subscript_caption_updates_value_and_precision_through_svg_and_reopen()
     assert!(
         crate::render::svg_page(&editor.doc, &viewport())
             .unwrap()
-            .contains("A₃")
+            .contains(">3</text>")
     );
 
     editor.doc.set_parameter_value(parameter, 5.).unwrap();
@@ -179,8 +179,15 @@ fn public_subscript_caption_updates_value_and_precision_through_svg_and_reopen()
         "A₅.₀₀"
     );
     let svg = crate::render::svg_page(&editor.doc, &viewport()).unwrap();
-    assert!(svg.contains("A₅.₀₀"));
-    assert!(!svg.contains("A₃"));
+    assert!(svg.contains(">A</text>"));
+    assert!(svg.contains(">5.00</text>"));
+    assert!(!svg.contains(">3</text>"));
+    let layout = editor.math_text_layout(caption).unwrap();
+    let base = layout.runs.iter().find(|run| run.text == "A").unwrap();
+    let index = layout.runs.iter().find(|run| run.text == "5.00").unwrap();
+    assert!(index.position.y + index.baseline > base.position.y + base.baseline);
+    assert!(index.size < base.size);
+    assert_eq!(index.reference, Some(1));
     assert_eq!(
         editor.hit(&viewport(), viewport().screen(Point { x: 244., y: 184. })),
         Some(caption)

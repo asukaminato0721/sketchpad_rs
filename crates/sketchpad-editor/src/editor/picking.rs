@@ -145,7 +145,9 @@ impl Editor {
                         .doc
                         .text_font_state(object.id)
                         .map_or(16., |style| style.size_code as f32);
-                    let (width, height) = if let Some(rows) = self.doc.text_rich_runs(object.id) {
+                    let (width, height) = if let Some(layout) = self.math_text_layout(object.id) {
+                        (layout.width, layout.height())
+                    } else if let Some(rows) = self.doc.text_rich_runs(object.id) {
                         let width = rows
                             .iter()
                             .map(|row| {
@@ -189,6 +191,17 @@ impl Editor {
                     )
                     .contains(p)
                 })
+        }) {
+            return Some(object.id);
+        }
+        if let Some(object) = self.doc.objects.iter().rev().find(|object| {
+            self.doc.is_displayed(object.id) && self.doc.point_math_labels(object.id).is_some_and(|labels| {
+                let ctx = self.font_context.clone().unwrap_or_else(|| crate::render::math_text::font_context(&self.doc));
+                labels.into_iter().any(|(point, nodes)| {
+                    let layout = crate::render::math_text::measured_nodes(&self.doc, object.id, &nodes, &ctx);
+                    egui::Rect::from_center_size(v.screen(point), egui::vec2(layout.width, layout.height())).contains(p)
+                })
+            })
         }) {
             return Some(object.id);
         }

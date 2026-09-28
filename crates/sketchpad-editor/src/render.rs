@@ -1,3 +1,8 @@
+#[path = "math_text.rs"]
+pub(crate) mod math_text;
+#[path = "editor/system_fonts.rs"]
+pub(crate) mod system_fonts;
+
 use crate::document::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
 use crate::style_records::{
@@ -1387,6 +1392,7 @@ pub fn svg_page_with_button_offset(
         }
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
+    let mut math_fonts = None;
     for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((text, rect)) = doc.text_content(object.id) {
             let at = vp.screen(Point {
@@ -1423,7 +1429,13 @@ pub fn svg_page_with_button_offset(
                     .flatten()
                     .any(|run| run.style != crate::text_object::RichRunStyle::default())
             });
-            if has_mixed_runs {
+            let math = doc.text_math_nodes(object.id).and_then(|_| {
+                let ctx = math_fonts.get_or_insert_with(|| crate::render::math_text::font_context(doc));
+                crate::render::math_text::measured_layout(doc, object.id, ctx)
+            });
+            if let Some(layout) = math {
+                layout.write_svg(&mut svg, at);
+            } else if has_mixed_runs {
                 let mut line_y = at.y;
                 for row in runs.unwrap().iter() {
                     let line_size = row
@@ -1514,6 +1526,14 @@ pub fn svg_page_with_button_offset(
                 writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>",at.x,at.y,xml_text(&text)).unwrap();
             }
         }
+        if let Some(labels) = doc.point_math_labels(object.id) {
+            let ctx = math_fonts.get_or_insert_with(|| math_text::font_context(doc));
+            for (point, nodes) in labels {
+                let layout = math_text::measured_nodes(doc, object.id, &nodes, ctx);
+                let at = vp.screen(point) - egui::vec2(layout.width, layout.height()) * 0.5;
+                layout.write_svg(&mut svg, at);
+            }
+        } else {
         for (point, text) in doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
             let at = vp.screen(point);
             let style = doc.numeric_label_font_state(object.id);
@@ -1526,6 +1546,7 @@ pub fn svg_page_with_button_offset(
                 if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
                 if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" },
                 xml_text(&text)).unwrap();
+        }
         }
         if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
