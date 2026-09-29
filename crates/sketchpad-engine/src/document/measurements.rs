@@ -732,27 +732,33 @@ impl Document {
         })
     }
     pub(super) fn coordinate_point_name(&self, first: usize) -> Option<String> {
-        Some(
-            self.objects
-                .get(first - 1)?
-                .label
-                .as_ref()
-                .and_then(|label| label.name_utf8().ok())
-                .map(str::to_owned)
-                .unwrap_or_else(|| {
-                    let ordinal = self
-                        .objects
-                        .iter()
-                        .take(first)
-                        .filter(|object| is_point_kind(&object.kind))
-                        .count();
-                    if (1..=26).contains(&ordinal) {
-                        ((b'A' + ordinal as u8 - 1) as char).to_string()
-                    } else {
-                        format!("Point {first}")
-                    }
-                }),
-        )
+        let object = self.objects.get(first - 1)?;
+        if let Some(name) = object
+            .label
+            .as_ref()
+            .and_then(|label| label.name_utf8().ok())
+        {
+            return Some(name.to_owned());
+        }
+        if let Kind::Transformed(definition) = &object.kind
+            && definition.element() == super::transform_model::ElementType::Point
+        {
+            return Some(format!(
+                "{}'",
+                self.coordinate_point_name(definition.source())?
+            ));
+        }
+        let ordinal = self
+            .objects
+            .iter()
+            .take(first)
+            .filter(|candidate| candidate.page == object.page && is_point_kind(&candidate.kind))
+            .count();
+        Some(if (1..=26).contains(&ordinal) {
+            ((b'A' + ordinal as u8 - 1) as char).to_string()
+        } else {
+            format!("Point {first}")
+        })
     }
     pub fn segment_length_cm(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;

@@ -60,6 +60,7 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
     object.kind.numeric_unit().is_some()
         || object.kind.is_action_button()
         || super::kind::is_point_kind(&object.kind)
+        || object.kind.is_circular_segment()
         || object.label.is_some()
         || matches!(
             object.kind,
@@ -460,6 +461,32 @@ impl Document {
                 self.coordinate_point_name(*center)?,
                 self.reference_geometry_name(*segment)?
             )),
+            Kind::CircularSegmentBoundary(_) => {
+                let ordinal = self
+                    .objects
+                    .iter()
+                    .take(source)
+                    .filter(|candidate| {
+                        !candidate.deleted
+                            && candidate.page == object.page
+                            && matches!(
+                                candidate.kind,
+                                Kind::CircleInterior(_)
+                                    | Kind::SectorBoundary(_)
+                                    | Kind::CircularSegmentBoundary(_)
+                            )
+                    })
+                    .count();
+                Some(format!("A{}", subscript_number(ordinal)))
+            }
+            Kind::Transformed(definition)
+                if definition.element() == super::transform_model::ElementType::CircularSegment =>
+            {
+                Some(format!(
+                    "{}'",
+                    self.reference_geometry_name(definition.source())?
+                ))
+            }
             Kind::Colorized(definition) => self.reference_geometry_name(definition.source()),
             Kind::FunctionPlot(function, ..) => {
                 Some(format!("y = {}(x)", self.function_symbol(*function)?))
