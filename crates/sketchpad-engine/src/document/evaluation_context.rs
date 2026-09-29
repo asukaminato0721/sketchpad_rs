@@ -239,6 +239,40 @@ impl Document {
         }
     }
 
+    /// Discard values derived from a previous substitution while preserving
+    /// frozen boundaries and the caller's current seed values.
+    pub(super) fn clear_evaluation_results(&mut self) {
+        let Some(context) = &mut self.evaluation_context else {
+            return;
+        };
+        let frozen = &context.frozen;
+        context.points.retain(|id, _| frozen.contains(id));
+        context.numbers.retain(|id, _| frozen.contains(id));
+        context.straights.retain(|id, _| frozen.contains(id));
+        context.circles.retain(|id, _| frozen.contains(id));
+        context.polygons.retain(|id, _| frozen.contains(id));
+        context.arcs.retain(|id, _| frozen.contains(id));
+        context.frames.retain(|id, _| frozen.contains(id));
+    }
+
+    /// Materialize a topologically ordered numeric DAG for the current seeds.
+    /// Cached undefined values are retained as such for the rest of this state.
+    pub(super) fn cache_evaluation_numbers(&mut self, ids: &[usize]) -> Option<()> {
+        self.evaluation_context.as_ref()?;
+        for &id in ids {
+            if self.evaluation_numeric(id).is_some() {
+                continue;
+            }
+            let object = self.objects.get(id.checked_sub(1)?)?;
+            if object.deleted || object.kind.numeric_unit().is_none() {
+                continue;
+            }
+            let value = self.numeric_value(id);
+            self.evaluation_context.as_mut()?.numbers.insert(id, value);
+        }
+        Some(())
+    }
+
     pub(super) fn set_evaluation_point(&mut self, id: usize, point: Point) -> Option<()> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted

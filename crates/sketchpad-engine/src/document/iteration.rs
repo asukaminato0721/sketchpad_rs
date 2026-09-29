@@ -11,7 +11,7 @@ use super::{Document, IterationDepth, Kind, Object, Point};
 use crate::style_records;
 use crate::style_records::RgbColor;
 use crate::table_records::NumericUnit;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn point_iteration_definition(
     objects: &[Object],
@@ -263,7 +263,7 @@ pub(super) fn supported_mapped_point_iteration(
             .and_then(|i| objects.get(i))
             .filter(|o| !o.deleted && o.page == page)
     };
-    if !(1..=16).contains(&seeds.len())
+    if !(1..=128).contains(&seeds.len())
         || !(1..=16).contains(&branches.len())
         || carried.is_empty()
         || seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len()
@@ -933,6 +933,68 @@ impl Document {
         })
     }
 
+    /// Reevaluate all visible labels attached to each mapped root in one pass.
+    /// A large simultaneous substitution can expose many bindings, and replaying
+    /// the identical state sequence once per label makes painting quadratic.
+    pub fn visible_mapped_numeric_label_images(&self) -> BTreeMap<usize, Vec<(Point, String)>> {
+        let mut groups: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
+        for binding in &self.objects {
+            let Kind::IterationBinding(source, iteration) = binding.kind else {
+                continue;
+            };
+            if !self.is_displayed(binding.id)
+                || !matches!(
+                    self.objects.get(source.saturating_sub(1)).map(|o| &o.kind),
+                    Some(Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. })
+                )
+                || !matches!(
+                    self.objects
+                        .get(iteration.saturating_sub(1))
+                        .map(|o| &o.kind),
+                    Some(Kind::MappedPointIteration { .. })
+                )
+            {
+                continue;
+            }
+            groups
+                .entry(iteration)
+                .or_default()
+                .push((binding.id, source));
+        }
+
+        let mut result = BTreeMap::new();
+        for (iteration, bindings) in groups {
+            let Some(primary) = bindings.first().map(|(_, source)| *source) else {
+                continue;
+            };
+            let Some(states) = self.mapped_iteration_images(primary, iteration, |sample, _| {
+                Some(
+                    bindings
+                        .iter()
+                        .map(|(_, source)| {
+                            sample
+                                .frozen_evaluation_document(*source)
+                                .unwrap_or(sample)
+                                .point_numeric_label(*source)
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            }) else {
+                continue;
+            };
+            for (column, (binding, _)) in bindings.iter().enumerate() {
+                result.insert(
+                    *binding,
+                    states
+                        .iter()
+                        .filter_map(|state| state.get(column).cloned().flatten())
+                        .collect(),
+                );
+            }
+        }
+        result
+    }
+
     fn iteration_value_cell(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.kind.is_function() {
@@ -1148,6 +1210,15 @@ impl Document {
         let mut level = vec![initial];
         let mut sample = self.clone();
         let external = self.mapped_external_inputs(seeds, branches, carried)?;
+        let mut numeric_order = branches
+            .iter()
+            .flatten()
+            .chain(carried)
+            .copied()
+            .filter(|id| !seeds.contains(id))
+            .collect::<Vec<_>>();
+        numeric_order.sort_unstable();
+        numeric_order.dedup();
         if retain_parent {
             sample.freeze_scoped_evaluation_inputs(self, &external)?;
             sample.inherit_evaluation_seeds(self)?;
@@ -1163,6 +1234,7 @@ impl Document {
             let mut next = Vec::new();
             let mut seen = BTreeSet::new();
             for state in &level {
+                sample.clear_evaluation_results();
                 if retain_parent {
                     sample.clear_evaluation_seed_ids(seeds);
                 } else {
@@ -1171,6 +1243,7 @@ impl Document {
                 for (id, value) in seeds.iter().zip(state) {
                     value.substitute(&mut sample, *id)?;
                 }
+                sample.cache_evaluation_numbers(&numeric_order)?;
                 for branch in branches {
                     let mapped: Vec<_> = branch
                         .iter()
@@ -1189,6 +1262,7 @@ impl Document {
             generated += next.len();
             if (!terminal_only && !*final_only) || step + 1 == depth {
                 for state in &next {
+                    sample.clear_evaluation_results();
                     if retain_parent {
                         sample.clear_evaluation_seed_ids(seeds);
                     } else {
@@ -1197,6 +1271,7 @@ impl Document {
                     for (id, value) in seeds.iter().zip(state) {
                         value.substitute(&mut sample, *id)?;
                     }
+                    sample.cache_evaluation_numbers(&numeric_order)?;
                     // Keep terminal undefinedness. The ordinary image reader
                     // filters each undefined image while preserving valid levels.
                     result.push((step + 1, evaluate(&sample, source)));

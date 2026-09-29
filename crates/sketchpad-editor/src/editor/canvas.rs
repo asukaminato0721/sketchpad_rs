@@ -188,6 +188,7 @@ impl Editor {
                         self.selection_order.clear();
                     }
                 }
+                let mapped_numeric_labels = self.doc.visible_mapped_numeric_label_images();
                 for object in self
                     .doc
                     .objects
@@ -434,7 +435,7 @@ impl Editor {
                             .doc
                             .point_numeric_label(object.id)
                             .map(|label| vec![label])
-                            .or_else(|| self.doc.mapped_numeric_label_images(object.id))
+                            .or_else(|| mapped_numeric_labels.get(&object.id).cloned())
                             .unwrap_or_default()
                         {
                             let style = self.doc.numeric_label_font_state(object.id);

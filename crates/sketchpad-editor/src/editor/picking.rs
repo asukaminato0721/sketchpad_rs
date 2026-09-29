@@ -300,10 +300,16 @@ impl Editor {
         }) {
             return Some(object.id);
         }
+        let mapped_numeric_labels = self.doc.visible_mapped_numeric_label_images();
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && (crate::render::mapped_numeric_label_hit(v, &self.doc, object.id, p)
-                    || crate::render::branch_iteration_hit(v, &self.doc, object.id, p)
+                && (crate::render::mapped_numeric_labels_hit(
+                    v,
+                    &self.doc,
+                    object.id,
+                    mapped_numeric_labels.get(&object.id).map(Vec::as_slice),
+                    p,
+                ) || crate::render::branch_iteration_hit(v, &self.doc, object.id, p)
                     || crate::render::point_iteration_hit(v, &self.doc, object.id, p)
                     || crate::render::circle_iteration_hit(v, &self.doc, object.id, p))
         }) {

@@ -936,7 +936,7 @@ impl Document {
                 }
                 let count = usize::from(u16::from_le_bytes(data[6..8].try_into().ok()?));
                 let branches_count = u32_at(data, 8) as usize;
-                if !(1..=16).contains(&count) || !(1..=16).contains(&branches_count) {
+                if !(1..=128).contains(&count) || !(1..=16).contains(&branches_count) {
                     return None;
                 }
                 let start = usize::from(code == 89);

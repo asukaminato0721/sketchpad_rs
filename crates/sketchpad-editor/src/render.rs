@@ -404,13 +404,24 @@ pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -
 }
 
 pub fn mapped_numeric_label_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
+    let labels = doc.visible_mapped_numeric_label_images();
+    mapped_numeric_labels_hit(vp, doc, id, labels.get(&id).map(Vec::as_slice), at)
+}
+
+pub fn mapped_numeric_labels_hit(
+    vp: &Viewport,
+    doc: &Document,
+    id: usize,
+    labels: Option<&[(Point, String)]>,
+    at: Pos2,
+) -> bool {
     let size = doc
         .numeric_label_font_state(id)
         .map_or(16., |style| f32::from(style.size_code));
-    doc.mapped_numeric_label_images(id).is_some_and(|labels| {
-        labels.into_iter().any(|(point, text)| {
+    labels.is_some_and(|labels| {
+        labels.iter().any(|(point, text)| {
             Rect::from_center_size(
-                vp.screen(point),
+                vp.screen(*point),
                 egui::vec2(text.chars().count() as f32 * size * 0.65, size * 1.1),
             )
             .contains(at)
@@ -1701,6 +1712,7 @@ fn svg_page_with_layout(
     }
     svg.push_str("</g>\n<g fill=\"#232323\" font-family=\"sans-serif\" font-size=\"16\">\n");
     let mut math_fonts = None;
+    let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
     for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((text, rect)) = doc.text_content(object.id) {
             let at = vp.screen(Point {
@@ -1853,7 +1865,7 @@ fn svg_page_with_layout(
             for (point, text) in doc
                 .point_numeric_label(object.id)
                 .map(|label| vec![label])
-                .or_else(|| doc.mapped_numeric_label_images(object.id))
+                .or_else(|| mapped_numeric_labels.get(&object.id).cloned())
                 .unwrap_or_default()
             {
                 let at = vp.screen(point);
