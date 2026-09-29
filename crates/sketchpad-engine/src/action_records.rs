@@ -13,6 +13,9 @@ pub const BUTTON_METADATA: u32 = 0x232e;
 pub const OBJECT_END: u32 = 0x07d7;
 pub const BROKEN_PAGE_LINK_TARGET: usize = 0xbd66;
 
+const MAX_POINT_ANIMATION_SPEED: f32 = 10_000.;
+const MAX_PARAMETER_ANIMATION_SPEED: f32 = 400_000.;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisibilityAction {
     Hide,
@@ -119,7 +122,15 @@ impl Default for AnimationSettings {
 
 impl AnimationSettings {
     pub fn validate(self) -> Result<(), String> {
-        if !self.speed.is_finite() || self.speed <= 0. || self.speed > 10_000. {
+        let maximum_speed = if self.parameter.is_some() {
+            // Imported reset-style parameter buttons use very large rates over
+            // correspondingly tiny domains. Keep point speeds at the authored
+            // boundary while admitting the observed finite parameter range.
+            MAX_PARAMETER_ANIMATION_SPEED
+        } else {
+            MAX_POINT_ANIMATION_SPEED
+        };
+        if !self.speed.is_finite() || self.speed <= 0. || self.speed > maximum_speed {
             return Err("Animation speed must be positive and finite".into());
         }
         if self.once && self.direction == AnimationDirection::Bidirectional {
@@ -1533,8 +1544,10 @@ impl AnimationButtonGroup {
 
     fn validate(&self) -> Result<(), String> {
         let header = &self.records.record(OBJECT_HEADER).payload;
-        if header.len() != 28 || u16_at(header, 0) != 62 {
-            return Err("Animation button needs a 28-byte object code 62 header".into());
+        let modern_header = header.len() == 28;
+        let legacy_header = header.len() == 16 && header[6..12] == [10, 0, 23, 0, 1, 0];
+        if u16_at(header, 0) != 62 || !(modern_header || legacy_header) {
+            return Err("Animation button needs a supported object code 62 header".into());
         }
         let refs = &self.records.record(OBJECT_REFS).payload;
         if refs.len() < 8
@@ -1775,7 +1788,23 @@ impl AnimationButtonGroup {
             .map_err(|_| "Action button label is not UTF-8".into())
     }
 
+    /// Modern action labels are UTF-8. The admitted 16-byte legacy header
+    /// cohort stores its otherwise identical Animation labels in code page 936.
+    pub fn label_text(&self) -> Result<String, String> {
+        match self.label_utf8() {
+            Ok(label) => Ok(label.to_owned()),
+            Err(_) if self.records.record(OBJECT_HEADER).payload.len() == 16 => encoding_rs::GBK
+                .decode_without_bom_handling_and_without_replacement(self.records.label_bytes())
+                .map(std::borrow::Cow::into_owned)
+                .ok_or_else(|| "Legacy Animation button label is not GBK".into()),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        if self.label_text().is_ok_and(|current| current == label) {
+            return Ok(());
+        }
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_animation_group.bin"),

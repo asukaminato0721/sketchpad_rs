@@ -2127,3 +2127,21 @@ construction visibly renders its sampled character pictures. No standalone
 test case was added. See
 [analysis](sampled_transformed_pictures_analysis.md). Full scan:
 `/tmp/sampled_picture_coverage.log`.
+
+## Legacy and high-rate Animation settings
+
+Ten additional code-62 Animation buttons now pass the same strict model as the
+existing action runtime. Eight modern parameter-reset buttons use large finite
+rates over tiny domains; the bounded parameter limit now covers the observed
+range without changing the point limit. Two legacy clock buttons retain their
+16-byte header and decode their code-page-936 labels without rewriting
+unchanged label bytes.
+
+Unsupported falls **751→741**, complete documents/drawings rise
+**1,513/1,554→1,514/1,555**, unsupported documents fall **86→85**, and partial
+views remain **800**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. Two contradictory Animation packets
+remain opaque rather than receiving invented semantics. The remaining 17
+code-62 objects are Sound buttons. No standalone test case was added. See
+[analysis](legacy_animation_settings_analysis.md). Full scan:
+`/tmp/animation_legacy_coverage.log`.

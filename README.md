@@ -282,6 +282,11 @@ rendering, picking, and triangulated SVG export while preserving native picture
 order and sampling metadata. The wire evidence and admission boundary are in
 [the sampled-picture analysis](dev/sampled_transformed_pictures_analysis.md).
 
+Imported Animation buttons retain the observed high-rate parameter-reset
+settings and the legacy clock variant with its short header and code-page-936
+label. Point rates remain separately bounded, and contradictory settings stay
+opaque. See [the compatibility analysis](dev/legacy_animation_settings_analysis.md).
+
 Imported loci also retain native sparse or parallel-branch dependency captures and can apply an explicit stored path transiently to a free base driver when that path is independent of the driver. Filled-region locus targets share the disk, sector, circular-segment, and polygon sampler; point-output sampled objects can serve as bounded outer curve targets. The measured corpus effects and strict admission rules are recorded in [the locus analysis](dev/locus_midpoint_analysis.md).
 
 Imported live captions understand the remaining observed native symbol-font

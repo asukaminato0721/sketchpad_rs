@@ -2054,10 +2054,10 @@ impl Document {
                             }))
                     }) => {
                         let group = animation_group.as_ref().unwrap();
-                        match group.label_utf8() {
+                        match group.label_text() {
                             Ok(label) => Kind::AnimationButton {
                                 targets: targets.to_vec(),
-                                label: label.to_owned(),
+                                label,
                                 anchor: group.screen_anchor(),
                                 settings: group.settings_list().unwrap(),
                             },
