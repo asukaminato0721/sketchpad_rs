@@ -2786,7 +2786,10 @@ impl GeometryRenderer {
                         mesh.styled_path(&screen, false, stroke, col);
                     }
                 }
-                Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
+                Kind::AngleMarker(..)
+                | Kind::SignedAngleValue(..)
+                | Kind::PolarAngleValue(..)
+                | Kind::VertexAngleValue(..) => {
                     if let Some(marker) = doc.angle_marker_geometry(o.id) {
                         let screen = marker
                             .sector

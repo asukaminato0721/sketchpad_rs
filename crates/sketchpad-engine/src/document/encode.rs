@@ -1783,9 +1783,11 @@ impl Document {
             }
             if let Kind::PolarAngleValue(a, b, c)
             | Kind::VertexAngleValue(a, b, c)
+            | Kind::SignedAngleValue(a, b, c)
             | Kind::AngleMarker(a, b, c, _) = o.kind
             {
                 let code = match o.kind {
+                    Kind::SignedAngleValue(..) => 114,
                     Kind::PolarAngleValue(..) => 115,
                     Kind::VertexAngleValue(..) => 116,
                     _ => 113,

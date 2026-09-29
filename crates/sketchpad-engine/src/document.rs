@@ -586,6 +586,8 @@ pub enum Kind {
     PolarAngleValue(usize, usize, usize),
     /// Reverse Cartesian turn from vertex→first to vertex→last, in [0,360).
     VertexAngleValue(usize, usize, usize),
+    /// Native code 114: signed shortest turn from vertex→first to vertex→last.
+    SignedAngleValue(usize, usize, usize),
     /// A displayed three-point angle mark with a native arc count.
     AngleMarker(usize, usize, usize, u16),
     /// Native code 121: one to three congruence ticks on a finite segment.

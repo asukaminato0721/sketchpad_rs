@@ -468,7 +468,7 @@ impl Document {
             let mut label: Option<LabelAux> = None;
             let mut angle_marker_style = None;
             let angle_marker_label =
-                h.len() == 28 && matches!(code, 113 | 115 | 116) && h[6..10] == [18, 0, 95, 0];
+                h.len() == 28 && matches!(code, 113..=116) && h[6..10] == [18, 0, 95, 0];
             let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0]))
                 || (matches!(code, 82 | 83) && matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0]))
                 || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
@@ -2156,7 +2156,7 @@ impl Document {
                     {
                         Kind::AngleMeasurement(*a, *b, *c)
                     }
-                    (113 | 115 | 116, None, [a, vertex, c])
+                    (113..=116, None, [a, vertex, c])
                         if angle_marker_label
                             && constraint_payload.is_none()
                             && [a, vertex, c].iter().all(|&&id| id.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind)))
@@ -2171,6 +2171,7 @@ impl Document {
                             } => {
                         let marker = rs.iter().find(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x090e).unwrap();
                         match code {
+                            114 => Kind::SignedAngleValue(*a, *vertex, *c),
                             115 => Kind::PolarAngleValue(*a, *vertex, *c),
                             116 => Kind::VertexAngleValue(*a, *vertex, *c),
                             _ => Kind::AngleMarker(*a, *vertex, *c, u16::from_le_bytes(b[marker.data.start..marker.data.start + 2].try_into().unwrap())),
@@ -2181,7 +2182,7 @@ impl Document {
                             && measurement_format && measurement_style
                             && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o|
                                 !o.deleted && o.page == page
-                                    && matches!(o.kind, Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) | Kind::AngleMarker(..)))
+                                    && matches!(o.kind, Kind::SignedAngleValue(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) | Kind::AngleMarker(..)))
                             && {
                                 let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
                                     .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();

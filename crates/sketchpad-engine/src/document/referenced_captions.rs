@@ -31,6 +31,7 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
             | Kind::PointRatio(..)
             | Kind::SegmentLength(..) => true,
             Kind::AngleMarker(..)
+            | Kind::SignedAngleValue(..)
             | Kind::AngleMeasurement(..)
             | Kind::ArcAngle(..)
             | Kind::CoordinateMeasurement {
@@ -371,6 +372,7 @@ impl Document {
         }
         match object.kind {
             Kind::AngleMarker(first, vertex, last, _)
+            | Kind::SignedAngleValue(first, vertex, last)
             | Kind::AngleMeasurement(first, vertex, last) => Some(format!(
                 "∠{}{}{}",
                 self.coordinate_point_name(first)?,

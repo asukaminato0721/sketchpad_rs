@@ -2088,3 +2088,24 @@ byte-exact. The untouched fixture round-trips with SHA-256
 `88555d49ece2998b3e28b40b640fd5a382eff82bab76a7c5085b68b4df168ebc`.
 No standalone test case was added. See [analysis](data_function_analysis.md).
 Full scan: `/tmp/drawing_function_cache_coverage.log`.
+
+## Legacy signed-angle values
+
+Two code-114 class-18/subtype-95 objects retain a live signed shortest angle
+from three points. A real Sketchpad 5 Show All Hidden capture confirms the
+negative turn used by the dependent legacy code-119 rotations; a separate
+untouched Native open/save is byte-identical. The distinct semantic kind keeps
+code 114 separate from ordinary angle markers and positive directed angles,
+while supporting degree evaluation, marker presentation, remapping, and an
+exact writer.
+
+The two values, two rotations, and two downstream loci are restored.
+Unsupported falls **775→769**, complete documents/drawings rise
+**1,508/1,549→1,510/1,551**, unsupported documents fall **91→89**, and partial
+views fall **801→800**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. The smaller Native control saves with
+SHA-256
+`e4fc80205c12fd460f8ce849a09bd8ca55aa7e57e2c2166e3ba56c703ae5ab20`.
+No standalone test case was added. See
+[analysis](signed_angle114_analysis.md). Full scan:
+`/tmp/signed_angle114_coverage.log`.

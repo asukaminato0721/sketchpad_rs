@@ -356,6 +356,7 @@ impl Editor {
                                 .min_by(f32::total_cmp)?
                         }
                         Kind::AngleMarker(..)
+                        | Kind::SignedAngleValue(..)
                         | Kind::PolarAngleValue(..)
                         | Kind::VertexAngleValue(..) => {
                             let marker = self.doc.angle_marker_geometry(o.id)?;

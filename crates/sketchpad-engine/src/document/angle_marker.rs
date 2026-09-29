@@ -11,7 +11,10 @@ impl AngleMarkerStyle {
     pub(super) fn for_kind(kind: &Kind) -> Option<Self> {
         matches!(
             kind,
-            Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..)
+            Kind::AngleMarker(..)
+                | Kind::SignedAngleValue(..)
+                | Kind::PolarAngleValue(..)
+                | Kind::VertexAngleValue(..)
         )
         .then_some(Self {
             arrow: !matches!(kind, Kind::AngleMarker(..)),
@@ -64,7 +67,9 @@ impl Document {
         }
         let (first, vertex, last, count) = match object.kind {
             Kind::AngleMarker(a, b, c, count) => (a, b, c, count),
-            Kind::PolarAngleValue(a, b, c) | Kind::VertexAngleValue(a, b, c) => (a, b, c, 1),
+            Kind::SignedAngleValue(a, b, c)
+            | Kind::PolarAngleValue(a, b, c)
+            | Kind::VertexAngleValue(a, b, c) => (a, b, c, 1),
             _ => return None,
         };
         let (first, vertex, last) = (

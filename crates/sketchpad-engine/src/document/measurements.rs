@@ -90,7 +90,9 @@ impl Document {
             Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) => self.ratio_value(id),
             Kind::SlopeMeasurement(_, _) => self.slope_value(id),
             Kind::AngleMeasurement(_, _, _) => self.angle_degrees(id),
-            Kind::AngleMarker(a, vertex, c, _) => self.signed_angle_degrees(*a, *vertex, *c),
+            Kind::AngleMarker(a, vertex, c, _) | Kind::SignedAngleValue(a, vertex, c) => {
+                self.signed_angle_degrees(*a, *vertex, *c)
+            }
             Kind::PolarAngleValue(_, _, _) | Kind::VertexAngleValue(_, _, _) => {
                 self.directed_angle_degrees(id)
             }
@@ -143,6 +145,7 @@ impl Document {
                     let (first, vertex, last) = match angle.kind {
                         Kind::PolarAngleValue(a, b, c)
                         | Kind::VertexAngleValue(a, b, c)
+                        | Kind::SignedAngleValue(a, b, c)
                         | Kind::AngleMarker(a, b, c, _) => (a, b, c),
                         _ => return None,
                     };
@@ -167,7 +170,7 @@ impl Document {
                 let radians = self.angle_unit_radians
                     && matches!(
                         self.objects.get(source.checked_sub(1)?)?.kind,
-                        Kind::AngleMarker(..)
+                        Kind::AngleMarker(..) | Kind::SignedAngleValue(..)
                     );
                 let value = if radians {
                     crate::table_records::format_numeric_value(

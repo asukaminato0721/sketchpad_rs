@@ -43,7 +43,8 @@ records on an unchanged save. Point, Segment, and analytic Arc headers account
 for seven direct roots; tests compare every resulting point or sampled endpoint
 against an independent rotation of its live source.
 
-Six code-119 objects deliberately remain opaque: two depend on legacy code 114,
-two rotate unsupported transformed interiors, and two use circular-segment
-boundaries, which are not a transform element. The original `课时7笔记.gsp`
-opened and resaved byte-identically in native Sketchpad 5 under Xvfb/Wine.
+Follow-up format work established circular-segment rotations and the two legacy
+code-114 signed-angle sources. Their dependent point rotations now use the same
+typed numeric-rotation evaluator, so all observed code-119 objects decode. The
+original `课时7笔记.gsp` opened and resaved byte-identically in native Sketchpad
+5 under Xvfb/Wine. See [signed angle analysis](signed_angle114_analysis.md).

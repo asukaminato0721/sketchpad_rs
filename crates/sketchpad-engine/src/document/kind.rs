@@ -69,6 +69,7 @@ impl Kind {
             Kind::NumericAlias { unit, .. } => Some(*unit),
             Kind::AngleMeasurement(_, _, _)
             | Kind::AngleMarker(_, _, _, _)
+            | Kind::SignedAngleValue(_, _, _)
             | Kind::PolarAngleValue(_, _, _)
             | Kind::VertexAngleValue(_, _, _)
             | Kind::ArcAngle(_) => Some(NumericUnit::Degrees),
@@ -495,6 +496,7 @@ impl Kind {
             | Kind::ArcOnCircle(a, b, c)
             | Kind::CenterArc(a, b, c)
             | Kind::AngleMeasurement(a, b, c)
+            | Kind::SignedAngleValue(a, b, c)
             | Kind::PolarAngleValue(a, b, c)
             | Kind::VertexAngleValue(a, b, c) => {
                 vec![a, b, c]
@@ -925,6 +927,7 @@ impl Kind {
                 Kind::CircleArcLength(m(circle), m(start), m(end))
             }
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
+            Kind::SignedAngleValue(a, b, c) => Kind::SignedAngleValue(m(a), m(b), m(c)),
             Kind::PolarAngleValue(a, b, c) => Kind::PolarAngleValue(m(a), m(b), m(c)),
             Kind::VertexAngleValue(a, b, c) => Kind::VertexAngleValue(m(a), m(b), m(c)),
             Kind::AngleMarker(a, b, c, class) => Kind::AngleMarker(m(a), m(b), m(c), class),
@@ -1086,6 +1089,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointLineDistance(_, _)
             | Kind::SegmentRatio(_, _)
             | Kind::AngleMeasurement(_, _, _)
+            | Kind::SignedAngleValue(_, _, _)
             | Kind::PolarAngleValue(_, _, _)
             | Kind::VertexAngleValue(_, _, _)
             | Kind::PointRatio(_, _, _)
@@ -1878,19 +1882,20 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 blue: 128,
             },
         }),
-        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
-            Some(VisualStyle::Stroke {
-                line: SegmentLineStyle {
-                    width: LineWidth::Thin,
-                    pattern: LinePattern::Solid,
-                },
-                color: RgbColor {
-                    red: 64,
-                    green: 64,
-                    blue: 64,
-                },
-            })
-        }
+        Kind::AngleMarker(..)
+        | Kind::SignedAngleValue(..)
+        | Kind::PolarAngleValue(..)
+        | Kind::VertexAngleValue(..) => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Solid,
+            },
+            color: RgbColor {
+                red: 64,
+                green: 64,
+                blue: 64,
+            },
+        }),
         Kind::SegmentMarker { .. } | Kind::SegmentArrow { .. } => Some(VisualStyle::Stroke {
             line: SegmentLineStyle {
                 width: LineWidth::Thin,
