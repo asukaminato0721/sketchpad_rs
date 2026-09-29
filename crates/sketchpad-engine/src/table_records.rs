@@ -3124,16 +3124,10 @@ fn general_table_node_end(bytes: &[u8]) -> Option<usize> {
         }
         match bytes[at] {
             b'<' if bytes.get(at + 1) == Some(&b'T') => {
-                let separator = bytes[at + 2..]
-                    .iter()
-                    .position(|byte| *byte == b'x')?
-                    + at
-                    + 2;
-                let length = usize::from_str_radix(
-                    std::str::from_utf8(&bytes[at + 2..separator]).ok()?,
-                    16,
-                )
-                .ok()?;
+                let separator = bytes[at + 2..].iter().position(|byte| *byte == b'x')? + at + 2;
+                let length =
+                    usize::from_str_radix(std::str::from_utf8(&bytes[at + 2..separator]).ok()?, 16)
+                        .ok()?;
                 at = separator.checked_add(1 + length)?;
                 if bytes.get(at) != Some(&b'>') {
                     return None;
@@ -3226,14 +3220,14 @@ fn general_table_cells(layout: &[u8], source_count: usize) -> Option<Vec<Vec<Str
         || layout[..4] != [0x0d, 0x09, 0, 0]
         || u32::from_le_bytes(layout[4..8].try_into().ok()?) as usize != layout.len()
         || layout[8..12] != [0x10, 0, 0, 0]
-        || usize::from(u16::from_le_bytes(layout[18..20].try_into().ok()?))
-            != source_count + 1
-        || layout[20..28] != [1, 0, 0, 0, 0, 0, 0, 0]
+        || usize::from(u16::from_le_bytes(layout[18..20].try_into().ok()?)) != source_count + 1
+        || !matches!(layout[20], 0 | 1)
+        || layout[21..28] != [0; 7]
     {
         return None;
     }
-    let matrix_rows = usize::from(u16::from_le_bytes(layout[16..18].try_into().ok()?))
-        .checked_sub(1)?;
+    let matrix_rows =
+        usize::from(u16::from_le_bytes(layout[16..18].try_into().ok()?)).checked_sub(1)?;
     if !(2..=257).contains(&matrix_rows) {
         return None;
     }
@@ -3429,8 +3423,7 @@ impl TableGroup {
             .get(..4)
             .map(|field| u32::from_le_bytes(field.try_into().unwrap()) as usize)
             .ok_or("Missing general table source count")?;
-        if count < 2
-            || count > 256
+        if !(2..=256).contains(&count)
             || references.len() != 4 + count * 4
             || references[4..]
                 .chunks_exact(4)
@@ -3438,10 +3431,7 @@ impl TableGroup {
         {
             return Err("Invalid general table sources".into());
         }
-        let layout_record = rs
-            .iter()
-            .find(|record| record.kind == 0x090d)
-            .unwrap();
+        let layout_record = rs.iter().find(|record| record.kind == 0x090d).unwrap();
         let layout = &bytes[layout_record.payload..layout_record.end];
         if general_table_cells(layout, count).is_none() {
             return Err("Invalid general table layout".into());
@@ -3863,7 +3853,12 @@ impl TableGroup {
 
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs.iter().find(|record| record.kind == 0x090d).unwrap().payload + 12;
+        let at = rs
+            .iter()
+            .find(|record| record.kind == 0x090d)
+            .unwrap()
+            .payload
+            + 12;
         (
             i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
@@ -3872,7 +3867,12 @@ impl TableGroup {
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs.iter().find(|record| record.kind == 0x090d).unwrap().payload + 12;
+        let at = rs
+            .iter()
+            .find(|record| record.kind == 0x090d)
+            .unwrap()
+            .payload
+            + 12;
         self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
         self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
     }

@@ -612,10 +612,7 @@ impl Document {
                                     parent.deleted
                                         || parent.page != o.page
                                         || parent.kind.numeric_unit().is_none()
-                                            && !matches!(
-                                                parent.kind,
-                                                Kind::ReferencedText { .. }
-                                            )
+                                            && !matches!(parent.kind, Kind::ReferencedText { .. })
                                 })
                         })
                     {

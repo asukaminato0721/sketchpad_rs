@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,346/1,599** documents have all object kinds
-decoded; **1,381** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **2,181** unsupported slots (1,583
-drawing slots and 598 prototype slots), and 253 documents still contain
+Latest snapshot, 2026-09-29: **1,358/1,599** documents have all object kinds
+decoded; **1,393** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **2,141** unsupported slots (1,543
+drawing slots and 598 prototype slots), and 241 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -11,6 +11,7 @@ legacy polar-coordinate, circular-segment transform, and axis-rotation recoverie
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
+plus general native snapshot-table recovery
 are summarized at the end; the older detailed
 snapshots remain for comparison.
 
@@ -1793,3 +1794,24 @@ The supplied Sketchpad 5 displayed the `N!.gsp` table with columns `n`,
 remained 4,802 bytes. Port SVG evaluation produced the same six value rows.
 An out-of-tree edit probe moved the table anchor, saved, reopened, and retained
 both the anchor and all rows. No standalone regression test was added.
+
+## General native snapshot tables
+
+Native code-91 tables now retain two to seven ordered numeric or referenced-text
+sources, rich headers, one to 21 stored rows, their anchor, optional caption,
+font reference, visibility, and opaque alignment bytes. The shared rich-text
+decoder presents subscripts, superscripts, units, formulas, Unicode headers,
+and cached undefined values; save and dependency remapping keep the original
+wire records rather than rebuilding their presentation.
+
+All 40 decoded-parent code-91 drawing slots are restored. Unsupported falls
+2,181→2,141 (1,543 drawing plus 598 prototype), complete documents/drawings rise
+1,346/1,381→1,358/1,393, unsupported documents fall 253→241, and partial views
+fall 843→840. All 1,599 originals remain byte-exact with zero failures. Full
+scan: `/tmp/sketchpad_general_tables_coverage.log`.
+
+Sketchpad 5 and the port both display the nine-row coordinate-history table in
+`利用制表功能快速获取点的坐标.gsp`. A second Native check establishes the
+zero-state `抛豆实验估算圆周率.gsp` table, including its cached undefined π
+cell; Native Ctrl+S preserves both source files byte-for-byte. No standalone
+regression test was added.

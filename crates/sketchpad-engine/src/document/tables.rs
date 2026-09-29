@@ -114,9 +114,7 @@ impl Document {
             Kind::ParameterCalculation(_, group) => group.set_anchor(anchor)?,
             Kind::ValueTable(_, group)
             | Kind::ValueTablePair(_, _, group)
-            | Kind::DataTable(_, group) => {
-                group.set_anchor(anchor)
-            }
+            | Kind::DataTable(_, group) => group.set_anchor(anchor),
             _ => return Err("Object is not a number or table".into()),
         }
         self.checkpoint();

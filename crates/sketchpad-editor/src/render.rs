@@ -1878,7 +1878,7 @@ fn svg_page_with_layout(
             for (line, content) in lines.iter().enumerate() {
                 writeln!(
                     svg,
-                    "<text x=\"{}\" y=\"{}\">{}</text>",
+                    "<text x=\"{}\" y=\"{}\" xml:space=\"preserve\">{}</text>",
                     at.x + 4.,
                     at.y + 18. + line as f32 * 21.,
                     xml_text(content)

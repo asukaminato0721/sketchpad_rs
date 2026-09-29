@@ -454,3 +454,11 @@ produce rows 0–5 ending in `7.00` and `5040.00`. This restores all 42 remainin
 code-92 drawing records: unsupported slots fall to 2,181 and complete
 documents/drawings rise to 1,346/1,381, while all 1,599 originals remain
 byte-exact.
+
+General native snapshot tables preserve two to seven source columns, rich
+headers, stored rows, anchors, captions, fonts, visibility, and alignment bytes.
+Native and port checks cover both a nine-row coordinate history and a zero-state
+π-estimation table with an undefined cached cell. This restores all 40 code-91
+drawing records: unsupported slots fall to 2,141 and complete
+documents/drawings rise to 1,358/1,393, with all 1,599 originals still
+byte-exact.

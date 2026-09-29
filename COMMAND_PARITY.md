@@ -725,6 +725,16 @@ restores all 42 remaining code-92 drawing slots, lowering unsupported objects
 1,326/1,358→1,346/1,381. All 1,599 originals remain byte-exact; no standalone
 test case was added.
 
+Native code-91 snapshot tables now support two to seven ordered numeric or
+referenced-text columns. Import, copy/remap, movement, save, editor display, and
+SVG preserve or present their rich headers, cached rows, units, formulas,
+anchors, optional captions, font references, visibility, and alignment bytes.
+Native checks cover the nine-row coordinate table and the zero-state
+π-estimation table with its undefined cell. The compiled corpus restores all 40
+remaining code-91 drawing slots, lowering unsupported objects 2,181→2,141 and
+raising complete documents/drawings 1,346/1,381→1,358/1,393. All 1,599
+originals remain byte-exact; no standalone test case was added.
+
 ## Circular-segment interiors and measurements
 
 Circular-segment interiors now accept both observed native presentation profiles,

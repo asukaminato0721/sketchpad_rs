@@ -1185,3 +1185,12 @@ drawing plus 598 prototype), complete documents/drawings rise
 fall 856→843. All 1,599 originals remain byte-exact. Rebuild the next frontier
 from 2,181; do not treat the isolated code-91/92 presentation records as
 geometry recovery estimates.
+
+The neighboring code-91 cohort is the general native snapshot-table format,
+not a geometry construction. Strict parsing of its counted source list,
+rich-cell matrix, row/column fields, optional caption, font, anchor and opaque
+padding restores all 40 drawing tables. Unsupported falls 2,181→2,141 (1,543
+drawing plus 598 prototype), complete documents/drawings rise
+1,346/1,381→1,358/1,393, unsupported documents fall 253→241, and partial views
+fall 843→840. All 1,599 originals remain byte-exact. Rebuild the next frontier
+from 2,141.
