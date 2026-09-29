@@ -213,6 +213,8 @@ fn object_group(document: &[u8], ordinal: usize) -> Vec<u8> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParameterGroup {
     bytes: Vec<u8>,
+    // Legacy parameter labels can be GBK while their source bytes stay opaque.
+    name: String,
     // Sampling a native parameter trace must use the exact floating-point
     // driver without rewriting its saved decimal spelling or presentation.
     evaluation_value: Option<[u8; 8]>,
@@ -392,17 +394,11 @@ fn shift_decimal_words(words: &[u16], places: i32) -> Result<Vec<u16>, String> {
 
 impl ParameterGroup {
     pub fn default_value() -> Self {
-        Self {
-            bytes: object_group(DEFAULT_PARAMETER, 1),
-            evaluation_value: None,
-        }
+        Self::parse(&object_group(DEFAULT_PARAMETER, 1)).unwrap()
     }
 
     pub fn second_default_value() -> Self {
-        Self {
-            bytes: object_group(TWO_PARAMETERS, 2),
-            evaluation_value: None,
-        }
+        Self::parse(&object_group(TWO_PARAMETERS, 2)).unwrap()
     }
 
     pub fn named(name: &str, value: f64) -> Result<Self, String> {
@@ -414,10 +410,7 @@ impl ParameterGroup {
         if !valid {
             return Err("Name must contain 1–32 ASCII letters, digits, or underscores and begin with a letter".into());
         }
-        let mut group = Self {
-            bytes: object_group(NAMED_PARAMETER, 1),
-            evaluation_value: None,
-        };
+        let mut group = Self::parse(&object_group(NAMED_PARAMETER, 1))?;
         group.set_value(value)?;
         let rs = records(&group.bytes, 0)?;
         let named = object_group(NAMED_PARAMETER, 1);
@@ -518,11 +511,13 @@ impl ParameterGroup {
         let base = records(&template, 0)?;
         let expected = &template[base[1].payload..base[1].end];
         let immutable = [0..12, 16..22, 24..26, 32..36, 40..44, 46..48];
+        let header = &bytes[rs[0].payload..rs[0].end];
+        let legacy_scalar_header = header == [0, 0, 0, 0, 0, 0, 11, 0, 79, 0, 1, 0, 0, 0, 0, 0xe8];
         if immutable
             .iter()
             .any(|range| payload[range.clone()] != expected[range.clone()])
             || !display_mode_supported
-            || rs[0].end - rs[0].payload != 28
+            || !(header.len() == 28 || legacy_scalar_header)
             || u32::from_le_bytes(bytes[rs[0].payload..rs[0].payload + 4].try_into().unwrap())
                 & 0xffff
                 != 0
@@ -540,17 +535,26 @@ impl ParameterGroup {
         {
             return Err("Unsupported parameter variant".into());
         }
-        if let Some(record) = label_record {
+        let name = if let Some(record) = label_record {
             let label = crate::text_records::LabelAux::parse(&bytes[record.payload..record.end])?;
-            let name = label
-                .name_utf8()
-                .map_err(|_| "Parameter name is not UTF-8")?;
-            if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+            let name = match label.name_utf8() {
+                Ok(name) => name.to_owned(),
+                Err(_) if legacy_scalar_header => encoding_rs::GBK
+                    .decode_without_bom_handling_and_without_replacement(label.name_bytes())
+                    .ok_or("Parameter name is neither UTF-8 nor GBK")?
+                    .into_owned(),
+                Err(_) => return Err("Parameter name is not UTF-8".into()),
+            };
+            if label.name_bytes().len() > 256 || name.chars().any(char::is_control) {
                 return Err("Unsupported parameter name".into());
             }
-        }
+            name
+        } else {
+            String::new()
+        };
         let group = Self {
             bytes: bytes.to_vec(),
+            name,
             evaluation_value: None,
         };
         let at = group.anchor();
@@ -566,14 +570,7 @@ impl ParameterGroup {
     /// The explicitly stored name; an absent label returns an empty string.
     /// Native generated names require the containing page's naming counter.
     pub fn name(&self) -> &str {
-        let rs = records(&self.bytes, 0).unwrap();
-        let Some(label) = rs.iter().find(|r| r.kind == 0x07d5) else {
-            return "";
-        };
-        let payload = label.payload;
-        let len =
-            u16::from_le_bytes(self.bytes[payload + 22..payload + 24].try_into().unwrap()) as usize;
-        std::str::from_utf8(&self.bytes[payload + 24..payload + 24 + len]).unwrap()
+        &self.name
     }
 
     pub(crate) fn with_generated_name(
