@@ -1353,7 +1353,10 @@ fn svg_page_with_layout(
                     .unwrap();
                 }
             }
-        } else if let Some(surfaces) = doc.mapped_collection_surfaces(o.id, 384) {
+        } else if let Some(surfaces) = doc
+            .mapped_collection_surfaces(o.id, 384)
+            .or_else(|| doc.locus_surfaces(o.id, 384))
+        {
             for surface in surfaces {
                 let vertices = surface
                     .points
@@ -1376,23 +1379,6 @@ fn svg_page_with_layout(
                         VisualStyle::Polygon { opacity, .. } => f64::from(opacity) / 65535.,
                         _ => unreachable!(),
                     }
-                )
-                .unwrap();
-            }
-        } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
-            for points in polygons {
-                let vertices = points
-                    .into_iter()
-                    .map(|point| {
-                        let at = vp.screen(point);
-                        format!("{},{}", at.x, at.y)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                writeln!(
-                    svg,
-                    "<polygon points=\"{}\" fill=\"#ffb165\" stroke=\"none\"/>",
-                    vertices
                 )
                 .unwrap();
             }
@@ -2654,7 +2640,10 @@ impl GeometryRenderer {
                 .or_else(|| doc.mapped_collection_strokes(o.id, 384))
             {
                 mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected));
-            } else if let Some(surfaces) = doc.mapped_collection_surfaces(o.id, 384) {
+            } else if let Some(surfaces) = doc
+                .mapped_collection_surfaces(o.id, 384)
+                .or_else(|| doc.locus_surfaces(o.id, 384))
+            {
                 for surface in surfaces {
                     let fill = if doc.selected.contains(&o.id) {
                         [1., 0., 1., 0.18]
@@ -2668,19 +2657,6 @@ impl GeometryRenderer {
                     };
                     let screen = surface
                         .points
-                        .into_iter()
-                        .map(|point| vp.screen(point))
-                        .collect::<Vec<_>>();
-                    mesh.polygon(&screen, fill);
-                }
-            } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
-                let fill = if doc.selected.contains(&o.id) {
-                    [1., 0., 1., 0.18]
-                } else {
-                    [1., 177. / 255., 101. / 255., 1.]
-                };
-                for points in polygons {
-                    let screen = points
                         .into_iter()
                         .map(|point| vp.screen(point))
                         .collect::<Vec<_>>();

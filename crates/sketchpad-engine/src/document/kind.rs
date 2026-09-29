@@ -1376,6 +1376,7 @@ pub(super) fn parameter_locus_subtype(objects: &[Object], target: usize) -> Opti
     } else if is_locus_straight_kind(&object.kind)
         || is_locus_polygon_kind(&object.kind)
         || is_locus_curve_collection(objects, target)
+        || super::locus::is_locus_surface_collection(objects, target)
     {
         Some(43)
     } else {

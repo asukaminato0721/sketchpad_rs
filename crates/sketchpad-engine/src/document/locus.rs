@@ -78,7 +78,31 @@ pub(super) fn is_mapped_polygon_locus(objects: &[Object], kind: &Kind) -> bool {
     target
         .checked_sub(1)
         .and_then(|index| objects.get(index))
-        .is_some_and(|object| !object.deleted && is_locus_polygon_kind(&object.kind))
+        .is_some_and(|object| {
+            !object.deleted
+                && (is_locus_polygon_kind(&object.kind)
+                    || is_locus_surface_collection(objects, object.id))
+        })
+}
+
+/// A sampled polygon family can itself be swept by a later locus. IDs must
+/// descend at every level so malformed native cycles cannot recurse here.
+pub(super) fn is_locus_surface_collection(objects: &[Object], id: usize) -> bool {
+    let Some(object) = id.checked_sub(1).and_then(|index| objects.get(index)) else {
+        return false;
+    };
+    let refs = match &object.kind {
+        Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) if !object.deleted => refs,
+        _ => return false,
+    };
+    let Some(&target) = refs.first().filter(|&&target| target < id) else {
+        return false;
+    };
+    target
+        .checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .is_some_and(|target| is_locus_polygon_kind(&target.kind))
+        || is_locus_surface_collection(objects, target)
 }
 
 pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
@@ -800,8 +824,20 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<Vec<Point>>> {
+        let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
+            _ => return None,
+        };
         let polygons = self.sampled_locus_polygons(id, subdivisions)?;
         let mut surfaces: Vec<_> = polygons.iter().flatten().cloned().collect();
+        if self
+            .objects
+            .get(target.checked_sub(1)?)?
+            .kind
+            .is_circle_interior()
+        {
+            return Some(surfaces);
+        }
         for pair in polygons.windows(2) {
             let (Some(before), Some(after)) = (&pair[0], &pair[1]) else {
                 continue;
@@ -817,7 +853,23 @@ impl Document {
         Some(surfaces)
     }
 
-    fn locus_styled_surfaces(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
+    pub fn locus_surfaces(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
+        let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
+            _ => return None,
+        };
+        if is_locus_surface_collection(&self.objects, target) {
+            let inner_subdivisions = subdivisions.isqrt().max(2);
+            return Some(
+                self.sample_any_locus(id, subdivisions, |sample, target| {
+                    sample.locus_surfaces(target, inner_subdivisions)
+                })?
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect(),
+            );
+        }
         let samples = self.sample_any_locus(id, subdivisions, |sample, target| {
             let points = sample.filled_region_points(target)?;
             let style = sample.effective_visual_style(target)?;
@@ -831,6 +883,14 @@ impl Document {
                 style: *style,
             })
             .collect::<Vec<_>>();
+        if self
+            .objects
+            .get(target.checked_sub(1)?)?
+            .kind
+            .is_circle_interior()
+        {
+            return Some(surfaces);
+        }
         for pair in samples.windows(2) {
             let (Some((before, _)), Some((after, style))) = (&pair[0], &pair[1]) else {
                 continue;
@@ -864,7 +924,7 @@ impl Document {
         }
         Some(
             self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
-                sample.locus_styled_surfaces(source, subdivisions)
+                sample.locus_surfaces(source, subdivisions)
             })?
             .into_iter()
             .flatten()

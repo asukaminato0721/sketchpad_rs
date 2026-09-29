@@ -293,6 +293,7 @@ impl Document {
         if object.deleted || object.kind.numeric_unit().is_none() || !value.is_finite() {
             return None;
         }
+        self.invalidate_evaluation_dependents(id);
         let context = self.evaluation_context.as_mut()?;
         context.seed_points.remove(&id);
         context.seed_numbers.insert(id, value);

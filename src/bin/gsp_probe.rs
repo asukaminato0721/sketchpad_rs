@@ -2614,6 +2614,17 @@ fn svg(input: &str, output: &str) -> Result<(), String> {
                 }
             }
         }
+        if let Some(surfaces) = document
+            .mapped_collection_surfaces(object.id, 32)
+            .or_else(|| document.locus_surfaces(object.id, 32))
+        {
+            for point in surfaces.into_iter().flat_map(|surface| surface.points) {
+                bounds.0 = bounds.0.min(point.x);
+                bounds.1 = bounds.1.min(point.y);
+                bounds.2 = bounds.2.max(point.x);
+                bounds.3 = bounds.3.max(point.y);
+            }
+        }
     }
     if !bounds.0.is_finite() {
         bounds = (0., 0., 800., 600.);

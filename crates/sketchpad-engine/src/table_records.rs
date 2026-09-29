@@ -1136,35 +1136,62 @@ impl ParameterExpr {
         self.eval_raw_values(&[source])
     }
     fn eval_raw_values(&self, sources: &[f64]) -> Option<f64> {
-        self.eval_raw_context(sources, &[], &|_, _, _| None)
+        self.eval_raw_context(sources, &[], false, &|_, _, _| None)
     }
     fn eval_raw_context(
         &self,
         sources: &[f64],
         units: &[NumericUnit],
+        radians: bool,
         functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
     ) -> Option<f64> {
         let value = match self {
             Self::Source(index) => *sources.get(*index)?,
             Self::FunctionSource(index, argument) => functions(
                 *index,
-                argument.eval_raw_context(sources, units, functions)?,
+                argument.eval_raw_context(sources, units, radians, functions)?,
                 argument.units(units).ok()?,
             )?,
-            Self::Neg(argument) => -argument.eval_raw_context(sources, units, functions)?,
-            Self::Group(argument) => argument.eval_raw_context(sources, units, functions)?,
+            Self::Neg(argument) => {
+                -argument.eval_raw_context(sources, units, radians, functions)?
+            }
+            Self::Group(argument) => {
+                argument.eval_raw_context(sources, units, radians, functions)?
+            }
             Self::Literal(value, _) => *value,
             Self::Call(function, argument) => {
-                let value = argument.eval_raw_context(sources, units, functions)?;
+                let value = argument.eval_raw_context(sources, units, radians, functions)?;
                 // Native calculator PI constant, present at executable offset 0x272690.
-                let angle = value / 180. * CALCULATOR_PI;
+                let angle = if radians {
+                    value
+                } else {
+                    value / 180. * CALCULATOR_PI
+                };
                 match function {
                     0x2000 => angle.sin(),
                     0x2001 => angle.cos(),
                     0x2002 => angle.tan(),
-                    0x2003 => value.asin() / CALCULATOR_PI * 180.,
-                    0x2004 => value.acos() / CALCULATOR_PI * 180.,
-                    0x2005 => value.atan() / CALCULATOR_PI * 180.,
+                    0x2003 => {
+                        if radians {
+                            value.asin()
+                        } else {
+                            value.asin() / CALCULATOR_PI * 180.
+                        }
+                    }
+                    0x2004 => {
+                        if radians {
+                            value.acos()
+                        } else {
+                            value.acos() / CALCULATOR_PI * 180.
+                        }
+                    }
+                    0x2005 => {
+                        if radians {
+                            value.atan()
+                        } else {
+                            value.atan() / CALCULATOR_PI * 180.
+                        }
+                    }
                     0x2006 => value.abs(),
                     0x2007 => value.sqrt(),
                     0x2008 => value.ln(),
@@ -1182,8 +1209,8 @@ impl ParameterExpr {
                 }
             }
             Self::Binary(operator, left, right) => {
-                let left = left.eval_raw_context(sources, units, functions)?;
-                let right = right.eval_raw_context(sources, units, functions)?;
+                let left = left.eval_raw_context(sources, units, radians, functions)?;
+                let right = right.eval_raw_context(sources, units, radians, functions)?;
                 match operator {
                     0x1000 => left + right,
                     0x1001 => left - right,
@@ -1975,13 +2002,32 @@ impl ParameterCalculationGroup {
         units: &[NumericUnit],
         functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
     ) -> Option<f64> {
-        self.display_value_with_functions(values, units, functions)
+        self.display_value_with_functions_angle_mode(values, units, false, functions)
+            .filter(|value| value.is_finite())
+    }
+    pub(crate) fn value_for_sources_with_functions_angle_mode(
+        &self,
+        values: &[f64],
+        units: &[NumericUnit],
+        radians: bool,
+        functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
+    ) -> Option<f64> {
+        self.display_value_with_functions_angle_mode(values, units, radians, functions)
             .filter(|value| value.is_finite())
     }
     pub(crate) fn display_value_with_functions(
         &self,
         values: &[f64],
         units: &[NumericUnit],
+        functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
+    ) -> Option<f64> {
+        self.display_value_with_functions_angle_mode(values, units, false, functions)
+    }
+    pub(crate) fn display_value_with_functions_angle_mode(
+        &self,
+        values: &[f64],
+        units: &[NumericUnit],
+        radians: bool,
         functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
     ) -> Option<f64> {
         if values.len() != self.sources().len()
@@ -1994,7 +2040,7 @@ impl ParameterCalculationGroup {
         if tree.units(units).ok()? != self.unit() {
             return None;
         }
-        tree.eval_raw_context(values, units, functions)
+        tree.eval_raw_context(values, units, radians, functions)
     }
     /// Caption evaluation retains an infinite result from finite inputs.
     /// Geometry and downstream numeric sources still use `value_for_sources`.

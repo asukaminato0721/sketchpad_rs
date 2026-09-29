@@ -1212,7 +1212,7 @@ impl Document {
                     };
                     a.distance(b)
                 } else {
-                    self.distance_value_pixels(radius_source)?
+                    self.marked_distance_value_pixels(radius_source)?.abs()
                 };
                 (center, radius)
             }

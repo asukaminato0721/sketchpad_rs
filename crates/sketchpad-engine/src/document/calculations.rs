@@ -839,9 +839,14 @@ impl Document {
             return None;
         };
         let sources = calculation_source_ids(first, group);
-        group.value_for_sources_with_functions(&values, &units, &|index, argument, unit| {
-            self.function_value_with_unit(*sources.get(index)?, argument, unit)
-        })
+        group.value_for_sources_with_functions_angle_mode(
+            &values,
+            &units,
+            self.angle_unit_radians,
+            &|index, argument, unit| {
+                self.function_value_with_unit(*sources.get(index)?, argument, unit)
+            },
+        )
     }
 
     pub fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
@@ -850,9 +855,14 @@ impl Document {
             return None;
         };
         let sources = calculation_source_ids(first, group);
-        group.display_value_with_functions(&values, &units, &|index, argument, unit| {
-            self.function_value_with_unit(*sources.get(index)?, argument, unit)
-        })
+        group.display_value_with_functions_angle_mode(
+            &values,
+            &units,
+            self.angle_unit_radians,
+            &|index, argument, unit| {
+                self.function_value_with_unit(*sources.get(index)?, argument, unit)
+            },
+        )
     }
 
     fn parameter_calculation_inputs(
