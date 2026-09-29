@@ -253,8 +253,17 @@ fn attached_numeric_label_command_accepts_measurement_units_and_live_edits() {
     editor.doc.selected = [a, distance].into_iter().collect();
     editor.attach_numeric_label_selected();
     let label = editor.doc.objects.last().unwrap().id;
-    assert!(matches!(editor.doc.objects[label-1].kind, Kind::PointNumericLabel(point, value) if point == a && value == distance));
-    assert!(editor.doc.point_numeric_label(label).unwrap().1.ends_with(" cm"));
+    assert!(
+        matches!(editor.doc.objects[label-1].kind, Kind::PointNumericLabel(point, value) if point == a && value == distance)
+    );
+    assert!(
+        editor
+            .doc
+            .point_numeric_label(label)
+            .unwrap()
+            .1
+            .ends_with(" cm")
+    );
     let before = editor.doc.point_numeric_label(label).unwrap().1;
     editor.doc.checkpoint();
     assert!(editor.doc.move_point(b, Point { x: 260., y: 180. }));

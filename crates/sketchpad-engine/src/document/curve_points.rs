@@ -64,7 +64,8 @@ pub(super) fn decode(
         || header[..2] != [15, 0]
         || header[6..10] != [1, 0, 10, 0]
         || payload.len() != 12
-        || free_constraint_subtype(objects, path).is_none_or(|subtype| payload[..4] != [15, 0, subtype, 0])
+        || free_constraint_subtype(objects, path)
+            .is_none_or(|subtype| payload[..4] != [15, 0, subtype, 0])
         || !free_supported(objects, path, page, before)
     {
         return None;
@@ -102,8 +103,12 @@ impl Document {
         let t = PointCurve::new(self, path)?.literal_fraction(fraction)?;
         match self.objects.get(path.checked_sub(1)?)?.kind {
             Kind::Locus(..) => Some(t),
-            Kind::SampledMapped(_) => self.sampled_mapped_evaluator(path)?.logical_point_value(fraction),
-            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _) => Some(min + (max - min) * t),
+            Kind::SampledMapped(_) => self
+                .sampled_mapped_evaluator(path)?
+                .logical_point_value(fraction),
+            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _) => {
+                Some(min + (max - min) * t)
+            }
             _ => None,
         }
     }

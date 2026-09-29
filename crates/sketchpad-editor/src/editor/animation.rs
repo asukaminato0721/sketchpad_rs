@@ -1,7 +1,7 @@
 use super::{AnimationButtonDraft, AnimationTrack, Editor};
+use crate::render::{TraceMark, TraceSample};
 use sketchpad_engine::action_records::{AnimationDirection, AnimationSettings, MovementSpeed};
 use sketchpad_engine::document::{Kind, LineMode, Point};
-use crate::render::TraceMark;
 use sketchpad_engine::style_records::{RgbColor, VisualStyle};
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -27,22 +27,33 @@ impl Editor {
                 },
             };
             if let Some(point) = self.doc.position(object.id) {
-                self.trace_marks.push(TraceMark::Point(point, color));
+                self.trace_marks
+                    .push(TraceSample::new(TraceMark::Point(point, color)));
             } else if let Some((a, b, mode)) = self.doc.line_points(object.id) {
                 self.trace_marks
-                    .push(TraceMark::Straight(a, b, mode, color));
+                    .push(TraceSample::new(TraceMark::Straight(a, b, mode, color)));
             } else if let Some((center, radius)) = self.doc.circle_points(object.id) {
                 self.trace_marks
-                    .push(TraceMark::Circle(center, radius, color));
+                    .push(TraceSample::new(TraceMark::Circle(center, radius, color)));
             } else if let Some(points) = self.doc.arc_points(object.id, 128) {
-                self.trace_marks.push(TraceMark::Arc(points, color));
+                self.trace_marks
+                    .push(TraceSample::new(TraceMark::Arc(points, color)));
             } else if let Some(points) = self.doc.polygon_points(object.id) {
-                self.trace_marks.push(TraceMark::Polygon(points, color));
+                self.trace_marks
+                    .push(TraceSample::new(TraceMark::Polygon(points, color)));
             }
         }
         if self.trace_marks.len() > 8192 {
             self.trace_marks.drain(..self.trace_marks.len() - 8192);
         }
+    }
+    pub(super) fn prune_faded_traces(&mut self) {
+        if !self.preferences.fade_traces {
+            return;
+        }
+        let lifetime = self.preferences.trace_fade_seconds.max(0.1);
+        self.trace_marks
+            .retain(|sample| sample.created_at.elapsed().as_secs_f32() < lifetime);
     }
     fn next_animation_random(state: &mut u64) -> f64 {
         *state ^= *state << 13;
@@ -176,6 +187,10 @@ impl Editor {
             Kind::PointOnArc(host, t) if self.doc.point_on_arc(host, t).is_some() => (t, None),
             Kind::PointOnPolygon(host, edge, t) => {
                 (self.doc.polygon_boundary_parameter(host, edge, t)?, None)
+            }
+            Kind::PointOnCurve(host, t) if self.doc.point_on_curve(host, t).is_some() => (t, None),
+            Kind::PointOnSector(host, t) if self.doc.point_on_sector(host, t).is_some() => {
+                (t, None)
             }
             _ => return None,
         };
@@ -491,7 +506,9 @@ impl Editor {
             }
             let circular = matches!(
                 kind,
-                Kind::PointOnCircle(_, _, _) | Kind::PointOnPolygon(_, _, _)
+                Kind::PointOnCircle(_, _, _)
+                    | Kind::PointOnPolygon(_, _, _)
+                    | Kind::PointOnSector(_, _)
             );
             match track.button_settings.map(|settings| settings.direction) {
                 Some(AnimationDirection::Forward) => {
@@ -573,6 +590,8 @@ impl Editor {
                 Kind::PointOnPolygon(host, _, _) => {
                     self.doc.point_at_polygon_parameter(host, track.phase)
                 }
+                Kind::PointOnCurve(host, _) => self.doc.point_on_curve(host, track.phase),
+                Kind::PointOnSector(host, _) => self.doc.point_on_sector(host, track.phase),
                 _ => None,
             };
             let moved = destination.is_some_and(|point| self.doc.move_point(track.id, point));
@@ -586,6 +605,6 @@ impl Editor {
         self.animation_last_tick = now;
         self.tick_animation(elapsed);
         self.tick_movement(elapsed);
-        self.tick_presentations();
+        self.tick_presentations(elapsed);
     }
 }

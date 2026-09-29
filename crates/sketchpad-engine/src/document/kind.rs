@@ -1,6 +1,6 @@
 use super::calculations::calculation_source_ids;
 use super::transform_model::ElementType;
-use super::{EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object};
+use super::{EmbeddedToolInputKind, ImagePlacement, IterationDepth, Kind, LineMode, Object};
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::style_records::{
     LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
@@ -10,13 +10,16 @@ use crate::value_equation_records::ValueEquationKind;
 use std::collections::BTreeSet;
 
 impl Kind {
-    pub fn is_arc(&self) -> bool { is_arc_kind(self) }
+    pub fn is_arc(&self) -> bool {
+        is_arc_kind(self)
+    }
     pub fn is_function(&self) -> bool {
         matches!(
             self,
             Self::FunctionDefinition(_)
                 | Self::ReferencedFunction(_, _)
                 | Self::DerivativeFunction(_, _)
+                | Self::DataFunction { .. }
         )
     }
 
@@ -116,13 +119,17 @@ impl Kind {
                 .is_some_and(|definition| definition.element() == ElementType::Sector)
     }
     pub fn is_filled_region(&self) -> bool {
-        self.is_polygon() || self.is_sector() || self.is_circle_interior()
+        self.is_polygon()
+            || self.is_sector()
+            || self.is_circle_interior()
             || matches!(self, Kind::CircularSegmentBoundary(_))
     }
     pub fn is_circle_interior(&self) -> bool {
         matches!(self, Kind::CircleInterior(_))
             || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Disk)
-            || self.transform_definition().is_some_and(|d| d.element() == ElementType::Disk)
+            || self
+                .transform_definition()
+                .is_some_and(|d| d.element() == ElementType::Disk)
     }
     pub fn is_circle(&self) -> bool {
         matches!(self, Kind::Circle(..) | Kind::CircleBySegment(..))
@@ -221,10 +228,28 @@ impl Kind {
         }
     }
     pub fn dependencies(&self) -> Vec<usize> {
-        if let Kind::Image { anchor: Some(id), .. } = self {
-            return vec![*id];
+        if let Kind::CroppedImage { source, polygon } = self {
+            return vec![*source, *polygon];
         }
-        if let Kind::CoordinatePoint(d) = self { return d.native_references(); }
+        if let Kind::Image { placement, .. } = self {
+            return match placement {
+                ImagePlacement::Independent(_) => Vec::new(),
+                ImagePlacement::Point { anchor, .. } => vec![*anchor],
+                ImagePlacement::Rectangle {
+                    bottom_right,
+                    top_left,
+                } => vec![*bottom_right, *top_left],
+                ImagePlacement::Parallelogram {
+                    top_left,
+                    bottom_right,
+                    bottom_left,
+                } => vec![*top_left, *bottom_right, *bottom_left],
+                ImagePlacement::Transformed(definition) => definition.dependencies(),
+            };
+        }
+        if let Kind::CoordinatePoint(d) = self {
+            return d.native_references();
+        }
         if let Kind::ReferencedText { parents, .. } = self {
             return parents.clone();
         }
@@ -416,6 +441,7 @@ impl Kind {
             | Kind::SlopeMeasurement(a, b)
             | Kind::FunctionPlot(a, b, _, _, _)
             | Kind::PathValuePoint(a, b) => vec![a, b],
+            Kind::DataFunction { source, frame, .. } => vec![source, frame],
             Kind::PlottedPoint(frame, _, _) => vec![frame],
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
             | Kind::NumericCoordinatePoint(x, y, frame) => vec![x, y, frame],
@@ -456,12 +482,20 @@ impl Kind {
             | Kind::LengthPairCalculation(_, _, _)
             | Kind::PointParameterIteration(_, _, _, _, _, _)
             | Kind::ParameterCalculation(_, _) => unreachable!(),
-            Kind::CoordinatePoint(..) | Kind::Transformed(..) | Kind::MappedElement(..) | Kind::SampledMapped(..) | Kind::Colorized(..) | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
+            Kind::CoordinatePoint(..)
+            | Kind::CroppedImage { .. }
+            | Kind::Transformed(..)
+            | Kind::MappedElement(..)
+            | Kind::SampledMapped(..)
+            | Kind::Colorized(..)
+            | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
         }
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let m = |id: usize| ids[id];
-        if let Kind::CoordinatePoint(d) = self { return Kind::CoordinatePoint(d.remap(ids)); }
+        if let Kind::CoordinatePoint(d) = self {
+            return Kind::CoordinatePoint(d.remap(ids));
+        }
         if let Kind::Colorized(definition) = self {
             return Kind::Colorized(definition.remap(ids));
         }
@@ -582,6 +616,7 @@ impl Kind {
         if let Kind::PresentationButton {
             targets,
             mode,
+            options,
             label,
             anchor,
         } = self
@@ -589,6 +624,7 @@ impl Kind {
             return Kind::PresentationButton {
                 targets: targets.iter().map(|&target| m(target)).collect(),
                 mode: *mode,
+                options: *options,
                 label: label.clone(),
                 anchor: *anchor,
             };
@@ -643,12 +679,44 @@ impl Kind {
                 second: m(*second),
             };
         }
+        if let Kind::Image { png, placement } = self {
+            return Kind::Image {
+                png: png.clone(),
+                placement: match placement {
+                    ImagePlacement::Independent(transform) => {
+                        ImagePlacement::Independent(*transform)
+                    }
+                    ImagePlacement::Point { anchor, relative } => ImagePlacement::Point {
+                        anchor: m(*anchor),
+                        relative: *relative,
+                    },
+                    ImagePlacement::Rectangle {
+                        bottom_right,
+                        top_left,
+                    } => ImagePlacement::Rectangle {
+                        bottom_right: m(*bottom_right),
+                        top_left: m(*top_left),
+                    },
+                    ImagePlacement::Parallelogram {
+                        top_left,
+                        bottom_right,
+                        bottom_left,
+                    } => ImagePlacement::Parallelogram {
+                        top_left: m(*top_left),
+                        bottom_right: m(*bottom_right),
+                        bottom_left: m(*bottom_left),
+                    },
+                    ImagePlacement::Transformed(definition) => {
+                        ImagePlacement::Transformed(definition.remap_unchecked(ids))
+                    }
+                },
+            };
+        }
         match *self {
             Kind::Free(p) => Kind::Free(p),
-            Kind::Image { ref png, transform, anchor } => Kind::Image {
-                png: png.clone(),
-                transform,
-                anchor: anchor.map(m),
+            Kind::CroppedImage { source, polygon } => Kind::CroppedImage {
+                source: m(source),
+                polygon: m(polygon),
             },
             Kind::PlainText { ref text, rect } => Kind::PlainText {
                 text: text.clone(),
@@ -697,11 +765,21 @@ impl Kind {
                 },
             ),
             Kind::PointNumericLabel(point, value) => Kind::PointNumericLabel(m(point), m(value)),
-            Kind::PointReferencedText { point, source, ref text } => Kind::PointReferencedText {
-                point: m(point), source: m(source), text: text.clone(),
+            Kind::PointReferencedText {
+                point,
+                source,
+                ref text,
+            } => Kind::PointReferencedText {
+                point: m(point),
+                source: m(source),
+                text: text.clone(),
             },
-            Kind::ReferencedText { ref parents, ref text } => Kind::ReferencedText {
-                parents: parents.iter().map(|id| m(*id)).collect(), text: text.clone(),
+            Kind::ReferencedText {
+                ref parents,
+                ref text,
+            } => Kind::ReferencedText {
+                parents: parents.iter().map(|id| m(*id)).collect(),
+                text: text.clone(),
             },
             Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) => {
                 Kind::PointParameterIteration(
@@ -760,6 +838,15 @@ impl Kind {
             }
             Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
             Kind::DerivativeFunction(source, expr) => Kind::DerivativeFunction(m(source), expr),
+            Kind::DataFunction {
+                source,
+                frame,
+                smoothing,
+            } => Kind::DataFunction {
+                source: m(source),
+                frame: m(frame),
+                smoothing,
+            },
             Kind::FunctionPlot(a, b, min, max, samples) => {
                 Kind::FunctionPlot(m(a), m(b), min, max, samples)
             }
@@ -784,7 +871,10 @@ impl Kind {
             Kind::PolarAngleValue(a, b, c) => Kind::PolarAngleValue(m(a), m(b), m(c)),
             Kind::VertexAngleValue(a, b, c) => Kind::VertexAngleValue(m(a), m(b), m(c)),
             Kind::AngleMarker(a, b, c, class) => Kind::AngleMarker(m(a), m(b), m(c), class),
-            Kind::NumericAlias { source, unit } => Kind::NumericAlias { source: m(source), unit },
+            Kind::NumericAlias { source, unit } => Kind::NumericAlias {
+                source: m(source),
+                unit,
+            },
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
@@ -811,6 +901,7 @@ impl Kind {
                 Kind::CircleCircleIntersection(m(a), m(b), root)
             }
             Kind::Unsupported(code) => Kind::Unsupported(code),
+            Kind::Image { .. } => unreachable!(),
             Kind::ToolInput(input) => Kind::ToolInput(input),
             Kind::Polygon(_)
             | Kind::BranchingPolygonIteration { .. }
@@ -825,7 +916,10 @@ impl Kind {
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
-            Kind::CoordinatePoint(..) | Kind::MappedElement(..) | Kind::SampledMapped(..) | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
+            Kind::CoordinatePoint(..)
+            | Kind::MappedElement(..)
+            | Kind::SampledMapped(..)
+            | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
         }
     }
     pub(super) fn remap_checked(&self, ids: &[usize]) -> Result<Self, String> {
@@ -929,12 +1023,14 @@ pub(super) fn is_multi_page_deletion_kind(kind: &Kind) -> bool {
         )
 }
 pub(super) fn is_segment_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Segment) || matches!(
-        kind,
-        Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment)
-    ) || kind
-        .transform_definition()
-        .is_some_and(|definition| definition.element() == ElementType::Segment)
+    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Segment)
+        || matches!(
+            kind,
+            Kind::Segment(..) | Kind::ToolInput(EmbeddedToolInputKind::Segment)
+        )
+        || kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::Segment)
 }
 
 pub(super) fn is_straight_kind(kind: &Kind) -> bool {
@@ -1009,8 +1105,9 @@ pub(super) fn straight_kind_mode(kind: &Kind) -> Option<LineMode> {
 pub(super) fn is_point_kind(kind: &Kind) -> bool {
     matches!(kind, Kind::MappedElement(definition) if definition.element() == ElementType::Point)
         || matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Point)
-        || kind.transform_definition()
-        .is_some_and(|definition| definition.element() == ElementType::Point)
+        || kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::Point)
         || matches!(
             kind,
             Kind::Free(_)
@@ -1022,8 +1119,8 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PointOnLine(_, _)
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
-            | Kind::PointOnSector(_, _)
-            | Kind::PointOnCurve(_, _)
+                | Kind::PointOnSector(_, _)
+                | Kind::PointOnCurve(_, _)
                 | Kind::PointOnPolygon(_, _, _)
                 | Kind::GraphHorizontalUnit(_, _)
                 | Kind::GraphVerticalUnit(_, _)
@@ -1036,8 +1133,8 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
                 | Kind::CurveIntersection(_, _, _)
-            | Kind::BoundaryIntersection(_, _)
-            | Kind::LineCircleIntersection(_, _, _)
+                | Kind::BoundaryIntersection(_, _)
+                | Kind::LineCircleIntersection(_, _, _)
                 | Kind::CircleCircleIntersection(_, _, _)
         )
 }
@@ -1116,32 +1213,94 @@ pub(super) fn expected_parameter_locus_refs(
     Some(refs)
 }
 
-/// Native records fix target/path/driver roles and the final target, while
-/// intermediate dependency nodes may be stored in a different traversal order.
-/// Match the complete multiset so omissions, duplicates and unrelated nodes
-/// cannot acquire validity merely by naming a supported target.
+fn locus_target_dependency_closure(
+    objects: &[Object],
+    current: usize,
+    page: usize,
+    found: &mut BTreeSet<usize>,
+) -> Option<()> {
+    if !found.insert(current) {
+        return Some(());
+    }
+    let object = objects.get(current.checked_sub(1)?)?;
+    if object.deleted || object.page != page || matches!(object.kind, Kind::Unsupported(_)) {
+        return None;
+    }
+    let parents = if let Kind::Midpoint(a, b) = object.kind {
+        let host = object.midpoint_host?;
+        if !matches!(objects.get(host.checked_sub(1)?)?.kind, Kind::Segment(x, y) if (x == a && y == b) || (x == b && y == a))
+        {
+            return None;
+        }
+        vec![host]
+    } else {
+        object.kind.dependencies()
+    };
+    for parent in parents {
+        if parent >= current {
+            return None;
+        }
+        locus_target_dependency_closure(objects, parent, page, found)?;
+    }
+    Some(())
+}
+
+/// Native records fix target/path/driver roles and the final target. Their
+/// intermediate capture list may omit branches or retain an independent target
+/// branch, but every captured node must belong to the target's live closure.
 pub(super) fn locus_refs_match(objects: &[Object], refs: &[usize]) -> bool {
-    let Some((&target, &driver)) = refs.first().zip(refs.get(2)) else {
+    let Some((&target, &path, &driver)) = refs
+        .first()
+        .zip(refs.get(1))
+        .zip(refs.get(2))
+        .map(|((target, path), driver)| (target, path, driver))
+    else {
         return false;
     };
-    let Some(expected) = expected_locus_refs(objects, driver, target) else {
+    let Some(expected) = expected_locus_refs_for_path(objects, driver, target, path) else {
         return false;
     };
-    if refs.len() != expected.len()
-        || refs.get(..3) != expected.get(..3)
-        || refs.last() != Some(&target)
-    {
+    if refs.len() < 4 || refs.get(..3) != expected.get(..3) || refs.last() != Some(&target) {
         return false;
     }
-    let mut captured = refs[3..].to_vec();
-    captured.sort_unstable();
-    captured == expected[3..]
+    let mut allowed: BTreeSet<_> = expected[3..].iter().copied().collect();
+    if let Some(page) = objects.get(target - 1).map(|object| object.page) {
+        let mut closure = BTreeSet::new();
+        if locus_target_dependency_closure(objects, target, page, &mut closure).is_some() {
+            allowed.extend(closure);
+        }
+    }
+    allowed.remove(&path);
+    allowed.remove(&driver);
+    let captured: BTreeSet<_> = refs[3..].iter().copied().collect();
+    captured.len() == refs.len() - 3 && captured.is_subset(&allowed)
 }
 
 pub(super) fn expected_locus_refs(
     objects: &[Object],
     driver: usize,
     target: usize,
+) -> Option<Vec<usize>> {
+    let moving = objects.get(driver.checked_sub(1)?)?;
+    let path = match moving.kind {
+        Kind::PointOnRay(path, _)
+        | Kind::PointOnLine(path, _)
+        | Kind::PointOnSegment(path, _)
+        | Kind::PointOnCircle(path, _, _)
+        | Kind::PointOnArc(path, _)
+        | Kind::PointOnCurve(path, _)
+        | Kind::PointOnPolygon(path, ..)
+        | Kind::PointOnSector(path, _) => path,
+        _ => return None,
+    };
+    expected_locus_refs_for_path(objects, driver, target, path)
+}
+
+fn expected_locus_refs_for_path(
+    objects: &[Object],
+    driver: usize,
+    target: usize,
+    path: usize,
 ) -> Option<Vec<usize>> {
     fn ancestry(
         objects: &[Object],
@@ -1203,56 +1362,70 @@ pub(super) fn expected_locus_refs(
             || is_locus_straight_kind(&traced.kind)
             || traced.kind.is_circle()
             || is_arc_kind(&traced.kind)
-            || is_locus_polygon_kind(&traced.kind))
+            || is_locus_polygon_kind(&traced.kind)
+            || is_locus_curve_collection(objects, target))
     {
         return None;
     }
     if is_locus_straight_kind(&traced.kind) {
         locus_straight_source_mode(objects, target)?;
     }
-    let path = match moving.kind {
-        Kind::PointOnRay(path, _)
-            if locus_straight_source_mode(objects, path) == Some(LineMode::Ray) => path,
-        Kind::PointOnLine(path, _)
-            if locus_straight_source_mode(objects, path) == Some(LineMode::Line) => path,
-        Kind::PointOnSegment(path, _)
-            if locus_straight_source_mode(objects, path) == Some(LineMode::Segment) =>
-        {
-            path
-        }
-        Kind::PointOnCircle(path, _, _) if objects.get(path.checked_sub(1)?)?.kind.is_circle() => {
-            path
-        }
-        Kind::PointOnArc(path, _)
-            if is_arc_kind(&objects.get(path.checked_sub(1)?)?.kind) =>
-        {
-            path
-        }
-        Kind::PointOnCurve(path, _)
-            if super::curve_points::free_supported(objects, path, moving.page, driver) => path,
-        Kind::PointOnPolygon(path, ..)
-            if objects.get(path.checked_sub(1)?)?.kind.is_polygon() => path,
-        Kind::PointOnSector(path, _)
-            if super::sector_boundary::supported_host(objects, path, moving.page, driver) => path,
-        _ => return None,
-    };
+    super::locus::locus_driver_range_info_for_path(objects, driver, path)?;
     let host = objects.get(path.checked_sub(1)?)?;
-    if path >= driver || host.deleted || host.page != moving.page { return None; }
-    let ancestors = ancestry(objects, driver, target, moving.page, &mut Default::default())?;
+    if path >= target || host.deleted || host.page != moving.page {
+        return None;
+    }
+    if matches!(moving.kind, Kind::Free(_))
+        && ancestry(objects, driver, path, moving.page, &mut Default::default()).is_some()
+    {
+        return None;
+    }
+    let ancestors = ancestry(
+        objects,
+        driver,
+        target,
+        moving.page,
+        &mut Default::default(),
+    )?;
     let mut refs = vec![target, path];
     refs.extend(ancestors);
     Some(refs)
 }
 
 pub(super) fn is_arc_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Arc) || matches!(
-        kind,
-        Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
-    ) || kind.transform_definition().is_some_and(|definition| definition.element() == ElementType::Arc)
+    matches!(kind, Kind::Colorized(d) if d.element() == ElementType::Arc)
+        || matches!(
+            kind,
+            Kind::ThreePointArc(_, _, _) | Kind::ArcOnCircle(_, _, _) | Kind::CenterArc(_, _, _)
+        )
+        || kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::Arc)
 }
 
 pub(super) fn is_locus_polygon_kind(kind: &Kind) -> bool {
-    kind.is_polygon()
+    kind.is_filled_region()
+}
+
+/// A point-output sampled object is itself a curve, so a later locus can sweep
+/// that whole curve. Keep this bounded to already validated native families;
+/// geometric-output loci are not recursively reclassified as curves.
+pub(super) fn is_locus_curve_collection(objects: &[Object], id: usize) -> bool {
+    let Some(object) = id.checked_sub(1).and_then(|index| objects.get(index)) else {
+        return false;
+    };
+    if object.deleted {
+        return false;
+    }
+    match &object.kind {
+        Kind::SampledMapped(_) => true,
+        Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs
+            .first()
+            .and_then(|target| target.checked_sub(1))
+            .and_then(|index| objects.get(index))
+            .is_some_and(|target| !target.deleted && is_point_kind(&target.kind)),
+        _ => false,
+    }
 }
 
 pub(super) fn is_locus_straight_kind(kind: &Kind) -> bool {
@@ -1276,7 +1449,8 @@ pub(super) fn locus_straight_mode(kind: &Kind) -> Option<LineMode> {
             | Kind::Perpendicular(_, _)
             | Kind::Bisector(_, _, _)
             | Kind::Colorized(_)
-    ) || kind.transform_definition().is_some() {
+    ) || kind.transform_definition().is_some()
+    {
         straight_kind_mode(kind)
     } else {
         None
@@ -1293,18 +1467,23 @@ pub(super) fn locus_straight_source_mode(objects: &[Object], id: usize) -> Optio
     let mut current = id;
     loop {
         let object = objects.get(current.checked_sub(1)?)?;
-        if object.deleted || object.page != page || locus_straight_mode(&object.kind) != Some(mode) {
+        if object.deleted || object.page != page || locus_straight_mode(&object.kind) != Some(mode)
+        {
             return None;
         }
         let source = if let Kind::Colorized(definition) = &object.kind {
-            if !definition.supported(objects, page, current) { return None; }
+            if !definition.supported(objects, page, current) {
+                return None;
+            }
             definition.source()
         } else if let Some(definition) = object.kind.transform_definition() {
             definition.source()
         } else {
             return Some(mode);
         };
-        if source == 0 || source >= current { return None; }
+        if source == 0 || source >= current {
+            return None;
+        }
         current = source;
     }
 }
@@ -1319,7 +1498,9 @@ pub(super) fn plot_straight_mode(kind: &Kind) -> Option<LineMode> {
     match kind {
         Kind::ToolInput(_) => None,
         Kind::GraphAxis(_, _, form) if !matches!(form, 0 | 1 | 0x1_0001) => None,
-        Kind::CircleAxis(_, form) | Kind::DistanceAxis(_, _, form) if !matches!(form, 0 | 1) => None,
+        Kind::CircleAxis(_, form) | Kind::DistanceAxis(_, _, form) if !matches!(form, 0 | 1) => {
+            None
+        }
         _ => straight_kind_mode(kind),
     }
 }
@@ -1329,12 +1510,14 @@ pub(super) fn is_plot_path_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
-    value.is_finite() && is_plot_path_kind(kind) && match plot_straight_mode(kind) {
-        Some(LineMode::Segment) => (0.0..=1.0).contains(&value),
-        Some(LineMode::Ray) => value >= 0.0,
-        Some(LineMode::Line) => true,
-        None => !is_arc_kind(kind) || (0.0..=1.0).contains(&value),
-    }
+    value.is_finite()
+        && is_plot_path_kind(kind)
+        && match plot_straight_mode(kind) {
+            Some(LineMode::Segment) => (0.0..=1.0).contains(&value),
+            Some(LineMode::Ray) => value >= 0.0,
+            Some(LineMode::Line) => true,
+            None => !is_arc_kind(kind) || (0.0..=1.0).contains(&value),
+        }
 }
 
 pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
@@ -1418,7 +1601,14 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         width: LineWidth::Medium,
         pattern: LinePattern::Solid,
     };
-    if let Some(element) = kind.transform_definition().map(|d| d.element()).or_else(|| match kind { Kind::Colorized(d) => Some(d.element()), _ => None }) {
+    if let Some(element) = kind
+        .transform_definition()
+        .map(|d| d.element())
+        .or_else(|| match kind {
+            Kind::Colorized(d) => Some(d.element()),
+            _ => None,
+        })
+    {
         return Some(match element {
             ElementType::Point => VisualStyle::Point {
                 shape: PointStyle::Medium,
@@ -1428,14 +1618,17 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 VisualStyle::Stroke { line, color: navy }
             }
             ElementType::Circle | ElementType::Arc => VisualStyle::Stroke { line, color: green },
-            ElementType::Polygon | ElementType::Sector | ElementType::Disk => VisualStyle::Polygon {
-                opacity: 32767,
-                color: RgbColor {
-                    red: 255,
-                    green: 128,
-                    blue: 0,
-                },
-            },
+            ElementType::Polygon | ElementType::Sector | ElementType::Disk => {
+                VisualStyle::Polygon {
+                    opacity: 32767,
+                    color: RgbColor {
+                        red: 255,
+                        green: 128,
+                        blue: 0,
+                    },
+                }
+            }
+            ElementType::Image => return None,
         });
     }
     match kind {
@@ -1449,8 +1642,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnLine(_, _)
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
-            | Kind::PointOnSector(_, _)
-            | Kind::PointOnCurve(_, _)
+        | Kind::PointOnSector(_, _)
+        | Kind::PointOnCurve(_, _)
         | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
@@ -1459,8 +1652,8 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)
         | Kind::CurveIntersection(_, _, _)
-            | Kind::BoundaryIntersection(_, _)
-            | Kind::LineCircleIntersection(_, _, _)
+        | Kind::BoundaryIntersection(_, _)
+        | Kind::LineCircleIntersection(_, _, _)
         | Kind::CircleCircleIntersection(_, _, _) => Some(VisualStyle::Point {
             shape: PointStyle::Medium,
             color: red,
@@ -1495,16 +1688,35 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 blue: 128,
             },
         }),
-        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => Some(VisualStyle::Stroke {
-            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
-            color: RgbColor { red: 64, green: 64, blue: 64 },
-        }),
+        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
+            Some(VisualStyle::Stroke {
+                line: SegmentLineStyle {
+                    width: LineWidth::Thin,
+                    pattern: LinePattern::Solid,
+                },
+                color: RgbColor {
+                    red: 64,
+                    green: 64,
+                    blue: 64,
+                },
+            })
+        }
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
         Kind::SampledMapped(_) => Some(VisualStyle::Stroke {
-            line: SegmentLineStyle { width: LineWidth::Thin, pattern: LinePattern::Solid },
-            color: RgbColor { red: 255, green: 0, blue: 0 },
+            line: SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Solid,
+            },
+            color: RgbColor {
+                red: 255,
+                green: 0,
+                blue: 0,
+            },
         }),
-        Kind::CircleInterior(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_) | Kind::Polygon(_) => Some(VisualStyle::Polygon {
+        Kind::CircleInterior(_)
+        | Kind::SectorBoundary(_)
+        | Kind::CircularSegmentBoundary(_)
+        | Kind::Polygon(_) => Some(VisualStyle::Polygon {
             opacity: 32767,
             color: RgbColor {
                 red: 255,

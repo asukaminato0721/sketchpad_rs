@@ -2,12 +2,45 @@ use super::Editor;
 use sketchpad_engine::document::Kind;
 
 impl Editor {
+    pub(super) fn begin_edit_definition(&mut self, id: usize) -> Result<(), String> {
+        let object = self
+            .doc
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid object ID")?)
+            .filter(|object| !object.deleted && object.page == self.doc.active_page)
+            .ok_or("Select one editable definition on the active page")?;
+        if matches!(
+            object.kind,
+            Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _)
+        ) {
+            self.begin_function_dialog(false, Some(id));
+            return Ok(());
+        }
+        if let Kind::Parameter(group) = &object.kind {
+            self.parameter_value_draft = group.value().to_string();
+            self.parameter_value_dialog = Some(id);
+            return Ok(());
+        }
+        if let Kind::Calculation(group) = &object.kind {
+            self.calculation_draft = group.expression();
+            self.calculation_edit_id = Some(id);
+            self.calculation_dialog = true;
+            return Ok(());
+        }
+        Err("Select one supported calculation, function, or numeric parameter".into())
+    }
+
     pub(super) fn calculation_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if self.calculation_dialog {
+            let edit_id = self.calculation_edit_id;
             let mut apply = false;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("calculation_expression")).show(root.ctx(), |ui| {
-                ui.heading("Calculate");
+                ui.heading(if edit_id.is_some() {
+                    "Edit calculation"
+                } else {
+                    "Calculate"
+                });
                 ui.text_edit_singleline(&mut self.calculation_draft);
                 ui.label(
                     if self.doc.selected.iter().any(|&id| self.doc.objects.get(id - 1).is_some_and(|object| matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))) {
@@ -33,14 +66,31 @@ impl Editor {
                     ui.label("Functions: sin, cos, tan (degrees), asin, acos, atan, abs, sqrt, ln, log, sgn, round, trunc; constants: pi, π, e");
                 }
                 ui.horizontal(|ui| {
-                    apply = ui.button("Create").clicked();
+                    apply = ui
+                        .button(if edit_id.is_some() { "Update" } else { "Create" })
+                        .clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });
             if cancel {
                 self.calculation_dialog = false;
+                self.calculation_edit_id = None;
             }
             if apply {
+                if let Some(id) = edit_id {
+                    match self
+                        .doc
+                        .set_calculation_expression(id, self.calculation_draft.trim())
+                    {
+                        Ok(()) => {
+                            self.calculation_dialog = false;
+                            self.calculation_edit_id = None;
+                            self.status = format!("Updated calculation {id}");
+                        }
+                        Err(error) => self.status = error,
+                    }
+                    return;
+                }
                 let (_, y) = self.doc.next_calculation_anchor();
                 let selected_length = if self.doc.selected.len() == 1 {
                     self.doc.selected.iter().next().copied().filter(|&id| {
@@ -152,6 +202,7 @@ impl Editor {
                 match result {
                     Ok(id) => {
                         self.calculation_dialog = false;
+                        self.calculation_edit_id = None;
                         self.status = format!("Created calculation {id}");
                     }
                     Err(error) => self.status = error,

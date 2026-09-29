@@ -34,6 +34,79 @@ impl Editor {
         }
     }
 }
+
+impl Editor {
+    pub(super) fn apply_selected_text_style(&mut self, command: TextStyleCommand) {
+        self.status = match self.doc.toggle_selected_text_style(command) {
+            Ok(count) => format!("Formatted {count} text object(s)"),
+            Err(error) => error,
+        };
+    }
+
+    pub(super) fn apply_selected_text_family(&mut self) {
+        self.status = match self
+            .doc
+            .set_selected_text_family(self.text_font_input.trim())
+        {
+            Ok(count) => format!("Changed font on {count} text object(s)"),
+            Err(error) => error,
+        };
+    }
+
+    pub(super) fn text_palette_ui(&mut self, root: &mut egui::Ui) {
+        if !self.show_text_palette {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("Text Palette")
+            .default_pos(egui::pos2(220., 175.))
+            .resizable(false)
+            .open(&mut open)
+            .show(root.ctx(), |ui| {
+                if let Some(style) = self
+                    .doc
+                    .selected
+                    .iter()
+                    .find_map(|id| self.doc.text_font_state(*id))
+                {
+                    ui.label(format!("{} — {} pt", style.family, style.size_code));
+                } else {
+                    ui.label("Select text, an object label, or a numeric caption.");
+                }
+                ui.horizontal(|ui| {
+                    for (label, command) in [
+                        ("Bold", TextStyleCommand::Bold),
+                        ("Italic", TextStyleCommand::Italic),
+                        ("Underline", TextStyleCommand::Underline),
+                    ] {
+                        if ui.button(label).clicked() {
+                            self.apply_selected_text_style(command);
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Smaller").clicked() {
+                        self.apply_selected_text_style(TextStyleCommand::DecreaseSize);
+                    }
+                    if ui.button("Larger").clicked() {
+                        self.apply_selected_text_style(TextStyleCommand::IncreaseSize);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.text_font_input)
+                            .hint_text("Font family"),
+                    );
+                    if ui.button("Apply Font").clicked() {
+                        self.apply_selected_text_family();
+                    }
+                });
+            });
+        self.show_text_palette = open;
+    }
+}
+
 impl Editor {
     pub(super) fn tools_ui(&mut self, root: &mut egui::Ui) {
         egui::Panel::left("tools").min_size(110.).show(root, |ui| {
@@ -192,10 +265,10 @@ impl Editor {
                     let selected_range = self
                         .text_selected_range
                         .and_then(|(target, start, end)| (target == id).then_some((start, end)));
-                    if ui.button("Apply text").clicked() {
-                        if let Err(error) = self.doc.edit_text(id, &self.edit_buffer) {
-                            self.status = error;
-                        }
+                    if ui.button("Apply text").clicked()
+                        && let Err(error) = self.doc.edit_text(id, &self.edit_buffer)
+                    {
+                        self.status = error;
                     }
                     ui.horizontal(|ui| {
                         for (label, command) in [
@@ -271,9 +344,9 @@ impl Editor {
                             };
                         }
                     });
-                } else if self.doc.position(id).is_some() {
+                } else if self.doc.can_edit_geometry_label(id) {
                     ui.separator();
-                    ui.label("Point label");
+                    ui.label("Object label");
                     ui.text_edit_singleline(&mut self.edit_buffer);
                     let visible = self.doc.objects[id - 1]
                         .label
@@ -283,17 +356,20 @@ impl Editor {
                         .button(if visible { "Hide label" } else { "Show label" })
                         .clicked()
                     {
-                        if let Err(error) =
-                            self.doc.set_point_label(id, &self.edit_buffer, !visible)
-                        {
-                            self.status = error;
-                        }
+                        self.status =
+                            match self.doc.set_object_label(id, &self.edit_buffer, !visible) {
+                                Ok(true) => "Updated object label".into(),
+                                Ok(false) => "Object label is unchanged".into(),
+                                Err(error) => error,
+                            };
                     }
                     if ui.button("Rename label").clicked() {
-                        if let Err(error) = self.doc.set_point_label(id, &self.edit_buffer, visible)
-                        {
-                            self.status = error;
-                        }
+                        self.status =
+                            match self.doc.set_object_label(id, &self.edit_buffer, visible) {
+                                Ok(true) => "Renamed object label".into(),
+                                Ok(false) => "Object label is unchanged".into(),
+                                Err(error) => error,
+                            };
                     }
                 }
             } else {

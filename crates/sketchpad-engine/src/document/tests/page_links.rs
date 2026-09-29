@@ -10,7 +10,8 @@ fn native_page_links_import_with_destinations_and_preserve_file() {
             0,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/action_link_page_two_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/action_link_page_two_original.gsp")
+                .as_slice(),
             0,
             1,
         ),
@@ -230,14 +231,16 @@ fn free_points_move_and_save_on_both_pages() {
             1,
             2,
             Point { x: 261., y: 171. },
-            include_bytes!("../../../../../tests/fixtures/two_page_point_moved_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/two_page_point_moved_port.gsp")
+                .as_slice(),
         ),
         (
             1,
             0,
             1,
             Point { x: 363., y: 247. },
-            include_bytes!("../../../../../tests/fixtures/two_page_point_moved_link_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/two_page_point_moved_link_port.gsp")
+                .as_slice(),
         ),
     ] {
         let mut document = Document::from_bytes(base, None).unwrap();
@@ -269,13 +272,17 @@ fn constrained_points_move_and_save_on_second_page() {
             include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp"),
             5,
             Point { x: 246., y: 111. },
-            include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_moved_port.gsp"),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_segment_constrained_moved_port.gsp"
+            ),
         ),
         (
             include_bytes!("../../../../../tests/fixtures/two_page_circle_constrained_native.gsp"),
             5,
             Point { x: 111., y: 111. },
-            include_bytes!("../../../../../tests/fixtures/two_page_circle_constrained_moved_port.gsp"),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_circle_constrained_moved_port.gsp"
+            ),
         ),
         (
             include_bytes!("../../../../../tests/fixtures/two_page_arc_constrained_native.gsp"),
@@ -351,7 +358,8 @@ fn multi_page_constraint_writer_rejects_invalid_edits() {
 }
 #[test]
 fn multi_page_visual_styles_save_on_both_pages() {
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut document = Document::from_bytes(base, None).unwrap();
     assert!(document.partial_view);
     let blue = RgbColor {
@@ -474,7 +482,8 @@ fn multi_page_visual_styles_save_on_both_pages() {
 }
 #[test]
 fn multi_page_trace_flags_save_and_toggle_back() {
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut document = Document::from_bytes(base, None).unwrap();
     document.active_page = 1;
     document.selected.extend([4, 5]);

@@ -1,6 +1,7 @@
 use super::Editor;
 use sketchpad_engine::action_records::{
-    AnimationDirection, MovementSpeed, PresentationMode, ScrollPlacement,
+    AnimationDirection, MovementSpeed, PresentationMode, PresentationOptions, PresentationStop,
+    ScrollPlacement,
 };
 use sketchpad_engine::document::Kind;
 
@@ -244,6 +245,7 @@ impl Editor {
                         "Present {} selected action button(s)",
                         draft.targets.len()
                     ));
+                    let previous_mode = draft.mode;
                     ui.radio_value(
                         &mut draft.mode,
                         PresentationMode::Simultaneous,
@@ -254,6 +256,63 @@ impl Editor {
                         PresentationMode::Sequential,
                         "Sequentially",
                     );
+                    if draft.mode != previous_mode {
+                        let before = (
+                            draft.options.deselect,
+                            draft.options.stop_animations,
+                            draft.options.erase_traces,
+                        );
+                        draft.options = PresentationOptions::for_mode(draft.mode);
+                        draft.options.deselect = before.0;
+                        draft.options.stop_animations = before.1;
+                        draft.options.erase_traces = before.2;
+                    }
+                    ui.separator();
+                    ui.label("Before starting:");
+                    ui.checkbox(&mut draft.options.deselect, "Deselect objects");
+                    ui.checkbox(
+                        &mut draft.options.stop_animations,
+                        "Stop running animations",
+                    );
+                    ui.checkbox(&mut draft.options.erase_traces, "Erase traces");
+                    ui.separator();
+                    if draft.mode == PresentationMode::Simultaneous {
+                        ui.label("Stop after:");
+                        ui.radio_value(
+                            &mut draft.options.stop,
+                            PresentationStop::LastAction,
+                            "Last action stops",
+                        );
+                        ui.radio_value(
+                            &mut draft.options.stop,
+                            PresentationStop::FirstAction,
+                            "First action stops",
+                        );
+                        ui.radio_value(
+                            &mut draft.options.stop,
+                            PresentationStop::ElapsedTime,
+                            "Elapsed time",
+                        );
+                    } else {
+                        draft.options.stop = PresentationStop::LastAction;
+                        ui.label("Pause between actions:");
+                    }
+                    if draft.mode == PresentationMode::Sequential
+                        || draft.options.stop == PresentationStop::ElapsedTime
+                    {
+                        let mut seconds = f64::from(draft.options.time_tenths) / 10.;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut seconds)
+                                    .range(0.0..=6553.5)
+                                    .speed(0.1)
+                                    .suffix(" s"),
+                            )
+                            .changed()
+                        {
+                            draft.options.time_tenths = (seconds * 10.).round() as u16;
+                        }
+                    }
                     ui.horizontal(|ui| {
                         create = ui.button("Create").clicked();
                         cancel = ui.button("Cancel").clicked();
@@ -263,10 +322,11 @@ impl Editor {
             if cancel {
                 self.presentation_button_dialog = None;
             } else if create {
-                match self
-                    .doc
-                    .add_presentation_button_for_targets(&draft.targets, draft.mode)
-                {
+                match self.doc.add_presentation_button_for_targets_with_options(
+                    &draft.targets,
+                    draft.mode,
+                    draft.options,
+                ) {
                     Ok(id) => {
                         self.select_only(id);
                         self.presentation_button_dialog = None;
@@ -289,17 +349,16 @@ impl Editor {
                             .selected_text(format!("Page {}", draft.target_page + 1))
                             .show_ui(ui, |ui| {
                                 for page in 0..self.doc.page_count {
-                                    if page != self.doc.active_page {
-                                        if ui
+                                    if page != self.doc.active_page
+                                        && ui
                                             .selectable_value(
                                                 &mut draft.target_page,
                                                 page,
                                                 format!("Page {}", page + 1),
                                             )
                                             .clicked()
-                                        {
-                                            draft.target_button_ordinal = None;
-                                        }
+                                    {
+                                        draft.target_button_ordinal = None;
                                     }
                                 }
                             });

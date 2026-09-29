@@ -8,6 +8,7 @@ use crate::graph::GridForm;
 use crate::style_records::{
     LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
 };
+use crate::text_records::display_label_name;
 use egui::{Pos2, Rect};
 use std::fmt::Write as _;
 use wgpu::util::DeviceExt;
@@ -342,10 +343,18 @@ pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -
 }
 
 pub fn mapped_numeric_label_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
-    let size = doc.numeric_label_font_state(id).map_or(16., |style| f32::from(style.size_code));
-    doc.mapped_numeric_label_images(id).is_some_and(|labels| labels.into_iter().any(|(point, text)| {
-        Rect::from_center_size(vp.screen(point), egui::vec2(text.chars().count() as f32 * size * 0.65, size * 1.1)).contains(at)
-    }))
+    let size = doc
+        .numeric_label_font_state(id)
+        .map_or(16., |style| f32::from(style.size_code));
+    doc.mapped_numeric_label_images(id).is_some_and(|labels| {
+        labels.into_iter().any(|(point, text)| {
+            Rect::from_center_size(
+                vp.screen(point),
+                egui::vec2(text.chars().count() as f32 * size * 0.65, size * 1.1),
+            )
+            .contains(at)
+        })
+    })
 }
 pub fn repeated_polygon_opacity(opacity: u16, paths: f64) -> f32 {
     (1. - (1. - f64::from(opacity) / 65535.).powf(paths)) as f32
@@ -380,8 +389,9 @@ pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -
 
 pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
     if let Some(disks) = doc.colorized_disk_iteration_images(id) {
-        return disks.into_iter().any(|(center, radius, _)|
-            vp.screen(center).distance(at) <= (radius as f32 * vp.scale).abs());
+        return disks.into_iter().any(|(center, radius, _)| {
+            vp.screen(center).distance(at) <= (radius as f32 * vp.scale).abs()
+        });
     }
     if let Some(polygons) = doc.polygon_iteration_images(id) {
         return polygons.into_iter().any(|(points, _)| {
@@ -407,12 +417,20 @@ pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
         };
         at.distance(a + delta * t) < 7.
     };
-    if doc.mapped_collection_strokes(id, 384).is_some_and(|strokes| {
-        strokes.into_iter().any(|stroke| {
-            clipped_line(vp.screen(stroke.start), vp.screen(stroke.end), stroke.mode, vp.rect)
+    if doc
+        .mapped_collection_strokes(id, 384)
+        .is_some_and(|strokes| {
+            strokes.into_iter().any(|stroke| {
+                clipped_line(
+                    vp.screen(stroke.start),
+                    vp.screen(stroke.end),
+                    stroke.mode,
+                    vp.rect,
+                )
                 .is_some_and(|(a, b)| near(a, b))
+            })
         })
-    }) {
+    {
         return true;
     }
     if doc
@@ -480,6 +498,97 @@ pub fn picture_hit(vp: &Viewport, png: &[u8], transform: [f64; 6], at: Pos2) -> 
     let width = u32::from_be_bytes(png[16..20].try_into().unwrap()) as f64;
     let height = u32::from_be_bytes(png[20..24].try_into().unwrap()) as f64;
     u >= 0. && u <= width && v >= 0. && v <= height
+}
+
+pub fn point_in_polygon(points: &[Pos2], at: Pos2) -> bool {
+    points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .take(points.len())
+        .fold(false, |inside, (a, b)| {
+            inside
+                ^ ((a.y > at.y) != (b.y > at.y)
+                    && at.x < (b.x - a.x) * (at.y - a.y) / (b.y - a.y) + a.x)
+        })
+}
+
+/// Clip a live crop polygon to the source bitmap and return screen/UV vertices.
+pub fn cropped_picture_vertices(
+    vp: &Viewport,
+    png: &[u8],
+    transform: [f64; 6],
+    polygon: &[Point],
+) -> Option<Vec<(Pos2, Pos2)>> {
+    let (width, height) = crate::image_records::ImageFile::png_size(png).ok()?;
+    let width = f64::from(width);
+    let height = f64::from(height);
+    let det = transform[0] * transform[4] - transform[1] * transform[3];
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let mut pixels = polygon
+        .iter()
+        .map(|point| {
+            let x = point.x - transform[2];
+            let y = point.y - transform[5];
+            (
+                (transform[4] * x - transform[1] * y) / det,
+                (-transform[3] * x + transform[0] * y) / det,
+            )
+        })
+        .collect::<Vec<_>>();
+    for (axis, bound, keep_greater) in [
+        (0, 0., true),
+        (0, width, false),
+        (1, 0., true),
+        (1, height, false),
+    ] {
+        if pixels.is_empty() {
+            return None;
+        }
+        let inside = |point: (f64, f64)| {
+            let value = if axis == 0 { point.0 } else { point.1 };
+            if keep_greater {
+                value >= bound
+            } else {
+                value <= bound
+            }
+        };
+        let intersect = |a: (f64, f64), b: (f64, f64)| {
+            let (av, bv) = if axis == 0 { (a.0, b.0) } else { (a.1, b.1) };
+            let t = (bound - av) / (bv - av);
+            (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+        };
+        let mut clipped = Vec::new();
+        let mut previous = *pixels.last()?;
+        for current in pixels.iter().copied() {
+            match (inside(previous), inside(current)) {
+                (true, true) => clipped.push(current),
+                (true, false) => clipped.push(intersect(previous, current)),
+                (false, true) => {
+                    clipped.push(intersect(previous, current));
+                    clipped.push(current);
+                }
+                (false, false) => {}
+            }
+            previous = current;
+        }
+        pixels = clipped;
+    }
+    let vertices = pixels
+        .into_iter()
+        .map(|(u, v)| {
+            let world = Point {
+                x: transform[0] * u + transform[1] * v + transform[2],
+                y: transform[3] * u + transform[4] * v + transform[5],
+            };
+            (
+                vp.screen(world),
+                egui::pos2((u / width) as f32, (v / height) as f32),
+            )
+        })
+        .collect::<Vec<_>>();
+    (vertices.len() >= 3).then_some(vertices)
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -577,8 +686,7 @@ fn grid_lines_for_frame(doc: &Document, vp: &Viewport, frame_id: usize) -> Vec<(
         (xmin.floor() - 1., xmax.ceil() + 1.),
         (ymin.floor() - 1., ymax.ceil() + 1.),
     ];
-    for axis in 0..2 {
-        let (lo, hi) = bounds[axis];
+    for (axis, &(lo, hi)) in bounds.iter().enumerate() {
         if !lo.is_finite() || !hi.is_finite() {
             continue;
         }
@@ -596,15 +704,15 @@ fn grid_lines_for_frame(doc: &Document, vp: &Viewport, frame_id: usize) -> Vec<(
                     frame.world(xmax + 1., value as f64),
                 )
             };
-            if let (Some(a), Some(b)) = pair {
-                if let Some(line) = clipped_line(
+            if let (Some(a), Some(b)) = pair
+                && let Some(line) = clipped_line(
                     vp.screen(Point { x: a.x, y: a.y }),
                     vp.screen(Point { x: b.x, y: b.y }),
                     LineMode::Line,
                     vp.rect,
-                ) {
-                    lines.push(line);
-                }
+                )
+            {
+                lines.push(line);
             }
             value = value.saturating_add(interval);
             if value == i64::MAX {
@@ -756,10 +864,10 @@ fn grid_geometry(doc: &Document, vp: &Viewport) -> GridGeometry {
     geometry
 }
 
-fn defined_axis_annotations(
-    doc: &Document,
-    vp: &Viewport,
-) -> (Vec<(Pos2, Pos2, bool)>, Vec<(Pos2, String, bool)>) {
+type AxisTick = (Pos2, Pos2, bool);
+type AxisLabel = (Pos2, String, bool);
+
+fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Vec<AxisLabel>) {
     let mut ticks = Vec::new();
     let mut labels = Vec::new();
     for object in doc.objects.iter().filter(|object| {
@@ -894,13 +1002,6 @@ pub fn defined_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, 
     defined_axis_annotations(doc, vp).1
 }
 
-#[cfg(test)]
-fn grid_points(doc: &Document, vp: &Viewport) -> Vec<Pos2> {
-    let mut grid = grid_geometry(doc, vp);
-    grid.dots.append(&mut grid.selected_dots);
-    grid.dots
-}
-
 pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String)> {
     if !doc.axis_trigonometric() {
         return Vec::new();
@@ -970,33 +1071,109 @@ pub fn svg_page_with_button_offset(
     vp: &Viewport,
     button_offset: egui::Vec2,
 ) -> Result<String, String> {
-    if doc.partial_view && doc.objects.iter().any(|object|
-        object.page == doc.active_page && !object.deleted
-            && matches!(object.kind, Kind::Unsupported(_))) {
+    svg_page_with_layout(doc, vp, button_offset, vp.rect, None)
+}
+
+pub fn svg_page_on_paper(
+    doc: &Document,
+    vp: &Viewport,
+    button_offset: egui::Vec2,
+    paper_width_mm: f32,
+    paper_height_mm: f32,
+) -> Result<String, String> {
+    const PX_PER_MM: f32 = 96. / 25.4;
+    let paper = Rect::from_min_size(
+        Pos2::ZERO,
+        egui::vec2(paper_width_mm * PX_PER_MM, paper_height_mm * PX_PER_MM),
+    );
+    svg_page_with_layout(
+        doc,
+        vp,
+        button_offset,
+        paper,
+        Some((paper_width_mm, paper_height_mm)),
+    )
+}
+
+fn svg_page_with_layout(
+    doc: &Document,
+    vp: &Viewport,
+    button_offset: egui::Vec2,
+    page: Rect,
+    physical_size_mm: Option<(f32, f32)>,
+) -> Result<String, String> {
+    if doc.partial_view
+        && doc.objects.iter().any(|object| {
+            object.page == doc.active_page
+                && !object.deleted
+                && matches!(object.kind, Kind::Unsupported(_))
+        })
+    {
         return Err("This document contains objects that cannot be exported yet".into());
     }
     let r = vp.rect;
-    if !r.is_finite() || r.width() <= 0. || r.height() <= 0. {
+    if !r.is_finite()
+        || r.width() <= 0.
+        || r.height() <= 0.
+        || !page.is_finite()
+        || page.width() <= 0.
+        || page.height() <= 0.
+    {
         return Err("No visible sketch viewport".into());
     }
+    let (width, height) = physical_size_mm.map_or_else(
+        || (r.width().to_string(), r.height().to_string()),
+        |(width, height)| (format!("{width}mm"), format!("{height}mm")),
+    );
     let mut svg = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\">\n<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"white\"/>\n",
-        r.width(),
-        r.height(),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\">\n<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"white\"/>\n<defs><clipPath id=\"sketch-clip\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath></defs>\n<g clip-path=\"url(#sketch-clip)\">\n",
+        width,
+        height,
+        page.min.x,
+        page.min.y,
+        page.width(),
+        page.height(),
+        page.min.x,
+        page.min.y,
+        page.width(),
+        page.height(),
         r.min.x,
         r.min.y,
         r.width(),
         r.height(),
-        r.min.x,
-        r.min.y,
-        r.width(),
-        r.height()
     );
     for object in doc
         .objects
         .iter()
         .filter(|object| doc.is_displayed(object.id))
     {
+        if let Some((_, png, transform, polygon)) = doc.cropped_image(object.id) {
+            let (width, height) = crate::image_records::ImageFile::png_size(png)?;
+            let origin = vp.screen(Point {
+                x: transform[2],
+                y: transform[5],
+            });
+            let points = polygon
+                .into_iter()
+                .map(|point| {
+                    let point = vp.screen(point);
+                    format!("{},{}", point.x, point.y)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(
+                svg,
+                "<clipPath id=\"picture-crop-{}\"><polygon points=\"{}\"/></clipPath>",
+                object.id, points
+            )
+            .unwrap();
+            writeln!(svg,
+                "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" clip-path=\"url(#picture-crop-{})\" href=\"data:image/png;base64,{}\"/>",
+                transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
+                transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
+                origin.x, origin.y, object.id, base64(png)).unwrap();
+            continue;
+        }
         if let Some((_, png, transforms)) = doc.image_instances(object.id) {
             let (width, height) = crate::image_records::ImageFile::png_size(png)?;
             for transform in transforms {
@@ -1066,11 +1243,27 @@ pub fn svg_page_with_button_offset(
             )
             .unwrap();
         }
-        if let Some(strokes) = doc.locus_styled_strokes(o.id, 384)
-            .or_else(|| doc.mapped_collection_strokes(o.id, 384)) {
+        if let Some(strokes) = doc
+            .locus_styled_strokes(o.id, 384)
+            .or_else(|| doc.mapped_collection_strokes(o.id, 384))
+        {
             for sample in strokes {
-                if let Some((a, b)) = clipped_line(vp.screen(sample.start), vp.screen(sample.end), sample.mode, r) {
-                    writeln!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{}/>", a.x, a.y, b.x, b.y, svg_stroke(Some(sample.style))).unwrap();
+                if let Some((a, b)) = clipped_line(
+                    vp.screen(sample.start),
+                    vp.screen(sample.end),
+                    sample.mode,
+                    r,
+                ) {
+                    writeln!(
+                        svg,
+                        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{}/>",
+                        a.x,
+                        a.y,
+                        b.x,
+                        b.y,
+                        svg_stroke(Some(sample.style))
+                    )
+                    .unwrap();
                 }
             }
         } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
@@ -1100,9 +1293,12 @@ pub fn svg_page_with_button_offset(
                     .collect::<Vec<_>>()
             })
             .or_else(|| doc.locus_strokes(o.id, 384))
-                .or_else(|| doc.sampled_mapped_strokes(o.id, 384))
+            .or_else(|| doc.sampled_mapped_strokes(o.id, 384))
         {
-            if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
+            if matches!(
+                doc.effective_visual_style(o.id),
+                Some(VisualStyle::Stroke { .. })
+            ) {
                 for path in curve_screen_paths(vp, &segments) {
                     let points = path
                         .iter()
@@ -1163,18 +1359,45 @@ pub fn svg_page_with_button_offset(
         }
         if let Some(marker) = doc.angle_marker_geometry(o.id) {
             let style = doc.effective_visual_style(o.id);
-            let color = match style { Some(VisualStyle::Stroke { color, .. }) => css_color(color), _ => "#404040".into() };
-            let vertices = |points: &[Point]| points.iter().map(|point| {
-                let at = vp.screen(*point);
-                format!("{},{}", at.x, at.y)
-            }).collect::<Vec<_>>().join(" ");
-            writeln!(svg, "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
-                vertices(&marker.sector), color, f64::from(o.angle_marker_style.unwrap().opacity) / 65535.).unwrap();
+            let color = match style {
+                Some(VisualStyle::Stroke { color, .. }) => css_color(color),
+                _ => "#404040".into(),
+            };
+            let vertices = |points: &[Point]| {
+                points
+                    .iter()
+                    .map(|point| {
+                        let at = vp.screen(*point);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            writeln!(
+                svg,
+                "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                vertices(&marker.sector),
+                color,
+                f64::from(o.angle_marker_style.unwrap().opacity) / 65535.
+            )
+            .unwrap();
             for path in marker.strokes {
-                writeln!(svg, "<polyline points=\"{}\" fill=\"none\"{}/>", vertices(&path), svg_stroke(style)).unwrap();
+                writeln!(
+                    svg,
+                    "<polyline points=\"{}\" fill=\"none\"{}/>",
+                    vertices(&path),
+                    svg_stroke(style)
+                )
+                .unwrap();
             }
             for arrow in marker.arrows {
-                writeln!(svg, "<polygon points=\"{}\" fill=\"{}\" stroke=\"none\"/>", vertices(&arrow), color).unwrap();
+                writeln!(
+                    svg,
+                    "<polygon points=\"{}\" fill=\"{}\" stroke=\"none\"/>",
+                    vertices(&arrow),
+                    color
+                )
+                .unwrap();
             }
         }
         let polygon_object = if o.kind.is_filled_region() {
@@ -1212,14 +1435,22 @@ pub fn svg_page_with_button_offset(
                 _ => 32767,
             };
             for (points, color) in polygons {
-                let vertices = points.into_iter().map(|point| {
-                    let at = vp.screen(point);
-                    format!("{},{}", at.x, at.y)
-                }).collect::<Vec<_>>().join(" ");
-                writeln!(svg,
+                let vertices = points
+                    .into_iter()
+                    .map(|point| {
+                        let at = vp.screen(point);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    svg,
                     "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
-                    vertices, css_color(color), f64::from(opacity) / 65535.
-                ).unwrap();
+                    vertices,
+                    css_color(color),
+                    f64::from(opacity) / 65535.
+                )
+                .unwrap();
             }
         } else if let Some(polygons) = doc.polygon_iteration_images(o.id) {
             let (color, opacity) = match doc.effective_visual_style(o.id) {
@@ -1430,7 +1661,8 @@ pub fn svg_page_with_button_offset(
                     .any(|run| run.style != crate::text_object::RichRunStyle::default())
             });
             let math = doc.text_math_nodes(object.id).and_then(|_| {
-                let ctx = math_fonts.get_or_insert_with(|| crate::render::math_text::font_context(doc));
+                let ctx =
+                    math_fonts.get_or_insert_with(|| crate::render::math_text::font_context(doc));
                 crate::render::math_text::measured_layout(doc, object.id, ctx)
             });
             if let Some(layout) = math {
@@ -1477,12 +1709,19 @@ pub fn svg_page_with_button_offset(
                             .style
                             .underline
                             .unwrap_or_else(|| style.as_ref().is_some_and(|style| style.underline));
-                        let run_color = run.style.rgb_color().map(|[red, green, blue]| {
-                            format!(" fill=\"#{red:02x}{green:02x}{blue:02x}\"")
-                        }).unwrap_or_default();
-                        let (run_size, baseline_shift) = run.style.script_metrics(
-                            f32::from(run.style.size_code.unwrap_or(size)));
-                        let script = if baseline_shift == 0. { String::new() } else {
+                        let run_color = run
+                            .style
+                            .rgb_color()
+                            .map(|[red, green, blue]| {
+                                format!(" fill=\"#{red:02x}{green:02x}{blue:02x}\"")
+                            })
+                            .unwrap_or_default();
+                        let (run_size, baseline_shift) = run
+                            .style
+                            .script_metrics(f32::from(run.style.size_code.unwrap_or(size)));
+                        let script = if baseline_shift == 0. {
+                            String::new()
+                        } else {
                             format!(" baseline-shift=\"{baseline_shift}px\"")
                         };
                         write!(
@@ -1534,19 +1773,28 @@ pub fn svg_page_with_button_offset(
                 layout.write_svg(&mut svg, at);
             }
         } else {
-        for (point, text) in doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
-            let at = vp.screen(point);
-            let style = doc.numeric_label_font_state(object.id);
-            let size = style.as_ref().map_or(16, |style| style.size_code);
-            let family = style.as_ref().map_or("sans-serif", |style| style.family.as_str())
-                .replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
-            writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
+            for (point, text) in doc
+                .point_numeric_label(object.id)
+                .map(|label| vec![label])
+                .or_else(|| doc.mapped_numeric_label_images(object.id))
+                .unwrap_or_default()
+            {
+                let at = vp.screen(point);
+                let style = doc.numeric_label_font_state(object.id);
+                let size = style.as_ref().map_or(16, |style| style.size_code);
+                let family = style
+                    .as_ref()
+                    .map_or("sans-serif", |style| style.family.as_str())
+                    .replace('&', "&amp;")
+                    .replace('"', "&quot;")
+                    .replace('<', "&lt;");
+                writeln!(svg,"<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\">{}</text>",
                 at.x,at.y,family,size,
                 if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
                 if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
                 if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" },
                 xml_text(&text)).unwrap();
-        }
+            }
         }
         if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
@@ -1564,11 +1812,11 @@ pub fn svg_page_with_button_offset(
         if let Some(label) = &object.label
             && label.visible()
             && let Ok(name) = label.name_utf8()
-            && let Some(point) = doc.position(object.id).or_else(||
-                doc.angle_marker_label_anchor(object.id))
+            && let Some(point) = doc.object_label_anchor(object.id)
         {
             let at = vp.screen(point);
             let offset = label.offset();
+            let name = display_label_name(name);
             let style = doc.text_font_state(object.id);
             let size = style.as_ref().map_or(13, |style| style.size_code);
             let family = style
@@ -1588,7 +1836,7 @@ pub fn svg_page_with_button_offset(
                 if style.as_ref().is_some_and(|style| style.bold) { "bold" } else { "normal" },
                 if style.as_ref().is_some_and(|style| style.italic) { "italic" } else { "normal" },
                 if style.as_ref().is_some_and(|style| style.underline) { "underline" } else { "none" },
-                xml_text(name)
+                xml_text(name.as_ref())
             )
             .unwrap();
         }
@@ -1698,7 +1946,7 @@ pub fn svg_page_with_button_offset(
     for (at, label, vertical) in defined_axis_labels(doc, vp) {
         writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" dominant-baseline=\"{}\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y, if vertical { "end" } else { "middle" }, if vertical { "middle" } else { "hanging" }).unwrap();
     }
-    svg.push_str("</svg>\n");
+    svg.push_str("</g>\n</svg>\n");
     Ok(svg)
 }
 struct Mesh {
@@ -1724,7 +1972,12 @@ impl Mesh {
                 sample.mode,
                 vp.rect,
             ) {
-                self.styled_path(&[a, b], false, line, selection_color.unwrap_or_else(|| rgba(color, 1.)));
+                self.styled_path(
+                    &[a, b],
+                    false,
+                    line,
+                    selection_color.unwrap_or_else(|| rgba(color, 1.)),
+                );
             }
         }
     }
@@ -1894,9 +2147,39 @@ pub enum TraceMark {
     Polygon(Vec<Point>, RgbColor),
 }
 
+#[derive(Clone)]
+pub struct TraceSample {
+    pub mark: TraceMark,
+    pub created_at: std::time::Instant,
+}
+
+impl TraceSample {
+    pub fn new(mark: TraceMark) -> Self {
+        Self {
+            mark,
+            created_at: std::time::Instant::now(),
+        }
+    }
+}
+
 pub struct GeometryRenderer {
     pipeline: wgpu::RenderPipeline,
 }
+
+pub struct RenderTarget<'a> {
+    pub device: &'a wgpu::Device,
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub view: &'a wgpu::TextureView,
+    pub size: [u32; 2],
+    pub pixels_per_point: f32,
+}
+
+pub struct RenderPreferences {
+    pub background_color: [u8; 3],
+    pub selection_color: [u8; 3],
+    pub trace_fade_seconds: Option<f32>,
+}
+
 impl GeometryRenderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1947,15 +2230,19 @@ impl GeometryRenderer {
     }
     pub fn render(
         &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        target: RenderTarget<'_>,
         doc: &Document,
         vp: &Viewport,
-        size: [u32; 2],
-        ppp: f32,
-        traces: &[TraceMark],
+        traces: &[TraceSample],
+        preferences: RenderPreferences,
     ) {
+        let RenderTarget {
+            device,
+            encoder,
+            view,
+            size,
+            pixels_per_point: ppp,
+        } = target;
         let mut mesh = Mesh {
             vertices: Vec::new(),
             width: size[0] as f32,
@@ -1964,7 +2251,12 @@ impl GeometryRenderer {
         };
         let dark = [0.14, 0.18, 0.24, 1.];
         let blue = [0.09, 0.42, 0.84, 1.];
-        let selected = [0.94, 0.32, 0.10, 1.];
+        let selected = [
+            f32::from(preferences.selection_color[0]) / 255.,
+            f32::from(preferences.selection_color[1]) / 255.,
+            f32::from(preferences.selection_color[2]) / 255.,
+            1.,
+        ];
         let grid = grid_geometry(doc, vp);
         for point in grid.dots {
             mesh.line(
@@ -1982,7 +2274,7 @@ impl GeometryRenderer {
                 mesh.line(pair[0], pair[1], 1., [0.78, 0.83, 0.88, 1.]);
             }
         }
-        let selected_grid = [0.94, 0.12, 0.62, 1.];
+        let selected_grid = selected;
         for point in grid.selected_dots {
             mesh.line(
                 point + egui::vec2(-1.5, 0.),
@@ -2002,15 +2294,23 @@ impl GeometryRenderer {
         for (a, b, is_selected) in defined_axis_annotations(doc, vp).0 {
             mesh.line(a, b, 1., if is_selected { selected } else { dark });
         }
-        for mark in traces {
-            match mark {
+        let trace_now = std::time::Instant::now();
+        for sample in traces {
+            let alpha = preferences.trace_fade_seconds.map_or(1., |seconds| {
+                (1. - trace_now.duration_since(sample.created_at).as_secs_f32() / seconds)
+                    .clamp(0., 1.)
+            });
+            if alpha <= 0. {
+                continue;
+            }
+            match &sample.mark {
                 TraceMark::Point(point, color) => {
-                    mesh.disk(vp.screen(*point), 2., rgba(*color, 1.));
+                    mesh.disk(vp.screen(*point), 2., rgba(*color, alpha));
                 }
                 TraceMark::Straight(a, b, mode, color) => {
                     if let Some((a, b)) = clipped_line(vp.screen(*a), vp.screen(*b), *mode, vp.rect)
                     {
-                        mesh.line(a, b, 1., rgba(*color, 1.));
+                        mesh.line(a, b, 1., rgba(*color, alpha));
                     }
                 }
                 TraceMark::Circle(center, radius, color) => {
@@ -2029,7 +2329,7 @@ impl GeometryRenderer {
                             width: LineWidth::Hairline,
                             pattern: LinePattern::Solid,
                         },
-                        rgba(*color, 1.),
+                        rgba(*color, alpha),
                     );
                 }
                 TraceMark::Arc(points, color) => {
@@ -2045,7 +2345,7 @@ impl GeometryRenderer {
                             width: LineWidth::Hairline,
                             pattern: LinePattern::Solid,
                         },
-                        rgba(*color, 1.),
+                        rgba(*color, alpha),
                     );
                 }
                 TraceMark::Polygon(points, color) => {
@@ -2054,7 +2354,7 @@ impl GeometryRenderer {
                         .copied()
                         .map(|point| vp.screen(point))
                         .collect::<Vec<_>>();
-                    mesh.polygon(&screen, rgba(*color, 0.025));
+                    mesh.polygon(&screen, rgba(*color, 0.025 * alpha));
                 }
             }
         }
@@ -2081,10 +2381,10 @@ impl GeometryRenderer {
                     pattern: LinePattern::Solid,
                 },
             };
-            if let Some((a, b, mode)) = doc.line_points(o.id) {
-                if let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect) {
-                    mesh.styled_path(&[a, b], false, stroke, col);
-                }
+            if let Some((a, b, mode)) = doc.line_points(o.id)
+                && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, vp.rect)
+            {
+                mesh.styled_path(&[a, b], false, stroke, col);
             }
             if let Some(polygons) = doc.colorized_polygon_iteration_images(o.id) {
                 let opacity = match doc.effective_visual_style(o.id) {
@@ -2093,9 +2393,19 @@ impl GeometryRenderer {
                 };
                 for (points, color) in polygons {
                     let screen = points.into_iter().map(|p| vp.screen(p)).collect::<Vec<_>>();
-                    mesh.polygon(&screen,
-                        if is_selected { [selected[0], selected[1], selected[2], f32::from(opacity) / 65535.] }
-                        else { rgba(color, f32::from(opacity) / 65535.) });
+                    mesh.polygon(
+                        &screen,
+                        if is_selected {
+                            [
+                                selected[0],
+                                selected[1],
+                                selected[2],
+                                f32::from(opacity) / 65535.,
+                            ]
+                        } else {
+                            rgba(color, f32::from(opacity) / 65535.)
+                        },
+                    );
                 }
             } else if let Some(polygons) = doc.polygon_iteration_images(o.id) {
                 let (color, opacity) = match doc.effective_visual_style(o.id) {
@@ -2134,9 +2444,20 @@ impl GeometryRenderer {
                 for (center, radius, color) in disks {
                     let r = (radius as f32 * vp.scale).abs();
                     if r > 0.5 && r < 100000. {
-                        mesh.disk(vp.screen(center), r,
-                            if is_selected { [selected[0], selected[1], selected[2], f32::from(opacity) / 65535.] }
-                            else { rgba(color, f32::from(opacity) / 65535.) });
+                        mesh.disk(
+                            vp.screen(center),
+                            r,
+                            if is_selected {
+                                [
+                                    selected[0],
+                                    selected[1],
+                                    selected[2],
+                                    f32::from(opacity) / 65535.,
+                                ]
+                            } else {
+                                rgba(color, f32::from(opacity) / 65535.)
+                            },
+                        );
                     }
                 }
             }
@@ -2198,8 +2519,10 @@ impl GeometryRenderer {
                     }
                 }
             }
-            if let Some(strokes) = doc.locus_styled_strokes(o.id, 384)
-                .or_else(|| doc.mapped_collection_strokes(o.id, 384)) {
+            if let Some(strokes) = doc
+                .locus_styled_strokes(o.id, 384)
+                .or_else(|| doc.mapped_collection_strokes(o.id, 384))
+            {
                 mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected));
             } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
                 let fill = if doc.selected.contains(&o.id) {
@@ -2226,7 +2549,10 @@ impl GeometryRenderer {
                 .or_else(|| doc.locus_strokes(o.id, 384))
                 .or_else(|| doc.sampled_mapped_strokes(o.id, 384))
             {
-                if matches!(doc.effective_visual_style(o.id), Some(VisualStyle::Stroke { .. })) {
+                if matches!(
+                    doc.effective_visual_style(o.id),
+                    Some(VisualStyle::Stroke { .. })
+                ) {
                     for path in curve_screen_paths(vp, &segments) {
                         mesh.styled_path(&path, false, stroke, col);
                     }
@@ -2277,14 +2603,34 @@ impl GeometryRenderer {
                 }
                 Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
                     if let Some(marker) = doc.angle_marker_geometry(o.id) {
-                        let screen = marker.sector.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
-                        mesh.polygon(&screen, [col[0], col[1], col[2], f32::from(o.angle_marker_style.unwrap().opacity) / 65535.]);
+                        let screen = marker
+                            .sector
+                            .into_iter()
+                            .map(|point| vp.screen(point))
+                            .collect::<Vec<_>>();
+                        mesh.polygon(
+                            &screen,
+                            [
+                                col[0],
+                                col[1],
+                                col[2],
+                                f32::from(o.angle_marker_style.unwrap().opacity) / 65535.,
+                            ],
+                        );
                         for path in marker.strokes {
-                            let screen = path.into_iter().map(|point| vp.screen(point)).collect::<Vec<_>>();
+                            let screen = path
+                                .into_iter()
+                                .map(|point| vp.screen(point))
+                                .collect::<Vec<_>>();
                             mesh.styled_path(&screen, false, stroke, col);
                         }
                         for arrow in marker.arrows {
-                            mesh.tri(vp.screen(arrow[0]), vp.screen(arrow[1]), vp.screen(arrow[2]), col);
+                            mesh.tri(
+                                vp.screen(arrow[0]),
+                                vp.screen(arrow[1]),
+                                vp.screen(arrow[2]),
+                                col,
+                            );
                         }
                     }
                 }
@@ -2365,9 +2711,9 @@ impl GeometryRenderer {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.96,
-                        g: 0.97,
-                        b: 0.985,
+                        r: f64::from(preferences.background_color[0]) / 255.,
+                        g: f64::from(preferences.background_color[1]) / 255.,
+                        b: f64::from(preferences.background_color[2]) / 255.,
                         a: 1.,
                     }),
                     store: wgpu::StoreOp::Store,
@@ -2390,1426 +2736,5 @@ impl GeometryRenderer {
                 pass.draw(0..mesh.vertices.len() as u32, 0..1);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_angle_markers_export_one_and_two_live_svg_arcs() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let mut hidden = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/angle_marker87_hide_both_native_saved.gsp"),
-            None,
-        ).unwrap();
-        hidden.partial_view = false;
-        let baseline = svg_page(&hidden, &viewport).unwrap().matches("<polyline").count();
-        for (bytes, expected_arcs) in [
-            (include_bytes!("../../../tests/fixtures/angle_marker87_original_native_saved.gsp").as_slice(), 3),
-            (include_bytes!("../../../tests/fixtures/angle_marker87_hide13_native_saved.gsp").as_slice(), 2),
-            (include_bytes!("../../../tests/fixtures/angle_marker87_hide14_native_saved.gsp").as_slice(), 1),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            // This fixture contains unrelated opaque objects; isolate the
-            // already-decoded marker strokes for renderer verification.
-            doc.partial_view = false;
-            let svg = svg_page(&doc, &viewport).unwrap();
-            assert_eq!(svg.matches("<polyline").count(), baseline + expected_arcs);
-        }
-    }
-
-    #[test]
-    fn mapped_colorized_disks_export_each_generation_with_its_live_fill() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let mut original = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/colorized_iteration88_original_native_saved.gsp"),
-            None,
-        ).unwrap();
-        let mut hidden = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/colorized_iteration88_hide_fill_binding20_native_saved.gsp"),
-            None,
-        ).unwrap();
-        let generations = original.colorized_disk_iteration_images(20).unwrap().len();
-        original.partial_view = false;
-        hidden.partial_view = false;
-        let svg = svg_page(&original, &viewport).unwrap();
-        let baseline = svg_page(&hidden, &viewport).unwrap();
-        assert_eq!(svg.matches("fill-opacity=").count(), baseline.matches("fill-opacity=").count() + generations);
-        assert!(svg.contains("fill=\"#ff0000\""));
-        assert!(svg.contains("fill=\"#1f42f5\""));
-    }
-
-    #[test]
-    fn mapped_colorized_polygons_export_each_generation_with_its_live_fill() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/colorized_polygon89_depth3_native_saved.gsp"),
-            None,
-        ).unwrap();
-        let images = doc.colorized_polygon_iteration_images(23).unwrap();
-        let distinct = images.iter().map(|(_, color)| css_color(*color)).collect::<std::collections::HashSet<_>>();
-        assert!(distinct.len() >= 3);
-        for object in &mut doc.objects {
-            object.visible = object.id == 23;
-        }
-        doc.partial_view = false;
-        let svg = svg_page(&doc, &viewport).unwrap();
-        assert_eq!(svg.matches("<polygon ").count(), images.len());
-        for color in distinct {
-            assert!(svg.contains(&format!("fill=\"{color}\"")), "missing {color}");
-        }
-    }
-
-    #[test]
-    fn direct_colorized_polygon_svg_recolors_without_changing_its_outline() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let mut svg_results = Vec::new();
-        for bytes in [
-            include_bytes!("../../../tests/fixtures/colorized_polygon89_hide_binding23_native_saved.gsp").as_slice(),
-            include_bytes!("../../../tests/fixtures/colorized_polygon89_range_hi2_hide_binding23_native_saved.gsp").as_slice(),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            let color = css_color(doc.colorized_color(14).unwrap());
-            for object in &mut doc.objects {
-                object.visible = object.id == 14;
-            }
-            doc.partial_view = false;
-            let svg = svg_page(&doc, &viewport).unwrap();
-            assert_eq!(svg.matches("<polygon ").count(), 1);
-            assert!(svg.contains(&format!("fill=\"{color}\"")));
-            svg_results.push((svg, color));
-        }
-        assert_ne!(svg_results[0].1, svg_results[1].1);
-        let without_fill = |svg: &str, color: &str| svg.replace(color, "#fill");
-        assert_eq!(
-            without_fill(&svg_results[0].0, &svg_results[0].1),
-            without_fill(&svg_results[1].0, &svg_results[1].1)
-        );
-    }
-
-    #[test]
-    fn generic_straight_locus_svg_keeps_independent_sample_colors_and_pen_styles() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/locus_generic_straights63_chained_colorized_native_saved.gsp"),
-            None,
-        ).unwrap();
-        // The independently verified middle row is Grayscale(Vector(Ray), q).
-        let outer = doc.objects.iter().filter(|o| matches!(o.kind, Kind::Locus(..))).nth(1).unwrap().id;
-        for object in &mut doc.objects {
-            object.visible = object.id == outer;
-        }
-        doc.selected.insert(outer);
-        doc.set_selected_line_width(LineWidth::Thick).unwrap();
-        doc.set_selected_line_pattern(LinePattern::Dashed).unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        // Field3 / explicit query budget gives q = 0, 1/3, 2/3, 1.
-        for color in ["#000000", "#555555", "#aaaaaa", "#ffffff"] {
-            assert_eq!(svg.matches(&format!("stroke=\"{color}\" stroke-width=\"4\" stroke-dasharray=\"9 6\"")).count(), 1, "{svg}");
-        }
-        assert!(!svg.contains("<polygon"));
-        assert!(!svg.contains("<polyline"));
-        assert!(!svg.contains("stroke=\"#00b400\""));
-    }
-
-    #[test]
-    fn generic_straight_locus_canvas_mesh_preserves_sample_color_and_selection() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/locus_generic_straights63_chained_colorized_native_saved.gsp"),
-            None,
-        ).unwrap();
-        let outer = doc.objects.iter().filter(|o| matches!(o.kind, Kind::Locus(..))).nth(1).unwrap().id;
-        let strokes = doc.locus_styled_strokes(outer, 4).unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let mut mesh = Mesh { vertices: Vec::new(), width: 1000., height: 800., ppp: 1. };
-        mesh.locus_strokes(&vp, &strokes, None);
-        assert_eq!(mesh.vertices.len(), 24);
-        for (vertices, gray) in mesh.vertices.chunks_exact(6).zip([0., 85./255., 170./255., 1.]) {
-            assert!(vertices.iter().all(|v| v.color == [gray, gray, gray, 1.]));
-            assert!(vertices.iter().all(|v| v.pos[1].abs() <= 1.01));
-        }
-        mesh.vertices.clear();
-        let selected = [1., 0., 1., 1.];
-        mesh.locus_strokes(&vp, &strokes, Some(selected));
-        assert_eq!(mesh.vertices.len(), 24);
-        assert!(mesh.vertices.iter().all(|v| v.color == selected));
-    }
-
-    #[test]
-    fn native_calculation_caption_flag_is_independent_of_geometry() {
-        let suppressed = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/numeric_calculation_trailing_decimal_cube84_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        assert_eq!(suppressed.numeric_value(5), Some(2.));
-        assert!(number_lines_for_object(&suppressed, 5).is_none());
-        assert!(suppressed.position(14).is_some());
-
-        let visible = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/numeric_calculation_trailing_decimal_cube_formula_visible_native_verified.gsp"),
-            None,
-        ).unwrap();
-        assert_eq!(visible.numeric_value(5), Some(2.));
-        let caption = &number_lines_for_object(&visible, 5).unwrap().1[0];
-        assert!(caption.ends_with("2.00"), "{caption}");
-        assert!(visible.position(14).is_some());
-    }
-
-    #[test]
-    fn native_infinite_angle_caption_keeps_geometry_undefined() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/numeric_angle_ray_undefined_native_verified.gsp"),
-            None,
-        )
-        .unwrap();
-        assert_eq!(doc.numeric_value(6), None);
-        assert_eq!(
-            doc.parameter_calculation_display_value(6),
-            Some(f64::INFINITY)
-        );
-        assert!(number_lines_for_object(&doc, 6).unwrap().1[0].ends_with("∞°"));
-        assert!(doc.line_points(8).is_none());
-        doc.set_parameter_value(5, 4.).unwrap();
-        assert_eq!(doc.numeric_value(6), Some(90.));
-        assert!(number_lines_for_object(&doc, 6).unwrap().1[0].ends_with("90.00°"));
-        assert!(doc.line_points(8).is_some());
-    }
-
-    #[test]
-    fn native_radian_literal_calculations_render_named_and_formula_modes() {
-        for (bytes, value, text) in [
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/numeric_scalar_fraction_precision_native_verified.gsp"
-                )
-                .as_slice(),
-                0.075,
-                "0.07",
-            ),
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/numeric_scalar_true_half_precision_native_verified.gsp"
-                )
-                .as_slice(),
-                0.125,
-                "0.13",
-            ),
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/numeric_scalar_negative_half_precision_native_verified.gsp"
-                )
-                .as_slice(),
-                -0.125,
-                "-0.13",
-            ),
-        ] {
-            let doc = Document::from_bytes(bytes, None).unwrap();
-            assert_eq!(doc.numeric_value(17), Some(value));
-            let caption = &number_lines_for_object(&doc, 17).unwrap().1[0];
-            assert!(caption.ends_with(text), "{caption}");
-        }
-        let mut named = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/numeric_sourcefree_radian_named_native_verified.gsp"),
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            number_lines_for_object(&named, 5).unwrap().1,
-            vec!["x轴首刻度 = 15.00°"]
-        );
-        assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("x轴首刻度"));
-        named.objects[4]
-            .label
-            .as_mut()
-            .unwrap()
-            .set_name("θ")
-            .unwrap();
-        assert_eq!(
-            number_lines_for_object(&named, 5).unwrap().1,
-            vec!["θ = 15.00°"]
-        );
-        assert!(number_lines_for_object(&named, 15).unwrap().1[0].contains("θ"));
-        let unnamed = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/numeric_sourcefree_radian_unnamed_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        let caption = &number_lines_for_object(&unnamed, 5).unwrap().1[0];
-        assert!(caption.contains("180°"), "{caption}");
-        assert!(caption.contains("14.28571°"), "{caption}");
-    }
-
-    #[test]
-    fn native_generated_parameter_names_render_in_captions_and_formulas() {
-        let doc = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/numeric_parameter_autoname_all_unnamed_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        for (id, prefix) in [(1, "t₄ = "), (2, "t₅ = "), (3, "t₆ = ")] {
-            let (_, lines) = number_lines_for_object(&doc, id).unwrap();
-            assert!(lines[0].starts_with(prefix), "{:?}", lines);
-        }
-        let doc = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/numeric_parameter_autoname_counter_seven_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        let (_, lines) = number_lines_for_object(&doc, 2).unwrap();
-        assert!(lines[0].starts_with("t₇ = "));
-        let (_, lines) = number_lines_for_object(&doc, 5).unwrap();
-        assert!(lines[0].contains("t₇"), "{:?}", lines);
-        let doc = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/numeric_parameter_presentation_mode_zero_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        let (_, lines) = number_lines_for_object(&doc, 2).unwrap();
-        assert!(lines[0].starts_with("0.5 cm = "), "{:?}", lines);
-        let (_, lines) = number_lines_for_object(&doc, 5).unwrap();
-        assert!(lines[0].contains("0.5 cm"), "{:?}", lines);
-    }
-
-    #[test]
-    fn legacy_polygon_fill_color_edit_and_modern_clipboard_keep_native_opacity() {
-        let original = include_bytes!("../../../tests/fixtures/legacy_polygon_rank_original.gsp");
-        let blue = include_bytes!("../../../tests/fixtures/legacy_polygon_blue_native_verified.gsp");
-        let mut doc = Document::from_bytes(original, None).unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(500., 400.)),
-            scale: 1.,
-            center: Point { x: 200., y: 150. },
-        };
-        let alpha = f64::from(49151) / 65535.;
-        assert!(
-            svg_page(&doc, &vp)
-                .unwrap()
-                .contains(&format!("fill=\"#ff0000\" fill-opacity=\"{alpha}\""))
-        );
-        doc.selected.insert(5);
-        let color = RgbColor {
-            red: 0,
-            green: 128,
-            blue: 255,
-        };
-        assert_eq!(doc.set_selected_color(color).unwrap(), 1);
-        assert_eq!(doc.encode().unwrap(), blue);
-        assert_eq!(doc.objects[4].interior_order, None);
-        let header = doc.objects[4].header_offset.unwrap();
-        assert_eq!(
-            crate::document::records(blue)
-                .unwrap()
-                .into_iter()
-                .find(|r| r.data.start == header)
-                .unwrap()
-                .data
-                .len(),
-            16
-        );
-        assert!(
-            svg_page(&doc, &vp)
-                .unwrap()
-                .contains(&format!("fill=\"#0080ff\" fill-opacity=\"{alpha}\""))
-        );
-        doc.undo();
-        assert_eq!(doc.encode().unwrap(), original);
-        doc.redo();
-        assert_eq!(doc.encode().unwrap(), blue);
-        let clip = doc.copy_selected().unwrap();
-        let mut modern = Document::new();
-        let pasted = modern.paste(&clip).unwrap();
-        let polygon = pasted
-            .into_iter()
-            .find(|id| modern.objects[id - 1].kind.is_polygon())
-            .unwrap();
-        assert_eq!(
-            modern.objects[polygon - 1].visual_style,
-            Some(VisualStyle::Polygon {
-                color,
-                opacity: 49151
-            })
-        );
-        assert_eq!(modern.objects[polygon - 1].interior_order, Some(0));
-        modern.verify_roundtrip().unwrap();
-        let saved = modern.encode().unwrap();
-        if std::env::var_os("SKETCHPAD_WRITE_LEGACY_STYLE_FIXTURE").is_some() {
-            std::fs::write("/tmp/legacy_polygon_modern_copy_writer.gsp", &saved).unwrap();
-        }
-        assert_eq!(
-            saved,
-            include_bytes!("../../../tests/fixtures/legacy_polygon_modern_copy_native_verified.gsp")
-        );
-        let reopened = Document::from_bytes(&saved, None).unwrap();
-        assert!(
-            svg_page(&reopened, &vp)
-                .unwrap()
-                .contains(&format!("fill=\"#0080ff\" fill-opacity=\"{alpha}\""))
-        );
-    }
-
-    #[test]
-    fn polygon_fills_follow_signed_native_rank_and_keep_other_draw_slots() {
-        let mut doc = Document::new();
-        for p in [
-            Point { x: 100., y: 100. },
-            Point { x: 300., y: 100. },
-            Point { x: 200., y: 300. },
-        ] {
-            doc.add(Kind::Free(p));
-        }
-        let orange = doc.add(Kind::Polygon(vec![1, 2, 3]));
-        let line = doc.add(Kind::Segment(1, 2));
-        let green = doc.add(Kind::Polygon(vec![1, 2, 3]));
-        let blue = doc.add(Kind::Polygon(vec![1, 2, 3]));
-        for (id, rank, color) in [
-            (
-                orange,
-                0,
-                RgbColor {
-                    red: 255,
-                    green: 128,
-                    blue: 0,
-                },
-            ),
-            (
-                green,
-                -1,
-                RgbColor {
-                    red: 0,
-                    green: 255,
-                    blue: 0,
-                },
-            ),
-            (
-                blue,
-                0,
-                RgbColor {
-                    red: 0,
-                    green: 0,
-                    blue: 255,
-                },
-            ),
-        ] {
-            doc.objects[id - 1].interior_order = Some(rank);
-            doc.objects[id - 1].visual_style = Some(VisualStyle::Polygon {
-                color,
-                opacity: 32767,
-            });
-        }
-        assert_eq!(
-            ordered_region_fills(&doc)
-                .iter()
-                .map(|o| o.id)
-                .collect::<Vec<_>>(),
-            [green, orange, blue]
-        );
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.)),
-            scale: 1.,
-            center: Point { x: 200., y: 200. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        let green_at = svg.find("fill=\"#00ff00\"").unwrap();
-        let orange_at = svg.find("fill=\"#ff8000\"").unwrap();
-        let blue_at = svg.find("fill=\"#0000ff\"").unwrap();
-        let line_at = svg.find("<line x1=").unwrap();
-        assert!(green_at < line_at && line_at < orange_at && orange_at < blue_at);
-        assert_eq!(doc.objects[line - 1].kind, Kind::Segment(1, 2));
-        doc.objects[green - 1].visible = false;
-        assert_eq!(
-            ordered_region_fills(&doc)
-                .iter()
-                .map(|o| o.id)
-                .collect::<Vec<_>>(),
-            [orange, blue]
-        );
-        doc.objects[green - 1].visible = true;
-        doc.objects[orange - 1].interior_order = Some(i32::MAX);
-        doc.objects[green - 1].interior_order = Some(i32::MIN);
-        assert_eq!(
-            ordered_region_fills(&doc)
-                .iter()
-                .map(|o| o.id)
-                .collect::<Vec<_>>(),
-            [green, blue, orange]
-        );
-    }
-    #[test]
-    fn styled_point_curve_samples_keep_dash_phase_and_undefined_breaks() {
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(300., 300.)),
-            scale: 1.,
-            center: Point { x: 0., y: 0. },
-        };
-        let samples = (0..30)
-            .map(|x| {
-                (
-                    Point { x: x as f64, y: 0. },
-                    Point {
-                        x: x as f64 + 1.,
-                        y: 0.,
-                    },
-                    LineMode::Segment,
-                )
-            })
-            .collect::<Vec<_>>();
-        let paths = curve_screen_paths(&vp, &samples);
-        assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0].len(), 31);
-        let mut mesh = Mesh {
-            vertices: Vec::new(),
-            width: 300.,
-            height: 300.,
-            ppp: 1.,
-        };
-        let color = [0.1, 0.6, 0.8, 1.];
-        mesh.styled_path(
-            &paths[0],
-            false,
-            SegmentLineStyle {
-                width: LineWidth::Thick,
-                pattern: LinePattern::Dashed,
-            },
-            color,
-        );
-        assert_eq!(mesh.vertices.len(), 108); // 18 painted 1px samples, 12 gap samples.
-        assert!(mesh.vertices.iter().all(|v| v.color == color));
-        assert!(!mesh.vertices.iter().any(|v| {
-            let x = (v.pos[0] + 1.) * 150.;
-            x > 159.1 && x < 164.9
-        }));
-        let broken = [
-            (
-                Point { x: 0., y: 0. },
-                Point { x: 1., y: 0. },
-                LineMode::Segment,
-            ),
-            (
-                Point { x: 1., y: 0. },
-                Point { x: 2., y: 0. },
-                LineMode::Segment,
-            ),
-            (
-                Point { x: 10., y: 0. },
-                Point { x: 11., y: 0. },
-                LineMode::Segment,
-            ),
-        ];
-        assert_eq!(
-            curve_screen_paths(&vp, &broken)
-                .iter()
-                .map(Vec::len)
-                .collect::<Vec<_>>(),
-            vec![3, 2]
-        );
-    }
-
-    #[test]
-    fn carried_circle_export_and_hit_respect_binding_visibility_and_style() {
-        let mut doc = Document::from_bytes(
-            include_bytes!(
-                "../../../tests/fixtures/point_translation_carried_circle_native_verified.gsp"
-            ),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(500., 400.)),
-            scale: 2.,
-            center: Point { x: 200., y: 160. },
-        };
-        let (center, radius) = doc.circle_iteration_images(6).unwrap()[2];
-        let at = vp.screen(Point {
-            x: center.x,
-            y: center.y + radius,
-        });
-        assert!(circle_iteration_hit(&vp, &doc, 6, at));
-        assert!(!circle_iteration_hit(
-            &vp,
-            &doc,
-            6,
-            vp.screen(Point {
-                x: center.x,
-                y: center.y + radius * 3.
-            })
-        ));
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert_eq!(
-            svg.lines()
-                .filter(|line| line.starts_with("<circle") && line.contains("fill=\"none\""))
-                .count(),
-            3
-        );
-        let stroke = svg_stroke(doc.objects[5].visual_style);
-        assert!(!stroke.is_empty());
-        assert_eq!(svg.matches(&format!("<circle{stroke}")).count(), 3);
-        doc.selected.insert(6);
-        doc.set_selected_visibility(false);
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert_eq!(
-            svg.lines()
-                .filter(|line| line.starts_with("<circle") && line.contains("fill=\"none\""))
-                .count(),
-            0
-        );
-        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
-        assert!(!reopened.is_displayed(6));
-    }
-
-    #[test]
-    fn branching_polygon_svg_uses_path_multiplicity_and_carried_bindings() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/branch_polygon_iteration_native_edited_port.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(500., 400.)),
-            scale: 1.,
-            center: Point { x: 200., y: 180. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert_eq!(svg.matches("<polygon ").count(), 6);
-        assert_eq!(svg.matches("<line").count(), 18);
-        assert_eq!(svg.matches("<circle").count(), 3);
-        let opacity = repeated_polygon_opacity(32767, 2.);
-        assert!((opacity - 0.75).abs() < 0.0001);
-        assert!(svg.contains(&format!("fill-opacity=\"{opacity}\"")));
-    }
-
-    #[test]
-    fn styled_free_text_uses_each_objects_saved_font_in_svg() {
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        for (source, first_bold) in [
-            (
-                include_bytes!("../../../tests/fixtures/text_two_objects_first_bold_off_original.gsp")
-                    .as_slice(),
-                false,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/text_two_objects_second_bold_off_original.gsp")
-                    .as_slice(),
-                true,
-            ),
-        ] {
-            let doc = Document::from_bytes(source, None).unwrap();
-            let svg = svg_page(&doc, &vp).unwrap();
-            let hello = svg
-                .lines()
-                .find(|line| line.contains(">Hello</text>"))
-                .unwrap();
-            let world = svg
-                .lines()
-                .find(|line| line.contains(">World</text>"))
-                .unwrap();
-            assert!(hello.contains(if first_bold {
-                "font-weight=\"bold\""
-            } else {
-                "font-weight=\"normal\""
-            }));
-            assert!(world.contains(if first_bold {
-                "font-weight=\"normal\""
-            } else {
-                "font-weight=\"bold\""
-            }));
-        }
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/text_two_objects_generated.gsp"),
-            None,
-        )
-        .unwrap();
-        doc.selected.insert(2);
-        doc.toggle_selected_text_style(crate::document::TextStyleCommand::Italic)
-            .unwrap();
-        doc.toggle_selected_text_style(crate::document::TextStyleCommand::Underline)
-            .unwrap();
-        let svg = svg_page(&doc, &vp).unwrap();
-        let world = svg
-            .lines()
-            .find(|line| line.contains(">World</text>"))
-            .unwrap();
-        assert!(world.contains("font-style=\"italic\""));
-        assert!(world.contains("text-decoration=\"underline\""));
-        doc.selected.clear();
-        doc.selected.insert(1);
-        doc.set_selected_text_family("Arial").unwrap();
-        let svg = svg_page(&doc, &vp).unwrap();
-        let hello = svg
-            .lines()
-            .find(|line| line.contains(">Hello</text>"))
-            .unwrap();
-        assert!(hello.contains("font-family=\"Arial\""));
-    }
-    #[test]
-    fn point_labels_use_independent_saved_text_styles_in_svg() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/text_two_point_labels_first_bold_off_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        let first = svg.lines().find(|line| line.contains(">A</text>")).unwrap();
-        let second = svg.lines().find(|line| line.contains(">B</text>")).unwrap();
-        assert!(first.contains("font-weight=\"normal\""));
-        assert!(second.contains("font-weight=\"bold\""));
-        doc.selected.insert(1);
-        doc.toggle_selected_text_style(crate::document::TextStyleCommand::IncreaseSize)
-            .unwrap();
-        let svg = svg_page(&doc, &vp).unwrap();
-        let first = svg.lines().find(|line| line.contains(">A</text>")).unwrap();
-        let second = svg.lines().find(|line| line.contains(">B</text>")).unwrap();
-        assert!(first.contains("font-size=\"36\""));
-        assert!(second.contains("font-size=\"24\""));
-    }
-    #[test]
-    fn mixed_format_caption_exports_distinct_svg_spans() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/text_mixed_bold_italic_he_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        let line = svg
-            .lines()
-            .find(|line| line.contains("He</tspan>"))
-            .unwrap();
-        assert!(line.contains("font-weight=\"normal\" font-style=\"italic\""));
-        assert!(line.contains(
-            "<tspan font-size=\"24\" font-weight=\"bold\" font-style=\"normal\" text-decoration=\"none\">llo</tspan>"
-        ));
-    }
-    #[test]
-    fn mixed_size_caption_exports_distinct_svg_sizes() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/text_mixed_size36_he_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        let line = svg
-            .lines()
-            .find(|line| line.contains("He</tspan>"))
-            .unwrap();
-        assert!(line.contains("<tspan font-size=\"36\""));
-        assert!(line.contains("<tspan font-size=\"24\""));
-    }
-    #[test]
-    fn mixed_family_caption_exports_native_font_index() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/text_mixed_adventor_he_original.gsp"),
-            None,
-        )
-        .unwrap();
-        assert!(!doc.partial_view);
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.contains("<tspan font-family=\"TeX Gyre Adventor\""));
-    }
-    #[test]
-    fn dotted_grid_exports_intersection_points() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_dotted_grid_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        assert!(grid_points(&doc, &vp).len() > 40);
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.matches("r=\"1.2\"").count() > 40);
-        assert_eq!(svg.matches("<line x1=").count(), 2);
-    }
-    #[test]
-    fn mixed_coordinate_systems_render_square_lines_and_polar_dots_independently() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_two_frames_mixed_grid_generated.gsp"),
-            None,
-        )
-        .unwrap();
-        assert_eq!(doc.active_coordinate_system(), Some(9));
-        assert_eq!(doc.frame_styles.get(&9), Some(&(GridForm::Square, false)));
-        assert_eq!(doc.frame_styles.get(&14), Some(&(GridForm::Polar, true)));
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let grid = grid_geometry(&doc, &vp);
-        assert!(grid.lines.len() > 10);
-        assert!(grid.dots.len() > 30);
-        assert!(grid.polar_paths.is_empty());
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.matches("r=\"1.2\"").count() > 30);
-        assert!(svg.matches("<line x1=").count() > 10);
-
-        doc.selected.insert(9);
-        let selected = grid_geometry(&doc, &vp);
-        assert!(selected.selected_lines.len() > 10);
-        assert!(selected.lines.is_empty());
-        assert!(selected.dots.len() > 30);
-        doc.selected.clear();
-
-        doc.set_grid_visible(false);
-        let hidden = grid_geometry(&doc, &vp);
-        assert!(hidden.lines.is_empty());
-        assert!(hidden.dots.len() > 30);
-    }
-    #[test]
-    fn snap_points_keeps_the_visible_grid() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_snap_points_original.gsp"),
-            None,
-        )
-        .unwrap();
-        assert_eq!(doc.snap_points, vec![true]);
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        assert!(grid_geometry(&doc, &vp).lines.len() > 10);
-        assert!(svg_page(&doc, &vp).unwrap().matches("<line x1=").count() > 10);
-    }
-    #[test]
-    fn circle_frame_axis_ticks_and_labels_follow_its_radius() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_unit_circle_generated.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(640., 480.)),
-            scale: 1.,
-            center: Point { x: 323., y: 217. },
-        };
-        let (ticks, labels) = defined_axis_annotations(&doc, &vp);
-        assert!(ticks.len() > 70);
-        assert!(
-            labels
-                .iter()
-                .any(|(_, label, _)| label == "−2" || label == "-2")
-        );
-        assert!(labels.iter().any(|(_, label, _)| label == "0.5"));
-        assert!(svg_page(&doc, &vp).unwrap().contains(">0.5</text>"));
-        doc.move_point(2, Point { x: 383., y: 217. });
-        let moved = defined_axis_annotations(&doc, &vp);
-        assert!(moved.0.len() > ticks.len());
-        doc.set_grid_visible(false);
-        assert!(defined_axis_annotations(&doc, &vp).0.is_empty());
-    }
-    #[test]
-    fn rectangular_distance_frame_uses_independent_axis_tick_spacing() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_two_segments_generated.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(640., 480.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let (ticks, labels) = defined_axis_annotations(&doc, &vp);
-        assert!(ticks.iter().any(|(a, b, _)| a.x == 330. && b.x == 330.));
-        assert!(ticks.iter().any(|(a, b, _)| a.y == 225. && b.y == 225.));
-        assert!(labels.iter().any(|(_, label, _)| label == "1"));
-        assert!(labels.iter().any(|(_, label, _)| label == "0.5"));
-        assert!(svg_page(&doc, &vp).unwrap().contains(">0.5</text>"));
-        doc.set_grid_visible(false);
-        assert!(defined_axis_annotations(&doc, &vp).0.is_empty());
-    }
-    #[test]
-    fn hidden_coordinate_system_does_not_draw_its_axes_or_origin() {
-        let mut doc = Document::new();
-        doc.add_default_coordinate_system(Point { x: 199., y: 125. })
-            .unwrap();
-        doc.set_grid_visible(false);
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(!svg.contains("<line "));
-        assert!(!svg.contains("<circle "));
-    }
-    #[test]
-    fn polar_grid_draws_rings_and_rectangular_unit_is_visible() {
-        let polar = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_polar_grid_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let rectangular = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_rectangular_grid_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let svg = svg_page(&polar, &vp).unwrap();
-        assert!(svg.matches("<polyline ").count() > 24);
-        assert!(!polar.is_displayed(4));
-        assert!(rectangular.is_displayed(4));
-        let svg = svg_page(&rectangular, &vp).unwrap();
-        assert!(svg.matches("<circle ").count() >= 3);
-    }
-    #[test]
-    fn trigonometric_axis_labels_are_placed_at_pi_multiples() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/graph_trigonometric_axis_original.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-            scale: 1.,
-            center: Point { x: 199., y: 125. },
-        };
-        let labels = trigonometric_axis_labels(&doc, &vp);
-        assert_eq!(labels.len(), 2);
-        assert!(labels.iter().any(|(_, text)| text == "−π"));
-        assert!(labels.iter().any(|(_, text)| text == "π"));
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.contains(">−π</text>"));
-        assert!(svg.contains(">π</text>"));
-    }
-    #[test]
-    fn numeric_ratio_shapes_export_and_zero_circle_is_omitted() {
-        for (bytes, image, primitive, count) in [
-            (
-                include_bytes!("../../../tests/fixtures/numeric_ratio_point_port.gsp").as_slice(),
-                6,
-                "<circle ",
-                1,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_ratio_segment_port.gsp").as_slice(),
-                7,
-                "<line ",
-                1,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_ratio_circle_port.gsp").as_slice(),
-                7,
-                "<circle ",
-                1,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_ratio_polygon_port.gsp").as_slice(),
-                7,
-                "<polygon ",
-                1,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_ratio_circle_zero_port.gsp").as_slice(),
-                7,
-                "<circle ",
-                0,
-            ),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            for object in &mut doc.objects {
-                object.visible = object.id == image;
-            }
-            let vp = Viewport {
-                rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-                scale: 1.,
-                center: Point { x: 200., y: 150. },
-            };
-            assert_eq!(
-                svg_page(&doc, &vp).unwrap().matches(primitive).count(),
-                count
-            );
-        }
-    }
-
-    #[test]
-    fn numeric_angle_shapes_export_with_saved_colors() {
-        for (bytes, primitive) in [
-            (
-                include_bytes!("../../../tests/fixtures/numeric_angle_segment_edited_port.gsp")
-                    .as_slice(),
-                "<line ",
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_angle_circle_edited_port.gsp").as_slice(),
-                "<circle ",
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/numeric_angle_polygon_edited_port.gsp")
-                    .as_slice(),
-                "<polygon ",
-            ),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            for object in &mut doc.objects {
-                object.visible = object.id == 10;
-            }
-            let vp = Viewport {
-                rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.)),
-                scale: 1.,
-                center: Point { x: 200., y: 150. },
-            };
-            let svg = svg_page(&doc, &vp).unwrap();
-            assert_eq!(svg.matches(primitive).count(), 1);
-            assert!(svg.contains("#2850c8"));
-        }
-    }
-
-    #[test]
-    fn svg_uses_saved_point_stroke_and_polygon_styles() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/style_integrated_saved_by_wine.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(800., 600.)),
-            scale: 1.,
-            center: Point { x: 200., y: 200. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.contains("stroke=\"#008000\" stroke-width=\"4\" stroke-dasharray=\"9 6\""));
-        assert!(svg.contains("stroke=\"#0000ff\" stroke-width=\"1.5\" stroke-dasharray=\"2 5\""));
-        assert!(svg.contains(&format!(
-            "fill=\"#800080\" fill-opacity=\"{}\" stroke=\"none\"",
-            f64::from(32767) / 65535.
-        )));
-        assert!(svg.contains("r=\"6\" fill=\"#0000ff\""));
-    }
-    #[test]
-    fn referenced_captions_export_current_source_values_and_names() {
-        let mut doc = Document::from_bytes(include_bytes!("../../../tests/fixtures/referenced_rich51_api_baseline_native_saved.gsp"), None).unwrap();
-        let vp = Viewport { rect: Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.,600.)), scale: 1., center: Point{x:400.,y:300.} };
-        let before=svg_page(&doc,&vp).unwrap();
-        assert!(before.contains("POINT Alpha"));
-        assert!(before.contains("VALUE 2.0"));
-        doc.set_parameter_value(2,4.).unwrap();
-        doc.set_point_label(1,"Beta",false).unwrap();
-        let after=svg_page(&doc,&vp).unwrap();
-        assert!(after.contains("POINT Beta"));
-        assert!(after.contains("VALUE 4.0"));
-        assert!(!after.contains("CACHE"));
-        doc.verify_roundtrip().unwrap();
-    }
-    #[test]
-    fn live_color_wrappers_update_svg_geometry_and_color_after_reopen() {
-        use crate::document::colorized::{ColorBinding, ColorRangeBehavior};
-        let mut doc = Document::new();
-        let a = doc.add(Kind::Free(Point { x: 100., y: 100. }));
-        let b = doc.add(Kind::Free(Point { x: 200., y: 100. }));
-        let c = doc.add(Kind::Free(Point { x: 100., y: 200. }));
-        let segment = doc.add(Kind::Segment(a, b));
-        let circle = doc.add(Kind::Circle(a, b));
-        let polygon = doc.add(Kind::Polygon(vec![a, b, c]));
-        let arc = doc.add(Kind::CenterArc(a, b, c));
-        let value = doc.add_named_parameter("q", 0.5, (10, 10)).unwrap();
-        for source in [a, segment, circle, polygon, arc] {
-            doc.add_colorized(source, ColorBinding::Grayscale { value }, 0., 1., ColorRangeBehavior::Clamp).unwrap();
-            doc.objects[source - 1].visible = false;
-        }
-        let vp = Viewport {
-            rect: Rect::from_min_size(egui::pos2(0., 0.), egui::vec2(800., 600.)),
-            scale: 1., center: Point { x: 200., y: 200. },
-        };
-        let before = svg_page(&doc, &vp).unwrap();
-        assert!(before.matches("#7f7f7f").count() >= 5);
-        doc.set_parameter_value(value, 0.75).unwrap();
-        assert!(doc.move_point(b, Point { x: 250., y: 100. }));
-        let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
-        let after = svg_page(&reopened, &vp).unwrap();
-        assert!(after.matches("#bfbfbf").count() >= 5);
-        assert!(!after.contains("#7f7f7f"));
-        assert_ne!(before, after);
-    }
-    #[test]
-    fn picture_hit_and_svg_use_the_same_affine_viewport() {
-        let mut doc = Document::new();
-        let png = include_bytes!("../../../tests/fixtures/image_tiny.png");
-        doc.import_png(png, Point { x: 120., y: 130. }).unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(egui::pos2(10., 20.), egui::vec2(300., 200.)),
-            scale: 2.,
-            center: Point { x: 150., y: 150. },
-        };
-        let Kind::Image { png, transform, .. } = &doc.objects[0].kind else {
-            unreachable!()
-        };
-        let corners = picture_screen_quad(&vp, png, *transform).unwrap();
-        assert!(picture_hit(
-            &vp,
-            png,
-            *transform,
-            corners[0] + egui::vec2(8., 8.)
-        ));
-        assert!(!picture_hit(
-            &vp,
-            png,
-            *transform,
-            corners[0] - egui::vec2(8., 8.)
-        ));
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.contains("data:image/png;base64,iVBORw0KGgo"));
-        assert!(svg.contains("<image width=\"16\" height=\"16\""));
-    }
-    #[test]
-    fn imported_point_anchored_picture_moves_in_svg_and_picking() {
-        let original = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/anchored_image94_coin_original_input.gsp"),
-            None,
-        )
-        .unwrap();
-        let moved = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/anchored_image94_coin_move_input.gsp"),
-            None,
-        )
-        .unwrap();
-        let vp = Viewport {
-            rect: Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        let Kind::Image { png, .. } = &original.objects[28].kind else {
-            panic!("native picture is not decoded")
-        };
-        let original_quad = picture_screen_quad(&vp, png, original.image_transform(29).unwrap()).unwrap();
-        let moved_quad = picture_screen_quad(&vp, png, moved.image_transform(29).unwrap()).unwrap();
-        for (before, after) in original_quad.into_iter().zip(moved_quad) {
-            assert_eq!(after, before + egui::vec2(40., 20.));
-        }
-        assert!(picture_hit(&vp, png, moved.image_transform(29).unwrap(), moved_quad[0] + egui::vec2(10., 10.)));
-        let Kind::Image { transform, .. } = &original.objects[28].kind else {
-            unreachable!()
-        };
-        let isolated = |point: Point| {
-            let mut document = Document::new();
-            let anchor = document.add(Kind::Free(point));
-            document.add(Kind::Image {
-                png: png.clone(),
-                transform: *transform,
-                anchor: Some(anchor),
-            });
-            document
-        };
-        let before = svg_page(&isolated(Point { x: 686., y: 341. }), &vp).unwrap();
-        let after = svg_page(&isolated(Point { x: 726., y: 361. }), &vp).unwrap();
-        assert_eq!(before.matches("<image ").count(), after.matches("<image ").count());
-        assert_ne!(before, after);
-    }
-    #[test]
-    fn imported_multi_resource_pictures_export_their_own_pngs() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        for (bytes, first, second) in [
-            (include_bytes!("../../../tests/fixtures/image_objects91_original_native_saved.gsp").as_slice(), true, true),
-            (include_bytes!("../../../tests/fixtures/image_objects91_hide20_native_saved.gsp").as_slice(), false, true),
-            (include_bytes!("../../../tests/fixtures/image_objects91_hide21_native_saved.gsp").as_slice(), true, false),
-            (include_bytes!("../../../tests/fixtures/image_objects91_hide_both_native_saved.gsp").as_slice(), false, false),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            doc.partial_view = false;
-            let svg = svg_page(&doc, &viewport).unwrap();
-            assert_eq!(svg.matches("<image ").count(), usize::from(first) + usize::from(second));
-            assert_eq!(svg.contains("<image width=\"253\" height=\"35\""), first);
-            assert_eq!(svg.contains("<image width=\"321\" height=\"35\""), second);
-        }
-    }
-    #[test]
-    fn imported_free_text_rgb_runs_export_live_run_colors() {
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(1000., 800.)),
-            scale: 1.,
-            center: Point { x: 500., y: 400. },
-        };
-        for (bytes, color) in [
-            (include_bytes!("../../../tests/fixtures/rich_style92_original_native_saved.gsp").as_slice(), "#0000ff"),
-            (include_bytes!("../../../tests/fixtures/rich_style92_g2_native_saved.gsp").as_slice(), "#0001ff"),
-            (include_bytes!("../../../tests/fixtures/rich_style92_l050_native_saved.gsp").as_slice(), "#00004f"),
-        ] {
-            let mut doc = Document::from_bytes(bytes, None).unwrap();
-            for object in &mut doc.objects {
-                object.visible = object.id == 14;
-            }
-            doc.partial_view = false;
-            let svg = svg_page(&doc, &viewport).unwrap();
-            assert!(svg.contains(&format!("fill=\"{color}\"")), "missing {color}");
-        }
-    }
-    #[test]
-    fn collapsed_iteration_circles_are_omitted_from_svg() {
-        let doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/vector_collapsed_circle_iteration_port.gsp"),
-            None,
-        )
-        .unwrap();
-        let viewport = Viewport {
-            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
-            scale: 1.,
-            center: Point { x: 200., y: 180. },
-        };
-        let svg = svg_page(&doc, &viewport).unwrap();
-        assert!(!svg.contains("r=\"0\""));
-        assert!(svg.contains("r=\"40\""));
-    }
-
-    #[test]
-    fn scientific_captions_reach_svg_without_changing_numeric_values() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/scientific_rounding_native_verified.gsp"),
-            None,
-        )
-        .unwrap();
-        let viewport = Viewport {
-            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
-            scale: 1.,
-            center: Point { x: 200., y: 180. },
-        };
-        let svg = svg_page(&doc, &viewport).unwrap();
-        assert!(svg.contains("1.00 · 10⁷"));
-        assert!(svg.contains("-2.86 · 10¹⁴"));
-        assert_eq!(doc.numeric_value(1), Some(9999999.));
-        doc.set_numeric_precision(&[1], 5).unwrap();
-        assert!(svg_page(&doc, &viewport).unwrap().contains("1.00000 · 10⁷"));
-        assert_eq!(doc.numeric_value(1), Some(9999999.));
-    }
-
-    #[test]
-    fn calculation_precision_survives_svg_export() {
-        let mut doc = Document::from_bytes(
-            include_bytes!("../../../tests/fixtures/calculation_precision_native_verified.gsp"),
-            None,
-        )
-        .unwrap();
-        let viewport = Viewport {
-            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 360.)),
-            scale: 1.,
-            center: Point { x: 200., y: 180. },
-        };
-        let svg = svg_page(&doc, &viewport).unwrap();
-        for caption in ["5.292 cm", "2.0000", "0.24690", "5</text>"] {
-            assert!(svg.contains(caption), "missing {caption}");
-        }
-        doc.set_numeric_precision(&[8, 9, 11, 12], 5).unwrap();
-        assert!(svg_page(&doc, &viewport).unwrap().contains("5.12500"));
-        doc.set_numeric_precision(&[11, 12], 0).unwrap();
-        let svg = svg_page(&doc, &viewport).unwrap();
-        assert!(!svg.contains("0.24690"));
-        assert!(!svg.contains("5.12500"));
-    }
-    #[test]
-    fn svg_export_uses_visible_geometry_and_refuses_partial_documents() {
-        let mut doc = Document::new();
-        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
-        let b = doc.add(Kind::Free(Point { x: 80., y: 20. }));
-        doc.add(Kind::Segment(a, b));
-        let circle = doc.add(Kind::Circle(a, b));
-        let vp = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(100., 100.)),
-            scale: 1.,
-            center: Point { x: 50., y: 50. },
-        };
-        let svg = svg_page(&doc, &vp).unwrap();
-        assert!(svg.contains("<line"));
-        assert!(svg.contains("<circle"));
-        doc.selected.insert(circle);
-        doc.set_selected_visibility(false);
-        assert!(!svg_page(&doc, &vp).unwrap().contains("r=\"70\""));
-        doc.partial_view = true;
-        assert!(svg_page(&doc, &vp).is_ok());
-        doc.add(Kind::Unsupported(999));
-        assert!(svg_page(&doc, &vp).is_err());
-    }
-    #[test]
-    fn clips_line_ray_and_segment() {
-        let r = Rect::from_min_max(Pos2::new(0., 0.), Pos2::new(100., 100.));
-        let a = Pos2::new(50., 50.);
-        let b = Pos2::new(60., 50.);
-        assert_eq!(
-            clipped_line(a, b, LineMode::Line, r),
-            Some((Pos2::new(0., 50.), Pos2::new(100., 50.)))
-        );
-        assert_eq!(
-            clipped_line(a, b, LineMode::Ray, r),
-            Some((a, Pos2::new(100., 50.)))
-        );
-        assert_eq!(clipped_line(a, b, LineMode::Segment, r), Some((a, b)));
-        assert_eq!(clipped_line(a, a, LineMode::Line, r), None);
-    }
-    #[test]
-    fn action_button_uses_same_rectangle_for_export_and_hit_testing() {
-        let mut doc = Document::new();
-        let a = doc.add(Kind::Free(Point { x: 10., y: 20. }));
-        let b = doc.add(Kind::Free(Point { x: 100., y: 20. }));
-        let segment = doc.add(Kind::Segment(a, b));
-        let button = doc.add_hide_show_button(segment).unwrap();
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::new(50., 70.), egui::vec2(300., 200.)),
-            scale: 1.,
-            center: Point { x: 150., y: 100. },
-        };
-        let Kind::HideShowButton { label, anchor, .. } = &doc.objects[button - 1].kind else {
-            unreachable!()
-        };
-        let bounds = action_button_rect(&viewport, *anchor, label);
-        assert_eq!(bounds.min, Pos2::new(60., 75.));
-        assert!(bounds.contains(Pos2::new(105., 85.)));
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Hide Segment</text>")
-        );
-        assert!(
-            svg_page_with_button_offset(&doc, &viewport, egui::vec2(40., 10.))
-                .unwrap()
-                .contains("<rect x=\"100\" y=\"85\"")
-        );
-        doc.activate_hide_show_button(button).unwrap();
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("显示线段</text>")
-        );
-    }
-    #[test]
-    fn svg_length_tracks_geometry_and_visibility() {
-        let mut doc = Document::new();
-        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
-        let b = doc.add(Kind::Free(Point { x: 100., y: 0. }));
-        let segment = doc.add(Kind::Segment(a, b));
-        let measurement = doc.add(Kind::SegmentLength(segment));
-        let distance = doc.add(Kind::PointDistance(a, b));
-        let circle = doc.add(Kind::Circle(a, b));
-        let circumference = doc.add(Kind::CircleCircumference(circle));
-        let radius = doc.add(Kind::CircleRadius(circle));
-        let viewport = Viewport {
-            rect: Rect::from_min_size(Pos2::ZERO, egui::vec2(200., 100.)),
-            scale: 1.,
-            center: Point { x: 100., y: 50. },
-        };
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Length = 2.65 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Distance = 2.65 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Circumference = 16.62 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Radius = 2.65 cm")
-        );
-        doc.checkpoint();
-        doc.move_point(b, Point { x: 200., y: 0. });
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Length = 5.29 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Distance = 5.29 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Circumference = 33.25 cm")
-        );
-        assert!(
-            svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Radius = 5.29 cm")
-        );
-        doc.selected.insert(measurement);
-        doc.selected.insert(distance);
-        doc.selected.insert(circumference);
-        doc.selected.insert(radius);
-        doc.set_selected_visibility(false);
-        assert!(!svg_page(&doc, &viewport).unwrap().contains("Length ="));
-        assert!(!svg_page(&doc, &viewport).unwrap().contains("Distance ="));
-        assert!(
-            !svg_page(&doc, &viewport)
-                .unwrap()
-                .contains("Circumference =")
-        );
-        assert!(!svg_page(&doc, &viewport).unwrap().contains("Radius ="));
     }
 }

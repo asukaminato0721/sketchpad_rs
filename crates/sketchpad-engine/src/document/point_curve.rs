@@ -98,9 +98,14 @@ impl<'a> PointCurve<'a> {
                     || !is_point_kind(&doc.objects.get(target.checked_sub(1)?)?.kind)
                     || !matches!(
                         kind,
-                        Kind::PointOnSegment(..) | Kind::PointOnCircle(..) | Kind::PointOnArc(..)
-                            | Kind::PointOnRay(..) | Kind::PointOnLine(..)
-                            | Kind::PointOnCurve(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..)
+                        Kind::PointOnSegment(..)
+                            | Kind::PointOnCircle(..)
+                            | Kind::PointOnArc(..)
+                            | Kind::PointOnRay(..)
+                            | Kind::PointOnLine(..)
+                            | Kind::PointOnCurve(..)
+                            | Kind::PointOnPolygon(..)
+                            | Kind::PointOnSector(..)
                     )
                 {
                     return None;
@@ -144,10 +149,15 @@ impl<'a> PointCurve<'a> {
                 kind: Kind::PointOnArc(..),
                 ..
             } => (0.0..=1.0).contains(&value).then_some(value),
-            Source::Geometric { kind: Kind::PointOnPolygon(..) | Kind::PointOnSector(..), .. } =>
-                (0.0..=1.0).contains(&value).then_some(value),
-            Source::Geometric { kind: Kind::PointOnCurve(..), path, .. } =>
-                Self::new(self.original, *path)?.literal_fraction(value),
+            Source::Geometric {
+                kind: Kind::PointOnPolygon(..) | Kind::PointOnSector(..),
+                ..
+            } => (0.0..=1.0).contains(&value).then_some(value),
+            Source::Geometric {
+                kind: Kind::PointOnCurve(..),
+                path,
+                ..
+            } => Self::new(self.original, *path)?.literal_fraction(value),
             Source::Parameter { .. } | Source::Function { .. } => Some(value),
             Source::Mapped(evaluator) => evaluator.literal_fraction(value),
             _ => None,
@@ -168,23 +178,40 @@ impl<'a> PointCurve<'a> {
     /// Numeric points on an outer geometric locus consume a normalized driver fraction,
     /// even when its driver itself belongs to a raw-parameter locus.
     pub(super) fn normalized_numeric_fraction(&self, value: f64) -> Option<f64> {
-        if !value.is_finite() { return None; }
+        if !value.is_finite() {
+            return None;
+        }
         match &self.source {
-            Source::Geometric { kind: Kind::PointOnCircle(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..), .. } => Some(value.rem_euclid(1.)),
-            Source::Geometric { kind: Kind::PointOnCurve(..), path, .. } => {
+            Source::Geometric {
+                kind: Kind::PointOnCircle(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..),
+                ..
+            } => Some(value.rem_euclid(1.)),
+            Source::Geometric {
+                kind: Kind::PointOnCurve(..),
+                path,
+                ..
+            } => {
                 // A geometric locus driven by a function point has its own
                 // normalized numeric domain. Direct numeric function points
                 // retain their separate admission and parameter policy.
                 match &self.original.objects.get(path.checked_sub(1)?)?.kind {
                     Kind::FunctionPlot(..) => (0.0..=1.0).contains(&value).then_some(value),
-                    Kind::SampledMapped(definition) if self.original.objects.get(definition.path().checked_sub(1)?)?.kind.is_circle() => {
+                    Kind::SampledMapped(definition)
+                        if self
+                            .original
+                            .objects
+                            .get(definition.path().checked_sub(1)?)?
+                            .kind
+                            .is_circle() =>
+                    {
                         Some(value.rem_euclid(1.))
                     }
                     _ => Self::new(self.original, *path)?.normalized_numeric_fraction(value),
                 }
             }
-            Source::Geometric { .. } | Source::Parameter { .. } =>
-                (0.0..=1.0).contains(&value).then_some(value),
+            Source::Geometric { .. } | Source::Parameter { .. } => {
+                (0.0..=1.0).contains(&value).then_some(value)
+            }
             Source::Function { .. } => None,
             Source::Mapped(_) => (0.0..=1.0).contains(&value).then_some(value),
         }
@@ -234,7 +261,9 @@ impl<'a> PointCurve<'a> {
             } => {
                 // Use the original host geometry, retaining unrelated scoped inputs.
                 let parameter = *minimum + (*maximum - *minimum) * fraction;
-                sample.objects[*driver - 1].kind = self.original.locus_driver_kind_at(*driver, *path, parameter)?;
+                sample.objects[*driver - 1].kind = self
+                    .original
+                    .locus_driver_kind_at(*driver, *path, parameter)?;
                 sample.position(*target)?
             }
         };

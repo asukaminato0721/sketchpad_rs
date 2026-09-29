@@ -4,6 +4,7 @@ impl Document {
     fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             objects: self.objects.clone(),
+            merge_aliases: self.merge_aliases.clone(),
             measurement_names: self.measurement_names.clone(),
             snap_points: self.snap_points.clone(),
             grid_dotted: self.grid_dotted.clone(),
@@ -25,6 +26,7 @@ impl Document {
         let mut previous = self.snapshot();
         let page_count_changed = self.page_count != snapshot.page_count;
         self.objects = snapshot.objects;
+        self.merge_aliases = snapshot.merge_aliases;
         self.measurement_names = snapshot.measurement_names;
         self.snap_points = snapshot.snap_points;
         self.grid_dotted = snapshot.grid_dotted;

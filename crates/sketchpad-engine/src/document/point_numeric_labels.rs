@@ -15,7 +15,7 @@ pub(super) fn decode_referenced_label(
         return None;
     };
     let text = super::referenced_captions::decode_group(header, refs, group, font_count, 90)?;
-    supported_referenced_label(objects, page, id, *point, *source, &text).then(|| {
+    supported_referenced_label(objects, page, id, *point, *source, &text).then_some({
         Kind::PointReferencedText {
             point: *point,
             source: *source,

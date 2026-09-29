@@ -18,6 +18,74 @@ fn hidden_point_matches_original_sketchpad_bytes() {
     d.undo();
     assert!(d.objects[0].visible);
 }
+
+#[test]
+fn split_point_preserves_its_identity_and_children() {
+    let mut source = Document::new();
+    let a = source.add(Kind::Free(Point { x: 0., y: 0. }));
+    let b = source.add(Kind::Free(Point { x: 10., y: 0. }));
+    let host = source.add(Kind::Segment(a, b));
+    let midpoint = source.add(Kind::SegmentMidpoint(host));
+    let end = source.add(Kind::Free(Point { x: 5., y: 10. }));
+    let child = source.add(Kind::Segment(midpoint, end));
+    let mut document = Document::from_bytes(&source.encode().unwrap(), None).unwrap();
+
+    document.split_point(midpoint).unwrap();
+    assert!(matches!(document.objects[midpoint - 1].kind, Kind::Free(_)));
+    assert_eq!(
+        document.dependencies_of(child).unwrap(),
+        vec![midpoint, end]
+    );
+    document.move_point(a, Point { x: -20., y: 0. });
+    assert_eq!(document.position(midpoint), Some(Point { x: 5., y: 0. }));
+
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert!(matches!(reopened.objects[midpoint - 1].kind, Kind::Free(_)));
+    assert_eq!(
+        reopened.dependencies_of(child).unwrap(),
+        vec![midpoint, end]
+    );
+}
+
+#[test]
+fn merge_point_reattaches_children_and_removes_the_source() {
+    let mut source = Document::new();
+    let merged = source.add(Kind::Free(Point { x: 0., y: 0. }));
+    let target = source.add(Kind::Free(Point { x: 10., y: 0. }));
+    let end = source.add(Kind::Free(Point { x: 10., y: 10. }));
+    source.add(Kind::Segment(merged, end));
+    let mut document = Document::from_bytes(&source.encode().unwrap(), None).unwrap();
+
+    document.merge_points(merged, target).unwrap();
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.objects.len(), 3);
+    assert_eq!(reopened.position(1), Some(Point { x: 10., y: 0. }));
+    assert!(matches!(reopened.objects[2].kind, Kind::Segment(1, 2)));
+}
+
+#[test]
+fn custom_transform_dependency_slice_creates_native_mapped_point() {
+    let mut document = Document::new();
+    let seed = document.add(Kind::Free(Point { x: 0., y: 0. }));
+    let fixed = document.add(Kind::Free(Point { x: 10., y: 0. }));
+    let segment = document.add(Kind::Segment(seed, fixed));
+    let output = document.add(Kind::SegmentMidpoint(segment));
+    let replacement = document.add(Kind::Free(Point { x: 30., y: 20. }));
+
+    let carried = document.custom_transform_carried(seed, output).unwrap();
+    assert_eq!(carried, vec![segment, output]);
+    let mapped = document
+        .add_mapped_element(output, seed, replacement, &carried)
+        .unwrap();
+    assert_eq!(document.position(mapped), Some(Point { x: 20., y: 10. }));
+
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.position(mapped), Some(Point { x: 20., y: 10. }));
+    assert!(matches!(
+        reopened.objects[mapped - 1].kind,
+        Kind::MappedElement(_)
+    ));
+}
 #[test]
 fn pages_and_selection_metadata() {
     let tools = Document::open(Path::new("../../tests/fixtures/example_tools.gsp")).unwrap();

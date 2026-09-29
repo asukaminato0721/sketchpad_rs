@@ -43,14 +43,18 @@ fn multi_page_paste_remaps_dependencies_on_same_and_earlier_pages() {
         include_bytes!("../../../../../tests/fixtures/two_page_line_point_port.gsp"),
         6,
         0,
-        include_bytes!("../../../../../tests/fixtures/two_page_pasted_line_point_first_page_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_pasted_line_point_first_page_port.gsp"
+        ),
         4,
     );
     pasted(
         include_bytes!("../../../../../tests/fixtures/two_page_one_host_measurements_port.gsp"),
         10,
         0,
-        include_bytes!("../../../../../tests/fixtures/two_page_pasted_perimeter_first_page_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_pasted_perimeter_first_page_port.gsp"
+        ),
         5,
     );
 
@@ -110,10 +114,14 @@ fn multi_page_clear_remaps_survivors_and_removes_dependents() {
         1,
         5,
         &[5, 10, 14],
-        include_bytes!("../../../../../tests/fixtures/two_page_polygon_measurements_cleared_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_polygon_measurements_cleared_port.gsp"
+        ),
     );
     cleared(
-        include_bytes!("../../../../../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp"
+        ),
         1,
         4,
         &[4, 5, 6],
@@ -187,7 +195,8 @@ fn multi_page_clear_remaps_survivors_and_removes_dependents() {
     );
     std::fs::remove_file(path).unwrap();
 
-    let source = include_bytes!("../../../../../tests/fixtures/action_link_page_port_generated.gsp");
+    let source =
+        include_bytes!("../../../../../tests/fixtures/action_link_page_port_generated.gsp");
     let mut document = Document::from_bytes(source, None).unwrap();
     document.selected.insert(1);
     assert!(document.clear_selected().is_err());

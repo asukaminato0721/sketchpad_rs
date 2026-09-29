@@ -7,6 +7,7 @@ pub struct Record {
     pub start: usize,
     pub data: std::ops::Range<usize>,
 }
+pub type PageTitleSlot = (Option<usize>, usize, Option<String>);
 pub fn u32_at(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes(b[i..i + 4].try_into().unwrap())
 }
@@ -40,10 +41,7 @@ pub fn records(b: &[u8]) -> Result<Vec<Record>, String> {
     }
     Ok(out)
 }
-pub fn page_title_slots(
-    b: &[u8],
-    rs: &[Record],
-) -> Result<Vec<(Option<usize>, usize, Option<String>)>, String> {
+pub fn page_title_slots(b: &[u8], rs: &[Record]) -> Result<Vec<PageTitleSlot>, String> {
     let mut slots = Vec::new();
     for (start, _) in rs.iter().enumerate().filter(|(_, r)| r.kind == 0x03e8) {
         let trailer = (start + 1..rs.len())
@@ -67,7 +65,7 @@ pub fn put_record(out: &mut Vec<u8>, kind: u32, data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(data);
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         out.push(0);
     }
 }

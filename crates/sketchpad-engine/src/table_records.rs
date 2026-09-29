@@ -1,12 +1,16 @@
 //! Bounded GSP4 support for numeric parameters and verified snapshot tables.
 //! Unknown layouts and values are refused before writing.
 
-const TEMPLATE_DOCUMENT: &[u8] = include_bytes!("../../../tests/fixtures/table_parameter_tabulated.gsp");
-const DEFAULT_PARAMETER: &[u8] = include_bytes!("../../../tests/fixtures/table_parameter_default.gsp");
-const TWO_PARAMETERS: &[u8] = include_bytes!("../../../tests/fixtures/table_two_parameters_original.gsp");
+const TEMPLATE_DOCUMENT: &[u8] =
+    include_bytes!("../../../tests/fixtures/table_parameter_tabulated.gsp");
+const DEFAULT_PARAMETER: &[u8] =
+    include_bytes!("../../../tests/fixtures/table_parameter_default.gsp");
+const TWO_PARAMETERS: &[u8] =
+    include_bytes!("../../../tests/fixtures/table_two_parameters_original.gsp");
 const NAMED_PARAMETER: &[u8] =
     include_bytes!("../../../tests/fixtures/table_parameter_speed_original.gsp");
-const TWO_COLUMN_TABLE: &[u8] = include_bytes!("../../../tests/fixtures/table_two_columns_original.gsp");
+const TWO_COLUMN_TABLE: &[u8] =
+    include_bytes!("../../../tests/fixtures/table_two_columns_original.gsp");
 #[cfg(test)]
 const TWO_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../../../tests/fixtures/table_two_columns_two_rows_original.gsp");
@@ -17,7 +21,8 @@ const THREE_ROW_PAIR_TABLE: &[u8] =
 const FOUR_ROW_PAIR_TABLE: &[u8] =
     include_bytes!("../../../tests/fixtures/table_pair_four_rows_original.gsp");
 const CALCULATION: &[u8] = include_bytes!("../../../tests/fixtures/table_calculate_2_plus_3.gsp");
-const MEASURED_CALCULATION: &[u8] = include_bytes!("../../../assets/measurement_times_two_group.bin");
+const MEASURED_CALCULATION: &[u8] =
+    include_bytes!("../../../assets/measurement_times_two_group.bin");
 const MEASURED_CALCULATION_TWO_DIGIT: &[u8] =
     include_bytes!("../../../assets/measurement_times_twelve_group.bin");
 const PARAMETER_CALCULATION_NATIVE: &[u8] =
@@ -284,7 +289,9 @@ struct ParameterLiteral {
 }
 
 fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLiteral, String> {
-    let scientific = words.windows(4).position(|part| part == [0x1002, 1, 0, 0x1004]);
+    let scientific = words
+        .windows(4)
+        .position(|part| part == [0x1002, 1, 0, 0x1004]);
     let (mantissa, exponent) = if let Some(at) = scientific {
         let tail = &words[at + 4..];
         let negative = tail.first() == Some(&0x1001);
@@ -292,20 +299,29 @@ fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLitera
         if digits.is_empty() || digits.iter().any(|digit| *digit > 9) {
             return Err("Invalid parameter exponent".into());
         }
-        let exponent = digits.iter().try_fold(0_i32, |value, digit|
-            value.checked_mul(10)?.checked_add(i32::from(*digit)))
+        let exponent = digits
+            .iter()
+            .try_fold(0_i32, |value, digit| {
+                value.checked_mul(10)?.checked_add(i32::from(*digit))
+            })
             .ok_or("Parameter exponent is out of range")?;
-        (&words[..at], Some(if negative { -exponent } else { exponent }))
+        (
+            &words[..at],
+            Some(if negative { -exponent } else { exponent }),
+        )
     } else {
         (words, None)
     };
     let (magnitude, suffix) = if unit == NumericUnit::Scalar {
         (mantissa, None)
     } else {
-        let (&suffix, magnitude) = mantissa.split_last()
+        let (&suffix, magnitude) = mantissa
+            .split_last()
             .ok_or("Parameter is missing its value")?;
-        if !matches!((unit, suffix),
-            (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)) {
+        if !matches!(
+            (unit, suffix),
+            (NumericUnit::Length, 0x0201) | (NumericUnit::Degrees, 0x0100..=0x0102)
+        ) {
             return Err("Parameter value units disagree with its header".into());
         }
         (magnitude, Some(suffix))
@@ -318,18 +334,34 @@ fn parameter_literal(words: &[u16], unit: NumericUnit) -> Result<ParameterLitera
         _ => value_from_words(magnitude)?,
     };
     let value = if let Some(exponent) = exponent {
-        format!("{value}e{exponent}").parse::<f64>()
+        format!("{value}e{exponent}")
+            .parse::<f64>()
             .map_err(|_| "Invalid scientific parameter value")?
-    } else { value };
-    if !value.is_finite() { return Err("Parameter value must be finite".into()); }
-    Ok(ParameterLiteral { value, suffix, exponent })
+    } else {
+        value
+    };
+    if !value.is_finite() {
+        return Err("Parameter value must be finite".into());
+    }
+    Ok(ParameterLiteral {
+        value,
+        suffix,
+        exponent,
+    })
 }
 
 fn shift_decimal_words(words: &[u16], places: i32) -> Result<Vec<u16>, String> {
     let negative = words.first() == Some(&4097);
     let words = &words[usize::from(negative)..];
-    let decimal = words.iter().position(|word| *word == 10).unwrap_or(words.len());
-    let mut digits = words.iter().copied().filter(|word| *word != 10).collect::<Vec<_>>();
+    let decimal = words
+        .iter()
+        .position(|word| *word == 10)
+        .unwrap_or(words.len());
+    let mut digits = words
+        .iter()
+        .copied()
+        .filter(|word| *word != 10)
+        .collect::<Vec<_>>();
     let split = decimal as i64 + i64::from(places);
     if !(-31..=32).contains(&split) {
         return Err("Parameter mantissa exceeds 32 native numeric tokens".into());
@@ -337,12 +369,18 @@ fn shift_decimal_words(words: &[u16], places: i32) -> Result<Vec<u16>, String> {
     let split = if split <= 0 {
         digits.splice(..0, std::iter::repeat_n(0, (1 - split) as usize));
         1
-    } else { split as usize };
+    } else {
+        split as usize
+    };
     digits.resize(digits.len().max(split), 0);
     let mut whole = digits[..split].to_vec();
-    while whole.len() > 1 && whole[0] == 0 { whole.remove(0); }
+    while whole.len() > 1 && whole[0] == 0 {
+        whole.remove(0);
+    }
     let mut fraction = digits[split..].to_vec();
-    while fraction.last() == Some(&0) { fraction.pop(); }
+    while fraction.last() == Some(&0) {
+        fraction.pop();
+    }
     let mut result = if negative { vec![4097] } else { Vec::new() };
     result.extend(whole);
     if !fraction.is_empty() {
@@ -388,7 +426,7 @@ impl ParameterGroup {
         label.extend_from_slice(&(name.len() as u16).to_le_bytes());
         label.extend_from_slice(name.as_bytes());
         label.push(0);
-        if name.len() % 2 == 0 {
+        if name.len().is_multiple_of(2) {
             label.push(0);
         }
         let mut updated = group.bytes[..rs[2].start].to_vec();
@@ -429,7 +467,7 @@ impl ParameterGroup {
         let bbox_record = rs.iter().find(|r| r.kind == 0x08a3).unwrap();
         let label_record = rs.iter().find(|r| r.kind == 0x07d5);
         let payload_len = rs[1].end - rs[1].payload;
-        if !(94..=156).contains(&payload_len) || payload_len % 2 != 0 {
+        if !(94..=156).contains(&payload_len) || !payload_len.is_multiple_of(2) {
             return Err("Unsupported parameter value length".into());
         }
         let word_count = (payload_len - 92) / 2;
@@ -582,7 +620,7 @@ impl ParameterGroup {
         label.extend_from_slice(&(name.len() as u16).to_le_bytes());
         label.extend_from_slice(name.as_bytes());
         label.push(0);
-        if name.len() % 2 == 0 {
+        if name.len().is_multiple_of(2) {
             label.push(0);
         }
         let rs = records(&self.bytes, 0)?;
@@ -1023,6 +1061,9 @@ pub enum CalculationSourceKind {
 }
 
 // Native calculator degree conversion, verified with tan(90).
+// Sketchpad stores and evaluates this decimal literal, which intentionally
+// differs from Rust's full-precision PI constant.
+#[allow(clippy::approx_constant)]
 pub(crate) const CALCULATOR_PI: f64 = 3.1415926535898;
 
 pub(crate) const CALCULATION_FUNCTIONS: &[(&str, u16)] = &[
@@ -1640,8 +1681,17 @@ fn calculation_tree(words: &[u16]) -> Result<ParameterExpr, String> {
 impl ParameterCalculationGroup {
     pub(crate) fn with_label(&self, label: &crate::text_records::LabelAux) -> Result<Self, String> {
         let entries = records(&self.bytes, 0)?;
-        if entries.iter().any(|record| record.kind == 0x07d5
-            && &self.bytes[record.payload..record.payload + u32::from_le_bytes(self.bytes[record.start..record.start + 4].try_into().unwrap()) as usize] == label.payload()) {
+        if entries.iter().any(|record| {
+            record.kind == 0x07d5
+                && &self.bytes[record.payload
+                    ..record.payload
+                        + u32::from_le_bytes(
+                            self.bytes[record.start..record.start + 4]
+                                .try_into()
+                                .unwrap(),
+                        ) as usize]
+                    == label.payload()
+        }) {
             return Ok(self.clone());
         }
         let has_label = entries.iter().any(|record| record.kind == 0x07d5);
@@ -1649,7 +1699,9 @@ impl ParameterCalculationGroup {
         for record in entries {
             if record.kind == 0x07d5 || (!has_label && record.kind == 0x07d8) {
                 put_record(&mut bytes, 0x07d5, label.payload());
-                if record.kind == 0x07d5 { continue; }
+                if record.kind == 0x07d5 {
+                    continue;
+                }
             }
             bytes.extend_from_slice(&self.bytes[record.start..record.end]);
         }
@@ -2488,7 +2540,7 @@ impl CalculationGroup {
         }
         let payload = &bytes[rs[1].payload..rs[1].end];
         if !(94..=604).contains(&payload.len())
-            || payload.len() % 2 != 0
+            || !payload.len().is_multiple_of(2)
             || u32::from_le_bytes(payload[36..40].try_into().unwrap()) as usize
                 != payload.len() - 32
             || u16::from_le_bytes(payload[44..46].try_into().unwrap()) as usize
@@ -2689,7 +2741,7 @@ fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(payload);
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         out.push(0);
     }
 }
@@ -2746,7 +2798,7 @@ fn canonical_table_values(
     for &value in values {
         layout.extend_from_slice(format!("0<H<{}", table_value_text(value)?).as_bytes());
     }
-    while layout.len() % 4 != 0 {
+    while !layout.len().is_multiple_of(4) {
         layout.push(0);
     }
     let layout_len = layout.len() as u32;
@@ -2833,7 +2885,7 @@ fn canonical_pair_table(
         layout.extend_from_slice(row.as_bytes());
     }
     let used_len = layout.len();
-    while layout.len() % 4 != 0 {
+    while !layout.len().is_multiple_of(4) {
         layout.push(0);
     }
     // Keep the opaque alignment bytes observed in the original two- and
@@ -2858,7 +2910,7 @@ fn canonical_pair_table(
 }
 
 fn named_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
-    if layout.len() < 28 || layout.len() % 4 != 0 {
+    if layout.len() < 28 || !layout.len().is_multiple_of(4) {
         return None;
     }
     let text = &layout[28..];
@@ -2941,7 +2993,7 @@ pub fn named_table_value_text(value: f64, precision: usize) -> Result<String, St
 // Native automatically numbered headers encode the base letter and subscript
 // as separate text runs rather than the plain-name grammar.
 fn indexed_table_parts(layout: &[u8]) -> Option<(String, Vec<String>)> {
-    if layout.len() < 28 || layout.len() % 4 != 0 {
+    if layout.len() < 28 || !layout.len().is_multiple_of(4) {
         return None;
     }
     let text = &layout[28..];
@@ -2984,7 +3036,9 @@ fn canonical_indexed_table(
         return Err("Invalid indexed table source or rows".into());
     }
     let base = object_group(
-        include_bytes!("../../../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"),
+        include_bytes!(
+            "../../../tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp"
+        ),
         15,
     );
     let rs = records(&base, 0)?;
@@ -2996,7 +3050,7 @@ fn canonical_indexed_table(
     for value in values {
         layout.extend_from_slice(format!("0<H<T{}x{value}>>", value.len()).as_bytes());
     }
-    while layout.len() % 4 != 0 {
+    while !layout.len().is_multiple_of(4) {
         layout.push(0);
     }
     if indexed_table_parts(&layout) != Some((name.to_owned(), values.to_vec())) {
@@ -3035,7 +3089,7 @@ fn canonical_named_table(
     for value in values {
         layout.extend_from_slice(format!("0<H<T{}x{value}>>", value.len()).as_bytes());
     }
-    while layout.len() % 4 != 0 {
+    while !layout.len().is_multiple_of(4) {
         layout.push(0);
     }
     if named_table_parts(&layout) != Some((name.to_owned(), values.to_vec())) {
@@ -3678,7 +3732,8 @@ mod tests {
 
     #[test]
     fn parameter_calculation_chain_imports_and_evaluates() {
-        let native = include_bytes!("../../../tests/fixtures/parameter_calculation_chain_native.gsp");
+        let native =
+            include_bytes!("../../../tests/fixtures/parameter_calculation_chain_native.gsp");
         let expected = [2., 4., 5., 5., 2.5];
         for (ordinal, value) in (2..=6).zip(expected) {
             let group =
@@ -3691,7 +3746,8 @@ mod tests {
     }
     #[test]
     fn measured_two_digit_native_group_imports() {
-        let native = include_bytes!("../../../tests/fixtures/calculation_length_times_twelve_native.gsp");
+        let native =
+            include_bytes!("../../../tests/fixtures/calculation_length_times_twelve_native.gsp");
         let group = super::object_group(native, 5);
         let parsed = super::MeasuredCalculationGroup::parse(&group).unwrap();
         assert_eq!(parsed.factor(), 12);
@@ -3954,14 +4010,18 @@ mod tests {
             assert!(group.value(1.).is_some());
             assert!(group.value(-1.).is_some());
             let quantity = ParameterCalculationGroup::from_expression_with_source_unit(
-                    1,
-                    "v",
-                    &format!("{function}(v)"),
-                    (10, 30),
-                    NumericUnit::Degrees
-                ).unwrap();
+                1,
+                "v",
+                &format!("{function}(v)"),
+                (10, 30),
+                NumericUnit::Degrees,
+            )
+            .unwrap();
             assert_eq!(quantity.unit(), NumericUnit::Degrees);
-            assert_eq!(quantity.value_with_source_unit(0.5, NumericUnit::Degrees), group.value(0.5));
+            assert_eq!(
+                quantity.value_with_source_unit(0.5, NumericUnit::Degrees),
+                group.value(0.5)
+            );
         }
         let prefix = ParameterCalculationGroup::from_expression(1, "p", "p+pi", (10, 30)).unwrap();
         assert_eq!(prefix.value(2.), Some(2. + CALCULATOR_PI));
@@ -4057,10 +4117,22 @@ mod tests {
             Some(3.)
         );
         let sine_length = ParameterCalculationGroup::from_expression_with_source_unit(
-            1, "v", "sin(v)", (10, 30), NumericUnit::Length,
-        ).unwrap();
+            1,
+            "v",
+            "sin(v)",
+            (10, 30),
+            NumericUnit::Length,
+        )
+        .unwrap();
         assert_eq!(sine_length.unit(), NumericUnit::Scalar);
-        assert!((sine_length.value_with_source_unit(30., NumericUnit::Length).unwrap() - 0.5).abs() < 1e-12);
+        assert!(
+            (sine_length
+                .value_with_source_unit(30., NumericUnit::Length)
+                .unwrap()
+                - 0.5)
+                .abs()
+                < 1e-12
+        );
         for (expression, expected) in [("round(n*0.15)", -4.), ("trunc(n*0.15)", -4.)] {
             let group =
                 ParameterCalculationGroup::from_expression(1, "n", expression, (10, 30)).unwrap();
@@ -4226,7 +4298,9 @@ mod tests {
         let mut retained_header = negative.as_bytes().to_vec();
         retained_header[16..18].copy_from_slice(&49u16.to_le_bytes());
         let restored = ParameterCalculationGroup::parse(&retained_header)
-            .unwrap().with_source_units(&[Area]).unwrap();
+            .unwrap()
+            .with_source_units(&[Area])
+            .unwrap();
         assert_eq!(restored.unit(), Length);
         assert_eq!(restored.value_for_sources(&[9.], &[Area]), Some(3.));
         assert_eq!(restored.as_bytes(), retained_header);
@@ -4313,13 +4387,17 @@ mod tests {
         ParameterGroup::parse(parameter.as_bytes()).unwrap();
         for (bytes, range) in [
             (
-                include_bytes!("../../../tests/fixtures/action_animation_parameter_native_rate2.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/action_animation_parameter_native_rate2.gsp"
+                )
+                .as_slice(),
                 5.7..5.8,
             ),
             (
-                include_bytes!("../../../tests/fixtures/action_animation_parameter_native_discrete.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/action_animation_parameter_native_discrete.gsp"
+                )
+                .as_slice(),
                 6.7..6.9,
             ),
         ] {
@@ -4354,7 +4432,9 @@ mod tests {
         assert_eq!(
             ParameterGroup::named("speed", 3.25).unwrap().as_bytes(),
             object_group(
-                include_bytes!("../../../tests/fixtures/table_parameter_speed_precision2_original.gsp"),
+                include_bytes!(
+                    "../../../tests/fixtures/table_parameter_speed_precision2_original.gsp"
+                ),
                 1
             )
         );
@@ -4407,7 +4487,8 @@ mod tests {
             );
             assert!(table.clone().add_default_snapshot().is_err());
         }
-        let original = include_bytes!("../../../tests/fixtures/table_named_speed_two_rows_original.gsp");
+        let original =
+            include_bytes!("../../../tests/fixtures/table_named_speed_two_rows_original.gsp");
         let parameter = ParameterGroup::parse(&object_group(original, 1)).unwrap();
         let two_rows = object_group(original, 2);
         let parsed = TableGroup::parse(&two_rows).unwrap();
@@ -4419,7 +4500,8 @@ mod tests {
         assert_eq!(generated.rows(), 1);
         assert!(generated.remove_last_snapshot().is_err());
 
-        let live_add = include_bytes!("../../../tests/fixtures/table_named_speed_live_add_original.gsp");
+        let live_add =
+            include_bytes!("../../../tests/fixtures/table_named_speed_live_add_original.gsp");
         let original_group = object_group(live_add, 2);
         let original_table = TableGroup::parse(&original_group).unwrap();
         assert_eq!(
@@ -4483,29 +4565,37 @@ mod tests {
                 1.75,
             ),
             (
-                include_bytes!("../../../tests/fixtures/calculation_twelve_plus_thirtyfour_native.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/calculation_twelve_plus_thirtyfour_native.gsp"
+                )
+                .as_slice(),
                 "12+34",
                 "12 + 34",
                 46.,
             ),
             (
-                include_bytes!("../../../tests/fixtures/calculation_twelve_minus_thirtyfour_native.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/calculation_twelve_minus_thirtyfour_native.gsp"
+                )
+                .as_slice(),
                 "12-34",
                 "12 − 34",
                 -22.,
             ),
             (
-                include_bytes!("../../../tests/fixtures/calculation_twelve_times_thirtyfour_native.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/calculation_twelve_times_thirtyfour_native.gsp"
+                )
+                .as_slice(),
                 "12*34",
                 "12 · 34",
                 408.,
             ),
             (
-                include_bytes!("../../../tests/fixtures/calculation_twelve_divide_thirtyfour_native.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/calculation_twelve_divide_thirtyfour_native.gsp"
+                )
+                .as_slice(),
                 "12/34",
                 "12 ÷ 34",
                 12. / 34.,

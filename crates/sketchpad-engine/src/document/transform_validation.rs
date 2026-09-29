@@ -1,6 +1,8 @@
 //! Save policies for shared transform definitions. Geometry and serialization
 //! share definitions, while authoring capabilities retain their native proofs.
-use super::kind::{is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count};
+use super::kind::{
+    is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count,
+};
 use super::transform_model::{
     DisplacementExpr, ElementType, NativeLiteralRole, NativeTransformFlavor, NumericExpr,
     Transform, TransformDefinition,
@@ -22,36 +24,38 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
     match definition.element() {
         E::Point => is_point_kind(&source.kind),
         E::Segment => is_segment_kind(&source.kind),
-        E::Ray | E::Line => source.kind.fixed_transform_straight_mode()
-            == Some(if definition.element() == E::Ray { LineMode::Ray } else { LineMode::Line }),
+        E::Ray | E::Line => {
+            source.kind.fixed_transform_straight_mode()
+                == Some(if definition.element() == E::Ray {
+                    LineMode::Ray
+                } else {
+                    LineMode::Line
+                })
+        }
         E::Circle => source.kind.is_circle(),
         E::Arc => is_arc_kind(&source.kind),
         E::Sector => source.kind.is_sector(),
-        E::Polygon => source.kind.is_polygon()
-            && polygon_vertex_count(&document.objects, definition.source()).is_some(),
+        E::Polygon => {
+            source.kind.is_polygon()
+                && polygon_vertex_count(&document.objects, definition.source()).is_some()
+        }
         E::Disk => source.kind.is_circle_interior(),
+        E::Image => matches!(source.kind, super::Kind::Image { .. }),
     }
 }
 
-fn expression_parents_supported(
-    document: &Document,
-    expression: &NumericExpr,
-) -> bool {
+fn expression_parents_supported(document: &Document, expression: &NumericExpr) -> bool {
     let point = |id: usize| {
         id.checked_sub(1)
             .and_then(|index| document.objects.get(index))
-            .is_some_and(|parent| {
-                !parent.deleted && is_point_kind(&parent.kind)
-            })
+            .is_some_and(|parent| !parent.deleted && is_point_kind(&parent.kind))
     };
     match *expression {
         NumericExpr::Literal { .. } => true,
         NumericExpr::ObjectValue { id, unit } => id
             .checked_sub(1)
             .and_then(|index| document.objects.get(index))
-            .is_some_and(|parent| {
-                !parent.deleted && parent.kind.is_transform_operand(unit)
-            }),
+            .is_some_and(|parent| !parent.deleted && parent.kind.is_transform_operand(unit)),
         NumericExpr::DirectedAngle {
             first,
             vertex,
@@ -69,9 +73,7 @@ fn operation_parents_supported(document: &Document, definition: &TransformDefini
     let point = |id: usize| {
         id.checked_sub(1)
             .and_then(|index| document.objects.get(index))
-            .is_some_and(|parent| {
-                !parent.deleted && is_point_kind(&parent.kind)
-            })
+            .is_some_and(|parent| !parent.deleted && is_point_kind(&parent.kind))
     };
     match definition.transform() {
         Transform::Translate(DisplacementExpr::Cartesian {
@@ -94,7 +96,8 @@ fn operation_parents_supported(document: &Document, definition: &TransformDefini
         Transform::Dilate { center, ratio } => {
             point(*center) && expression_parents_supported(document, ratio)
         }
-        Transform::Reflect { mirror } => mirror.checked_sub(1)
+        Transform::Reflect { mirror } => mirror
+            .checked_sub(1)
             .and_then(|index| document.objects.get(index))
             .is_some_and(|parent| !parent.deleted && is_straight_kind(&parent.kind)),
     }
@@ -114,6 +117,12 @@ fn validate_literals(definition: &TransformDefinition) -> bool {
                 _ => true,
             }
     })
+}
+
+pub(super) fn definition_supported(document: &Document, definition: &TransformDefinition) -> bool {
+    validate_literals(definition)
+        && source_supported(document, definition)
+        && operation_parents_supported(document, definition)
 }
 
 /// Apply the native-proved save policies to a shared transform definition.
@@ -146,8 +155,7 @@ pub(super) fn validate_transform(
         .native_references()
         .iter()
         .any(|id| *id == 0 || *id >= object.id)
-        || !source_supported(document, &definition)
-        || !operation_parents_supported(document, &definition)
+        || !definition_supported(document, &definition)
     {
         return Err(invalid());
     }

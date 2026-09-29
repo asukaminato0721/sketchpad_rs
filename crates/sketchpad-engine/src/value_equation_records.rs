@@ -461,7 +461,8 @@ mod tests {
     fn corpus_point_value_groups_accept_names_and_caption_positions() {
         for (group, refs) in [
             (
-                include_bytes!("../../../tests/fixtures/point_value_labeled_ray_group.bin").as_slice(),
+                include_bytes!("../../../tests/fixtures/point_value_labeled_ray_group.bin")
+                    .as_slice(),
                 [17, 16],
             ),
             (
@@ -531,13 +532,15 @@ mod tests {
                 0.6145401831027362,
             ),
             (
-                include_bytes!("../../../tests/fixtures/point_on_arc_value_t04_native.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/point_on_arc_value_t04_native.gsp")
+                    .as_slice(),
                 [5, 4],
                 true,
                 0.3999999999999999,
             ),
             (
-                include_bytes!("../../../tests/fixtures/point_on_circle_arc_value_native.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/point_on_circle_arc_value_native.gsp")
+                    .as_slice(),
                 [7, 6],
                 false,
                 0.5999999999999999,
@@ -617,7 +620,8 @@ mod tests {
     fn generated_documents_and_edited_originals_decode() {
         for (base, kind, refs) in [
             (
-                include_bytes!("../../../tests/fixtures/value_equation_point_value_base.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_point_value_base.gsp")
+                    .as_slice(),
                 ValueEquationKind::PointValue,
                 [4, 3],
             ),
@@ -638,7 +642,8 @@ mod tests {
         }
         for (source, kind) in [
             (
-                include_bytes!("../../../tests/fixtures/value_equation_point_value_moved.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_point_value_moved.gsp")
+                    .as_slice(),
                 ValueEquationKind::PointValue,
             ),
             (
@@ -646,7 +651,8 @@ mod tests {
                 ValueEquationKind::LineEquation,
             ),
             (
-                include_bytes!("../../../tests/fixtures/value_equation_circle_moved.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_circle_moved.gsp")
+                    .as_slice(),
                 ValueEquationKind::CircleEquation,
             ),
         ] {
@@ -675,28 +681,34 @@ mod tests {
     fn remapped_wine_files_and_vertical_variant_reparse() {
         for (source, kind, refs) in [
             (
-                include_bytes!("../../../tests/fixtures/value_equation_generated_point.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_generated_point.gsp")
+                    .as_slice(),
                 ValueEquationKind::PointValue,
                 [5, 4],
             ),
             (
-                include_bytes!("../../../tests/fixtures/value_equation_generated_line.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_generated_line.gsp")
+                    .as_slice(),
                 ValueEquationKind::LineEquation,
                 [4, 10],
             ),
             (
-                include_bytes!("../../../tests/fixtures/value_equation_generated_circle.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_generated_circle.gsp")
+                    .as_slice(),
                 ValueEquationKind::CircleEquation,
                 [4, 10],
             ),
             (
-                include_bytes!("../../../tests/fixtures/value_equation_vertical_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/value_equation_vertical_original.gsp")
+                    .as_slice(),
                 ValueEquationKind::LineEquation,
                 [3, 9],
             ),
             (
-                include_bytes!("../../../tests/fixtures/value_equation_circle_point_value_original.gsp")
-                    .as_slice(),
+                include_bytes!(
+                    "../../../tests/fixtures/value_equation_circle_point_value_original.gsp"
+                )
+                .as_slice(),
                 ValueEquationKind::PointValue,
                 [4, 3],
             ),

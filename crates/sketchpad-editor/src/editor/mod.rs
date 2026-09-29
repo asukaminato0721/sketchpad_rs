@@ -6,10 +6,10 @@ mod actions;
 mod animation;
 mod calculation_dialogs;
 mod canvas;
-mod construction;
 mod colorized;
-mod referenced_captions;
+mod construction;
 mod custom_tools;
+mod custom_transforms;
 mod document_dialogs;
 mod files;
 pub(crate) mod fonts;
@@ -19,6 +19,9 @@ mod menu;
 mod panels;
 mod picking;
 mod plot_dialogs;
+mod preferences;
+mod properties;
+mod referenced_captions;
 mod runtime;
 mod selection;
 mod transform_dialogs;
@@ -39,13 +42,13 @@ fn is_circle_construction_host(kind: &Kind) -> bool {
         })
 }
 
+use crate::render::{TraceSample, Viewport};
 use sketchpad_engine::action_records::{
-    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement,
+    AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions, ScrollPlacement,
 };
 use sketchpad_engine::document::{Clipboard, Document, Kind, Point};
 use sketchpad_engine::function_records::SimpleFunction;
 use sketchpad_engine::plot_points_records::PlotPointsMode;
-use crate::render::{TraceMark, Viewport};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -57,7 +60,7 @@ enum Tool {
     Segment,
     Circle,
     Text,
-    Custom(usize),
+    Custom(custom_tools::ToolSource),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MarkedAngle {
@@ -85,6 +88,91 @@ enum OutputAction {
     Svg,
     Pdf,
     Print,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaperSize {
+    A4,
+    Letter,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionMagnetism {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Preferences {
+    double_click_deselection: bool,
+    selection_magnetism: SelectionMagnetism,
+    update_colors_automatically: bool,
+    randomize_interior_colors: bool,
+    background_color: [u8; 3],
+    selection_color: [u8; 3],
+    point_color: [u8; 3],
+    straight_color: [u8; 3],
+    round_color: [u8; 3],
+    interior_color: [u8; 3],
+    point_locus_color: [u8; 3],
+    plot_color: [u8; 3],
+    fade_traces: bool,
+    trace_fade_seconds: f32,
+    object_style_defaults: sketchpad_engine::document::ObjectStyleDefaults,
+    new_polygon_opacity: u16,
+    angle_precision: u16,
+    distance_precision: u16,
+    other_precision: u16,
+    show_text_palette_for_new_captions: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            double_click_deselection: false,
+            selection_magnetism: SelectionMagnetism::Medium,
+            update_colors_automatically: true,
+            randomize_interior_colors: false,
+            background_color: [245, 247, 251],
+            selection_color: [240, 82, 26],
+            point_color: [255, 0, 0],
+            straight_color: [0, 0, 128],
+            round_color: [0, 128, 0],
+            interior_color: [255, 128, 0],
+            point_locus_color: [128, 0, 0],
+            plot_color: [128, 0, 128],
+            fade_traces: false,
+            trace_fade_seconds: 5.,
+            object_style_defaults: Default::default(),
+            new_polygon_opacity: 32767,
+            angle_precision: 2,
+            distance_precision: 2,
+            other_precision: 2,
+            show_text_palette_for_new_captions: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PageSetup {
+    paper_size: PaperSize,
+    landscape: bool,
+    margin_mm: f32,
+    fit_to_page: bool,
+    scale_percent: u16,
+}
+
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self {
+            paper_size: PaperSize::A4,
+            landscape: false,
+            margin_mm: 12.7,
+            fit_to_page: true,
+            scale_percent: 100,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +227,7 @@ struct ScrollButtonDraft {
 struct PresentationButtonDraft {
     targets: Vec<usize>,
     mode: PresentationMode,
+    options: PresentationOptions,
 }
 #[derive(Clone)]
 struct LinkButtonDraft {
@@ -147,13 +236,22 @@ struct LinkButtonDraft {
     target_button_ordinal: Option<usize>,
     url: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CustomTransform {
+    name: String,
+    seed: usize,
+    output: usize,
+}
 #[derive(Clone)]
 struct PresentationTrack {
     id: usize,
     targets: Vec<usize>,
     mode: PresentationMode,
+    options: PresentationOptions,
     next: usize,
     active: Vec<usize>,
+    elapsed_seconds: f64,
+    pause_remaining: f64,
 }
 struct Editor {
     doc: Document,
@@ -170,7 +268,7 @@ struct Editor {
     marked_angle: Option<MarkedAngle>,
     marked_ratio: Option<[usize; 3]>,
     marked_ratio_value: Option<usize>,
-    trace_marks: Vec<TraceMark>,
+    trace_marks: Vec<TraceSample>,
     animations: Vec<AnimationTrack>,
     movements: Vec<MovementTrack>,
     presentations: Vec<PresentationTrack>,
@@ -183,12 +281,27 @@ struct Editor {
     document_options_page: usize,
     page_name_draft: String,
     remove_page_confirmation: Option<usize>,
+    page_setup_dialog: bool,
+    print_preview_dialog: bool,
+    page_setup: PageSetup,
+    print_preview_texture: Option<egui::TextureHandle>,
+    print_preview_error: Option<String>,
+    preferences_dialog: bool,
+    preferences: Preferences,
+    preferences_draft: Preferences,
     show_motion_controller: bool,
     show_toolbox: bool,
+    show_text_palette: bool,
     create_tool_dialog: bool,
     tool_name_draft: String,
     custom_tool_inputs: Vec<usize>,
     custom_tool_path_start: Option<custom_tools::PathStart>,
+    tool_folder: Option<custom_tools::ToolFolder>,
+    custom_transforms: Vec<CustomTransform>,
+    define_custom_transform_dialog: Option<(usize, usize)>,
+    custom_transform_name_draft: String,
+    edit_custom_transforms_dialog: bool,
+    custom_transform_edit_selected: usize,
     animation_button_dialog: Option<AnimationButtonDraft>,
     movement_button_dialog: Option<MovementButtonDraft>,
     scroll_button_dialog: Option<ScrollButtonDraft>,
@@ -245,7 +358,13 @@ struct Editor {
     named_parameter_dialog: bool,
     parameter_name_draft: String,
     calculation_dialog: bool,
+    calculation_edit_id: Option<usize>,
     calculation_draft: String,
+    properties_dialog: Option<usize>,
+    properties_draft_for: Option<usize>,
+    properties_label_draft: String,
+    properties_label_visible_draft: bool,
+    properties_opacity_draft: u16,
     iterate_dialog: bool,
     iteration_depth_draft: String,
     plot_axis_dialog: Option<Option<usize>>,
@@ -287,12 +406,27 @@ impl Editor {
             document_options_page: 0,
             page_name_draft: String::new(),
             remove_page_confirmation: None,
+            page_setup_dialog: false,
+            print_preview_dialog: false,
+            page_setup: PageSetup::default(),
+            print_preview_texture: None,
+            print_preview_error: None,
+            preferences_dialog: false,
+            preferences: Preferences::default(),
+            preferences_draft: Preferences::default(),
             show_motion_controller: false,
             show_toolbox: true,
+            show_text_palette: false,
             create_tool_dialog: false,
             tool_name_draft: String::new(),
             custom_tool_inputs: Vec::new(),
             custom_tool_path_start: None,
+            tool_folder: None,
+            custom_transforms: Vec::new(),
+            define_custom_transform_dialog: None,
+            custom_transform_name_draft: String::new(),
+            edit_custom_transforms_dialog: false,
+            custom_transform_edit_selected: 0,
             animation_button_dialog: None,
             movement_button_dialog: None,
             scroll_button_dialog: None,
@@ -349,7 +483,13 @@ impl Editor {
             named_parameter_dialog: false,
             parameter_name_draft: "a".into(),
             calculation_dialog: false,
+            calculation_edit_id: None,
             calculation_draft: "2 + 3".into(),
+            properties_dialog: None,
+            properties_draft_for: None,
+            properties_label_draft: String::new(),
+            properties_label_visible_draft: false,
+            properties_opacity_draft: 32767,
             iterate_dialog: false,
             iteration_depth_draft: "3".into(),
             plot_axis_dialog: None,
@@ -361,6 +501,7 @@ impl Editor {
             plot_table_mode: PlotPointsMode::Cartesian,
             exit_requested: false,
         };
+        e.sync_document_preferences();
         e.fit();
         e
     }
@@ -389,8 +530,7 @@ impl Editor {
                     y: rect.bottom.into(),
                 });
             }
-            if let Some((anchor, _)) =
-                crate::render::number_lines_for_object(&self.doc, object.id)
+            if let Some((anchor, _)) = crate::render::number_lines_for_object(&self.doc, object.id)
             {
                 pts.push(Point {
                     x: anchor.0 as f64,

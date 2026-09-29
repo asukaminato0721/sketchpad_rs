@@ -1,8 +1,8 @@
 //! Intrinsic closed sector boundary. The live Arc dependency remains the model;
 //! sampled outlines are presentation values, not stored polygon vertices.
 use super::kind::is_arc_kind;
-use super::transform_model::ElementType;
 use super::transform_evaluator::TransformGeometry;
+use super::transform_model::ElementType;
 use super::{Document, Kind, Object, Point};
 
 pub(super) type SectorArc = (Point, f64, f64, f64, bool);
@@ -20,18 +20,16 @@ pub(super) fn supported_circular_segment_source(
 ) -> bool {
     supported_source(objects, arc, page, before)
         && objects.get(arc - 1).is_some_and(|source| {
-            matches!(source.kind, Kind::CenterArc(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..))
+            matches!(
+                source.kind,
+                Kind::CenterArc(..) | Kind::ThreePointArc(..) | Kind::ArcOnCircle(..)
+            )
         })
 }
 pub(super) fn supported_host(objects: &[Object], host: usize, page: usize, before: usize) -> bool {
     host.checked_sub(1)
         .and_then(|i| objects.get(i))
-        .is_some_and(|o| {
-            host < before
-                && !o.deleted
-                && o.page == page
-                && o.kind.is_sector()
-        })
+        .is_some_and(|o| host < before && !o.deleted && o.page == page && o.kind.is_sector())
 }
 fn arc_at((center, radius, start, sweep, clockwise_y): SectorArc, t: f64) -> Point {
     let angle = start + sweep * t;
@@ -217,15 +215,15 @@ impl Document {
     }
     /// Sampled presentation outline for filled shapes; this does not change path typing.
     pub fn filled_region_points(&self, id: usize) -> Option<Vec<Point>> {
-        if let Some(object) = self.objects.get(id.checked_sub(1)?) {
-            if let Kind::CircularSegmentBoundary(arc) = object.kind {
-                if object.deleted {
-                    return None;
-                }
-                // The closing edge is the chord from arc end back to arc start.
-                // The fill tessellator closes the returned outline itself.
-                return self.arc_points(arc, 192);
+        if let Some(object) = self.objects.get(id.checked_sub(1)?)
+            && let Kind::CircularSegmentBoundary(arc) = object.kind
+        {
+            if object.deleted {
+                return None;
             }
+            // The closing edge is the chord from arc end back to arc start.
+            // The fill tessellator closes the returned outline itself.
+            return self.arc_points(arc, 192);
         }
         if self
             .objects

@@ -13,6 +13,10 @@ fn native_midpoint_locus_import_generation_and_parent_edit() {
     let points = native.locus_segments(8, 8).unwrap();
     assert_eq!(points.first().unwrap().0, Point { x: 160., y: 140. });
     assert_eq!(points.last().unwrap().1, Point { x: 250., y: 140. });
+    assert!(super::super::kind::locus_refs_match(
+        &native.objects,
+        &[7, 3, 4, 5, 6, 7]
+    ));
 
     let base = include_bytes!("../../../../../tests/fixtures/locus_midpoint_base.gsp");
     let mut created = Document::from_bytes(base, None).unwrap();
@@ -30,6 +34,35 @@ fn native_midpoint_locus_import_generation_and_parent_edit() {
     let moved = edited.locus_segments(8, 8).unwrap();
     assert_eq!(moved.first().unwrap().0, Point { x: 150., y: 160. });
     assert_eq!(moved.last().unwrap().1, Point { x: 250., y: 140. });
+
+    // Native loci may keep the base point free and supply a later, independent
+    // path in the locus record. The transient constraint must survive writing
+    // without changing the base point itself.
+    let mut explicit = Document::new();
+    let driver = explicit.add(Kind::Free(Point { x: 90., y: 90. }));
+    let start = explicit.add(Kind::Free(Point { x: 10., y: 20. }));
+    let end = explicit.add(Kind::Free(Point { x: 30., y: 40. }));
+    let path = explicit.add(Kind::Segment(start, end));
+    let anchor = explicit.add(Kind::Free(Point { x: 50., y: 60. }));
+    let target = explicit.add(Kind::Segment(driver, anchor));
+    let locus = explicit.add(Kind::Locus(vec![target, path, driver, target], 3));
+    let family = explicit.locus_segments(locus, 3).unwrap();
+    assert_eq!(family.first().unwrap().0, Point { x: 10., y: 20. });
+    assert_eq!(family.last().unwrap().0, Point { x: 30., y: 40. });
+    assert_eq!(explicit.position(driver), Some(Point { x: 90., y: 90. }));
+    let reopened = Document::from_bytes(&explicit.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.objects[driver - 1].kind,
+        explicit.objects[driver - 1].kind
+    );
+    assert_eq!(reopened.locus_segments(locus, 3), Some(family));
+
+    let dependent_path = explicit.add(Kind::Segment(driver, start));
+    let later_target = explicit.add(Kind::Segment(driver, anchor));
+    assert!(!super::super::kind::locus_refs_match(
+        &explicit.objects,
+        &[later_target, dependent_path, driver, later_target]
+    ));
 }
 #[test]
 fn translated_point_locus_import_generation_and_parent_edit() {
@@ -63,7 +96,8 @@ fn translated_point_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn circle_driver_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_circle_driver_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_circle_driver_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -92,7 +126,8 @@ fn circle_driver_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn arc_driver_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_arc_driver_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_arc_driver_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -150,7 +185,8 @@ fn two_step_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn branched_locus_and_non_right_angle_polar_cache() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_branch_midpoint_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_branch_midpoint_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -158,6 +194,14 @@ fn branched_locus_and_non_right_angle_polar_cache() {
         native.objects[8].kind,
         Kind::Locus(vec![8, 3, 4, 5, 6, 7, 8], 500)
     );
+    assert!(super::super::kind::locus_refs_match(
+        &native.objects,
+        &[8, 3, 4, 8]
+    ));
+    assert!(!super::super::kind::locus_refs_match(
+        &native.objects,
+        &[8, 3, 4, 8, 8]
+    ));
     let original = native.locus_segments(9, 4).unwrap();
     let half_unit = 37.79527559055118 / 2.;
     assert!((original[0].0.x - (120. - half_unit)).abs() < 1e-9);
@@ -170,8 +214,9 @@ fn branched_locus_and_non_right_angle_polar_cache() {
     assert!(f64_at(base, offset + 4).abs() < 1e-12);
     assert_eq!(f64_at(base, offset + 12), -1.);
     let mut stale_cache = base.to_vec();
-    stale_cache[offset + 4..offset + 20]
-        .copy_from_slice(&include_bytes!("../../../../../assets/polar_translation_payload.bin")[4..20]);
+    stale_cache[offset + 4..offset + 20].copy_from_slice(
+        &include_bytes!("../../../../../assets/polar_translation_payload.bin")[4..20],
+    );
     assert!(
         Document::from_bytes(&stale_cache, None)
             .unwrap()
@@ -191,7 +236,8 @@ fn branched_locus_and_non_right_angle_polar_cache() {
 }
 #[test]
 fn segment_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_segment_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_segment_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -223,7 +269,8 @@ fn segment_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn circle_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_circle_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_circle_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -249,7 +296,8 @@ fn circle_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn line_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_line_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_line_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -290,7 +338,8 @@ fn line_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn ray_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_ray_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_ray_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -324,7 +373,8 @@ fn ray_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn arc_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_arc_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_arc_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -380,7 +430,8 @@ fn arc_on_circle_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn parallel_line_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_parallel_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_parallel_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -451,7 +502,8 @@ fn perpendicular_line_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn bisector_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_bisector_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_bisector_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -480,7 +532,8 @@ fn bisector_target_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn polygon_target_locus_import_generation_and_parent_edit() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_polygon_target_original.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_polygon_target_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -605,8 +658,7 @@ fn polar_translated_polygon_locus_import_generation_and_parent_edit() {
     let locus_header = records(&encoded)
         .unwrap()
         .into_iter()
-        .filter(|record| record.kind == 0x07d0)
-        .last()
+        .rfind(|record| record.kind == 0x07d0)
         .unwrap();
     assert_eq!(
         &encoded[locus_header.data.start + 18..locus_header.data.start + 20],
@@ -630,8 +682,9 @@ fn polar_translated_polygon_locus_import_generation_and_parent_edit() {
 }
 #[test]
 fn rectangular_translated_polygon_locus_import_generation_and_parent_edit() {
-    let native_bytes =
-        include_bytes!("../../../../../tests/fixtures/locus_rectangular_polygon_target_original.gsp");
+    let native_bytes = include_bytes!(
+        "../../../../../tests/fixtures/locus_rectangular_polygon_target_original.gsp"
+    );
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -647,15 +700,15 @@ fn rectangular_translated_polygon_locus_import_generation_and_parent_edit() {
     assert!((family[0][0].y - (180. + dy)).abs() < 1e-9);
     assert!((family[125][0].x - (300. + dx)).abs() < 1e-9);
 
-    let base = include_bytes!("../../../../../tests/fixtures/locus_rectangular_polygon_target_base.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/locus_rectangular_polygon_target_base.gsp");
     let mut generated = Document::from_bytes(base, None).unwrap();
     assert_eq!(generated.construct_locus(4, 8), Ok(9));
     let encoded = generated.encode().unwrap();
     let locus_header = records(&encoded)
         .unwrap()
         .into_iter()
-        .filter(|record| record.kind == 0x07d0)
-        .last()
+        .rfind(|record| record.kind == 0x07d0)
         .unwrap();
     assert_eq!(
         &encoded[locus_header.data.start + 18..locus_header.data.start + 20],
@@ -758,4 +811,26 @@ fn locus_object_families_skip_undefined_members() {
             doc.locus_strokes(locus, 8)
         );
     }
+
+    // A point-output locus is itself a curve. A later locus may sweep that
+    // curve when an external constrained point participates in its target.
+    let mut nested = Document::new();
+    let outer_start = nested.add(Kind::Free(Point { x: 0., y: 0. }));
+    let outer_end = nested.add(Kind::Free(Point { x: 10., y: 0. }));
+    let outer_path = nested.add(Kind::Segment(outer_start, outer_end));
+    let outer_driver = nested.add(Kind::PointOnSegment(outer_path, 0.));
+    let inner_start = nested.add(Kind::Free(Point { x: 0., y: 10. }));
+    let inner_end = nested.add(Kind::Free(Point { x: 10., y: 10. }));
+    let inner_path = nested.add(Kind::Segment(inner_start, inner_end));
+    let inner_driver = nested.add(Kind::PointOnSegment(inner_path, 0.));
+    let midpoint_host = nested.add(Kind::Segment(outer_driver, inner_driver));
+    let midpoint = nested.add(Kind::SegmentMidpoint(midpoint_host));
+    let inner_locus = nested.construct_locus(inner_driver, midpoint).unwrap();
+    let outer_locus = nested.construct_locus(outer_driver, inner_locus).unwrap();
+    let strokes = nested.locus_strokes(outer_locus, 2).unwrap();
+    assert_eq!(strokes.len(), 6);
+    assert_eq!(strokes.first().unwrap().0, Point { x: 0., y: 5. });
+    assert_eq!(strokes.last().unwrap().1, Point { x: 10., y: 5. });
+    let reopened = Document::from_bytes(&nested.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.locus_strokes(outer_locus, 2), Some(strokes));
 }

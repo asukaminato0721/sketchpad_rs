@@ -129,6 +129,81 @@ pub(super) fn decode_mapped_element(
 }
 
 impl Document {
+    /// Return the ordered construction slice that changes when `seed` is
+    /// substituted and produces `output`. This is the dependency model used by
+    /// Sketchpad custom point transforms and by native code-101 applications.
+    pub fn custom_transform_carried(
+        &self,
+        seed: usize,
+        output: usize,
+    ) -> Result<Vec<usize>, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Custom transforms require a supported single-page sketch".into());
+        }
+        let point = |id: usize| {
+            self.objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|object| {
+                    !object.deleted
+                        && object.page == self.active_page
+                        && is_point_kind(&object.kind)
+                        && !matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
+                })
+        };
+        if seed == output || seed >= output || !point(seed) || !point(output) {
+            return Err("Select a point followed by a later point that depends on it".into());
+        }
+
+        // Object IDs are native construction order, so a single forward pass
+        // identifies every node affected by substituting the seed.
+        let mut dependent = vec![false; self.objects.len() + 1];
+        dependent[seed] = true;
+        for id in seed + 1..=output {
+            let object = &self.objects[id - 1];
+            if object.deleted || object.page != self.active_page {
+                continue;
+            }
+            let parents = object.construction_dependencies();
+            if parents.iter().any(|parent| {
+                *parent == 0
+                    || *parent >= id
+                    || self
+                        .objects
+                        .get(parent.saturating_sub(1))
+                        .is_none_or(|parent| parent.deleted || parent.page != self.active_page)
+            }) {
+                return Err("The selected construction has invalid dependencies".into());
+            }
+            dependent[id] = parents
+                .iter()
+                .any(|parent| dependent.get(*parent).copied().unwrap_or(false));
+        }
+        if !dependent[output] {
+            return Err("The second point does not depend on the first point".into());
+        }
+
+        // Keep only the affected ancestors of the chosen output. Independent
+        // operands remain external inputs and are frozen by mapped evaluation.
+        let mut carried = BTreeSet::new();
+        let mut pending = vec![output];
+        while let Some(id) = pending.pop() {
+            if id == seed || !dependent.get(id).copied().unwrap_or(false) || !carried.insert(id) {
+                continue;
+            }
+            pending.extend(
+                self.objects[id - 1]
+                    .construction_dependencies()
+                    .into_iter()
+                    .filter(|parent| dependent.get(*parent).copied().unwrap_or(false)),
+            );
+        }
+        let carried = carried.into_iter().collect::<Vec<_>>();
+        if !supported_mapped_point_iteration(&self.objects, &[seed], &[vec![seed]], &carried) {
+            return Err("This point dependency graph cannot be used as a custom transform".into());
+        }
+        Ok(carried)
+    }
+
     pub fn add_mapped_element(
         &mut self,
         output: usize,

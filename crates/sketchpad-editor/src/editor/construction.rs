@@ -162,7 +162,8 @@ impl Editor {
             return;
         }
         let [arc] = self.selection_order.as_slice() else {
-            self.status = "Select one arc for the sector interior".into(); return;
+            self.status = "Select one arc for the sector interior".into();
+            return;
         };
         match self.doc.add_sector_boundary(*arc) {
             Ok(id) => self.select_only(id),
@@ -542,26 +543,34 @@ impl Editor {
             return;
         }
         let host = self.selection_order.iter().copied().find(|id| {
-            self.doc
-                .objects
-                .get(id.saturating_sub(1))
-                .is_some_and(|o| o.kind.is_polygon() || o.kind.is_arc() || is_circle_construction_host(&o.kind)
-                    || matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SampledMapped(_) | Kind::SectorBoundary(_)))
-                || matches!(
-                    self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
-                    Some(
-                        Kind::Polygon(_)
-                            | Kind::Segment(_, _)
-                            | Kind::Ray(_, _)
-                            | Kind::Line(_, _)
-                            | Kind::ThreePointArc(_, _, _)
-                            | Kind::ArcOnCircle(_, _, _)
-                            | Kind::CenterArc(_, _, _)
+            self.doc.objects.get(id.saturating_sub(1)).is_some_and(|o| {
+                o.kind.is_polygon()
+                    || o.kind.is_arc()
+                    || is_circle_construction_host(&o.kind)
+                    || matches!(
+                        o.kind,
+                        Kind::Locus(..)
+                            | Kind::ParameterLocus(..)
+                            | Kind::FunctionPlot(..)
+                            | Kind::SampledMapped(_)
+                            | Kind::SectorBoundary(_)
                     )
+            }) || matches!(
+                self.doc.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                Some(
+                    Kind::Polygon(_)
+                        | Kind::Segment(_, _)
+                        | Kind::Ray(_, _)
+                        | Kind::Line(_, _)
+                        | Kind::ThreePointArc(_, _, _)
+                        | Kind::ArcOnCircle(_, _, _)
+                        | Kind::CenterArc(_, _, _)
                 )
+            )
         });
         let Some(host) = host else {
-            self.status = "Select a segment, ray, line, circle, arc, polygon, sector, or point curve".into();
+            self.status =
+                "Select a segment, ray, line, circle, arc, polygon, sector, or point curve".into();
             return;
         };
         if self.doc.objects[host - 1].page != self.doc.active_page {
@@ -595,7 +604,10 @@ impl Editor {
                         y: (vertices[0].y + vertices[1].y) / 2.,
                     })
                 } else {
-                    self.doc.point_on_arc(host, 0.5).or_else(|| self.doc.point_on_curve(host, 0.5)).or_else(|| self.doc.point_on_sector(host, 0.5))
+                    self.doc
+                        .point_on_arc(host, 0.5)
+                        .or_else(|| self.doc.point_on_curve(host, 0.5))
+                        .or_else(|| self.doc.point_on_sector(host, 0.5))
                 }
             });
         let Some(kind) = position.and_then(|p| self.doc.constrained_point(host, p)) else {
@@ -624,14 +636,18 @@ impl Editor {
         }
         let round = |id: usize| {
             self.doc.circle_points(id).is_some()
-                || self.doc.objects[id - 1].kind.is_arc()
-                    && self.doc.arc_points(id, 1).is_some()
+                || self.doc.objects[id - 1].kind.is_arc() && self.doc.arc_points(id, 1).is_some()
         };
         let kinds = if self.doc.line_points(a).is_some() && self.doc.line_points(b).is_some() {
             vec![Kind::Intersection(a, b)]
         } else if self.doc.can_construct_boundary_intersection(a, b)
-            || self.doc.can_construct_boundary_intersection(b, a) {
-            let (straight, polygon) = if self.doc.objects[b - 1].kind.is_polygon() { (a, b) } else { (b, a) };
+            || self.doc.can_construct_boundary_intersection(b, a)
+        {
+            let (straight, polygon) = if self.doc.objects[b - 1].kind.is_polygon() {
+                (a, b)
+            } else {
+                (b, a)
+            };
             vec![Kind::BoundaryIntersection(straight, polygon)]
         } else if (self.doc.line_points(a).is_some() && round(b))
             || (round(a) && self.doc.line_points(b).is_some())
@@ -642,17 +658,21 @@ impl Editor {
                 (b, a)
             };
             vec![
-                Kind::LineCircleIntersection(line, circle, 0),
                 Kind::LineCircleIntersection(line, circle, 1),
+                Kind::LineCircleIntersection(line, circle, 0),
             ]
         } else if let Some(points) = self.doc.curve_intersections(a, b) {
-            (0..points.len()).map(|branch| Kind::CurveIntersection(a, b, branch as u32)).collect()
+            (0..points.len())
+                .map(|branch| Kind::CurveIntersection(a, b, branch as u32))
+                .collect()
         } else if let Some(points) = self.doc.curve_intersections(b, a) {
-            (0..points.len()).map(|branch| Kind::CurveIntersection(b, a, branch as u32)).collect()
+            (0..points.len())
+                .map(|branch| Kind::CurveIntersection(b, a, branch as u32))
+                .collect()
         } else if round(a) && round(b) {
             vec![
-                Kind::CircleCircleIntersection(a, b, 0),
                 Kind::CircleCircleIntersection(a, b, 1),
+                Kind::CircleCircleIntersection(a, b, 0),
             ]
         } else {
             self.status = "Select intersecting lines, circles, arcs, polygons or curves".into();
@@ -660,14 +680,20 @@ impl Editor {
         };
         self.doc.selected.clear();
         self.selection_order.clear();
+        let mut positions = Vec::<Point>::new();
         for kind in kinds {
-            if self.doc.page_count > 1 {
-                let mut probe = self.doc.clone();
-                let probe_id = probe.add(kind.clone());
-                if probe.position(probe_id).is_none() {
-                    continue;
-                }
+            let mut probe = self.doc.clone();
+            let probe_id = probe.add(kind.clone());
+            let Some(position) = probe.position(probe_id) else {
+                continue;
+            };
+            if positions
+                .iter()
+                .any(|existing| existing.distance(position) <= 1e-8)
+            {
+                continue;
             }
+            positions.push(position);
             let id = self.doc.add(kind);
             self.doc.selected.insert(id);
             self.selection_order.push(id);
@@ -747,19 +773,28 @@ impl Editor {
             return;
         }
         let (circle, start, end) = (ids[0], ids[1], ids[2]);
-        if [circle, start, end]
-            .iter()
-            .any(|id| self.doc.objects.get(id.saturating_sub(1)).is_none_or(|object| object.page != self.doc.active_page))
-        {
+        if [circle, start, end].iter().any(|id| {
+            self.doc
+                .objects
+                .get(id.saturating_sub(1))
+                .is_none_or(|object| object.page != self.doc.active_page)
+        }) {
             self.status = "Select objects on the current page".into();
             return;
         }
-        let valid = [start, end].iter().all(|id| self.doc.objects.get(id.saturating_sub(1))
-            .is_some_and(|object| !object.deleted && object.kind.is_point()))
-            && self.doc.objects.get(circle.saturating_sub(1))
-                .is_some_and(|object| !object.deleted && object.kind.is_circle());
+        let valid = [start, end].iter().all(|id| {
+            self.doc
+                .objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|object| !object.deleted && object.kind.is_point())
+        }) && self
+            .doc
+            .objects
+            .get(circle.saturating_sub(1))
+            .is_some_and(|object| !object.deleted && object.kind.is_circle());
         if !valid {
-            self.status = "Select a circle, a start point for the radius, and an end direction point".into();
+            self.status =
+                "Select a circle, a start point for the radius, and an end direction point".into();
             return;
         }
         let id = self.doc.add(Kind::ArcOnCircle(circle, start, end));

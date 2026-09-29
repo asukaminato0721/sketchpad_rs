@@ -15,7 +15,8 @@ fn copy_segment_includes_parents_but_not_children_like_original() {
     assert_eq!(doc.objects[5].kind, Kind::Free(Point { x: 170., y: 140. }));
     assert_eq!(doc.objects[6].kind, Kind::Free(Point { x: 270., y: 140. }));
     assert_eq!(doc.objects[7].kind, Kind::Segment(6, 7));
-    let original = Document::open(Path::new("../../tests/fixtures/wine_pasted_segment.gsp")).unwrap();
+    let original =
+        Document::open(Path::new("../../tests/fixtures/wine_pasted_segment.gsp")).unwrap();
     assert_eq!(
         doc.objects.iter().map(|o| &o.kind).collect::<Vec<_>>(),
         original.objects.iter().map(|o| &o.kind).collect::<Vec<_>>()
@@ -417,8 +418,10 @@ fn native_copied_parametric_functions_keep_their_saved_names() {
 }
 #[test]
 fn native_copied_plot_imports_and_moves_as_an_editable_curve() {
-    let mut native =
-        Document::open(Path::new("../../tests/fixtures/function_plot_copied_native.gsp")).unwrap();
+    let mut native = Document::open(Path::new(
+        "../../tests/fixtures/function_plot_copied_native.gsp",
+    ))
+    .unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.objects[9].function_anchor, Some((30, 25)));
     let before = native.function_plot_points(16, 8).unwrap();
@@ -543,7 +546,8 @@ fn clear_then_construct_and_unsupported_document_guard() {
     assert_eq!(reopened.objects.len(), 1);
     assert_eq!(reopened.objects[0].kind, source.objects[1].kind);
 
-    let mut unsupported = Document::open(Path::new("../../tests/fixtures/example_tools.gsp")).unwrap();
+    let mut unsupported =
+        Document::open(Path::new("../../tests/fixtures/example_tools.gsp")).unwrap();
     unsupported.selected.insert(1);
     assert!(unsupported.clear_selected().is_err());
     assert_eq!(

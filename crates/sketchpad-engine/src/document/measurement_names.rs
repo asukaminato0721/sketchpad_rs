@@ -12,11 +12,11 @@ impl Document {
             .map(|page| measurement_name_counter(&self.original, page))
             .collect::<Vec<_>>();
         for (&id, &number) in &names {
-            if let Some(object) = self.objects.get(id.saturating_sub(1)) {
-                if let Some(counter) = next.get_mut(object.page) {
-                    *counter =
-                        counter.and_then(|counter| number.checked_add(1).map(|n| counter.max(n)));
-                }
+            if let Some(object) = self.objects.get(id.saturating_sub(1))
+                && let Some(counter) = next.get_mut(object.page)
+            {
+                *counter =
+                    counter.and_then(|counter| number.checked_add(1).map(|n| counter.max(n)));
             }
         }
         // A hidden caption participates when a visible construction uses it.
@@ -177,13 +177,13 @@ impl Document {
             if record.kind == 0x03e8 {
                 page = Some(page.map_or(0, |p| p + 1));
             }
-            if record.kind == 0x0967 {
-                if let Some((page, next)) = page.and_then(|p| counters.get(&p).map(|&n| (p, n))) {
-                    let counter = measurement_name_counter(&prepared.original, page)
-                        .ok_or("Invalid measurement name counter")?;
-                    prepared.original[record.data.start + 2..record.data.start + 6]
-                        .copy_from_slice(&counter.max(next).to_le_bytes());
-                }
+            if record.kind == 0x0967
+                && let Some((page, next)) = page.and_then(|p| counters.get(&p).map(|&n| (p, n)))
+            {
+                let counter = measurement_name_counter(&prepared.original, page)
+                    .ok_or("Invalid measurement name counter")?;
+                prepared.original[record.data.start + 2..record.data.start + 6]
+                    .copy_from_slice(&counter.max(next).to_le_bytes());
             }
         }
         Ok(Some(prepared))

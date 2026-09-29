@@ -5,6 +5,8 @@
 //! infer object names, values, or button behavior from cached text.
 use crate::text_object::RichRunStyle;
 
+type ReferenceResolver<'a> = dyn FnMut(usize, ReferenceRole, Option<&str>) -> Option<String> + 'a;
+
 /// Native reference operand roles. The low sixteen bits remain a one-based
 /// parent slot; role bits select live presentation rather than cached spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -12,6 +14,8 @@ pub enum ReferenceRole {
     Value,
     Name,
     Definition,
+    /// A numeric value formatted as an additive term, including its sign.
+    SignedValue,
     Expression,
 }
 
@@ -21,6 +25,7 @@ impl ReferenceRole {
             0 => Self::Value,
             0xA => Self::Name,
             0xB => Self::Definition,
+            0xD => Self::SignedValue,
             0xE => Self::Expression,
             _ => return None,
         };
@@ -36,6 +41,8 @@ pub struct ReferencedStyle {
     pub red: Option<u16>,
     pub green: Option<u16>,
     pub blue: Option<u16>,
+    /// Native geometry-name decoration: overbar, segment, ray, line, or arc.
+    pub geometry_decoration: Option<u8>,
 }
 
 impl ReferencedStyle {
@@ -54,6 +61,7 @@ impl ReferencedStyle {
             red: child.red.or(self.red),
             green: child.green.or(self.green),
             blue: child.blue.or(self.blue),
+            geometry_decoration: child.geometry_decoration.or(self.geometry_decoration),
         }
     }
 }
@@ -65,12 +73,20 @@ pub enum ReferencedNode {
     PiSuffix,
     Horizontal(Vec<Self>),
     Vertical(Vec<Self>),
+    VerticalCentered(Vec<Self>),
+    /// Native outer layout measurements. They affect the source frame, not
+    /// the caption's textual or mathematical contents.
+    FrameMetrics([Option<u32>; 5]),
     Styled {
         style: ReferencedStyle,
         children: Vec<Self>,
     },
     Radical(Box<Self>),
-    Delimited { open: char, close: char, body: Box<Self> },
+    Delimited {
+        open: char,
+        close: char,
+        body: Box<Self>,
+    },
     Fraction {
         numerator: Box<Self>,
         denominator: Box<Self>,
@@ -96,9 +112,20 @@ pub enum ReferencedNode {
 impl ReferencedNode {
     pub fn has_math_layout(&self) -> bool {
         match self {
-            Self::Fraction { .. } | Self::Subscript { .. } | Self::Superscript { .. } | Self::Radical(_) | Self::Delimited { .. } => true,
-            Self::Horizontal(children) | Self::Vertical(children) | Self::Styled { children, .. } => children.iter().any(Self::has_math_layout),
-            _ => false,
+            Self::Fraction { .. }
+            | Self::Subscript { .. }
+            | Self::Superscript { .. }
+            | Self::Radical(_)
+            | Self::Delimited { .. } => true,
+            Self::Horizontal(children)
+            | Self::Vertical(children)
+            | Self::VerticalCentered(children) => children.iter().any(Self::has_math_layout),
+            Self::Styled { style, children } => {
+                style.geometry_decoration.is_some() || children.iter().any(Self::has_math_layout)
+            }
+            Self::FrameMetrics(_) | Self::Literal(_) | Self::PiSuffix | Self::Reference { .. } => {
+                false
+            }
         }
     }
 }
@@ -192,6 +219,7 @@ impl ReferencedText {
                     ReferencedNode::Reference { slot, role, .. } => out.push((*slot, *role)),
                     ReferencedNode::Horizontal(children)
                     | ReferencedNode::Vertical(children)
+                    | ReferencedNode::VerticalCentered(children)
                     | ReferencedNode::Styled { children, .. } => visit(children, out),
                     ReferencedNode::Fraction {
                         numerator,
@@ -208,8 +236,12 @@ impl ReferencedText {
                         visit(std::slice::from_ref(numerator), out);
                         visit(std::slice::from_ref(denominator), out);
                     }
-                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => visit(std::slice::from_ref(body), out),
-                    ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
+                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => {
+                        visit(std::slice::from_ref(body), out)
+                    }
+                    ReferencedNode::Literal(_)
+                    | ReferencedNode::PiSuffix
+                    | ReferencedNode::FrameMetrics(_) => {}
                 }
             }
         }
@@ -230,6 +262,7 @@ impl ReferencedText {
                     }
                     ReferencedNode::Horizontal(children)
                     | ReferencedNode::Vertical(children)
+                    | ReferencedNode::VerticalCentered(children)
                     | ReferencedNode::Styled { children, .. } => visit(children, slots),
                     ReferencedNode::Fraction {
                         numerator,
@@ -246,8 +279,12 @@ impl ReferencedText {
                         visit(std::slice::from_ref(numerator), slots);
                         visit(std::slice::from_ref(denominator), slots);
                     }
-                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => visit(std::slice::from_ref(body), slots),
-                    ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
+                    ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => {
+                        visit(std::slice::from_ref(body), slots)
+                    }
+                    ReferencedNode::Literal(_)
+                    | ReferencedNode::PiSuffix
+                    | ReferencedNode::FrameMetrics(_) => {}
                 }
             }
         }
@@ -256,23 +293,52 @@ impl ReferencedText {
         slots.into_iter().collect()
     }
 
-    pub fn resolved_nodes(&self, mut resolver: impl FnMut(usize, ReferenceRole) -> Option<String>) -> Vec<ReferencedNode> {
-        fn resolve(node: &mut ReferencedNode, resolver: &mut dyn FnMut(usize, ReferenceRole) -> Option<String>) {
+    pub fn resolved_nodes(
+        &self,
+        mut resolver: impl FnMut(usize, ReferenceRole) -> Option<String>,
+    ) -> Vec<ReferencedNode> {
+        fn resolve(
+            node: &mut ReferencedNode,
+            resolver: &mut dyn FnMut(usize, ReferenceRole) -> Option<String>,
+        ) {
             match node {
                 ReferencedNode::Reference { slot, role, cached } => {
-                    *cached = Some(vec![ReferencedNode::Literal(resolver(*slot, *role).unwrap_or_else(|| "undefined".into()))]);
+                    *cached = Some(vec![ReferencedNode::Literal(
+                        resolver(*slot, *role).unwrap_or_else(|| "undefined".into()),
+                    )]);
                 }
-                ReferencedNode::Horizontal(children) | ReferencedNode::Vertical(children)
-                | ReferencedNode::Styled { children, .. } => for child in children { resolve(child, resolver); },
-                ReferencedNode::Fraction { numerator: a, denominator: b }
+                ReferencedNode::Horizontal(children)
+                | ReferencedNode::Vertical(children)
+                | ReferencedNode::VerticalCentered(children)
+                | ReferencedNode::Styled { children, .. } => {
+                    for child in children {
+                        resolve(child, resolver);
+                    }
+                }
+                ReferencedNode::Fraction {
+                    numerator: a,
+                    denominator: b,
+                }
                 | ReferencedNode::Subscript { base: a, index: b }
-                | ReferencedNode::Superscript { base: a, exponent: b } => { resolve(a, resolver); resolve(b, resolver); }
-                ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => resolve(body, resolver),
-                ReferencedNode::Literal(_) | ReferencedNode::PiSuffix => {}
+                | ReferencedNode::Superscript {
+                    base: a,
+                    exponent: b,
+                } => {
+                    resolve(a, resolver);
+                    resolve(b, resolver);
+                }
+                ReferencedNode::Radical(body) | ReferencedNode::Delimited { body, .. } => {
+                    resolve(body, resolver)
+                }
+                ReferencedNode::Literal(_)
+                | ReferencedNode::PiSuffix
+                | ReferencedNode::FrameMetrics(_) => {}
             }
         }
         let mut nodes = self.nodes.clone();
-        for node in &mut nodes { resolve(node, &mut resolver); }
+        for node in &mut nodes {
+            resolve(node, &mut resolver);
+        }
         nodes
     }
 
@@ -298,7 +364,7 @@ impl ReferencedText {
 fn horizontal(
     nodes: &[ReferencedNode],
     inherited: &ReferencedStyle,
-    resolver: &mut dyn FnMut(usize, ReferenceRole, Option<&str>) -> Option<String>,
+    resolver: &mut ReferenceResolver<'_>,
 ) -> Vec<Vec<ReferencedRun>> {
     let mut rows = vec![vec![]];
     for node in nodes {
@@ -314,7 +380,7 @@ fn horizontal(
 fn evaluate_node(
     node: &ReferencedNode,
     inherited: &ReferencedStyle,
-    resolver: &mut dyn FnMut(usize, ReferenceRole, Option<&str>) -> Option<String>,
+    resolver: &mut ReferenceResolver<'_>,
 ) -> Vec<Vec<ReferencedRun>> {
     match node {
         ReferencedNode::Literal(text) => vec![vec![ReferencedRun {
@@ -328,19 +394,32 @@ fn evaluate_node(
             reference: None,
         }]],
         ReferencedNode::Horizontal(children) => horizontal(children, inherited, resolver),
-        ReferencedNode::Vertical(children) => children
+        ReferencedNode::Vertical(children) | ReferencedNode::VerticalCentered(children) => children
             .iter()
             .flat_map(|child| evaluate_node(child, inherited, resolver))
             .collect(),
+        ReferencedNode::FrameMetrics(_) => vec![],
         ReferencedNode::Styled { style, children } => {
             horizontal(children, &inherited.inherited(style), resolver)
         }
-        ReferencedNode::Radical(body) => horizontal(&[
-            ReferencedNode::Literal("√(".into()), (**body).clone(), ReferencedNode::Literal(")".into())
-        ], inherited, resolver),
-        ReferencedNode::Delimited { open, close, body } => horizontal(&[
-            ReferencedNode::Literal(open.to_string()), (**body).clone(), ReferencedNode::Literal(close.to_string())
-        ], inherited, resolver),
+        ReferencedNode::Radical(body) => horizontal(
+            &[
+                ReferencedNode::Literal("√(".into()),
+                (**body).clone(),
+                ReferencedNode::Literal(")".into()),
+            ],
+            inherited,
+            resolver,
+        ),
+        ReferencedNode::Delimited { open, close, body } => horizontal(
+            &[
+                ReferencedNode::Literal(open.to_string()),
+                (**body).clone(),
+                ReferencedNode::Literal(close.to_string()),
+            ],
+            inherited,
+            resolver,
+        ),
         ReferencedNode::Fraction {
             numerator,
             denominator,
@@ -445,7 +524,7 @@ impl<'a> Parser<'a> {
         closed: bool,
         in_cache: bool,
         depth: usize,
-        _vertical_parent: bool,
+        vertical_parent: bool,
     ) -> Result<Vec<ReferencedNode>, String> {
         if depth > 128 {
             return Err("Referenced markup nesting is too deep".into());
@@ -488,25 +567,45 @@ impl<'a> Parser<'a> {
             } else if self.bytes[self.at..].starts_with(b"<+") {
                 self.at += 2;
                 let children = self.sequence(true, in_cache, depth + 1, false)?;
-                let [base, exponent]: [ReferencedNode; 2] = children.try_into()
+                let [base, exponent]: [ReferencedNode; 2] = children
+                    .try_into()
                     .map_err(|_| "A superscript requires two operands")?;
-                nodes.push(ReferencedNode::Superscript { base: Box::new(base), exponent: Box::new(exponent) });
+                nodes.push(ReferencedNode::Superscript {
+                    base: Box::new(base),
+                    exponent: Box::new(exponent),
+                });
             } else if self.bytes[self.at..].starts_with(b"<-") {
                 self.at += 2;
                 let children = self.sequence(true, in_cache, depth + 1, false)?;
-                let [base, index]: [ReferencedNode; 2] = children.try_into()
+                let [base, index]: [ReferencedNode; 2] = children
+                    .try_into()
                     .map_err(|_| "A subscript requires two operands")?;
-                nodes.push(ReferencedNode::Subscript { base: Box::new(base), index: Box::new(index) });
-            } else if [b"<R".as_slice(), b"<(", b"<|"].iter().any(|prefix| self.bytes[self.at..].starts_with(prefix)) {
+                nodes.push(ReferencedNode::Subscript {
+                    base: Box::new(base),
+                    index: Box::new(index),
+                });
+            } else if [b"<R".as_slice(), b"<(", b"<|"]
+                .iter()
+                .any(|prefix| self.bytes[self.at..].starts_with(prefix))
+            {
                 let marker = self.bytes[self.at + 1];
                 self.at += 2;
                 let children = self.sequence(true, in_cache, depth + 1, false)?;
-                let [body]: [ReferencedNode; 1] = children.try_into()
+                let [body]: [ReferencedNode; 1] = children
+                    .try_into()
                     .map_err(|_| "A radical or delimiter requires one operand")?;
                 nodes.push(match marker {
                     b'R' => ReferencedNode::Radical(Box::new(body)),
-                    b'(' => ReferencedNode::Delimited { open: '(', close: ')', body: Box::new(body) },
-                    _ => ReferencedNode::Delimited { open: '|', close: '|', body: Box::new(body) },
+                    b'(' => ReferencedNode::Delimited {
+                        open: '(',
+                        close: ')',
+                        body: Box::new(body),
+                    },
+                    _ => ReferencedNode::Delimited {
+                        open: '|',
+                        close: '|',
+                        body: Box::new(body),
+                    },
                 });
             } else if self.bytes[self.at..].starts_with(b"<T") {
                 self.at += 2;
@@ -530,19 +629,37 @@ impl<'a> Parser<'a> {
                 self.expect(b'>')?;
                 nodes.push(ReferencedNode::Literal(text));
             } else if self.bytes[self.at..].starts_with(b"<VL")
+                || self.bytes[self.at..].starts_with(b"<VC")
                 || self.bytes[self.at..].starts_with(b"<H")
             {
                 let vertical = self.bytes[self.at..].starts_with(b"<VL");
-                self.at += if vertical { 3 } else { 2 };
-                let children = self.sequence(true, in_cache, depth + 1, vertical)?;
+                let centered = self.bytes[self.at..].starts_with(b"<VC");
+                self.at += if vertical || centered { 3 } else { 2 };
+                let children = self.sequence(true, in_cache, depth + 1, vertical || centered)?;
                 if children.is_empty() {
                     return Err("Empty rich-text layout".into());
                 }
-                nodes.push(if vertical {
+                nodes.push(if centered {
+                    ReferencedNode::VerticalCentered(children)
+                } else if vertical {
                     ReferencedNode::Vertical(children)
                 } else {
                     ReferencedNode::Horizontal(children)
                 });
+            } else if !in_cache
+                && (vertical_parent || depth == 0)
+                && self.bytes[self.at..].starts_with(b"<F")
+            {
+                self.at += 2;
+                let mut fields = [None; 5];
+                for field in &mut fields {
+                    *field = self.optional_hex_field()?;
+                }
+                self.expect(b'>')?;
+                if self.at < self.bytes.len() && self.bytes[self.at] != b'>' {
+                    return Err("Frame metrics must end an outer layout".into());
+                }
+                nodes.push(ReferencedNode::FrameMetrics(fields));
             } else if self.bytes[self.at..].starts_with(b"<?") {
                 if in_cache {
                     return Err("Nested reference cache is unsupported".into());
@@ -626,29 +743,52 @@ impl<'a> Parser<'a> {
         )
         .map_err(|_| "Rich-text hexadecimal overflow".into())
     }
+    fn optional_hex_field(&mut self) -> Result<Option<u32>, String> {
+        let start = self.at;
+        while self.bytes.get(self.at).is_some_and(u8::is_ascii_hexdigit) {
+            self.at += 1;
+        }
+        let value = if self.at == start {
+            None
+        } else {
+            Some(
+                u32::from_str_radix(
+                    std::str::from_utf8(&self.bytes[start..self.at]).unwrap(),
+                    16,
+                )
+                .map_err(|_| "Frame metric overflow")?,
+            )
+        };
+        self.expect(b'x')?;
+        Ok(value)
+    }
     fn style(&mut self, in_cache: bool) -> Result<ReferencedStyle, String> {
         let mut out = ReferencedStyle::default();
-        let mut count = 0;
         // Native dirty-save embeds a source-font context as SP#... in caches.
         if in_cache && self.bytes.get(self.at..self.at + 2) == Some(b"P#") {
             self.at += 1;
         }
-        let mut cache_overbar = false;
         let mut cache_spacing = false;
         while self.bytes.get(self.at) != Some(&b'<') {
             let attr = *self.bytes.get(self.at).ok_or("Truncated rich-text style")?;
             self.at += 1;
-            let value = if attr == b'P' && !self.bytes.get(self.at).is_some_and(u8::is_ascii_hexdigit) { 0 }
-                else { u16::try_from(self.hex()?).map_err(|_| "Rich-text style value overflow")? };
+            let value =
+                if attr == b'P' && !self.bytes.get(self.at).is_some_and(u8::is_ascii_hexdigit) {
+                    0
+                } else {
+                    u16::try_from(self.hex()?).map_err(|_| "Rich-text style value overflow")?
+                };
             match attr {
                 b'#' if (8..=512).contains(&value) && out.font.size_code.is_none() => {
                     out.font.size_code = Some(value)
                 }
                 b'P' if out.font.family_index.is_none() => out.font.family_index = Some(value),
-                b'+' if out.font.script_size.is_none() => out.font.script_size = Some(
-                    u8::try_from(value).map_err(|_| "Invalid script-size level")?),
-                b'O' if in_cache && (1..=2).contains(&value) && !cache_overbar => {
-                    cache_overbar = true
+                b'+' if out.font.script_size.is_none() => {
+                    out.font.script_size =
+                        Some(u8::try_from(value).map_err(|_| "Invalid script-size level")?)
+                }
+                b'O' if (1..=5).contains(&value) && out.geometry_decoration.is_none() => {
+                    out.geometry_decoration = Some(value as u8)
                 }
                 b'T' if in_cache && value == 1 && !cache_spacing => cache_spacing = true,
                 b'W' if (1..=2).contains(&value) && out.font.bold.is_none() => {
@@ -667,10 +807,6 @@ impl<'a> Parser<'a> {
                 b'L' if (1..=256).contains(&value) && out.blue.is_none() => out.blue = Some(value),
                 _ => return Err("Unsupported or duplicate rich-text style attribute".into()),
             }
-            count += 1;
-        }
-        if count == 0 {
-            return Err("Empty rich-text style attributes".into());
         }
         Ok(out)
     }
@@ -740,7 +876,6 @@ mod tests {
     fn unproved_flags_math_and_malformed_markup_are_rejected_completely() {
         for markup in [
             "<?xC0001>",
-            "<?1xD0001<T1x0>>",
             "<?x1A0001>",
             "<?xA0000>",
             "<?xA0002>",
@@ -760,7 +895,6 @@ mod tests {
             "<SR0<T1xx>>",
             "<SW3<T1xx>>",
             "<SW2W1<T1xx>>",
-            "<SO2<T1xx>>",
         ] {
             assert!(
                 ReferencedText::from_markup(markup, (0, 0), 1).is_err(),
@@ -798,6 +932,7 @@ mod tests {
                 match role {
                     ReferenceRole::Name => "n",
                     ReferenceRole::Definition => "n+1",
+                    ReferenceRole::SignedValue => panic!(),
                     ReferenceRole::Expression => "x²",
                     ReferenceRole::Value => panic!(),
                 }
@@ -835,6 +970,40 @@ mod tests {
         assert_eq!(rows[0][1].style.red, Some(256));
         assert_eq!(rows[0][1].style.green, Some(1));
         assert_eq!(rows[0][1].reference, Some(1));
+
+        let decorated = ReferencedText::from_markup("<SO3<T2xAB>>", (0, 0), 1).unwrap();
+        assert!(decorated.nodes()[0].has_math_layout());
+        assert_eq!(
+            decorated.evaluate(|_, _| None)[0][0]
+                .style
+                .geometry_decoration,
+            Some(3)
+        );
+
+        let centered =
+            ReferencedText::from_markup("<VC<H<T1xa>><H<T3xbbb>><F1Cxx205x20x004x>>", (0, 0), 1)
+                .unwrap();
+        let ReferencedNode::VerticalCentered(children) = &centered.nodes()[0] else {
+            panic!("expected centered vertical layout")
+        };
+        assert_eq!(
+            children.last(),
+            Some(&ReferencedNode::FrameMetrics([
+                Some(0x1c),
+                None,
+                Some(0x205),
+                Some(0x20),
+                Some(0x4)
+            ]))
+        );
+        assert_eq!(
+            centered
+                .evaluate(|_, _| None)
+                .into_iter()
+                .map(|row| row.into_iter().map(|run| run.text).collect::<String>())
+                .collect::<Vec<_>>(),
+            ["a", "bbb"]
+        );
     }
     #[test]
     fn native_dirty_cache_math_stays_inert_and_rejects_nested_dependencies() {
@@ -888,39 +1057,40 @@ mod tests {
             );
         }
         assert_eq!(&text.rich_bytes()[18..18 + markup.len()], markup.as_bytes());
-        for invalid in ["<!>", "<H<?x1><!FFFF>>", "<H<?1x1<H<T1x1>>><!71>>"] {
-            assert!(ReferencedText::from_markup(invalid, (0, 0), 1).is_err());
-        }
-    }
 
-    #[test]
-    fn native_active_subscript_uses_live_numeric_value_in_vertical_label() {
-        let markup = "<VL<-<T1xA><?1x1<H<T1x3>>>>>";
-        let text = ReferencedText::from_markup(markup, (115, 329), 1).unwrap();
-        assert_eq!(text.reference_occurrences(), [(1, ReferenceRole::Value)]);
-        for (value, expected) in [("3", "A₃"), ("5.00", "A₅.₀₀")] {
-            let rows = text.evaluate(|slot, cache| {
-                assert_eq!(slot, 1);
-                assert_eq!(cache, Some("3"));
-                Some(value.into())
-            });
-            assert_eq!(
-                rows.into_iter()
-                    .flatten()
-                    .map(|run| run.text)
-                    .collect::<String>(),
-                expected
-            );
-        }
-        assert_eq!(&text.rich_bytes()[18..18 + markup.len()], markup.as_bytes());
-        for markup in [
-            "<-<T1xA><?1x1<H<T1x3>>>>",
-            "<VL<-<T1xA><T1x3>>>",
-            "<VL<-<T1xAB><?1x1<H<T1x3>>>>>",
-            "<VL<-<T1xA><?x1>>>",
-        ] {
-            let text = ReferencedText::from_markup(markup, (0, 0), 1).unwrap();
-            assert!(text.nodes().iter().any(ReferencedNode::has_math_layout));
+        let symbols = ReferencedText::from_markup(
+            "<H<!5C><!5E><!71><!A3><!A5><!AE><!B1><!B7><!B8><!BB><!F2><!100><!103>>",
+            (0, 0),
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            symbols.evaluate(|_, _| None)[0]
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>(),
+            "∴⊥θ≤∞→±•÷≈∫⊙−"
+        );
+
+        let signed =
+            ReferencedText::from_markup("<H<T2xy=><?1xD0001<T4x + 2>>>", (0, 0), 1).unwrap();
+        assert_eq!(
+            signed.reference_occurrences(),
+            [(1, ReferenceRole::SignedValue)]
+        );
+        assert_eq!(
+            signed.evaluate_roles(|_, role, cache| {
+                assert_eq!(role, ReferenceRole::SignedValue);
+                assert_eq!(cache, Some(" + 2"));
+                Some(" − 3".into())
+            })[0]
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>(),
+            "y= − 3"
+        );
+        for invalid in ["<!>", "<H<?x1><!FFFF>>", "<H<?1x1<H<T1x1>>><!72>>"] {
+            assert!(ReferencedText::from_markup(invalid, (0, 0), 1).is_err());
         }
     }
 }

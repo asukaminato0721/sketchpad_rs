@@ -1,7 +1,9 @@
 use super::{Editor, MovementTrack, PendingAction, PresentationTrack};
-use sketchpad_engine::action_records::{MovementSpeed, PresentationMode, ScrollPlacement};
-use sketchpad_engine::document::{Kind, Point};
 use crate::render::Viewport;
+use sketchpad_engine::action_records::{
+    MovementSpeed, PresentationMode, PresentationStop, ScrollPlacement,
+};
+use sketchpad_engine::document::{Kind, Point};
 use std::process::Command;
 use std::time::Instant;
 
@@ -232,11 +234,21 @@ impl Editor {
         self.activate_action(id, viewport, depth, false)
     }
 
-    pub(super) fn activate_referenced_action(&mut self, id: usize, viewport: &Viewport) -> Result<(), String> {
+    pub(super) fn activate_referenced_action(
+        &mut self,
+        id: usize,
+        viewport: &Viewport,
+    ) -> Result<(), String> {
         self.activate_action(id, viewport, 0, true)
     }
 
-    fn activate_action(&mut self, id: usize, viewport: &Viewport, depth: usize, indirect: bool) -> Result<(), String> {
+    fn activate_action(
+        &mut self,
+        id: usize,
+        viewport: &Viewport,
+        depth: usize,
+        indirect: bool,
+    ) -> Result<(), String> {
         if depth > 32 {
             return Err("Presentation buttons are nested too deeply".into());
         }
@@ -294,6 +306,11 @@ impl Editor {
                 self.presentations.push(track);
                 return Ok(());
             }
+            if track.next < track.targets.len() && track.options.time_tenths != 0 {
+                track.pause_remaining = f64::from(track.options.time_tenths) / 10.;
+                self.presentations.push(track);
+                return Ok(());
+            }
         }
         Ok(())
     }
@@ -313,6 +330,7 @@ impl Editor {
                 self.stop_child_action(child, depth + 1);
             }
             if track.mode == PresentationMode::Sequential {
+                track.pause_remaining = 0.;
                 self.run_sequential_presentation(track, viewport, depth + 1)?;
             }
             return Ok(());
@@ -327,17 +345,38 @@ impl Editor {
         if object.deleted || !object.visible || object.page != self.doc.active_page {
             return Err("Presentation button is unavailable".into());
         }
-        let Kind::PresentationButton { targets, mode, .. } = &object.kind else {
+        let Kind::PresentationButton {
+            targets,
+            mode,
+            options,
+            ..
+        } = &object.kind
+        else {
             return Err("Object is not a Presentation button".into());
         };
         let targets = targets.clone();
         let mode = *mode;
+        let options = *options;
+        if options.deselect {
+            self.doc.selected.clear();
+            self.selection_order.clear();
+        }
+        if options.stop_animations {
+            self.animations.clear();
+            self.movements.clear();
+        }
+        if options.erase_traces {
+            self.trace_marks.clear();
+        }
         let mut track = PresentationTrack {
             id,
             targets,
             mode,
+            options,
             next: 0,
             active: Vec::new(),
+            elapsed_seconds: 0.,
+            pause_remaining: 0.,
         };
         match mode {
             PresentationMode::Simultaneous => {
@@ -347,8 +386,33 @@ impl Editor {
                         track.active.push(child);
                     }
                 }
-                if !track.active.is_empty() {
-                    self.presentations.push(track);
+                let completed_immediately = track.active.len() < track.targets.len();
+                match options.stop {
+                    PresentationStop::LastAction => {
+                        if !track.active.is_empty() {
+                            self.presentations.push(track);
+                        }
+                    }
+                    PresentationStop::FirstAction if completed_immediately => {
+                        for child in track.active {
+                            self.stop_child_action(child, depth + 1);
+                        }
+                    }
+                    PresentationStop::FirstAction => {
+                        if !track.active.is_empty() {
+                            self.presentations.push(track);
+                        }
+                    }
+                    PresentationStop::ElapsedTime if options.time_tenths == 0 => {
+                        for child in track.active {
+                            self.stop_child_action(child, depth + 1);
+                        }
+                    }
+                    PresentationStop::ElapsedTime => {
+                        if !track.active.is_empty() {
+                            self.presentations.push(track);
+                        }
+                    }
                 }
             }
             PresentationMode::Sequential => {
@@ -359,7 +423,7 @@ impl Editor {
         Ok(())
     }
 
-    pub(super) fn tick_presentations(&mut self) {
+    pub(super) fn tick_presentations(&mut self, elapsed_seconds: f64) {
         let Some(rect) = self.viewport_rect else {
             return;
         };
@@ -367,24 +431,56 @@ impl Editor {
         for mut track in tracks {
             match track.mode {
                 PresentationMode::Simultaneous => {
+                    let previous_active = track.active.len();
                     track.active.retain(|&id| self.action_is_running(id));
-                    if !track.active.is_empty() {
+                    track.elapsed_seconds += elapsed_seconds.max(0.);
+                    let should_stop = match track.options.stop {
+                        PresentationStop::LastAction => false,
+                        PresentationStop::FirstAction => track.active.len() < previous_active,
+                        PresentationStop::ElapsedTime => {
+                            track.elapsed_seconds >= f64::from(track.options.time_tenths) / 10.
+                        }
+                    };
+                    if should_stop {
+                        for child in track.active {
+                            self.stop_child_action(child, 1);
+                        }
+                    } else if !track.active.is_empty() {
                         self.presentations.push(track);
                     }
                 }
                 PresentationMode::Sequential => {
-                    if track.active.iter().all(|&id| !self.action_is_running(id)) {
-                        track.active.clear();
-                        let viewport = Viewport {
-                            rect,
-                            scale: self.scale,
-                            center: self.center,
-                        };
-                        if let Err(error) = self.run_sequential_presentation(track, &viewport, 0) {
-                            self.status = error;
-                        }
-                    } else {
+                    if track.active.iter().any(|&id| self.action_is_running(id)) {
                         self.presentations.push(track);
+                        continue;
+                    }
+                    let mut started_pause = false;
+                    if !track.active.is_empty() {
+                        track.active.clear();
+                        if track.next < track.targets.len() && track.options.time_tenths != 0 {
+                            track.pause_remaining = f64::from(track.options.time_tenths) / 10.;
+                            started_pause = true;
+                        }
+                    }
+                    if started_pause {
+                        self.presentations.push(track);
+                        continue;
+                    }
+                    if track.pause_remaining > 0. {
+                        track.pause_remaining =
+                            (track.pause_remaining - elapsed_seconds.max(0.)).max(0.);
+                        if track.pause_remaining > 0. {
+                            self.presentations.push(track);
+                            continue;
+                        }
+                    }
+                    let viewport = Viewport {
+                        rect,
+                        scale: self.scale,
+                        center: self.center,
+                    };
+                    if let Err(error) = self.run_sequential_presentation(track, &viewport, 0) {
+                        self.status = error;
                     }
                 }
             }

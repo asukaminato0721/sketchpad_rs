@@ -1,6 +1,6 @@
 use super::Editor;
-use sketchpad_engine::document::Kind;
 use crate::render::Viewport;
+use sketchpad_engine::document::Kind;
 
 impl Editor {
     pub(super) fn referenced_action_hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
@@ -22,12 +22,22 @@ impl Editor {
             });
             if let Some(layout) = self.math_text_layout(object.id) {
                 for run in layout.runs {
-                    if let Some(target) = run.reference.and_then(|slot| parents.get(slot - 1)).copied() {
-                        if self.doc.objects.get(target - 1).is_some_and(|o| !o.deleted && o.kind.is_action_button())
-                            && egui::Rect::from_min_size(origin + run.position.to_vec2(), run.galley.size()).contains(p)
-                        {
-                            return Some(target);
-                        }
+                    if let Some(target) = run
+                        .reference
+                        .and_then(|slot| parents.get(slot - 1))
+                        .copied()
+                        && self
+                            .doc
+                            .objects
+                            .get(target - 1)
+                            .is_some_and(|o| !o.deleted && o.kind.is_action_button())
+                        && egui::Rect::from_min_size(
+                            origin + run.position.to_vec2(),
+                            run.galley.size(),
+                        )
+                        .contains(p)
+                    {
+                        return Some(target);
                     }
                 }
                 continue;
@@ -44,27 +54,27 @@ impl Editor {
                     .fold(size, f32::max);
                 let mut x = origin.x;
                 for run in row {
-                    let (run_size, shift) = run.style.font.script_metrics(
-                        run.style.font.size_code.map_or(size, f32::from));
+                    let (run_size, shift) = run
+                        .style
+                        .font
+                        .script_metrics(run.style.font.size_code.map_or(size, f32::from));
                     let width = run.text.chars().count() as f32 * run_size * 0.65;
                     if let Some(target) = run
                         .reference
                         .and_then(|slot| parents.get(slot - 1))
                         .copied()
-                    {
-                        if self
+                        && self
                             .doc
                             .objects
                             .get(target - 1)
                             .is_some_and(|object| !object.deleted && object.kind.is_action_button())
-                            && egui::Rect::from_min_size(
-                                egui::pos2(x, y - shift),
-                                egui::vec2(width, height * 1.1),
-                            )
-                            .contains(p)
-                        {
-                            return Some(target);
-                        }
+                        && egui::Rect::from_min_size(
+                            egui::pos2(x, y - shift),
+                            egui::vec2(width, height * 1.1),
+                        )
+                        .contains(p)
+                    {
+                        return Some(target);
                     }
                     x += width;
                 }

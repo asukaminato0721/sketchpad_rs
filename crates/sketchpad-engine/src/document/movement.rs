@@ -16,9 +16,7 @@ impl MovementValue {
             return None;
         }
         let fraction = fraction.clamp(0., 1.);
-        if self.distance(destination).is_none() {
-            return None;
-        }
+        self.distance(destination)?;
         if fraction == 0. {
             return Some(self);
         }

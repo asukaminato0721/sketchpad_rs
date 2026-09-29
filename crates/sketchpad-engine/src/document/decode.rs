@@ -7,16 +7,13 @@ pub(super) fn polygon_constraint_subtype(
     count: usize,
 ) -> Option<u16> {
     let object = objects.get(host.checked_sub(1)?)?;
-    if matches!(&object.kind, super::Kind::Polygon(vertices) if vertices.len() == count) {
-        if let Some(at) = object.header_offset {
-            if bytes.get(at..at + 2) == Some(&[8, 0])
-                && bytes.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])
-                && (count == 9
-                    || matches!(bytes.get(at + 2..at + 4), Some([0, 0] | [1, 0])))
-            {
-                return Some(15);
-            }
-        }
+    if matches!(&object.kind, super::Kind::Polygon(vertices) if vertices.len() == count)
+        && let Some(at) = object.header_offset
+        && bytes.get(at..at + 2) == Some(&[8, 0])
+        && bytes.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])
+        && (count == 9 || matches!(bytes.get(at + 2..at + 4), Some([0, 0] | [1, 0])))
+    {
+        return Some(15);
     }
     super::records::polygon_subtype(count)
 }
@@ -28,14 +25,14 @@ use super::iteration::{
     supported_point_iteration_mapping, supported_point_parameter_iteration,
 };
 use super::kind::{
-    parameter_locus_refs_match, is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind,
-    is_locus_polygon_kind, is_locus_straight_kind, is_point_kind, is_segment_kind,
-    is_straight_kind, is_value_plot_path_kind, polygon_vertex_count, straight_kind_mode,
+    is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind, is_locus_polygon_kind,
+    is_locus_straight_kind, is_point_kind, is_segment_kind, is_straight_kind,
+    is_value_plot_path_kind, parameter_locus_refs_match, polygon_vertex_count, straight_kind_mode,
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
 use super::{
-    Document, EmbeddedToolInput, EmbeddedToolInputKind, IterationDepth, Kind, LineMode, Object,
-    Point,
+    Document, EmbeddedToolInput, EmbeddedToolInputKind, ImagePlacement, IterationDepth, Kind,
+    LineMode, Object, Point,
 };
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
@@ -43,7 +40,7 @@ use crate::action_records::{
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::graph::{GraphObject, GridForm};
-use crate::image_records::ImageFile;
+use crate::image_records::{ImageFile, ReadOnlyImageAttachment};
 use crate::plot_points_records::PlotPointsMode;
 use crate::table_records::{
     CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
@@ -171,7 +168,7 @@ pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Rec
             0x03eb => {
                 if group_open
                     || !tool_inputs
-                    || record.data.len() != 0
+                    || !record.data.is_empty()
                     || tool_expected != Some(tool_objects)
                 {
                     return false;
@@ -202,7 +199,7 @@ pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Rec
                 if group_open
                     || tool_inputs
                     || payload.len() < 4
-                    || (payload.len() - 4) % 4 != 0
+                    || !(payload.len() - 4).is_multiple_of(4)
                     || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
                 {
                     return false;
@@ -221,7 +218,7 @@ pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Rec
                 let payload = &bytes[record.data.clone()];
                 if !group_open
                     || payload.len() < 4
-                    || (payload.len() - 4) % 4 != 0
+                    || !(payload.len() - 4).is_multiple_of(4)
                     || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
                 {
                     return false;
@@ -327,7 +324,7 @@ impl Document {
                 0x07d2 if scan_code == 102 => {
                     let path = &b[record.data.clone()];
                     if path.len() >= 28
-                        && (path.len() - 4) % 4 == 0
+                        && (path.len() - 4).is_multiple_of(4)
                         && u32_at(path, 0) as usize == (path.len() - 4) / 4
                     {
                         for offset in [4, path.len() - 4] {
@@ -352,6 +349,15 @@ impl Document {
             .transpose()
             .ok()
             .flatten();
+        let cropped_images = if has_picture_resource {
+            crate::image_records::imported_cropped_image_catalog(b)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|crop| (crop.group_offset, crop))
+                .collect::<BTreeMap<_, _>>()
+        } else {
+            BTreeMap::new()
+        };
         let imported_images = if has_picture_resource && image_file.is_none() {
             crate::image_records::imported_image_catalog(b)
                 .unwrap_or_default()
@@ -361,8 +367,8 @@ impl Document {
         } else {
             BTreeMap::new()
         };
-        let anchored_images = if has_picture_resource {
-            crate::image_records::imported_anchored_image_catalog(b)
+        let attached_images = if has_picture_resource {
+            crate::image_records::imported_attached_image_catalog(b)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|image| (image.group_offset, image))
@@ -435,7 +441,8 @@ impl Document {
                 .as_ref()
                 .is_some_and(|picture| picture.picture_group_offset() == group_start)
                 || imported_images.contains_key(&group_start);
-            let is_anchored_image = anchored_images.contains_key(&group_start);
+            let is_attached_image = attached_images.contains_key(&group_start);
+            let is_cropped_image = cropped_images.contains_key(&group_start);
             let raw = u32_at(h, 0);
             let code = raw as u16;
             let tool_input = tool_inputs.get(&(objects.len() + 1)).copied();
@@ -456,7 +463,8 @@ impl Document {
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
             let mut angle_marker_style = None;
-            let angle_marker_label = h.len() == 28 && matches!(code, 113 | 115 | 116) && h[6..10] == [18, 0, 95, 0];
+            let angle_marker_label =
+                h.len() == 28 && matches!(code, 113 | 115 | 116) && h[6..10] == [18, 0, 95, 0];
             let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0]))
                 || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                     && matches!(
@@ -487,6 +495,8 @@ impl Document {
                             | 32
                             | 33
                             | 34
+                            | 63
+                            | 64
                             | 67
                             | 68
                             | 69
@@ -499,6 +509,16 @@ impl Document {
                             | 95
                             | 123
                     );
+            let arc_label = h[6..10] == [12, 0, 67, 0]
+                && (matches!(code, 75 | 79..=81)
+                    || matches!(code, 16..=21 | 24 | 27..=30 | 32..=34));
+            // Polygon groups also carry 07d5 naming metadata, but that record
+            // is not a displayed label. Keep it inert while admitting the
+            // proved point, straight, circle, base-arc, and transformed-arc
+            // presentations.
+            let geometric_label =
+                arc_label || labeled_shape && matches!(h[6..8], [1, 0] | [2, 0] | [3, 0]);
+            let image_internal_label = code == 99 && h[6..10] == [16, 0, 78, 0];
             let numeric_label = matches!(
                 code,
                 36 | 37
@@ -532,7 +552,7 @@ impl Document {
                 if matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87) {
                     graph_records.push((r.kind, d.to_vec()));
                 }
-                if matches!(code, 0 | 71 | 78) && r.kind == 0x0907 {
+                if matches!(code, 0 | 71 | 78 | 122) && r.kind == 0x0907 {
                     function_expression = Some(d.to_vec());
                 }
                 if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
@@ -551,10 +571,19 @@ impl Document {
                     });
                 }
                 match r.kind {
+                    0x07d5 if image_internal_label => {
+                        if d != [
+                            6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81, 92,
+                            97, 65, 3, 0, 91, 49, 93, 0,
+                        ] {
+                            safe = false;
+                        }
+                    }
                     0x07d5
                         if matches!(code, 0 | 15)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
+                            || arc_label
                             || angle_marker_label
                             || numeric_label =>
                     {
@@ -564,7 +593,7 @@ impl Document {
                                     || (code == 71 && h[6..10] == [11, 0, 57, 0])
                                     || numeric_label
                                     || angle_marker_label
-                                    || h[6..8] == [1, 0] =>
+                                    || geometric_label =>
                             {
                                 label = Some(value)
                             }
@@ -578,11 +607,13 @@ impl Document {
                         if matches!(code, 0 | 15)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
+                            || arc_label
                             || angle_marker_label =>
                     {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
                         if (labeled_shape
+                            || arc_label
                             || angle_marker_label
                             || code == 15
                             || (code == 71 && h[6..10] == [11, 0, 57, 0]))
@@ -599,7 +630,10 @@ impl Document {
                         point_offset = Some(r.data.start);
                     }
                     0x0903
-                        if matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120) =>
+                        if matches!(
+                            code,
+                            36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120
+                        ) =>
                     {
                         let sample: &[u8] = match code {
                             36 => {
@@ -619,8 +653,10 @@ impl Document {
                             40 => &include_bytes!(
                                 "../../../../assets/circumference_measurement_group.bin"
                             )[60..92],
-                            41 | 120 => &include_bytes!("../../../../assets/angle_measurement_group.bin")
-                                [68..100],
+                            41 | 120 => {
+                                &include_bytes!("../../../../assets/angle_measurement_group.bin")
+                                    [68..100]
+                            }
                             42 => &include_bytes!("../../../../assets/area_measurement_group.bin")
                                 [60..92],
                             43 => &include_bytes!(
@@ -719,7 +755,7 @@ impl Document {
                     {
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
-                    0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4) % 4 == 0 => {
+                    0x7d2 | 0x7d3 if d.len() >= 4 && (d.len() - 4).is_multiple_of(4) => {
                         let n = u32_at(d, 0) as usize;
                         if n == (d.len() - 4) / 4 {
                             refs = (0..n)
@@ -743,9 +779,13 @@ impl Document {
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !((code == 15 || (code == 71 && h[6..10] == [11, 0, 57, 0]))
                         && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !((labeled_shape || numeric_label || angle_marker_label) && matches!(r.kind, 0x07d5 | 0x07d8))
-                    && !(matches!(code, 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120)
-                        && matches!(r.kind, 0x0903 | 0x07d8))
+                    && !((labeled_shape || arc_label || numeric_label || angle_marker_label)
+                        && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !(image_internal_label && r.kind == 0x07d5)
+                    && !(matches!(
+                        code,
+                        36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120
+                    ) && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 49 | 65 | 66 | 86)
@@ -753,6 +793,7 @@ impl Document {
                     && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
+                    && !(code == 122 && matches!(r.kind, 0x0907 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(matches!(
                         code,
@@ -767,12 +808,20 @@ impl Document {
                     && !(matches!(code, 73 | 90) && matches!(r.kind, 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
-                    && !(is_anchored_image && matches!(r.kind, 0x090c | 0x1f44))
+                    && !(is_attached_image
+                        && (matches!(r.kind, 0x090c | 0x1f44) || r.kind == 0x232e && d.is_empty()))
+                    && !(is_cropped_image && (r.kind == 0x090c || r.kind == 0x232e && d.is_empty()))
+                    && !(matches!(code, 16..=21 | 24 | 27..=30 | 32..=34)
+                        && h[6..10] == [16, 0, 78, 0]
+                        && r.kind == 0x090c
+                        && d.len() == 16)
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                     && !(angle_marker_label && r.kind == 0x232e && d.is_empty())
-                    && !(angle_marker_label && r.kind == 0x090e && d.len() == 12
+                    && !(angle_marker_label
+                        && r.kind == 0x090e
+                        && d.len() == 12
                         && matches!(u16::from_le_bytes([d[0], d[1]]), 1 | 2)
                         && (code == 113 || d[0] == 1)
                         && matches!(u16::from_le_bytes([d[2], d[3]]), 0 | 1)
@@ -1131,13 +1180,20 @@ impl Document {
                 constraint_payload
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
-            ).filter(|definition| {
+            )
+            .filter(|definition| {
                 if definition.element() == super::transform_model::ElementType::Polygon
-                    && h[6..10] == [4, 0, 15, 0] {
-                    let group = rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
-                        .map(|r| (r.kind, r.data.len())).collect::<Vec<_>>();
-                    matches!(group.as_slice(),
-                        [(0x07d0, 28), (0x07d2, 12 | 20), (0x07d3, 24), (0x07d7, 0)])
+                    && h[6..10] == [4, 0, 15, 0]
+                {
+                    let group = rs
+                        .iter()
+                        .filter(|r| r.start >= group_start && r.start <= rs[i].start)
+                        .map(|r| (r.kind, r.data.len()))
+                        .collect::<Vec<_>>();
+                    matches!(
+                        group.as_slice(),
+                        [(0x07d0, 28), (0x07d2, 12 | 20), (0x07d3, 24), (0x07d7, 0)]
+                    )
                 } else {
                     true
                 }
@@ -1163,15 +1219,77 @@ impl Document {
                 constraint_payload
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
-                code == 26
-                    && !custom_trace_endpoints.contains(&(page, objects.len() + 1 - page_base))
-                    && rs
+                super::transform_decode::DecodeContext {
+                    standalone_custom_point: code == 26
+                        && !custom_trace_endpoints.contains(&(page, objects.len() + 1 - page_base))
+                        && rs
+                            .iter()
+                            .filter(|record| {
+                                record.start >= group_start && record.start <= rs[i].start
+                            })
+                            .map(|record| record.kind)
+                            .eq([0x07d0, 0x07d2, 0x07d7]),
+                    source_is_generic_polygon: refs
+                        .first()
+                        .and_then(|source| objects.get(source.saturating_sub(1)))
+                        .and_then(|source| source.header_offset)
+                        .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])),
+                },
+            ) {
+                if definition.element() == super::transform_model::ElementType::Image {
+                    let source = definition.source();
+                    let source_object = objects.get(source.saturating_sub(1));
+                    let source_png = source_object.and_then(|object| match &object.kind {
+                        Kind::Image { png, .. } if !object.deleted && object.page == page => {
+                            Some(png)
+                        }
+                        _ => None,
+                    });
+                    let group = rs
                         .iter()
                         .filter(|record| record.start >= group_start && record.start <= rs[i].start)
-                        .map(|record| record.kind)
-                        .eq([0x07d0, 0x07d2, 0x07d7]),
-            ) {
-                Kind::Transformed(definition)
+                        .collect::<Vec<_>>();
+                    let cache = group
+                        .iter()
+                        .find(|record| record.kind == 0x090c)
+                        .filter(|_| {
+                            group.iter().filter(|record| record.kind == 0x090c).count() == 1
+                                && group.iter().filter(|record| record.kind == 0x07d2).count() == 1
+                                && group.iter().filter(|record| record.kind == 0x07d3).count()
+                                    == usize::from(constraint_payload.is_some())
+                                && group.iter().all(|record| {
+                                    matches!(
+                                        record.kind,
+                                        0x07d0 | 0x07d2 | 0x07d3 | 0x090c | 0x07d7
+                                    )
+                                })
+                        })
+                        .map(|record| &b[record.data.clone()]);
+                    match (source_png, cache) {
+                        (Some(png), Some(cache)) if cache.len() == 16 => {
+                            let dimensions = ImageFile::png_size(png).ok();
+                            let cached = (
+                                u32_at(cache, 0),
+                                u32_at(cache, 4),
+                                u32_at(cache, 8),
+                                u32_at(cache, 12),
+                            );
+                            if dimensions.is_some_and(|(width, height)| {
+                                cached == (width, height, width, height)
+                            }) {
+                                Kind::Image {
+                                    png: png.clone(),
+                                    placement: ImagePlacement::Transformed(definition),
+                                }
+                            } else {
+                                Kind::Unsupported(code)
+                            }
+                        }
+                        _ => Kind::Unsupported(code),
+                    }
+                } else {
+                    Kind::Transformed(definition)
+                }
             } else if matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
                 && h.len() == 28
                 && h[6..8] == [2, 0]
@@ -1344,7 +1462,7 @@ impl Document {
                     }
                     (35, None, _)
                         if refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
-                            if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
+                            if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) || refs.first().is_some_and(|id| super::kind::is_locus_curve_collection(&objects, *id)) {
                                 h[6..10] == [6, 0, 43, 0]
                             } else {
                                 h[6..10] == [6, 0, 42, 0]
@@ -1355,17 +1473,13 @@ impl Document {
                                 data.len() == 40
                                     && u32_at(data, 16) >= 2
                                     && u32_at(data, 20) & 0xffff == 4
-                                    && refs.get(2).is_some_and(|id| super::locus::locus_driver_range_matches(
-                                        &objects, *id, f64_at(data, 0), f64_at(data, 8), u32_at(data, 20) >> 16))
-                                    && refs.first().and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|o| {
-                                        if is_locus_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || is_locus_polygon_kind(&o.kind) {
-                                            data[32..] == [0; 8]
-                                        } else {
-                                            // Native point curves retain either flag; the
-                                            // output header and dependency roles define the element.
-                                            data[36..] == [0; 4] && u32_at(data, 32) <= 1
-                                        }
-                                    })
+                                    && refs.get(1).zip(refs.get(2)).is_some_and(|(path, driver)| super::locus::locus_driver_range_matches(
+                                        &objects, *driver, *path, f64_at(data, 0), f64_at(data, 8), u32_at(data, 20) >> 16))
+                                    // Both native point and geometric sweeps retain either
+                                    // observed presentation flag. The output header and the
+                                    // validated target dependency define the element family.
+                                    && data[36..] == [0; 4]
+                                    && u32_at(data, 32) <= 1
                             }) => Kind::Locus(refs.clone(), u32_at(locus_range.as_ref().unwrap(), 16)),
                     (123, _, [path])
                         if literal_axis_value
@@ -1425,26 +1539,76 @@ impl Document {
                     }
                     (0, None, []) if is_image => {
                         if let Some(picture) = imported_images.get(&group_start) {
-                            Kind::Image { png: picture.png.clone(), transform: picture.transform, anchor: None }
+                            Kind::Image { png: picture.png.clone(), placement: ImagePlacement::Independent(picture.transform) }
                         } else {
                             let picture = image_file.as_ref().unwrap();
-                            Kind::Image { png: picture.png().to_vec(), transform: picture.transform(), anchor: None }
+                            Kind::Image { png: picture.png().to_vec(), placement: ImagePlacement::Independent(picture.transform()) }
                         }
                     }
                     (99, None, [anchor]) if h[6..10] == [16, 0, 78, 0]
                         && objects.get(anchor.saturating_sub(1)).is_some_and(|object| object.page == page && is_point_kind(&object.kind))
-                        && anchored_images.get(&group_start).is_some_and(|image| image.point_ref == (*anchor - page_base) as u32) => {
-                        let image = &anchored_images[&group_start];
+                        && attached_images.get(&group_start).is_some_and(|image| matches!(image.attachment, ReadOnlyImageAttachment::Point { point_ref, .. } if point_ref == (*anchor - page_base) as u32)) => {
+                        let image = &attached_images[&group_start];
                         let width = image.dimensions.0 as f64;
                         let height = image.dimensions.1 as f64;
+                        let ReadOnlyImageAttachment::Point { scale_x, scale_y, rotation, .. } = image.attachment else { unreachable!() };
+                        let (sin, cos) = rotation.sin_cos();
+                        let a = scale_x * cos;
+                        let b = scale_y * sin;
+                        let c = -scale_x * sin;
+                        let d = scale_y * cos;
                         Kind::Image {
                             png: image.png.clone(),
-                            transform: [
-                                image.scale_x, 0., -image.scale_x * width / 2.,
-                                0., image.scale_y, -image.scale_y * height / 2.,
-                            ],
-                            anchor: Some(*anchor),
+                            placement: ImagePlacement::Point {
+                                anchor: *anchor,
+                                relative: [
+                                    a, b, -a * width / 2. - b * height / 2.,
+                                    c, d, -c * width / 2. - d * height / 2.,
+                                ],
+                            },
                         }
+                    }
+                    (85, None, [bottom_right, top_left]) if h[6..10] == [16, 0, 78, 0]
+                        && [bottom_right, top_left].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|object| object.page == page && is_point_kind(&object.kind)))
+                        && attached_images.get(&group_start).is_some_and(|image| matches!(image.attachment, ReadOnlyImageAttachment::Rectangle { bottom_right: stored_bottom_right, top_left: stored_top_left } if stored_bottom_right == (*bottom_right - page_base) as u32 && stored_top_left == (*top_left - page_base) as u32)) => {
+                        Kind::Image {
+                            png: attached_images[&group_start].png.clone(),
+                            placement: ImagePlacement::Rectangle { bottom_right: *bottom_right, top_left: *top_left },
+                        }
+                    }
+                    (100, None, [top_left, bottom_right, bottom_left]) if h[6..10] == [16, 0, 78, 0]
+                        && [top_left, bottom_right, bottom_left].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|object| object.page == page && is_point_kind(&object.kind)))
+                        && attached_images.get(&group_start).is_some_and(|image| matches!(image.attachment, ReadOnlyImageAttachment::Parallelogram { top_left: stored_top_left, bottom_right: stored_bottom_right, bottom_left: stored_bottom_left } if stored_top_left == (*top_left - page_base) as u32 && stored_bottom_right == (*bottom_right - page_base) as u32 && stored_bottom_left == (*bottom_left - page_base) as u32)) => {
+                        Kind::Image {
+                            png: attached_images[&group_start].png.clone(),
+                            placement: ImagePlacement::Parallelogram { top_left: *top_left, bottom_right: *bottom_right, bottom_left: *bottom_left },
+                        }
+                    }
+                    (108, None, [source, polygon])
+                        if cropped_images.get(&group_start).is_some_and(|crop| {
+                            crop.source as usize + page_base == *source
+                                && crop.polygon as usize + page_base == *polygon
+                                && crop.visible == (raw & 0x1_0000 == 0)
+                        })
+                        && objects.get(source.saturating_sub(1)).is_some_and(|object| {
+                            object.page == page
+                                && matches!(&object.kind, Kind::Image { png, .. }
+                                    if ImageFile::png_size(png).ok() == Some(cropped_images[&group_start].dimensions))
+                        })
+                        && objects.get(polygon.saturating_sub(1)).is_some_and(|object| {
+                            object.page == page && object.kind.is_polygon()
+                        }) => {
+                        Kind::CroppedImage { source: *source, polygon: *polygon }
+                    }
+                    (122, None, [source, frame]) => {
+                        super::data_function::decode_data_function(
+                            &objects,
+                            page,
+                            h,
+                            &[*source, *frame],
+                            &b[group_start..rs[i].data.end],
+                        )
+                        .unwrap_or(Kind::Unsupported(code))
                     }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
                         let group = &b[group_start..rs[i].data.end];
@@ -1561,6 +1725,25 @@ impl Document {
                     }
                     (62, _, targets) if !targets.is_empty() && animation_group.as_ref().is_some_and(|group| {
                         group.target_ids() == targets.iter().map(|target| (*target - page_base) as u32).collect::<Vec<_>>()
+                            && group.settings_list().is_ok_and(|settings| settings.iter().zip(targets).all(|(settings, target)| {
+                                objects.get(target.saturating_sub(1)).is_some_and(|object| {
+                                    matches!(object.kind,
+                                        Kind::ToolInput(_)
+                                            | Kind::ToolPointOnPath(_)
+                                            | Kind::Free(_)
+                                            | Kind::Parameter(_)
+                                            | Kind::PointOnSegment(_, _)
+                                            | Kind::PointOnRay(_, _)
+                                            | Kind::PointOnLine(_, _)
+                                            | Kind::PointOnCircle(_, _, _)
+                                            | Kind::PointOnArc(_, _)
+                                            | Kind::PointOnPolygon(_, _, _)
+                                            | Kind::PointOnCurve(_, _)
+                                            | Kind::PointOnSector(_, _)
+                                    ) && (matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
+                                        || matches!(object.kind, Kind::Parameter(_)) == settings.parameter.is_some())
+                                })
+                            }))
                     }) => {
                         let group = animation_group.as_ref().unwrap();
                         match group.label_utf8() {
@@ -1610,6 +1793,7 @@ impl Document {
                             Ok(label) => Kind::PresentationButton {
                                 targets: targets.to_vec(),
                                 mode: group.mode(),
+                                options: group.options(),
                                 label: label.to_owned(),
                                 anchor: group.screen_anchor(),
                             },
@@ -2290,7 +2474,9 @@ impl Document {
             }
             let function_name = if matches!(
                 kind,
-                Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _)
+                Kind::FunctionDefinition(_)
+                    | Kind::ReferencedFunction(_, _)
+                    | Kind::DataFunction { .. }
             ) {
                 label
                     .as_ref()
@@ -2303,6 +2489,7 @@ impl Document {
                 kind,
                 Kind::FunctionDefinition(_)
                     | Kind::ReferencedFunction(_, _)
+                    | Kind::DataFunction { .. }
                     | Kind::Parameter(_)
                     | Kind::LinkUrlButton { .. }
                     | Kind::LinkPageButton { .. }
@@ -2311,10 +2498,15 @@ impl Document {
             }
             if label.is_some()
                 && !is_point_kind(&kind)
+                && !is_straight_kind(&kind)
+                && !kind.is_circle()
+                && !is_arc_kind(&kind)
                 && kind.numeric_unit().is_none()
                 && !matches!(
                     kind,
-                    Kind::ValueEquation { .. } | Kind::CoordinateMeasurement { .. } | Kind::PlainText { .. }
+                    Kind::ValueEquation { .. }
+                        | Kind::CoordinateMeasurement { .. }
+                        | Kind::PlainText { .. }
                 )
                 && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_)))
             {
@@ -2326,6 +2518,7 @@ impl Document {
                 Kind::FunctionDefinition(_)
                     | Kind::ReferencedFunction(_, _)
                     | Kind::DerivativeFunction(_, _)
+                    | Kind::DataFunction { .. }
             ) {
                 function_expression
                     .as_deref()
@@ -2373,11 +2566,16 @@ impl Document {
                 } else {
                     0x1_0000
                 } == 0;
-            let angle_marker_style = super::AngleMarkerStyle::for_kind(&kind).and(angle_marker_style);
+            let angle_marker_style =
+                super::AngleMarkerStyle::for_kind(&kind).and(angle_marker_style);
             objects.push(Object {
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 locus_interval: (matches!(kind, Kind::Locus(..))
-                    && matches!(objects[refs[2] - 1].kind, Kind::PointOnRay(..) | Kind::PointOnLine(..))).then(|| {
+                    && matches!(
+                        objects[refs[2] - 1].kind,
+                        Kind::PointOnRay(..) | Kind::PointOnLine(..)
+                    ))
+                .then(|| {
                     let data = locus_range.as_ref().unwrap();
                     [f64_at(data, 0), f64_at(data, 8)]
                 }),
@@ -2393,7 +2591,8 @@ impl Document {
                 visual_style,
                 angle_marker_style,
                 interior_order: (h.len() == 28
-                    && (h[6..8] == [4, 0] || matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0] | [5, 0, 16, 0])))
+                    && (h[6..8] == [4, 0]
+                        || matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0] | [5, 0, 16, 0])))
                 .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
                 rich_text_override: None,
@@ -2496,6 +2695,13 @@ impl Document {
             angle_unit_radians,
             marked_coordinate_system,
             frame_styles,
+            object_color_defaults: Default::default(),
+            object_style_defaults: Default::default(),
+            measurement_precision_defaults: Default::default(),
+            new_polygon_opacity: 32767,
+            randomize_interior_colors: false,
+            interior_color_cursor: super::initial_interior_color_cursor(),
+            merge_aliases: Default::default(),
             measurement_names: Default::default(),
             evaluation_context: None,
             original: b.to_vec(),

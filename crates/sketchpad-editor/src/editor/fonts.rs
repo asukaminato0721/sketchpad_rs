@@ -56,7 +56,9 @@ impl Editor {
     pub(super) fn math_text_layout(&self, id: usize) -> Option<crate::render::math_text::Layout> {
         self.doc.text_math_nodes(id)?;
         let fallback;
-        let ctx = if let Some(ctx) = &self.font_context { ctx } else {
+        let ctx = if let Some(ctx) = &self.font_context {
+            ctx
+        } else {
             fallback = crate::render::math_text::font_context(&self.doc);
             &fallback
         };

@@ -129,11 +129,11 @@ fn imported_picture_moves_undoes_and_survives_save() {
         .move_image(image, Point { x: 160., y: 155. })
         .unwrap();
     assert!(
-        matches!(&document.objects[1].kind, Kind::Image { transform, .. } if transform[2] == 160.)
+        matches!(&document.objects[1].kind, Kind::Image { placement: ImagePlacement::Independent(transform), .. } if transform[2] == 160.)
     );
     document.undo();
     assert!(
-        matches!(&document.objects[1].kind, Kind::Image { transform, .. } if transform[2] == 120.)
+        matches!(&document.objects[1].kind, Kind::Image { placement: ImagePlacement::Independent(transform), .. } if transform[2] == 120.)
     );
     document.redo();
     let path = std::env::temp_dir().join(format!("sketchpad-image-{}.gsp", std::process::id()));
@@ -143,6 +143,336 @@ fn imported_picture_moves_undoes_and_survives_save() {
     assert!(!reopened.partial_view);
     assert_eq!(reopened.objects.len(), 2);
     assert_eq!(reopened.objects[1].kind, document.objects[1].kind);
+
+    let top_left = document.add(Kind::Free(Point { x: 16., y: 26. }));
+    let bottom_left = document.add(Kind::Free(Point { x: 16., y: 90. }));
+    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+        *placement = ImagePlacement::Rectangle {
+            bottom_right: 1,
+            top_left,
+        };
+    }
+    assert_eq!(
+        document.image_transform(image),
+        Some([4., 0., 16., 0., 4., 26.])
+    );
+    assert_eq!(document.objects[image - 1].kind.dependencies(), vec![1, 3]);
+    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+        *placement = ImagePlacement::Parallelogram {
+            top_left,
+            bottom_right: 1,
+            bottom_left,
+        };
+    }
+    assert_eq!(
+        document.image_transform(image),
+        Some([4., 0., 16., 0., 4., 26.])
+    );
+    assert_eq!(
+        document.objects[image - 1].kind.dependencies(),
+        vec![3, 1, 4]
+    );
+    let vector_start = document.add(Kind::Free(Point { x: 10., y: 20. }));
+    let vector_end = document.add(Kind::Free(Point { x: 15., y: 12. }));
+    let translated = document.add(Kind::Image {
+        png: png.to_vec(),
+        placement: ImagePlacement::Transformed(
+            TransformDefinition::new(
+                image,
+                ElementType::Image,
+                Transform::Translate(DisplacementExpr::Vector {
+                    start: vector_start,
+                    end: vector_end,
+                }),
+                NativeTransformFlavor::Vector,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_eq!(
+        document.image_transform(translated),
+        Some([4., 0., 21., 0., 4., 18.])
+    );
+    assert_eq!(
+        document.objects[translated - 1].kind.dependencies(),
+        vec![image, vector_start, vector_end]
+    );
+    let scaled = document.add(Kind::Image {
+        png: png.to_vec(),
+        placement: ImagePlacement::Transformed(
+            TransformDefinition::new(
+                image,
+                ElementType::Image,
+                Transform::Dilate {
+                    center: top_left,
+                    ratio: NumericExpr::Literal {
+                        magnitude: 2.,
+                        unit: NumericUnit::Scalar,
+                        scale: 1.,
+                    },
+                },
+                NativeTransformFlavor::FixedDilation,
+            )
+            .unwrap(),
+        ),
+    });
+    assert_eq!(
+        document.image_transform(scaled),
+        Some([8., 0., 16., 0., 8., 26.])
+    );
+    assert_eq!(
+        document.objects[scaled - 1].kind.dependencies(),
+        vec![image, top_left]
+    );
+    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+        *placement = ImagePlacement::Point {
+            anchor: 1,
+            relative: [0., 1., -8., -1., 0., 8.],
+        };
+    }
+    assert_eq!(
+        document.image_transform(image),
+        Some([0., 1., 72., -1., 0., 98.])
+    );
+    assert_eq!(document.objects[image - 1].kind.dependencies(), vec![1]);
+}
+
+#[test]
+fn picture_top_edge_defines_a_native_data_function() {
+    let png = include_bytes!("../../../../../tests/fixtures/image_tiny.png");
+    let mut document = Document::new();
+    let picture = document
+        .import_png(png, Point { x: 150., y: 150. })
+        .unwrap();
+    let function = document
+        .add_picture_function(picture, Point { x: 199., y: 125. })
+        .unwrap();
+
+    assert_eq!(function, 8);
+    assert!(matches!(
+        document.objects[function - 1].kind,
+        Kind::DataFunction {
+            source: 1,
+            frame: 7,
+            smoothing: 3
+        }
+    ));
+    assert_eq!(document.dependencies_of(function).unwrap(), vec![1, 7]);
+    assert!(document.function_value(function, -1.1).is_some());
+    assert!(document.function_value(function, 0.0).is_none());
+
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(
+        reopened.objects[function - 1].kind,
+        document.objects[function - 1].kind
+    );
+    assert_eq!(
+        reopened.function_value(function, -1.1),
+        document.function_value(function, -1.1)
+    );
+}
+
+#[test]
+fn geometric_labels_keep_native_placement_parameters() {
+    let mut native_ray = Document::from_bytes(
+        include_bytes!("../../../../../tests/fixtures/text_ray_label_hide.gsp"),
+        None,
+    )
+    .unwrap();
+    assert!(!native_ray.partial_view);
+    let ray_label = native_ray.objects[5].label.as_ref().unwrap();
+    assert_eq!(ray_label.name_utf8().unwrap(), "k");
+    assert!(!ray_label.visible());
+    native_ray.selected.insert(6);
+    assert_eq!(
+        native_ray
+            .set_selected_geometry_label_visibility(true)
+            .unwrap(),
+        1
+    );
+    assert!(native_ray.objects[5].label.as_ref().unwrap().visible());
+    native_ray.undo();
+    assert!(!native_ray.objects[5].label.as_ref().unwrap().visible());
+
+    let mut document = Document::new();
+    let a = document.add(Kind::Free(Point { x: 100., y: 80. }));
+    let b = document.add(Kind::Free(Point { x: 200., y: 80. }));
+    let center = document.add(Kind::Free(Point { x: 320., y: 100. }));
+    let radius = document.add(Kind::Free(Point { x: 360., y: 100. }));
+    let arc_end = document.add(Kind::Free(Point { x: 320., y: 60. }));
+    let segment = document.add(Kind::Segment(a, b));
+    let ray = document.add(Kind::Ray(a, b));
+    let line = document.add(Kind::Line(a, b));
+    let circle = document.add(Kind::Circle(center, radius));
+    let arc = document.add(Kind::ArcOnCircle(circle, radius, arc_end));
+    let transformed_segment = document.add(Kind::FixedRectangularTranslatedSegment(
+        segment,
+        37.79527559055118,
+        3.,
+        37.79527559055118,
+        0.,
+    ));
+    let transformed_circle = document.add(Kind::FixedRectangularTranslatedCircle(
+        circle,
+        37.79527559055118,
+        3.,
+        37.79527559055118,
+        0.,
+    ));
+    let transformed_ray = document.add(Kind::RotatedRay(ray, a, 45.));
+    let transformed_line = document.add(Kind::RotatedLine(line, a, 45.));
+    let angle = document
+        .add_named_parameter("theta", 45., (20, 20))
+        .unwrap();
+    let transformed_arc = document
+        .add_calculated_angle_rotation(arc, center, angle)
+        .unwrap();
+    let [
+        colorized_segment,
+        colorized_ray,
+        colorized_line,
+        colorized_circle,
+        colorized_arc,
+    ] = [segment, ray, line, circle, arc].map(|source| {
+        document
+            .add_colorized(
+                source,
+                crate::document::colorized::ColorBinding::Spectrum { value: angle },
+                0.,
+                100.,
+                crate::document::colorized::ColorRangeBehavior::Clamp,
+            )
+            .unwrap()
+    });
+
+    assert!(document.set_object_label(segment, "s", true).unwrap());
+    assert!(document.set_object_label(circle, "c", true).unwrap());
+    assert!(document.set_object_label(arc, "a[1]", true).unwrap());
+    assert!(
+        document
+            .set_object_label(transformed_segment, "t[1]", true)
+            .unwrap()
+    );
+    assert!(
+        document
+            .set_object_label(transformed_circle, "d[1]", true)
+            .unwrap()
+    );
+    assert!(
+        document
+            .set_object_label(transformed_ray, "r[1]", true)
+            .unwrap()
+    );
+    assert!(
+        document
+            .set_object_label(transformed_line, "l[1]", true)
+            .unwrap()
+    );
+    assert!(
+        document
+            .set_object_label(transformed_arc, "b[1]", true)
+            .unwrap()
+    );
+    for (id, name) in [
+        (colorized_segment, "u[1]"),
+        (colorized_ray, "r[2]"),
+        (colorized_line, "l[2]"),
+        (colorized_circle, "v[1]"),
+        (colorized_arc, "w[1]"),
+    ] {
+        assert!(document.set_object_label(id, name, true).unwrap());
+    }
+    assert_eq!(
+        document.object_label_anchor(segment),
+        Some(Point { x: 125., y: 80. })
+    );
+    let circle_anchor = document.object_label_anchor(circle).unwrap();
+    assert!((circle_anchor.x - 348.2842712474619).abs() < 1e-12);
+    assert!((circle_anchor.y - 128.2842712474619).abs() < 1e-12);
+    assert_eq!(
+        document.object_label_anchor(arc),
+        document.point_on_arc(arc, 0.25)
+    );
+    assert_eq!(
+        document.object_label_anchor(transformed_segment),
+        document
+            .line_points(transformed_segment)
+            .map(|(start, end, _)| Point {
+                x: start.x + 0.25 * (end.x - start.x),
+                y: start.y + 0.25 * (end.y - start.y),
+            })
+    );
+    for straight in [transformed_ray, transformed_line] {
+        assert_eq!(
+            document.object_label_anchor(straight),
+            document.line_points(straight).map(|(start, end, _)| Point {
+                x: start.x + 0.25 * (end.x - start.x),
+                y: start.y + 0.25 * (end.y - start.y),
+            })
+        );
+    }
+    let transformed_circle_anchor = document.object_label_anchor(transformed_circle).unwrap();
+    let (transformed_center, transformed_radius) =
+        document.circle_points(transformed_circle).unwrap();
+    let transformed_angle = 7.0 * std::f64::consts::FRAC_PI_4;
+    assert!(
+        (transformed_circle_anchor.x
+            - (transformed_center.x + transformed_radius * transformed_angle.cos()))
+        .abs()
+            < 1e-12
+    );
+    assert!(
+        (transformed_circle_anchor.y
+            - (transformed_center.y - transformed_radius * transformed_angle.sin()))
+        .abs()
+            < 1e-12
+    );
+    assert_eq!(
+        document.object_label_anchor(transformed_arc),
+        document.point_on_arc(transformed_arc, 0.25)
+    );
+    for straight in [colorized_segment, colorized_ray, colorized_line] {
+        assert_eq!(
+            document.object_label_anchor(straight),
+            document.line_points(straight).map(|(start, end, _)| Point {
+                x: start.x + 0.25 * (end.x - start.x),
+                y: start.y + 0.25 * (end.y - start.y),
+            })
+        );
+    }
+    assert!(document.object_label_anchor(colorized_circle).is_some());
+    assert_eq!(
+        document.object_label_anchor(colorized_arc),
+        document.point_on_arc(colorized_arc, 0.25)
+    );
+
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert!(!reopened.partial_view);
+    for id in [
+        segment,
+        circle,
+        arc,
+        transformed_segment,
+        transformed_ray,
+        transformed_line,
+        transformed_circle,
+        transformed_arc,
+        colorized_segment,
+        colorized_ray,
+        colorized_line,
+        colorized_circle,
+        colorized_arc,
+    ] {
+        assert_eq!(
+            reopened.objects[id - 1].label,
+            document.objects[id - 1].label
+        );
+        assert_eq!(
+            reopened.object_label_anchor(id),
+            document.object_label_anchor(id)
+        );
+    }
 }
 
 #[test]
@@ -172,19 +502,57 @@ fn picture_import_rejects_bad_png_and_preserves_existing_resources() {
 }
 
 #[test]
+fn picture_crop_writes_native_layout_and_reopens_as_a_live_dependency() {
+    let source = include_bytes!("../../../../../tests/fixtures/image_port_polygon.gsp");
+    let mut document = Document::from_bytes(source, None).unwrap();
+    let crop = document.crop_picture_to_polygon(1, 5).unwrap();
+    assert_eq!(crop, 6);
+    assert!(!document.objects[0].visible);
+    assert!(matches!(
+        document.objects[5].kind,
+        Kind::CroppedImage {
+            source: 1,
+            polygon: 5
+        }
+    ));
+    let written = document.encode().unwrap();
+    let image_file = crate::image_records::ImageFile::parse(&written).unwrap();
+    assert_eq!(image_file.crops().len(), 1);
+    assert_eq!(image_file.crops()[0].source, 1);
+    assert_eq!(image_file.crops()[0].polygon, 5);
+    assert_eq!(image_file.crops()[0].dimensions, (16, 16));
+    let reopened = Document::from_bytes(&written, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert!(reopened.cropped_image(6).is_some());
+
+    let native = include_bytes!("../../../../../tests/fixtures/image_original_cropped.gsp");
+    let native_document = Document::from_bytes(native, None).unwrap();
+    assert!(!native_document.partial_view);
+    assert!(matches!(
+        native_document.objects[5].kind,
+        Kind::CroppedImage {
+            source: 1,
+            polygon: 5
+        }
+    ));
+    assert_eq!(native_document.encode().unwrap(), native);
+}
+
+#[test]
 fn original_drag_of_port_picture_reopens_and_remains_editable() {
-    let source = include_bytes!("../../../../../tests/fixtures/image_port_imported_dragged_wine.gsp");
+    let source =
+        include_bytes!("../../../../../tests/fixtures/image_port_imported_dragged_wine.gsp");
     let mut document = Document::from_bytes(source, None).unwrap();
     assert!(!document.partial_view);
     assert!(
-        matches!(&document.objects[1].kind, Kind::Image { transform, .. }
+        matches!(&document.objects[1].kind, Kind::Image { placement: ImagePlacement::Independent(transform), .. }
         if transform[2] == 184. && transform[5] == 170.)
     );
     document.move_image(2, Point { x: 204., y: 180. }).unwrap();
     let written = document.encode().unwrap();
     let reopened = Document::from_bytes(&written, None).unwrap();
     assert!(
-        matches!(&reopened.objects[1].kind, Kind::Image { transform, .. }
+        matches!(&reopened.objects[1].kind, Kind::Image { placement: ImagePlacement::Independent(transform), .. }
         if transform[2] == 204. && transform[5] == 180.)
     );
 }
@@ -230,18 +598,23 @@ fn styled_text_imports_and_edits_without_changing_other_runs() {
         include_bytes!("../../../../../tests/fixtures/text_style_italic_on.gsp").as_slice(),
         include_bytes!("../../../../../tests/fixtures/text_style_underline_on.gsp").as_slice(),
         include_bytes!("../../../../../tests/fixtures/text_style_larger.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/text_two_objects_first_bold_off_original.gsp")
-            .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/text_two_objects_second_bold_off_original.gsp")
-            .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/text_two_objects_first_bold_off_original.gsp"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/text_two_objects_second_bold_off_original.gsp"
+        )
+        .as_slice(),
     ] {
         let doc = Document::from_bytes(source, None).unwrap();
         assert!(!doc.partial_view);
         assert_eq!(doc.encode().unwrap(), source);
     }
 
-    let original =
-        include_bytes!("../../../../../tests/fixtures/text_two_objects_first_bold_off_original.gsp");
+    let original = include_bytes!(
+        "../../../../../tests/fixtures/text_two_objects_first_bold_off_original.gsp"
+    );
     let mut doc = Document::from_bytes(original, None).unwrap();
     let other = doc.objects[1].kind.clone();
     doc.edit_text(1, "Greetings").unwrap();
@@ -343,7 +716,8 @@ fn mixed_font_families_survive_style_edit_and_copy() {
 }
 #[test]
 fn native_mixed_format_text_moves_without_losing_runs() {
-    let source = include_bytes!("../../../../../tests/fixtures/text_mixed_bold_italic_he_original.gsp");
+    let source =
+        include_bytes!("../../../../../tests/fixtures/text_mixed_bold_italic_he_original.gsp");
     let mut doc = Document::from_bytes(source, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), source);
@@ -405,7 +779,8 @@ fn substring_size_steps_preserve_native_rich_text() {
 }
 #[test]
 fn native_mixed_family_caption_edits_and_reopens() {
-    let source = include_bytes!("../../../../../tests/fixtures/text_mixed_adventor_he_original.gsp");
+    let source =
+        include_bytes!("../../../../../tests/fixtures/text_mixed_adventor_he_original.gsp");
     let mut doc = Document::from_bytes(source, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), source);
@@ -531,11 +906,13 @@ fn selected_text_can_use_new_font_families_independently() {
 fn text_size_commands_follow_verified_native_steps() {
     for (source, size) in [
         (
-            include_bytes!("../../../../../tests/fixtures/text_style_smaller_18_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/text_style_smaller_18_original.gsp")
+                .as_slice(),
             18,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/text_style_larger_48_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/text_style_larger_48_original.gsp")
+                .as_slice(),
             48,
         ),
     ] {
@@ -572,8 +949,9 @@ fn text_size_commands_follow_verified_native_steps() {
 }
 #[test]
 fn point_label_styles_are_independent_and_survive_copy() {
-    let source =
-        include_bytes!("../../../../../tests/fixtures/text_two_point_labels_first_bold_off_original.gsp");
+    let source = include_bytes!(
+        "../../../../../tests/fixtures/text_two_point_labels_first_bold_off_original.gsp"
+    );
     let mut doc = Document::from_bytes(source, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), source);
@@ -741,7 +1119,8 @@ fn multi_page_literal_text_source_edits_preserve_other_pages_and_clear() {
 
 #[test]
 fn multi_page_literal_text_native_saved_fixture_remains_editable() {
-    let native = include_bytes!("../../../../../tests/fixtures/two_page_text_port_saved_by_wine.gsp");
+    let native =
+        include_bytes!("../../../../../tests/fixtures/two_page_text_port_saved_by_wine.gsp");
     let mut document = Document::from_bytes(native, None).unwrap();
     assert_eq!(document.page_count, 2);
     assert_eq!(document.objects.len(), 4);
@@ -819,7 +1198,8 @@ fn measurement_caption_font_edit_preserves_geometry_and_saved_position() {
 
 #[test]
 fn native_measurement_caption_reads_its_actual_indexed_font() {
-    let native = include_bytes!("../../../../../tests/fixtures/measurement_font_native_verified.gsp");
+    let native =
+        include_bytes!("../../../../../tests/fixtures/measurement_font_native_verified.gsp");
     let doc = Document::from_bytes(native, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), native);
@@ -854,7 +1234,8 @@ fn formatted_measurement_caption_replay_matches_native_verified_file() {
 
 #[test]
 fn multi_page_measurement_caption_moves_atomically_and_preserves_other_page() {
-    let native = include_bytes!("../../../../../tests/fixtures/two_page_point_measurements_port.gsp");
+    let native =
+        include_bytes!("../../../../../tests/fixtures/two_page_point_measurements_port.gsp");
     let mut doc = Document::from_bytes(native, None).unwrap();
     let id = doc
         .objects

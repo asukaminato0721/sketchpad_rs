@@ -1,6 +1,6 @@
 use super::kind::{
-    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_polygon_kind,
-    is_locus_straight_kind, is_point_kind,
+    expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_curve_collection,
+    is_locus_polygon_kind, is_locus_straight_kind, is_point_kind,
 };
 use super::{Document, Kind, LineMode, Object, Point};
 use crate::style_records::VisualStyle;
@@ -18,84 +18,153 @@ pub struct LocusStroke {
 /// Point-output loci are sampled as independent traces in a mapped scope.
 /// A locus used as the driver's own path has a separate nested-domain contract.
 pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
-    let Kind::Locus(refs, _) = kind else { return false; };
-    let (Some(&target), Some(&path)) = (refs.first(), refs.get(1)) else { return false; };
+    let Kind::Locus(refs, _) = kind else {
+        return false;
+    };
+    let (Some(&target), Some(&path)) = (refs.first(), refs.get(1)) else {
+        return false;
+    };
     let (Some(target), Some(path)) = (target.checked_sub(1), path.checked_sub(1)) else {
         return false;
     };
     objects.get(target).is_some_and(|o| is_point_kind(&o.kind))
-        && objects.get(path).is_some_and(|o| !matches!(o.kind, Kind::Locus(..)))
+        && objects
+            .get(path)
+            .is_some_and(|o| !matches!(o.kind, Kind::Locus(..)))
 }
 
-/// Native geometric-driver range and closure flag, independent of current geometry.
-pub(super) fn locus_driver_range_info(objects: &[Object], driver: usize) -> Option<(f64, u32)> {
+fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
+    let source = objects.get(path.checked_sub(1)?)?;
+    match &source.kind {
+        Kind::FunctionPlot(..) => Some(1),
+        Kind::SampledMapped(definition) => {
+            let path = objects.get(definition.path().checked_sub(1)?)?;
+            Some(u32::from(!path.kind.is_circle()))
+        }
+        Kind::ParameterLocus(..) => Some(1),
+        Kind::Locus(refs, _) => {
+            let inner_path = *refs.get(1)?;
+            let inner_driver = *refs.get(2)?;
+            if inner_driver >= path {
+                return None;
+            }
+            Some(locus_driver_range_info_for_path(objects, inner_driver, inner_path)?.1)
+        }
+        _ => None,
+    }
+}
+
+/// Resolve a locus driver against its explicit native path. Some native loci
+/// retain a free base point here; the locus record itself supplies the path
+/// constraint used only while evaluating the sweep.
+pub(super) fn locus_driver_range_info_for_path(
+    objects: &[Object],
+    driver: usize,
+    path: usize,
+) -> Option<(f64, u32)> {
     let moving = objects.get(driver.checked_sub(1)?)?;
-    let (path, maximum, flags) = match moving.kind {
-        Kind::PointOnSegment(path, _) | Kind::PointOnArc(path, _) => (path, 1., 1),
-        Kind::PointOnRay(path, _) => (path, 1., 2),
-        Kind::PointOnLine(path, _) => (path, 1., 3),
-        Kind::PointOnCircle(path, ..) => (path, std::f64::consts::TAU, 0),
-        Kind::PointOnPolygon(path, ..) | Kind::PointOnSector(path, _) => (path, 1., 0),
-        Kind::PointOnCurve(path, _) => {
-            let source = objects.get(path.checked_sub(1)?)?;
-            let flags = match &source.kind {
-                Kind::FunctionPlot(..) => 1,
-                Kind::SampledMapped(definition) => {
-                    let path = objects.get(definition.path().checked_sub(1)?)?;
-                    u32::from(!path.kind.is_circle())
-                }
-                Kind::ParameterLocus(..) => 1,
-                Kind::Locus(refs, _) => {
-                    let inner = *refs.get(2)?;
-                    if inner >= path {
-                        return None;
-                    }
-                    locus_driver_range_info(objects, inner)?.1
-                }
-                _ => return None,
-            };
-            (path, 1., flags)
-        }
-        _ => return None,
-    };
     let host = objects.get(path.checked_sub(1)?)?;
-    let supported = match moving.kind {
-        Kind::PointOnSegment(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Segment),
-        Kind::PointOnRay(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Ray),
-        Kind::PointOnLine(..) => super::kind::locus_straight_source_mode(objects, path) == Some(LineMode::Line),
-        Kind::PointOnCircle(..) => host.kind.is_circle(),
-        Kind::PointOnArc(..) => is_arc_kind(&host.kind),
-        Kind::PointOnPolygon(..) => host.kind.is_polygon(),
-        Kind::PointOnSector(..) => {
-            super::sector_boundary::supported_host(objects, path, moving.page, driver)
+    let straight = super::kind::locus_straight_source_mode(objects, path);
+    let inferred = || {
+        if let Some(mode) = straight {
+            return Some(match mode {
+                LineMode::Segment => (1., 1),
+                LineMode::Ray => (1., 2),
+                LineMode::Line => (1., 3),
+            });
         }
-        Kind::PointOnCurve(..) => {
-            super::curve_points::free_supported(objects, path, moving.page, driver)
+        if host.kind.is_circle() {
+            Some((std::f64::consts::TAU, 0))
+        } else if is_arc_kind(&host.kind) {
+            Some((1., 1))
+        } else if host.kind.is_polygon()
+            || super::sector_boundary::supported_host(objects, path, moving.page, objects.len() + 1)
+        {
+            Some((1., 0))
+        } else if super::curve_points::free_supported(objects, path, moving.page, objects.len() + 1)
+        {
+            Some((1., locus_curve_flags(objects, path)?))
+        } else {
+            None
         }
-        _ => false,
     };
-    (supported && !moving.deleted && !host.deleted && path < driver && moving.page == host.page)
-        .then_some((maximum, flags))
+    let info = match moving.kind {
+        Kind::PointOnSegment(host, _) if host == path && straight == Some(LineMode::Segment) => {
+            Some((1., 1))
+        }
+        Kind::PointOnRay(host, _) if host == path && straight == Some(LineMode::Ray) => {
+            Some((1., 2))
+        }
+        Kind::PointOnLine(host, _) if host == path && straight == Some(LineMode::Line) => {
+            Some((1., 3))
+        }
+        Kind::PointOnCircle(host, ..) if host == path && objects[path - 1].kind.is_circle() => {
+            Some((std::f64::consts::TAU, 0))
+        }
+        Kind::PointOnArc(host, _) if host == path && is_arc_kind(&objects[path - 1].kind) => {
+            Some((1., 1))
+        }
+        Kind::PointOnPolygon(host, ..) if host == path && objects[path - 1].kind.is_polygon() => {
+            Some((1., 0))
+        }
+        Kind::PointOnSector(host, _)
+            if host == path
+                && super::sector_boundary::supported_host(objects, path, moving.page, driver) =>
+        {
+            Some((1., 0))
+        }
+        Kind::PointOnCurve(host, _)
+            if host == path
+                && super::curve_points::free_supported(objects, path, moving.page, driver) =>
+        {
+            Some((1., locus_curve_flags(objects, path)?))
+        }
+        Kind::Free(_) => inferred(),
+        _ => None,
+    };
+    let valid_order = if matches!(moving.kind, Kind::Free(_)) {
+        path != driver
+    } else {
+        path < driver
+    };
+    (!moving.deleted && !host.deleted && valid_order && moving.page == host.page).then_some(info?)
 }
 
 /// Imported sampled-circle drivers also retain a proved open display profile.
 /// This metadata does not change the driver's periodic parameter domain.
 pub(super) fn locus_driver_range_matches(
-    objects: &[Object], driver: usize, minimum: f64, maximum: f64, closure: u32,
+    objects: &[Object],
+    driver: usize,
+    path: usize,
+    minimum: f64,
+    maximum: f64,
+    closure: u32,
 ) -> bool {
-    let Some((expected_maximum, expected_closure)) = locus_driver_range_info(objects, driver) else {
+    let Some((expected_maximum, expected_closure)) =
+        locus_driver_range_info_for_path(objects, driver, path)
+    else {
         return false;
     };
     if !minimum.is_finite() || !maximum.is_finite() || minimum >= maximum {
         return false;
     }
-    match objects[driver - 1].kind {
-        Kind::PointOnRay(..) => return minimum >= 0. && closure == 2,
-        Kind::PointOnLine(..) => return closure == 3,
+    let straight = match objects[driver - 1].kind {
+        Kind::PointOnRay(host, _) if host == path => Some(LineMode::Ray),
+        Kind::PointOnLine(host, _) if host == path => Some(LineMode::Line),
+        Kind::Free(_) => super::kind::locus_straight_source_mode(objects, path),
+        _ => None,
+    };
+    match straight {
+        Some(LineMode::Ray) => return minimum >= 0. && closure == 2,
+        Some(LineMode::Line) => return closure == 3,
         _ => {}
     }
-    if minimum != 0. || (maximum - expected_maximum).abs() >= 1e-12 { return false; }
-    if closure == expected_closure { return true; }
+    if minimum != 0. || (maximum - expected_maximum).abs() >= 1e-12 {
+        return false;
+    }
+    if closure == expected_closure {
+        return true;
+    }
     closure == 1 && objects.get(driver.saturating_sub(1)).is_some_and(|moving| {
         let Kind::PointOnCurve(host, _) = moving.kind else { return false; };
         objects.get(host.saturating_sub(1)).is_some_and(|source| {
@@ -108,10 +177,13 @@ pub(super) fn locus_driver_range_matches(
 impl Document {
     pub(super) fn locus_sampling_interval(&self, id: usize) -> Option<[f64; 2]> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        let Kind::Locus(refs, _) = &object.kind else { return None; };
+        let Kind::Locus(refs, _) = &object.kind else {
+            return None;
+        };
+        let path = *refs.get(1)?;
         let driver = *refs.get(2)?;
-        let (maximum, _) = locus_driver_range_info(&self.objects, driver)?;
-        let minimum = if matches!(self.objects[driver - 1].kind, Kind::PointOnLine(..)) { -1. } else { 0. };
+        let (maximum, closure) = locus_driver_range_info_for_path(&self.objects, driver, path)?;
+        let minimum = if closure == 3 { -1. } else { 0. };
         Some(object.locus_interval.unwrap_or([minimum, maximum]))
     }
 
@@ -136,6 +208,7 @@ impl Document {
         } else if is_locus_straight_kind(&self.objects[target - 1].kind)
             || self.objects[target - 1].kind.is_circle()
             || is_arc_kind(&self.objects[target - 1].kind)
+            || is_locus_curve_collection(&self.objects, target)
         {
             250
         } else {
@@ -274,30 +347,55 @@ impl Document {
                 Some(Kind::PointOnSector(path, parameter))
             }
             Kind::PointOnPolygon(host, ..) if *host == path => {
-                let vertices = self.polygon_points(path)?;
-                let lengths: Vec<_> = vertices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, point)| point.distance(vertices[(i + 1) % vertices.len()]))
-                    .collect();
-                let perimeter: f64 = lengths.iter().sum();
-                if !perimeter.is_finite() || perimeter <= 1e-9 {
-                    return None;
-                }
-                let mut remaining = parameter.rem_euclid(1.) * perimeter;
-                for (edge, length) in lengths.into_iter().enumerate() {
-                    if length <= 1e-9 {
-                        continue;
+                self.locus_polygon_driver_kind_at(path, parameter)
+            }
+            Kind::Free(_) => {
+                locus_driver_range_info_for_path(&self.objects, driver, path)?;
+                match super::kind::locus_straight_source_mode(&self.objects, path) {
+                    Some(LineMode::Segment) => Some(Kind::PointOnSegment(path, parameter)),
+                    Some(LineMode::Ray) => Some(Kind::PointOnRay(path, parameter)),
+                    Some(LineMode::Line) => Some(Kind::PointOnLine(path, parameter)),
+                    None if self.objects[path - 1].kind.is_circle() => {
+                        Some(Kind::PointOnCircle(path, parameter.cos(), parameter.sin()))
                     }
-                    if remaining <= length {
-                        return Some(Kind::PointOnPolygon(path, edge, remaining / length));
+                    None if is_arc_kind(&self.objects[path - 1].kind) => {
+                        Some(Kind::PointOnArc(path, parameter))
                     }
-                    remaining -= length;
+                    None if self.objects[path - 1].kind.is_polygon() => {
+                        self.locus_polygon_driver_kind_at(path, parameter)
+                    }
+                    None if self.objects[path - 1].kind.is_sector() => {
+                        Some(Kind::PointOnSector(path, parameter))
+                    }
+                    None => Some(Kind::PointOnCurve(path, parameter)),
                 }
-                None
             }
             _ => None,
         }
+    }
+
+    fn locus_polygon_driver_kind_at(&self, path: usize, parameter: f64) -> Option<Kind> {
+        let vertices = self.polygon_points(path)?;
+        let lengths: Vec<_> = vertices
+            .iter()
+            .enumerate()
+            .map(|(i, point)| point.distance(vertices[(i + 1) % vertices.len()]))
+            .collect();
+        let perimeter: f64 = lengths.iter().sum();
+        if !perimeter.is_finite() || perimeter <= 1e-9 {
+            return None;
+        }
+        let mut remaining = parameter.rem_euclid(1.) * perimeter;
+        for (edge, length) in lengths.into_iter().enumerate() {
+            if length <= 1e-9 {
+                continue;
+            }
+            if remaining <= length {
+                return Some(Kind::PointOnPolygon(path, edge, remaining / length));
+            }
+            remaining -= length;
+        }
+        None
     }
 
     pub fn locus_styled_strokes(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusStroke>> {
@@ -306,9 +404,15 @@ impl Document {
 
     /// A carried collection owns its local sampling domain. Replay each outer
     /// scope independently, retaining its binding's stroke presentation.
-    pub fn mapped_collection_strokes(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusStroke>> {
+    pub fn mapped_collection_strokes(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusStroke>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        let Kind::IterationBinding(source, iteration) = object.kind else { return None; };
+        let Kind::IterationBinding(source, iteration) = object.kind else {
+            return None;
+        };
         let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
         let straight_locus = super::kind::is_straight_locus(&self.objects, source_kind);
         let point_locus = is_point_locus(&self.objects, source_kind);
@@ -317,34 +421,82 @@ impl Document {
             return None;
         }
         let style = self.effective_visual_style(id)?;
-        Some(self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
-            if straight_locus {
-                sample.locus_styled_strokes_with_style(source, subdivisions, style)
-            } else if point_locus {
-                Some(sample.locus_strokes(source, subdivisions)?
-                    .into_iter().map(|(start, end, mode)| LocusStroke {
-                        start, end, mode, style,
-                    }).collect())
-            } else {
-                Some(sample.sampled_mapped_strokes(source, subdivisions)?
-                    .into_iter().map(|(start, end, mode)| LocusStroke {
-                        start, end, mode, style,
-                    }).collect())
-            }
-        })?.into_iter().flatten().flatten().collect())
+        Some(
+            self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
+                if straight_locus {
+                    sample.locus_styled_strokes_with_style(source, subdivisions, style)
+                } else if point_locus {
+                    Some(
+                        sample
+                            .locus_strokes(source, subdivisions)?
+                            .into_iter()
+                            .map(|(start, end, mode)| LocusStroke {
+                                start,
+                                end,
+                                mode,
+                                style,
+                            })
+                            .collect(),
+                    )
+                } else {
+                    Some(
+                        sample
+                            .sampled_mapped_strokes(source, subdivisions)?
+                            .into_iter()
+                            .map(|(start, end, mode)| LocusStroke {
+                                start,
+                                end,
+                                mode,
+                                style,
+                            })
+                            .collect(),
+                    )
+                }
+            })?
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+        )
     }
 
-    fn locus_styled_strokes_with_style(&self, id: usize, subdivisions: usize, style: VisualStyle) -> Option<Vec<LocusStroke>> {
-        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else { return None; };
+    fn locus_styled_strokes_with_style(
+        &self,
+        id: usize,
+        subdivisions: usize,
+        style: VisualStyle,
+    ) -> Option<Vec<LocusStroke>> {
+        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
         let target = *refs.first()?;
         super::kind::locus_straight_source_mode(&self.objects, target)?;
-        let VisualStyle::Stroke { line, color } = style else { return None; };
-        let sampled_color = matches!(self.objects.get(target.checked_sub(1)?)?.kind, Kind::Colorized(_));
-        Some(self.sample_locus(id, subdivisions, |sample, target| {
-            let (start, end, mode) = sample.line_points(target)?;
-            let color = if sampled_color { sample.colorized_color(target)? } else { color };
-            Some(LocusStroke { start, end, mode, style: VisualStyle::Stroke { line, color } })
-        })?.into_iter().flatten().collect())
+        let VisualStyle::Stroke { line, color } = style else {
+            return None;
+        };
+        let sampled_color = matches!(
+            self.objects.get(target.checked_sub(1)?)?.kind,
+            Kind::Colorized(_)
+        );
+        Some(
+            self.sample_locus(id, subdivisions, |sample, target| {
+                let (start, end, mode) = sample.line_points(target)?;
+                let color = if sampled_color {
+                    sample.colorized_color(target)?
+                } else {
+                    color
+                };
+                Some(LocusStroke {
+                    start,
+                    end,
+                    mode,
+                    style: VisualStyle::Stroke { line, color },
+                })
+            })?
+            .into_iter()
+            .flatten()
+            .collect(),
+        )
     }
 
     pub fn locus_strokes(
@@ -361,6 +513,25 @@ impl Document {
             return None;
         };
         let target_kind = &self.objects.get(refs.first()?.checked_sub(1)?)?.kind;
+        if is_locus_curve_collection(&self.objects, refs[0]) {
+            return Some(
+                self.sample_locus(id, subdivisions, |sample, target| {
+                    match &sample.objects.get(target.checked_sub(1)?)?.kind {
+                        Kind::SampledMapped(_) => {
+                            sample.sampled_mapped_strokes(target, subdivisions)
+                        }
+                        Kind::Locus(..) | Kind::ParameterLocus(..) => {
+                            sample.locus_strokes(target, subdivisions)
+                        }
+                        _ => None,
+                    }
+                })?
+                .into_iter()
+                .flatten()
+                .flatten()
+                .collect(),
+            );
+        }
         if is_locus_straight_kind(target_kind) {
             return Some(
                 self.sample_locus(id, subdivisions, |sample, target| {
@@ -397,7 +568,7 @@ impl Document {
             let polygons = is_locus_polygon_kind(target_kind);
             let paths = self.sample_locus(id, subdivisions, |sample, target| {
                 if polygons {
-                    sample.polygon_points(target)
+                    sample.filled_region_points(target)
                 } else {
                     sample.arc_points(target, 64)
                 }
@@ -438,7 +609,7 @@ impl Document {
             return None;
         }
         self.sample_locus(id, subdivisions, |sample, target| {
-            sample.polygon_points(target)
+            sample.filled_region_points(target)
         })
     }
 

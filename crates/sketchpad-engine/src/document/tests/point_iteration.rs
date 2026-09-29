@@ -81,11 +81,10 @@ fn translated_point_iteration_import_generation_and_parent_edit() {
     let images = moved.point_iteration_images(3).unwrap();
     assert!((images[0].x - (120. + 2. * 37.79527559055118)).abs() < 1e-8);
     assert!((images[4].y - 210.).abs() < 1e-8);
-    assert_eq!(
+    assert!(
         moved
             .add_point_iteration(1, 2, IterationDepth::Fixed(0))
-            .is_err(),
-        true
+            .is_err()
     );
     moved.selected.insert(3);
     assert_eq!(moved.clear_selected().unwrap(), vec![3, 4]);
@@ -99,7 +98,8 @@ fn translated_point_iteration_import_generation_and_parent_edit() {
 }
 #[test]
 fn regular_polygon_calculated_rotation_and_depth_update_and_roundtrip() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/regular_polygon_iteration_native.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/regular_polygon_iteration_native.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -215,8 +215,9 @@ fn point_iteration_live_depth_updates_copies_and_clears() {
 
 #[test]
 fn calculated_rotation_point_iteration_uses_scalar_calculation_depth() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/point_calculated_rotation_live_depth_port.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/point_calculated_rotation_live_depth_port.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);

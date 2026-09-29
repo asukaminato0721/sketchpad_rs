@@ -1,8 +1,7 @@
 //! Lossless helpers for the observed GSP4 embedded picture layout.
 //!
-//! This deliberately supports only a single independent affine picture with
-//! one embedded PNG resource. Other picture constructions must be probed before
-//! they are made writable.
+//! Imported pictures can be independent or attached to one, two, or three
+//! points. Only the single independent form is structurally writable.
 
 use std::ops::Range;
 
@@ -36,10 +35,76 @@ pub struct ImageFile {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CroppedPicture {
+    pub group_offset: usize,
     pub source: u32,
     pub polygon: u32,
     pub dimensions: (u32, u32),
     pub visible: bool,
+}
+
+/// Decode crop groups independently of the writable single-picture wrapper.
+/// The document decoder validates the recorded source dimensions against the
+/// referenced picture after resolving page-local object IDs.
+pub fn imported_cropped_image_catalog(bytes: &[u8]) -> Result<Vec<CroppedPicture>, String> {
+    let records = records(bytes)?;
+    let mut crops = Vec::new();
+    for (index, header) in records.iter().enumerate() {
+        let h = &bytes[header.payload.clone()];
+        if header.kind != OBJECT_HEADER
+            || h.len() != 28
+            || u16::from_le_bytes([h[0], h[1]]) != 108
+            || h[6..10] != [16, 0, 78, 0]
+        {
+            continue;
+        }
+        let Some(refs) = records.get(index + 1) else {
+            continue;
+        };
+        let Some(size) = records.get(index + 2) else {
+            continue;
+        };
+        let marker = records
+            .get(index + 3)
+            .filter(|record| record.kind == 0x232e);
+        let Some(end) = records.get(index + if marker.is_some() { 4 } else { 3 }) else {
+            continue;
+        };
+        if refs.kind != 0x07d2
+            || refs.payload.len() != 12
+            || size.kind != IMAGE_SIZE
+            || size.payload.len() != 16
+            || marker.is_some_and(|record| !record.payload.is_empty())
+            || end.kind != OBJECT_END
+            || !end.payload.is_empty()
+        {
+            continue;
+        }
+        let refs = &bytes[refs.payload.clone()];
+        let dimensions = &bytes[size.payload.clone()];
+        let source = u32_at(refs, 4);
+        let polygon = u32_at(refs, 8);
+        let source_dimensions = (u32_at(dimensions, 0), u32_at(dimensions, 4));
+        let crop_dimensions = (u32_at(dimensions, 8), u32_at(dimensions, 12));
+        if u32_at(refs, 0) != 2
+            || source == 0
+            || polygon == 0
+            || source == polygon
+            || source_dimensions.0 == 0
+            || source_dimensions.1 == 0
+            || crop_dimensions.0 == 0
+            || crop_dimensions.1 == 0
+        {
+            continue;
+        }
+        crops.push(CroppedPicture {
+            group_offset: header.start,
+            source,
+            polygon,
+            dimensions: source_dimensions,
+            visible: u32_at(h, 0) & 0x1_0000 == 0,
+        });
+    }
+    Ok(crops)
 }
 
 /// A strictly decoded imported picture. Multi-picture documents retain their
@@ -51,23 +116,41 @@ pub struct ReadOnlyImage {
     pub transform: [f64; 6],
 }
 
-/// One picture positioned by a live point. The stored scale and rotation are
-/// relative to that point; the document resolves the point at evaluation time.
+/// A strictly decoded native attachment. Point references are local to the
+/// page and are resolved by the document decoder.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReadOnlyImageAttachment {
+    Point {
+        point_ref: u32,
+        scale_x: f64,
+        scale_y: f64,
+        rotation: f64,
+    },
+    Rectangle {
+        bottom_right: u32,
+        top_left: u32,
+    },
+    Parallelogram {
+        top_left: u32,
+        bottom_right: u32,
+        bottom_left: u32,
+    },
+}
+
 #[derive(Clone, Debug)]
-pub struct ReadOnlyAnchoredImage {
+pub struct ReadOnlyAttachedImage {
     pub group_offset: usize,
-    pub point_ref: u32,
     pub png: Vec<u8>,
     pub dimensions: (u32, u32),
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub rotation: f64,
+    pub attachment: ReadOnlyImageAttachment,
 }
+
+type ImageResources<'a> = (Vec<&'a [u8]>, Vec<(u32, u32)>);
 
 fn validated_resources<'a>(
     bytes: &'a [u8],
     records: &[Record],
-) -> Result<(Vec<&'a [u8]>, Vec<(u32, u32)>), String> {
+) -> Result<ImageResources<'a>, String> {
     let resources = records
         .iter()
         .filter(|record| record.kind == RESOURCE)
@@ -93,26 +176,103 @@ fn validated_resources<'a>(
     Ok((pngs, dimensions))
 }
 
-pub fn imported_anchored_image_catalog(
-    bytes: &[u8],
-) -> Result<Vec<ReadOnlyAnchoredImage>, String> {
+pub fn imported_attached_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyAttachedImage>, String> {
     let records = records(bytes)?;
     let (pngs, dimensions) = validated_resources(bytes, &records)?;
     let mut images = Vec::new();
-    for group in records.windows(6) {
-        let [header, refs, operation, size, resource, end] = group else {
-            unreachable!()
-        };
+    for (index, header) in records.iter().enumerate() {
         let h = &bytes[header.payload.clone()];
-        if header.kind != OBJECT_HEADER
-            || h.len() != 28
-            || u16::from_le_bytes([h[0], h[1]]) != 99
-            || h[6..10] != [16, 0, 78, 0]
-            || refs.kind != 0x07d2
-            || refs.payload.len() != 8
-            || operation.kind != 0x07d3
-            || operation.payload.len() != 28
-            || size.kind != IMAGE_SIZE
+        if header.kind != OBJECT_HEADER || h.len() != 28 || h[6..10] != [16, 0, 78, 0] {
+            continue;
+        }
+        let code = u16::from_le_bytes([h[0], h[1]]);
+        let Some(refs) = records.get(index + 1) else {
+            continue;
+        };
+        if refs.kind != 0x07d2 {
+            continue;
+        }
+        let refs_bytes = &bytes[refs.payload.clone()];
+        let (size_index, attachment) = match code {
+            99 if refs.payload.len() == 8 && u32_at(refs_bytes, 0) == 1 => {
+                let Some(operation) = records.get(index + 2) else {
+                    continue;
+                };
+                if operation.kind != 0x07d3 || operation.payload.len() != 28 {
+                    continue;
+                }
+                let op = &bytes[operation.payload.clone()];
+                if u32_at(refs_bytes, 4) == 0 || u32_at(op, 0) != 99 {
+                    continue;
+                }
+                let values = (0..3)
+                    .map(|at| f64::from_le_bytes(op[4 + at * 8..12 + at * 8].try_into().unwrap()))
+                    .collect::<Vec<_>>();
+                if values.iter().any(|value| !value.is_finite())
+                    || values[0] <= 0.
+                    || values[1] <= 0.
+                {
+                    continue;
+                }
+                (
+                    index + 3,
+                    ReadOnlyImageAttachment::Point {
+                        point_ref: u32_at(refs_bytes, 4),
+                        scale_x: values[0],
+                        scale_y: values[1],
+                        rotation: values[2],
+                    },
+                )
+            }
+            85 if refs.payload.len() == 12 && u32_at(refs_bytes, 0) == 2 => (
+                index + 2,
+                ReadOnlyImageAttachment::Rectangle {
+                    bottom_right: u32_at(refs_bytes, 4),
+                    top_left: u32_at(refs_bytes, 8),
+                },
+            ),
+            100 if refs.payload.len() == 16 && u32_at(refs_bytes, 0) == 3 => (
+                index + 2,
+                ReadOnlyImageAttachment::Parallelogram {
+                    top_left: u32_at(refs_bytes, 4),
+                    bottom_right: u32_at(refs_bytes, 8),
+                    bottom_left: u32_at(refs_bytes, 12),
+                },
+            ),
+            _ => continue,
+        };
+        if attachment.references().contains(&0) {
+            continue;
+        }
+        let Some(size) = records.get(size_index) else {
+            continue;
+        };
+        let auxiliary = records.get(size_index + 1);
+        let resource_index = match auxiliary.map(|record| record.kind) {
+            Some(0x232e) if auxiliary.is_some_and(|record| record.payload.is_empty()) => {
+                size_index + 2
+            }
+            Some(0x07d5)
+                if code == 99
+                    && auxiliary.is_some_and(|record| {
+                        bytes[record.payload.clone()]
+                            == [
+                                6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81,
+                                92, 97, 65, 3, 0, 91, 49, 93, 0,
+                            ]
+                    }) =>
+            {
+                size_index + 2
+            }
+            _ => size_index + 1,
+        };
+        let Some(resource) = records.get(resource_index) else {
+            continue;
+        };
+        let Some(end) = records.get(resource_index + 1) else {
+            continue;
+        };
+        if size.kind != IMAGE_SIZE
             || size.payload.len() != 16
             || resource.kind != IMAGE_RESOURCE
             || resource.payload.len() != 2
@@ -121,43 +281,46 @@ pub fn imported_anchored_image_catalog(
         {
             continue;
         }
-        let refs = &bytes[refs.payload.clone()];
-        let op = &bytes[operation.payload.clone()];
-        let resource_id = u16::from_le_bytes(bytes[resource.payload.clone()].try_into().unwrap())
-            as usize;
+        let resource_id =
+            u16::from_le_bytes(bytes[resource.payload.clone()].try_into().unwrap()) as usize;
         let Some(&expected) = dimensions.get(resource_id) else {
             continue;
         };
-        let dimensions = &bytes[size.payload.clone()];
-        if u32_at(refs, 0) != 1
-            || u32_at(refs, 4) == 0
-            || u32_at(op, 0) != 99
-            || (0..4).map(|at| u32_at(dimensions, at * 4)).collect::<Vec<_>>()
-                != [expected.0, expected.1, expected.0, expected.1]
-        {
-            continue;
-        }
-        let values = (0..3)
-            .map(|at| f64::from_le_bytes(op[4 + at * 8..12 + at * 8].try_into().unwrap()))
+        let stored_size = &bytes[size.payload.clone()];
+        let exact_size = [expected.0, expected.1, expected.0, expected.1];
+        let observed_size = (0..4)
+            .map(|at| u32_at(stored_size, at * 4))
             .collect::<Vec<_>>();
-        if values.iter().any(|value| !value.is_finite())
-            || values[0] <= 0.
-            || values[1] <= 0.
-            || values[2] != 0.
+        if (code == 99 && observed_size != exact_size)
+            || (matches!(code, 85 | 100) && observed_size[2..] != exact_size[2..])
         {
             continue;
         }
-        images.push(ReadOnlyAnchoredImage {
+        images.push(ReadOnlyAttachedImage {
             group_offset: header.start,
-            point_ref: u32_at(refs, 4),
             png: pngs[resource_id].to_vec(),
             dimensions: expected,
-            scale_x: values[0],
-            scale_y: values[1],
-            rotation: values[2],
+            attachment,
         });
     }
     Ok(images)
+}
+
+impl ReadOnlyImageAttachment {
+    fn references(self) -> Vec<u32> {
+        match self {
+            Self::Point { point_ref, .. } => vec![point_ref],
+            Self::Rectangle {
+                bottom_right,
+                top_left,
+            } => vec![bottom_right, top_left],
+            Self::Parallelogram {
+                top_left,
+                bottom_right,
+                bottom_left,
+            } => vec![top_left, bottom_right, bottom_left],
+        }
+    }
 }
 
 pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String> {
@@ -356,7 +519,7 @@ impl ImageFile {
         if size.payload.len() != 16
             || transform.payload.len() != 48
             || resource_ref.payload.len() != 2
-            || terminator.payload.len() != 0
+            || !terminator.payload.is_empty()
             || bytes[resource_ref.payload.clone()] != [0, 0]
         {
             return Err("Unsupported picture group fields".into());
@@ -400,6 +563,7 @@ impl ImageFile {
                     return None;
                 }
                 Some(CroppedPicture {
+                    group_offset: header.start,
                     source: u32_at(bytes, refs.payload.start + 4),
                     polygon: u32_at(bytes, refs.payload.start + 8),
                     dimensions: (
@@ -410,10 +574,10 @@ impl ImageFile {
                 })
             })
             .collect();
-        let editable = records.iter().filter(|r| r.kind == IMAGE_SIZE).count() == 1
+        let editable = records.iter().filter(|r| r.kind == IMAGE_SIZE).count() == 1 + crops.len()
             && records.iter().filter(|r| r.kind == IMAGE_TRANSFORM).count() == 1
             && records.iter().filter(|r| r.kind == IMAGE_RESOURCE).count() == 1
-            && crops.is_empty();
+            && crops.iter().all(|crop| crop.dimensions == dimensions);
         Ok(Self {
             bytes: bytes.to_vec(),
             resource: (*resource).clone(),
@@ -461,6 +625,38 @@ impl ImageFile {
 
     pub fn crops(&self) -> &[CroppedPicture] {
         &self.crops
+    }
+
+    pub fn cropped_picture_group(
+        source: u32,
+        polygon: u32,
+        dimensions: (u32, u32),
+    ) -> Result<Vec<u8>, String> {
+        let template = include_bytes!("../../../tests/fixtures/image_original_cropped.gsp");
+        let records = records(template)?;
+        let group = records
+            .windows(4)
+            .find(|window| {
+                window[0].kind == OBJECT_HEADER
+                    && window[0].payload.len() == 28
+                    && u32_at(template, window[0].payload.start) as u16 == 108
+                    && window[1].kind == 0x07d2
+                    && window[1].payload.len() == 12
+                    && window[2].kind == IMAGE_SIZE
+                    && window[2].payload.len() == 16
+                    && window[3].kind == OBJECT_END
+            })
+            .ok_or("Missing cropped-picture template")?;
+        let mut bytes = template[group[0].start..group[3].end].to_vec();
+        let refs = group[1].payload.start - group[0].start;
+        bytes[refs + 4..refs + 8].copy_from_slice(&source.to_le_bytes());
+        bytes[refs + 8..refs + 12].copy_from_slice(&polygon.to_le_bytes());
+        let size = group[2].payload.start - group[0].start;
+        for at in [0, 8] {
+            bytes[size + at..size + at + 4].copy_from_slice(&dimensions.0.to_le_bytes());
+            bytes[size + at + 4..size + at + 8].copy_from_slice(&dimensions.1.to_le_bytes());
+        }
+        Ok(bytes)
     }
 
     pub fn can_edit(&self) -> bool {
@@ -519,7 +715,7 @@ impl ImageFile {
     }
 
     pub fn replace_png(&mut self, png: &[u8]) -> Result<(), String> {
-        if !self.editable {
+        if !self.editable || !self.crops.is_empty() {
             return Err("Picture has derived images whose rewrite is not verified".into());
         }
         let (width, height) = png_dimensions(png)?;
@@ -610,14 +806,19 @@ mod tests {
     }
 
     #[test]
-    fn crop_is_decoded_but_blocks_unverified_picture_edits() {
+    fn crop_is_decoded_and_known_fields_remain_editable() {
         let cropped = include_bytes!("../../../tests/fixtures/image_original_cropped.gsp");
         let mut picture = ImageFile::parse(cropped).unwrap();
         assert_eq!(picture.encode(), cropped);
-        assert!(!picture.can_edit());
+        assert_eq!(
+            imported_cropped_image_catalog(cropped).unwrap(),
+            picture.crops()
+        );
+        assert!(picture.can_edit());
         assert_eq!(
             picture.crops(),
             &[CroppedPicture {
+                group_offset: picture.crops()[0].group_offset,
                 source: 1,
                 polygon: 5,
                 dimensions: (16, 16),
@@ -625,14 +826,18 @@ mod tests {
             }]
         );
         assert!(!picture.visible());
-        assert!(picture.set_visible(true).is_err());
-        assert!(picture.set_transform([4., 0., 0., 0., 4., 0.]).is_err());
+        picture.set_visible(true).unwrap();
+        picture.set_transform([4., 0., 0., 0., 4., 0.]).unwrap();
+        let edited = picture.encode().to_vec();
         assert!(
             picture
                 .replace_png(include_bytes!("../../../tests/fixtures/image_tiny.png"))
                 .is_err()
         );
-        assert_eq!(picture.encode(), cropped);
+        assert_eq!(picture.encode(), edited);
+        let reopened = ImageFile::parse(picture.encode()).unwrap();
+        assert!(reopened.visible());
+        assert_eq!(reopened.transform(), [4., 0., 0., 0., 4., 0.]);
     }
 
     #[test]

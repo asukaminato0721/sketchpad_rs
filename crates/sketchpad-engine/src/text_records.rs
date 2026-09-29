@@ -5,10 +5,47 @@
 //! reference. The tail after the byte-counted name is deliberately opaque:
 //! original files contain nonzero bytes there, so rewriting it is unsafe.
 
+use std::borrow::Cow;
+
 pub const LABEL_AUX_KIND: u32 = 0x07d5;
 pub const OBJECT_AUX_KIND: u32 = 0x07d8;
 pub const RICH_TEXT_KIND: u32 = 0x08fc;
 pub const TEXT_BOX_KIND: u32 = 0x0898;
+
+/// Converts Sketchpad's saved numeric-index notation to its displayed form.
+/// The stored name stays unchanged so a save preserves the native spelling.
+pub fn display_label_name(name: &str) -> Cow<'_, str> {
+    let Some(first) = name.find('[') else {
+        return Cow::Borrowed(name);
+    };
+    let mut output = String::with_capacity(name.len());
+    let mut remaining = name;
+    let mut next = first;
+    loop {
+        output.push_str(&remaining[..next]);
+        let suffix = &remaining[next + 1..];
+        if let Some(end) = suffix.find(']')
+            && !suffix[..end].is_empty()
+            && suffix[..end].bytes().all(|digit| digit.is_ascii_digit())
+        {
+            for digit in suffix[..end].bytes() {
+                output.push(
+                    ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉'][usize::from(digit - b'0')],
+                );
+            }
+            remaining = &suffix[end + 1..];
+        } else {
+            output.push('[');
+            remaining = suffix;
+        }
+        let Some(start) = remaining.find('[') else {
+            output.push_str(remaining);
+            break;
+        };
+        next = start;
+    }
+    Cow::Owned(output)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelAux {
@@ -30,11 +67,24 @@ impl LabelAux {
     }
 
     pub fn new_point(name: &str, visible: bool, offset: (i16, i16)) -> Result<Self, String> {
+        Self::new_geometric(name, visible, offset, 0.0)
+    }
+
+    pub fn new_geometric(
+        name: &str,
+        visible: bool,
+        offset: (i16, i16),
+        parameter: f64,
+    ) -> Result<Self, String> {
+        if !parameter.is_finite() {
+            return Err("Label parameter must be finite".into());
+        }
         let mut payload = vec![0; 24];
         payload[0..2].copy_from_slice(&6_u16.to_le_bytes());
         payload[2..4].copy_from_slice(&(visible as u16).to_le_bytes());
         payload[6..8].copy_from_slice(&offset.0.to_le_bytes());
         payload[8..10].copy_from_slice(&offset.1.to_le_bytes());
+        payload[14..22].copy_from_slice(&parameter.to_le_bytes());
         let mut label = Self { payload };
         label.set_name(name)?;
         Ok(label)
@@ -72,6 +122,11 @@ impl LabelAux {
         )
     }
 
+    pub fn geometric_parameter(&self) -> Option<f64> {
+        let value = f64::from_le_bytes(self.payload.get(14..22)?.try_into().ok()?);
+        value.is_finite().then_some(value)
+    }
+
     pub fn set_visible(&mut self, visible: bool) {
         self.payload[2..4].copy_from_slice(&(visible as u16).to_le_bytes());
     }
@@ -100,7 +155,7 @@ impl LabelAux {
             self.payload.extend_from_slice(&suffix);
         } else {
             self.payload.push(suffix.first().copied().unwrap_or(0));
-            if bytes.len() % 2 == 0 {
+            if bytes.len().is_multiple_of(2) {
                 self.payload.push(0);
             }
         }
@@ -121,7 +176,7 @@ fn append_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) {
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(payload);
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         out.push(0);
     }
 }
@@ -297,6 +352,7 @@ mod tests {
         .unwrap();
         unusual.set_name("P[1]").unwrap();
         assert_eq!(unusual.name_utf8().unwrap(), "P[1]");
+        assert_eq!(display_label_name(unusual.name_utf8().unwrap()), "P₁");
         assert_eq!(unusual.trailing_bytes(), &[0, 0x78]);
     }
 

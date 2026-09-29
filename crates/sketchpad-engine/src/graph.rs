@@ -252,7 +252,8 @@ pub fn decode_graph_object(
         (87, [line, coordinates]) => {
             let format = records.iter().find(|(kind, _)| *kind == 0x0903)?.1;
             let style = records.iter().find(|(kind, _)| *kind == 0x07d8)?.1;
-            let sample = &include_bytes!("../../../assets/graph_slope_measurement_group.bin")[64..96];
+            let sample =
+                &include_bytes!("../../../assets/graph_slope_measurement_group.bin")[64..96];
             // Sketchpad rewrites this style index from 2 to 1 after a drag.
             (format.len() == 32
                 && u16::from_le_bytes(format[28..30].try_into().unwrap()) <= 5
@@ -637,7 +638,9 @@ pub fn slope_measurement_group(line: usize, coordinates: usize) -> Result<Vec<u8
 mod tests {
     use super::*;
 
-    fn object_groups(bytes: &[u8]) -> Vec<(u16, Vec<usize>, Vec<(u32, Vec<u8>)>)> {
+    type ObjectGroup = (u16, Vec<usize>, Vec<(u32, Vec<u8>)>);
+
+    fn object_groups(bytes: &[u8]) -> Vec<ObjectGroup> {
         assert_eq!(&bytes[..4], b"GSP4");
         let mut offset = 4;
         let mut groups = Vec::new();

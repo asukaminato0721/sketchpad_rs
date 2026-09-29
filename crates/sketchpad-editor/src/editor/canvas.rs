@@ -1,6 +1,7 @@
 use super::{Editor, Tool};
-use sketchpad_engine::document::{Kind, Point};
 use crate::render::Viewport;
+use sketchpad_engine::document::{Kind, Point};
+use sketchpad_engine::text_records::display_label_name;
 
 impl Editor {
     pub(super) fn canvas_ui(&mut self, root: &mut egui::Ui) -> egui::Rect {
@@ -24,174 +25,230 @@ impl Editor {
                         self.scale = (self.scale * (dy * 0.001).exp()).clamp(0.05, 20.);
                     }
                 }
-                if response.drag_started() && self.tool == Tool::Select {
-                    if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
-                        if let Some(id) = self.hit(&vp, p) {
-                            if self.doc.objects[id - 1].measurement_anchor.is_some()
-                                || matches!(
-                                    self.doc.objects[id - 1].kind,
-                                    Kind::Free(_)
-                                        | Kind::GraphVerticalUnit(_, _)
-                                        | Kind::Image { .. }
-                                        | Kind::PlainText { .. }
-                                        | Kind::ReferencedText { .. }
-                                        | Kind::Parameter(_)
-                                        | Kind::Calculation(_)
-                                        | Kind::MeasuredCalculation(_, _)
-                                        | Kind::LengthPairCalculation(_, _, _)
-                                        | Kind::ParameterCalculation(_, _)
-                                        | Kind::ValueTable(_, _)
-                                        | Kind::ValueTablePair(_, _, _)
-                                        | Kind::PointOnSegment(_, _)
-                                        | Kind::PointOnRay(_, _)
-                                        | Kind::PointOnLine(_, _)
-                                        | Kind::PointOnCircle(_, _, _)
-                                        | Kind::PointOnArc(_, _)
-            | Kind::PointOnCurve(..)
-            | Kind::PointOnSector(..)
-                                )
-                            {
-                                self.drag_offset = if let Some((x, y)) =
-                                    self.doc.objects[id - 1].measurement_anchor
-                                {
-                                    p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
-                                } else {
-                                    match &self.doc.objects[id - 1].kind {
-                                        Kind::ReferencedText { text, .. } => {
-                                            let (x, y) = text.stored_origin();
-                                            p - vp.screen(Point { x: f64::from(x), y: f64::from(y) })
-                                        }
-                                        Kind::PlainText { rect, .. } => {
-                                            p - vp.screen(Point {
-                                                x: rect.left.into(),
-                                                y: rect.top.into(),
-                                            })
-                                        }
-                                        Kind::Parameter(_)
-                                        | Kind::Calculation(_)
-                                        | Kind::MeasuredCalculation(_, _)
-                                        | Kind::LengthPairCalculation(_, _, _)
-                                        | Kind::ParameterCalculation(_, _)
-                                        | Kind::ValueTable(_, _)
-                                        | Kind::ValueTablePair(_, _, _) => {
-                                            let anchor =
-                                                crate::render::number_lines_for_object(
-                                                    &self.doc, id,
-                                                )
-                                                .unwrap()
-                                                .0;
-                                            p - (vp.rect.min
-                                                + egui::vec2(anchor.0 as f32, anchor.1 as f32))
-                                        }
-                                        Kind::Image { transform, .. } => {
-                                            p - vp.screen(Point {
-                                                x: transform[2],
-                                                y: transform[5],
-                                            })
-                                        }
-                                        _ => egui::Vec2::ZERO,
-                                    }
-                                };
-                                self.doc.checkpoint();
-                                self.animations.retain(|track| track.id != id);
-                                self.movements.retain(|track| track.source != id);
-                                self.dragging = Some(id);
-                                self.capture_traces();
-                            }
-                        }
-                    }
-                }
-                if response.dragged() {
-                    if let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos()) {
-                        if self.doc.objects[id - 1].measurement_anchor.is_some() {
-                            let at = p - self.drag_offset - vp.rect.min;
-                            if let Err(error) = self.doc.drag_measurement_caption(
-                                id,
-                                (at.x.round() as i16, at.y.round() as i16),
-                            ) {
-                                self.status = error;
-                            }
-                        } else if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
-                            if let Err(error) =
-                                self.doc.drag_image(id, vp.world(p - self.drag_offset))
-                            {
-                                self.status = error;
-                            }
-                        } else if matches!(self.doc.objects[id - 1].kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }) {
-                            if let Err(error) =
-                                self.doc.drag_text(id, vp.world(p - self.drag_offset))
-                            {
-                                self.status = error;
-                            }
-                        } else if matches!(
+                if response.drag_started()
+                    && self.tool == Tool::Select
+                    && let Some(p) = ui.input(|i| i.pointer.press_origin())
+                    && let Some(id) = self.hit(&vp, p)
+                    && (self.doc.objects[id - 1].measurement_anchor.is_some()
+                        || matches!(
                             self.doc.objects[id - 1].kind,
-                            Kind::Parameter(_)
+                            Kind::Free(_)
+                                | Kind::GraphVerticalUnit(_, _)
+                                | Kind::Image { .. }
+                                | Kind::PlainText { .. }
+                                | Kind::ReferencedText { .. }
+                                | Kind::Parameter(_)
                                 | Kind::Calculation(_)
                                 | Kind::MeasuredCalculation(_, _)
                                 | Kind::LengthPairCalculation(_, _, _)
                                 | Kind::ParameterCalculation(_, _)
                                 | Kind::ValueTable(_, _)
                                 | Kind::ValueTablePair(_, _, _)
-                        ) {
-                            let at = p - self.drag_offset - vp.rect.min;
-                            let anchor = (at.x.round() as i16, at.y.round() as i16);
-                            if let Err(error) = self.doc.move_number(id, anchor) {
-                                self.status = error;
+                                | Kind::PointOnSegment(_, _)
+                                | Kind::PointOnRay(_, _)
+                                | Kind::PointOnLine(_, _)
+                                | Kind::PointOnCircle(_, _, _)
+                                | Kind::PointOnArc(_, _)
+                                | Kind::PointOnCurve(..)
+                                | Kind::PointOnSector(..)
+                        ))
+                {
+                    self.drag_offset = if let Some((x, y)) =
+                        self.doc.objects[id - 1].measurement_anchor
+                    {
+                        p - (vp.rect.min + egui::vec2(f32::from(x), f32::from(y)))
+                    } else {
+                        match &self.doc.objects[id - 1].kind {
+                            Kind::ReferencedText { text, .. } => {
+                                let (x, y) = text.stored_origin();
+                                p - vp.screen(Point {
+                                    x: f64::from(x),
+                                    y: f64::from(y),
+                                })
                             }
-                        } else {
-                            self.doc.move_point(id, vp.world(p));
+                            Kind::PlainText { rect, .. } => {
+                                p - vp.screen(Point {
+                                    x: rect.left.into(),
+                                    y: rect.top.into(),
+                                })
+                            }
+                            Kind::Parameter(_)
+                            | Kind::Calculation(_)
+                            | Kind::MeasuredCalculation(_, _)
+                            | Kind::LengthPairCalculation(_, _, _)
+                            | Kind::ParameterCalculation(_, _)
+                            | Kind::ValueTable(_, _)
+                            | Kind::ValueTablePair(_, _, _) => {
+                                let anchor = crate::render::number_lines_for_object(&self.doc, id)
+                                    .unwrap()
+                                    .0;
+                                p - (vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32))
+                            }
+                            Kind::Image { .. } => self
+                                .doc
+                                .image_transform(id)
+                                .map(|transform| {
+                                    p - vp.screen(Point {
+                                        x: transform[2],
+                                        y: transform[5],
+                                    })
+                                })
+                                .unwrap_or_default(),
+                            _ => egui::Vec2::ZERO,
                         }
-                        self.capture_traces();
+                    };
+                    self.doc.checkpoint();
+                    self.animations.retain(|track| track.id != id);
+                    self.movements.retain(|track| track.source != id);
+                    self.dragging = Some(id);
+                    self.capture_traces();
+                }
+                if response.dragged()
+                    && let (Some(id), Some(p)) = (self.dragging, response.interact_pointer_pos())
+                {
+                    if self.doc.objects[id - 1].measurement_anchor.is_some() {
+                        let at = p - self.drag_offset - vp.rect.min;
+                        if let Err(error) = self.doc.drag_measurement_caption(
+                            id,
+                            (at.x.round() as i16, at.y.round() as i16),
+                        ) {
+                            self.status = error;
+                        }
+                    } else if matches!(self.doc.objects[id - 1].kind, Kind::Image { .. }) {
+                        if let Err(error) = self.doc.drag_image(id, vp.world(p - self.drag_offset))
+                        {
+                            self.status = error;
+                        }
+                    } else if matches!(
+                        self.doc.objects[id - 1].kind,
+                        Kind::PlainText { .. } | Kind::ReferencedText { .. }
+                    ) {
+                        if let Err(error) = self.doc.drag_text(id, vp.world(p - self.drag_offset)) {
+                            self.status = error;
+                        }
+                    } else if matches!(
+                        self.doc.objects[id - 1].kind,
+                        Kind::Parameter(_)
+                            | Kind::Calculation(_)
+                            | Kind::MeasuredCalculation(_, _)
+                            | Kind::LengthPairCalculation(_, _, _)
+                            | Kind::ParameterCalculation(_, _)
+                            | Kind::ValueTable(_, _)
+                            | Kind::ValueTablePair(_, _, _)
+                    ) {
+                        let at = p - self.drag_offset - vp.rect.min;
+                        let anchor = (at.x.round() as i16, at.y.round() as i16);
+                        if let Err(error) = self.doc.move_number(id, anchor) {
+                            self.status = error;
+                        }
+                    } else {
+                        self.doc.move_point(id, vp.world(p));
                     }
+                    self.capture_traces();
                 }
                 if response.drag_stopped() {
                     self.dragging = None;
                 }
-                if response.clicked() {
-                    if let Some(p) = response.interact_pointer_pos() {
-                        let multi = ui.input(|i| i.modifiers.shift);
-                        self.click(&vp, p, multi);
-                    }
+                if response.clicked()
+                    && let Some(p) = response.interact_pointer_pos()
+                {
+                    let multi = ui.input(|i| i.modifiers.shift);
+                    self.click(&vp, p, multi);
                 }
                 if response.double_clicked()
                     && let Some(p) = response.interact_pointer_pos()
-                    && let Some(id) = self.hit(&vp, p)
                 {
-                    match self.doc.objects[id - 1].kind {
-                        Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) => {
-                            self.begin_function_dialog(false, Some(id));
-                        }
-                        Kind::FunctionPlot(..)
-                        | Kind::ParametricPlot(..)
-                        | Kind::ParameterLocus(..) => {
-                            if let Some((min, max, samples)) = self.doc.plot_range(id) {
-                                self.plot_range_dialog = Some(id);
-                                self.plot_min_draft = min.to_string();
-                                self.plot_max_draft = max.to_string();
-                                self.plot_samples_draft = samples.to_string();
+                    if let Some(id) = self.hit(&vp, p) {
+                        match self.doc.objects[id - 1].kind {
+                            Kind::FunctionDefinition(_)
+                            | Kind::ReferencedFunction(_, _)
+                            | Kind::Calculation(_) => {
+                                if let Err(error) = self.begin_edit_definition(id) {
+                                    self.status = error;
+                                }
                             }
+                            Kind::FunctionPlot(..)
+                            | Kind::ParametricPlot(..)
+                            | Kind::ParameterLocus(..) => {
+                                if let Some((min, max, samples)) = self.doc.plot_range(id) {
+                                    self.plot_range_dialog = Some(id);
+                                    self.plot_min_draft = min.to_string();
+                                    self.plot_max_draft = max.to_string();
+                                    self.plot_samples_draft = samples.to_string();
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    } else if self.tool == Tool::Select && self.preferences.double_click_deselection
+                    {
+                        self.doc.selected.clear();
+                        self.selection_order.clear();
                     }
                 }
-                for object in self.doc.objects.iter().filter(|object| self.doc.is_displayed(object.id)) {
-                    if let Some((source, png, transforms)) = self.doc.image_instances(object.id) {
-                        if !self.image_textures.contains_key(&source) {
-                            if let Ok(decoded) =
+                for object in self
+                    .doc
+                    .objects
+                    .iter()
+                    .filter(|object| self.doc.is_displayed(object.id))
+                {
+                    if let Some((source, png, transform, polygon)) =
+                        self.doc.cropped_image(object.id)
+                    {
+                        if !self.image_textures.contains_key(&source)
+                            && let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
-                            {
-                                let rgba = decoded.to_rgba8();
-                                let color = egui::ColorImage::from_rgba_unmultiplied(
-                                    [rgba.width() as usize, rgba.height() as usize],
-                                    rgba.as_raw(),
-                                );
-                                let texture = ui.ctx().load_texture(
+                        {
+                            let rgba = decoded.to_rgba8();
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                [rgba.width() as usize, rgba.height() as usize],
+                                rgba.as_raw(),
+                            );
+                            self.image_textures.insert(
+                                source,
+                                ui.ctx().load_texture(
                                     format!("picture-{source}"),
                                     color,
                                     egui::TextureOptions::LINEAR,
-                                );
-                                self.image_textures.insert(source, texture);
+                                ),
+                            );
+                        }
+                        if let Some(texture) = self.image_textures.get(&source)
+                            && let Some(vertices) = crate::render::cropped_picture_vertices(
+                                &vp, png, transform, &polygon,
+                            )
+                        {
+                            let points =
+                                vertices.iter().map(|(point, _)| *point).collect::<Vec<_>>();
+                            let mut mesh = egui::Mesh::with_texture(texture.id());
+                            for (position, uv) in vertices {
+                                mesh.vertices.push(egui::epaint::Vertex {
+                                    pos: position,
+                                    uv,
+                                    color: egui::Color32::WHITE,
+                                });
                             }
+                            for triangle in crate::render::polygon_triangles(&points) {
+                                mesh.indices.extend(triangle.map(|index| index as u32));
+                            }
+                            ui.painter().add(egui::Shape::mesh(mesh));
+                        }
+                    }
+                    if let Some((source, png, transforms)) = self.doc.image_instances(object.id) {
+                        if !self.image_textures.contains_key(&source)
+                            && let Ok(decoded) =
+                                image::load_from_memory_with_format(png, image::ImageFormat::Png)
+                        {
+                            let rgba = decoded.to_rgba8();
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                [rgba.width() as usize, rgba.height() as usize],
+                                rgba.as_raw(),
+                            );
+                            let texture = ui.ctx().load_texture(
+                                format!("picture-{source}"),
+                                color,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.image_textures.insert(source, texture);
                         }
                         for transform in transforms {
                             if let Some(texture) = self.image_textures.get(&source)
@@ -234,7 +291,11 @@ impl Editor {
                                 run.style != sketchpad_engine::text_object::RichRunStyle::default()
                             })
                         });
-                        if let Some(layout) = crate::render::math_text::measured_layout(&self.doc, object.id, ui.ctx()) {
+                        if let Some(layout) = crate::render::math_text::measured_layout(
+                            &self.doc,
+                            object.id,
+                            ui.ctx(),
+                        ) {
                             layout.paint(ui.painter(), at);
                         } else if has_mixed_runs {
                             let mut line_y = at.y;
@@ -246,7 +307,8 @@ impl Editor {
                                 let mut x = at.x;
                                 for run in row {
                                     let (run_size, baseline_shift) = run.style.script_metrics(
-                                        run.style.size_code.map_or(size, f32::from));
+                                        run.style.size_code.map_or(size, f32::from),
+                                    );
                                     let run_family = run
                                         .style
                                         .family_index
@@ -265,8 +327,12 @@ impl Editor {
                                     let underline = run.style.underline.unwrap_or_else(|| {
                                         style.as_ref().is_some_and(|style| style.underline)
                                     });
-                                    let color = run.style.rgb_color()
-                                        .map(|[red, green, blue]| egui::Color32::from_rgb(red, green, blue))
+                                    let color = run
+                                        .style
+                                        .rgb_color()
+                                        .map(|[red, green, blue]| {
+                                            egui::Color32::from_rgb(red, green, blue)
+                                        })
                                         .unwrap_or_else(|| egui::Color32::from_gray(35));
                                     let format = egui::text::TextFormat {
                                         font_id: run_font_id,
@@ -286,7 +352,10 @@ impl Editor {
                                         ),
                                     );
                                     let width = galley.rect.width();
-                                    let position = egui::pos2(x, line_y + line_size - run_size - baseline_shift);
+                                    let position = egui::pos2(
+                                        x,
+                                        line_y + line_size - run_size - baseline_shift,
+                                    );
                                     ui.painter().galley(position, galley.clone(), color);
                                     if bold {
                                         ui.painter().galley(
@@ -338,7 +407,7 @@ impl Editor {
                                 text,
                                 egui::FontId::proportional(16.),
                                 if self.doc.selected.contains(&object.id) {
-                                    egui::Color32::MAGENTA
+                                    self.selection_color()
                                 } else {
                                     egui::Color32::BLACK
                                 },
@@ -347,34 +416,47 @@ impl Editor {
                     }
                     if let Some(labels) = self.doc.point_math_labels(object.id) {
                         for (point, nodes) in labels {
-                            let layout = crate::render::math_text::measured_nodes(&self.doc, object.id, &nodes, ui.ctx());
-                            let at = vp.screen(point) - egui::vec2(layout.width, layout.height()) * 0.5;
+                            let layout = crate::render::math_text::measured_nodes(
+                                &self.doc,
+                                object.id,
+                                &nodes,
+                                ui.ctx(),
+                            );
+                            let at =
+                                vp.screen(point) - egui::vec2(layout.width, layout.height()) * 0.5;
                             layout.paint(ui.painter(), at);
                         }
                     } else {
-                    for (point, text) in self.doc.point_numeric_label(object.id).map(|label| vec![label]).or_else(|| self.doc.mapped_numeric_label_images(object.id)).unwrap_or_default() {
-                        let style = self.doc.numeric_label_font_state(object.id);
-                        let size = style.as_ref().map_or(16, |style| style.size_code);
-                        let font_id = self.canvas_font_id(style.as_ref().map(|style| style.family.as_str()), size as f32);
-                        ui.painter().text(
-                            vp.screen(point),
-                            egui::Align2::CENTER_CENTER,
-                            text,
-                            font_id,
-                            if self.doc.selected.contains(&object.id) {
-                                egui::Color32::MAGENTA
-                            } else {
-                                egui::Color32::BLACK
-                            },
-                        );
-                    }
+                        for (point, text) in self
+                            .doc
+                            .point_numeric_label(object.id)
+                            .map(|label| vec![label])
+                            .or_else(|| self.doc.mapped_numeric_label_images(object.id))
+                            .unwrap_or_default()
+                        {
+                            let style = self.doc.numeric_label_font_state(object.id);
+                            let size = style.as_ref().map_or(16, |style| style.size_code);
+                            let font_id = self.canvas_font_id(
+                                style.as_ref().map(|style| style.family.as_str()),
+                                size as f32,
+                            );
+                            ui.painter().text(
+                                vp.screen(point),
+                                egui::Align2::CENTER_CENTER,
+                                text,
+                                font_id,
+                                if self.doc.selected.contains(&object.id) {
+                                    self.selection_color()
+                                } else {
+                                    egui::Color32::BLACK
+                                },
+                            );
+                        }
                     }
                     if let Some((_, lines)) =
                         crate::render::number_lines_for_object(&self.doc, object.id)
                         && let Some(number_rect) =
-                            crate::render::number_screen_rect_for_object(
-                                &vp, &self.doc, object.id,
-                            )
+                            crate::render::number_screen_rect_for_object(&vp, &self.doc, object.id)
                     {
                         ui.painter()
                             .rect_filled(number_rect, 0., egui::Color32::WHITE);
@@ -397,23 +479,27 @@ impl Editor {
                     if let Some(label) = &object.label
                         && label.visible()
                         && let Ok(name) = label.name_utf8()
-                        && let Some(point) = self.doc.position(object.id).or_else(||
-                            self.doc.angle_marker_label_anchor(object.id))
+                        && let Some(point) = self.doc.object_label_anchor(object.id)
                     {
                         let at = vp.screen(point);
                         let offset = label.offset();
                         let position = at + egui::vec2(offset.0 as f32, offset.1 as f32);
-                        let alignment = if object.angle_marker_style.is_some() { egui::Align2::CENTER_TOP } else { egui::Align2::LEFT_TOP };
+                        let alignment = if object.angle_marker_style.is_some() {
+                            egui::Align2::CENTER_TOP
+                        } else {
+                            egui::Align2::LEFT_TOP
+                        };
                         let style = self.doc.text_font_state(object.id);
                         let size = style.as_ref().map_or(13., |style| style.size_code as f32);
                         let font_id = self.canvas_font_id(
                             style.as_ref().map(|style| style.family.as_str()),
                             size,
                         );
+                        let name = display_label_name(name);
                         let bounds = ui.painter().text(
                             position,
                             alignment,
-                            name,
+                            name.as_ref(),
                             font_id.clone(),
                             egui::Color32::from_gray(35),
                         );
@@ -421,7 +507,7 @@ impl Editor {
                             ui.painter().text(
                                 position + egui::vec2(0.7, 0.),
                                 alignment,
-                                name,
+                                name.as_ref(),
                                 font_id.clone(),
                                 egui::Color32::from_gray(35),
                             );
@@ -495,9 +581,7 @@ impl Editor {
                         egui::Color32::from_rgb(36, 48, 61),
                     );
                 }
-                for (at, label, vertical) in
-                    crate::render::defined_axis_labels(&self.doc, &vp)
-                {
+                for (at, label, vertical) in crate::render::defined_axis_labels(&self.doc, &vp) {
                     ui.painter().text(
                         at,
                         if vertical {
@@ -513,8 +597,17 @@ impl Editor {
                 for (row, (id, text)) in self.overlay_rows().into_iter().enumerate() {
                     let rect = self.overlay_row_rect(&vp, row, id, &text);
                     if self.doc.selected.contains(&id) {
-                        ui.painter()
-                            .rect_filled(rect, 0., egui::Color32::from_rgb(255, 188, 230));
+                        let selected = self.selection_color();
+                        ui.painter().rect_filled(
+                            rect,
+                            0.,
+                            egui::Color32::from_rgba_unmultiplied(
+                                selected.r(),
+                                selected.g(),
+                                selected.b(),
+                                80,
+                            ),
+                        );
                     }
                     let style = self.doc.text_font_state(id);
                     let size = style

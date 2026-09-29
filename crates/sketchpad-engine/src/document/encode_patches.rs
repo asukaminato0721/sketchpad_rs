@@ -1,11 +1,70 @@
 use super::calculations::calculation_source_ids;
 use super::embedded_tools::{document_record_indices, document_records};
-use super::records::{put_record, records};
+use super::records::{header, put_record, records, u32_at};
 use super::{Document, Kind, Object};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{function_records, style_records, text_object, text_style_records};
 
 impl Document {
+    pub(super) fn patch_split_points(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let headers = document_record_indices(&rs)
+            .into_iter()
+            .filter(|&index| rs[index].kind == 0x07d0)
+            .collect::<Vec<_>>();
+        let objects = self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect::<Vec<_>>();
+        if headers.len() != objects.len() {
+            return Err("Object group count mismatch while splitting points".into());
+        }
+        let mut edits = Vec::new();
+        for (&start_index, object) in headers.iter().zip(objects) {
+            if object.id > self.source_count {
+                continue;
+            }
+            let Kind::Free(point) = object.kind else {
+                continue;
+            };
+            if object.point_offset.is_some() {
+                continue;
+            }
+            let header_record = &rs[start_index];
+            if u32_at(&bytes, header_record.data.start) & 0xffff == 0 {
+                continue;
+            }
+            let end_index = rs[start_index..]
+                .iter()
+                .position(|record| record.kind == 0x07d7)
+                .map(|offset| start_index + offset)
+                .ok_or("Split point group has no terminator")?;
+            let mut header = header(0);
+            header[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
+            header[4] = u8::from(object.tracing);
+            if let Some(style) = object.visual_style {
+                crate::style_records::set_visual_style(&mut header, style)?;
+            }
+            let mut replacement = Vec::new();
+            put_record(&mut replacement, 0x07d0, &header);
+            if let Some(label) = &object.label {
+                replacement
+                    .extend_from_slice(&crate::text_records::encode_point_label_records(label));
+            }
+            let mut coordinates = point.x.to_le_bytes().to_vec();
+            coordinates.extend_from_slice(&point.y.to_le_bytes());
+            put_record(&mut replacement, 0x0899, &coordinates);
+            put_record(&mut replacement, 0x07d7, &[]);
+            edits.push((header_record.start, rs[end_index].data.end, replacement));
+        }
+        edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
+        for (start, end, replacement) in edits {
+            bytes.splice(start..end, replacement);
+        }
+        Ok(bytes)
+    }
+
     pub(super) fn patch_marked_coordinate_link(&self, mut out: Vec<u8>) -> Result<Vec<u8>, String> {
         let Some(frame) = self.marked_coordinate_system[self.active_page] else {
             return Ok(out);
@@ -413,7 +472,13 @@ impl Document {
             if object.kind.is_filled_region() {
                 let payload = bytes
                     .get_mut(record.data.clone())
-                    .filter(|payload| matches!(payload.len(), 16 | 28) && (payload[6..8] == [4, 0] || payload[6..10] == [5, 0, 16, 0] || (payload.len() == 28 && matches!(payload[6..10], [13, 0, 68, 0] | [13, 0, 69, 0]))))
+                    .filter(|payload| {
+                        matches!(payload.len(), 16 | 28)
+                            && (payload[6..8] == [4, 0]
+                                || payload[6..10] == [5, 0, 16, 0]
+                                || (payload.len() == 28
+                                    && matches!(payload[6..10], [13, 0, 68, 0] | [13, 0, 69, 0])))
+                    })
                     .ok_or("Invalid polygon drawing-order header")?;
                 match (payload.len(), object.interior_order) {
                     (28, Some(order)) => payload[20..24].copy_from_slice(&order.to_le_bytes()),
@@ -424,7 +489,10 @@ impl Document {
                 let payload = &bytes[record.data.clone()];
                 if payload.len() != 28
                     || !(payload[6..8] == [4, 0]
-                        || matches!(payload[6..10], [5, 0, 16, 0] | [13, 0, 68, 0] | [13, 0, 69, 0]))
+                        || matches!(
+                            payload[6..10],
+                            [5, 0, 16, 0] | [13, 0, 68, 0] | [13, 0, 69, 0]
+                        ))
                     || payload[20..24] != order.to_le_bytes()
                 {
                     return Err("Cannot change drawing order of an unsupported interior".into());
@@ -438,7 +506,10 @@ impl Document {
                         style,
                     )
                 } else if super::kind::is_straight_locus(&self.objects, &object.kind) {
-                    style_records::set_locus_straight_visual_style(&mut bytes[record.data.clone()], style)
+                    style_records::set_locus_straight_visual_style(
+                        &mut bytes[record.data.clone()],
+                        style,
+                    )
                 } else {
                     style_records::set_visual_style(&mut bytes[record.data.clone()], style)
                 };
@@ -596,11 +667,14 @@ impl Document {
                 continue;
             }
             if let Kind::ReferencedText { text, .. } = &object.kind {
-                let rich = group.iter().find(|r| r.kind == 0x08fc).ok_or("Missing referenced caption payload")?;
+                let rich = group
+                    .iter()
+                    .find(|r| r.kind == 0x08fc)
+                    .ok_or("Missing referenced caption payload")?;
                 if bytes[rich.data.clone()] != *text.rich_bytes() {
                     let mut replacement = Vec::new();
                     super::records::put_record(&mut replacement, 0x08fc, text.rich_bytes());
-                    edits.push((rich.start, rich.data.end + rich.data.len()%2, replacement));
+                    edits.push((rich.start, rich.data.end + rich.data.len() % 2, replacement));
                 }
                 continue;
             }
@@ -648,36 +722,50 @@ impl Document {
                         edits.push((old.start, old.data.end + old.data.len() % 2, replacement));
                     }
                 } else {
-                    let insertion =
-                        if object
-                            .kind
-                            .transform_definition()
-                            .is_some_and(|definition| {
-                                definition.element() == super::transform_model::ElementType::Point
+                    let insertion = if super::kind::is_straight_kind(&object.kind)
+                        || object.kind.is_circle()
+                        || super::kind::is_arc_kind(&object.kind)
+                    {
+                        group
+                            .iter()
+                            .find(|item| item.kind == 0x07d8)
+                            .map(|item| item.start)
+                            .or_else(|| {
+                                group
+                                    .iter()
+                                    .find(|item| item.kind == 0x07d7)
+                                    .map(|item| item.start)
                             })
-                        {
-                            group
-                                .iter()
-                                .find(|item| matches!(item.kind, 0x07d8 | 0x232e))
-                                .map_or(record.start, |item| item.start)
-                        } else if matches!(
-                            object.kind,
-                            Kind::NumericCoordinatePoint(..)
-                                | Kind::PathValuePoint(..)
-                                | Kind::PathLiteralPoint(..)
-                                | Kind::PointOnArc(..)
-                                | Kind::CircleCircleIntersection(..)
-                                | Kind::ParameterCalculation(..)
-                                | Kind::PointRatio(..)
-                                | Kind::SegmentLength(..)
-                        ) {
-                            group
-                                .iter()
-                                .find(|record| record.kind == 0x07d8)
-                                .map_or(record.start, |font| font.start)
-                        } else {
-                            group[0].data.end + group[0].data.len() % 2
-                        };
+                            .unwrap_or(record.start)
+                    } else if object
+                        .kind
+                        .transform_definition()
+                        .is_some_and(|definition| {
+                            definition.element() == super::transform_model::ElementType::Point
+                        })
+                    {
+                        group
+                            .iter()
+                            .find(|item| matches!(item.kind, 0x07d8 | 0x232e))
+                            .map_or(record.start, |item| item.start)
+                    } else if matches!(
+                        object.kind,
+                        Kind::NumericCoordinatePoint(..)
+                            | Kind::PathValuePoint(..)
+                            | Kind::PathLiteralPoint(..)
+                            | Kind::PointOnArc(..)
+                            | Kind::CircleCircleIntersection(..)
+                            | Kind::ParameterCalculation(..)
+                            | Kind::PointRatio(..)
+                            | Kind::SegmentLength(..)
+                    ) {
+                        group
+                            .iter()
+                            .find(|record| record.kind == 0x07d8)
+                            .map_or(record.start, |font| font.start)
+                    } else {
+                        group[0].data.end + group[0].data.len() % 2
+                    };
                     edits.push((
                         insertion,
                         insertion,
@@ -695,57 +783,11 @@ impl Document {
         if ordinal != survivors.len() {
             return Err("Object group count mismatch in caption patch".into());
         }
-        edits.sort_by(|a, b| b.0.cmp(&a.0));
+        edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
         for (start, end, replacement) in edits {
             bytes.splice(start..end, replacement);
         }
         records(&bytes)?;
         Ok(bytes)
-    }
-}
-
-#[cfg(test)]
-mod caption_font_namespace_tests {
-    use super::*;
-
-    #[test]
-    fn imported_numeric_caption_font_uses_drawing_table_and_preserves_tool_bytes() {
-        let original =
-            include_bytes!("../../../../tests/fixtures/embedded_tool_scalar_created_native_verified.gsp");
-        let mut document = Document::from_bytes(original, None).unwrap();
-        let prototype = document.embedded_tool_document(0).unwrap();
-        let style = prototype.text_font_state(2).unwrap();
-        assert_eq!(style.size_code, 16);
-        assert!(!style.bold);
-        let index = document.imported_caption_font_index(&style).unwrap();
-        assert_eq!(index, 1);
-        document.objects[1].text_style_override = Some(style.clone());
-        assert_eq!(document.imported_caption_font_index(&style).unwrap(), index);
-        let output = document
-            .patch_text_font_overrides(original.to_vec())
-            .unwrap();
-        assert_eq!(
-            text_style_records::decode_font_state_at(&output, index as usize).unwrap(),
-            style
-        );
-        assert!(text_style_records::decode_font_state_at(&output, 2).is_err());
-        let tools = |bytes: &[u8]| {
-            let entries = records(bytes).unwrap();
-            let drawing = document_record_indices(&entries);
-            entries
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| !drawing.contains(index))
-                .flat_map(|(index, record)| {
-                    let end = entries
-                        .get(index + 1)
-                        .map_or(bytes.len(), |next| next.start);
-                    bytes[record.start..end].to_vec()
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(tools(original), tools(&output));
-        let reopened = Document::from_bytes(&output, None).unwrap();
-        assert_eq!(reopened.text_font_state(2), Some(style));
     }
 }

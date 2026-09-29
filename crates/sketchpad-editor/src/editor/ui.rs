@@ -42,21 +42,26 @@ impl Editor {
         }
         self.menu_ui(root);
         self.motion_controller_ui(root);
+        self.text_palette_ui(root);
         self.tools_ui(root);
         self.status_ui(root);
         let rect = self.canvas_ui(root);
         self.document_dialogs_ui(root);
+        self.preferences_dialog_ui(root);
         self.action_dialogs_ui(root);
         self.calculation_dialogs_ui(root);
+        self.properties_dialog_ui(root);
         self.function_dialogs_ui(root);
         self.plot_dialogs_ui(root);
         self.transform_dialogs_ui(root);
+        self.custom_transform_dialogs_ui(root);
         self.custom_tool_dialog_ui(root);
         let viewport = Viewport {
             rect,
             scale: self.scale,
             center: self.center,
         };
+        self.print_dialogs_ui(root, &viewport);
         if let Some(action) = self.pending_output.take() {
             self.output_page(&viewport, action);
         }

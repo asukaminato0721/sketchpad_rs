@@ -4,6 +4,9 @@ use super::{Document, Kind, Object};
 use crate::text_object::{RichTextRun, TextRect};
 
 fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) -> bool {
+    if role == ReferenceRole::SignedValue {
+        return object.kind.numeric_unit().is_some();
+    }
     if role != ReferenceRole::Value {
         return match &object.kind {
             Kind::Parameter(group) => role == ReferenceRole::Expression || !group.name().is_empty(),
@@ -131,17 +134,39 @@ pub(super) fn decode_group(
 }
 
 impl Document {
-    pub fn text_math_nodes(&self, id: usize) -> Option<Vec<super::referenced_text::ReferencedNode>> {
+    pub fn text_math_nodes(
+        &self,
+        id: usize,
+    ) -> Option<Vec<super::referenced_text::ReferencedNode>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted { return None; }
+        if object.deleted {
+            return None;
+        }
         match &object.kind {
             Kind::PlainText { .. } => self.text_rich_template(id)?.math_nodes(),
-            Kind::ReferencedText { parents, text } if text.nodes().iter().any(super::referenced_text::ReferencedNode::has_math_layout) => {
-                Some(text.resolved_nodes(|slot, role| self.referenced_source_text(*parents.get(slot - 1)?, role)))
+            Kind::ReferencedText { parents, text }
+                if text
+                    .nodes()
+                    .iter()
+                    .any(super::referenced_text::ReferencedNode::has_math_layout) =>
+            {
+                Some(text.resolved_nodes(|slot, role| {
+                    self.referenced_source_text(*parents.get(slot - 1)?, role)
+                }))
             }
-            Kind::PointReferencedText { point, source, text } if text.nodes().iter().any(super::referenced_text::ReferencedNode::has_math_layout) => {
+            Kind::PointReferencedText {
+                point,
+                source,
+                text,
+            } if text
+                .nodes()
+                .iter()
+                .any(super::referenced_text::ReferencedNode::has_math_layout) =>
+            {
                 let parents = [*point, *source];
-                Some(text.resolved_nodes(|slot, role| self.referenced_source_text(*parents.get(slot - 1)?, role)))
+                Some(text.resolved_nodes(|slot, role| {
+                    self.referenced_source_text(*parents.get(slot - 1)?, role)
+                }))
             }
             _ => None,
         }
@@ -175,6 +200,17 @@ impl Document {
         let object = self.objects.get(source.checked_sub(1)?)?;
         if object.deleted {
             return None;
+        }
+        if role == ReferenceRole::SignedValue {
+            let value = self.numeric_value(source)?;
+            if value.is_nan() {
+                return Some("undefined".into());
+            }
+            let text = self.numeric_value_text(source)?;
+            if value.is_sign_negative() {
+                return Some(format!(" − {}", text.trim_start_matches(['-', '−', '–'])));
+            }
+            return Some(format!(" + {text}"));
         }
         if matches!(
             object.kind,

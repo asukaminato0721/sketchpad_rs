@@ -1,5 +1,5 @@
 use super::kind::{
-    is_arc_kind, is_point_kind, is_straight_kind, plot_straight_mode, plot_path_accepts,
+    is_arc_kind, is_point_kind, is_straight_kind, plot_path_accepts, plot_straight_mode,
 };
 use super::transform_evaluator::TransformGeometry;
 use super::{Document, Kind, LineMode, Point};
@@ -10,18 +10,31 @@ use std::collections::BTreeSet;
 pub(super) use sketchpad_ir::affine::{reflect_point, rotate_point_about, scale_point_about};
 
 pub(super) fn polygon_path_point(vertices: &[Point], parameter: f64) -> Option<Point> {
-    if !parameter.is_finite() { return None; }
-    let lengths = vertices.iter().zip(vertices.iter().cycle().skip(1)).take(vertices.len())
-        .map(|(a, b)| a.distance(*b)).collect::<Vec<_>>();
+    if !parameter.is_finite() {
+        return None;
+    }
+    let lengths = vertices
+        .iter()
+        .zip(vertices.iter().cycle().skip(1))
+        .take(vertices.len())
+        .map(|(a, b)| a.distance(*b))
+        .collect::<Vec<_>>();
     let perimeter: f64 = lengths.iter().sum();
-    if perimeter <= 1e-9 { return None; }
+    if perimeter <= 1e-9 {
+        return None;
+    }
     let mut remaining = parameter * perimeter;
     for (edge, length) in lengths.into_iter().enumerate() {
-        if length <= 1e-9 { continue; }
+        if length <= 1e-9 {
+            continue;
+        }
         if remaining <= length {
             let (a, b) = (vertices[edge], vertices[(edge + 1) % vertices.len()]);
             let t = remaining / length;
-            return Some(Point { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+            return Some(Point {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+            });
         }
         remaining -= length;
     }
@@ -79,7 +92,7 @@ pub(super) fn intersect_straight(
     let t = cross(delta, s) / denominator;
     let u = cross(delta, r) / denominator;
     let contains = |mode: LineMode, parameter: f64| match mode {
-        LineMode::Segment => parameter >= -1e-10 && parameter <= 1. + 1e-10,
+        LineMode::Segment => (-1e-10..=1. + 1e-10).contains(&parameter),
         LineMode::Ray => parameter >= -1e-10,
         LineMode::Line => true,
     };
@@ -219,14 +232,20 @@ impl Document {
     /// Native code 95/123 retain finite values outside a straight host extent as undefined points.
     pub(super) fn undefined_transformed_ray_plot(&self, path: usize, value: f64) -> bool {
         value.is_finite()
-            && self.objects.get(path.saturating_sub(1)).is_some_and(|host| {
-                !host.deleted && match plot_straight_mode(&host.kind) {
-                    Some(LineMode::Segment) => !(0.0..=1.0).contains(&value),
-                    Some(LineMode::Ray) => value < 0.0,
-                    _ => false,
-                }
-            })
-            && self.line_points(path).is_some_and(|(start, end, _)| start != end)
+            && self
+                .objects
+                .get(path.saturating_sub(1))
+                .is_some_and(|host| {
+                    !host.deleted
+                        && match plot_straight_mode(&host.kind) {
+                            Some(LineMode::Segment) => !(0.0..=1.0).contains(&value),
+                            Some(LineMode::Ray) => value < 0.0,
+                            _ => false,
+                        }
+                })
+            && self
+                .line_points(path)
+                .is_some_and(|(start, end, _)| start != end)
     }
 
     pub(super) fn plot_arc_host_available(&self, path: usize) -> bool {
@@ -291,10 +310,16 @@ impl Document {
                 })
         };
         match host.kind {
-            Kind::Colorized(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
-                self.plot_arc_host_available(definition.source()),
-            Kind::Transformed(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
-                self.plot_arc_host_available(definition.source()),
+            Kind::Colorized(ref definition)
+                if definition.element() == super::transform_model::ElementType::Arc =>
+            {
+                self.plot_arc_host_available(definition.source())
+            }
+            Kind::Transformed(ref definition)
+                if definition.element() == super::transform_model::ElementType::Arc =>
+            {
+                self.plot_arc_host_available(definition.source())
+            }
             Kind::ThreePointArc(a, b, c) | Kind::CenterArc(a, b, c) => {
                 [a, b, c].into_iter().all(point_available)
             }
@@ -317,16 +342,31 @@ impl Document {
     /// Native three-point arcs with three distinct collinear positions form a
     /// segment only when the middle vertex is strictly between the endpoints.
     pub fn linear_three_point_arc(&self, path: usize) -> Option<(Point, Point)> {
-        if let Some(Kind::Colorized(definition)) = self.objects.get(path.checked_sub(1)?).map(|object| &object.kind) {
+        if let Some(Kind::Colorized(definition)) = self
+            .objects
+            .get(path.checked_sub(1)?)
+            .map(|object| &object.kind)
+        {
             return self.linear_three_point_arc(definition.source());
         }
         if let Some(original) = self.frozen_evaluation_document(path) {
             return original.linear_three_point_arc(path);
         }
-        if self.objects.get(path.checked_sub(1)?)?.kind.transform_definition()
-            .is_some_and(|definition| definition.element() == super::transform_model::ElementType::Arc) {
+        if self
+            .objects
+            .get(path.checked_sub(1)?)?
+            .kind
+            .transform_definition()
+            .is_some_and(|definition| {
+                definition.element() == super::transform_model::ElementType::Arc
+            })
+        {
             return match self.evaluate_transform(path).ok()? {
-                TransformGeometry::Straight { start, end, mode: LineMode::Segment } => Some((start, end)),
+                TransformGeometry::Straight {
+                    start,
+                    end,
+                    mode: LineMode::Segment,
+                } => Some((start, end)),
                 _ => None,
             };
         }
@@ -381,8 +421,9 @@ impl Document {
             }
             Kind::ArcOnCircle(..) => self.arc_geometry(path).is_none(),
             Kind::CenterArc(..) => self.arc_geometry(path).is_none(),
-            Kind::Transformed(_) if self.objects[path - 1].kind.is_arc() =>
-                self.arc_geometry(path).is_none() && self.linear_three_point_arc(path).is_none(),
+            Kind::Transformed(_) if self.objects[path - 1].kind.is_arc() => {
+                self.arc_geometry(path).is_none() && self.linear_three_point_arc(path).is_none()
+            }
             _ => false,
         }
     }
@@ -410,8 +451,17 @@ impl Document {
     }
 
     pub(super) fn undefined_native_path_plot(&self, path: usize, value: f64) -> bool {
-        if value.is_finite() && self.objects.get(path.saturating_sub(1)).is_some_and(|o|
-            matches!(o.kind, Kind::SampledMapped(_)) && super::curve_points::supported(&self.objects, path, o.page, self.objects.len() + 1)) {
+        if value.is_finite()
+            && self.objects.get(path.saturating_sub(1)).is_some_and(|o| {
+                matches!(o.kind, Kind::SampledMapped(_))
+                    && super::curve_points::supported(
+                        &self.objects,
+                        path,
+                        o.page,
+                        self.objects.len() + 1,
+                    )
+            })
+        {
             return self.plotted_curve_position(path, value).is_none();
         }
 
@@ -419,7 +469,11 @@ impl Document {
     }
 
     pub(super) fn undefined_three_point_arc(&self, path: usize) -> bool {
-        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+        if let Some(Kind::Colorized(definition)) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .map(|object| &object.kind)
+        {
             return self.undefined_three_point_arc(definition.source());
         }
         self.objects
@@ -429,7 +483,11 @@ impl Document {
     }
 
     pub(super) fn undefined_center_arc(&self, path: usize) -> bool {
-        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+        if let Some(Kind::Colorized(definition)) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .map(|object| &object.kind)
+        {
             return self.undefined_center_arc(definition.source());
         }
         self.objects
@@ -439,24 +497,48 @@ impl Document {
     }
 
     pub(super) fn undefined_arc_on_circle(&self, path: usize) -> bool {
-        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+        if let Some(Kind::Colorized(definition)) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .map(|object| &object.kind)
+        {
             return self.undefined_arc_on_circle(definition.source());
         }
-        let Some(host) = path.checked_sub(1).and_then(|index| self.objects.get(index)) else { return false; };
-        let Kind::ArcOnCircle(circle, start, end) = host.kind else { return false; };
+        let Some(host) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+        else {
+            return false;
+        };
+        let Kind::ArcOnCircle(circle, start, end) = host.kind else {
+            return false;
+        };
         !host.deleted
-            && [circle, start, end].into_iter().all(|id| id < path && self.objects.get(id.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == host.page))
+            && [circle, start, end].into_iter().all(|id| {
+                id < path
+                    && self
+                        .objects
+                        .get(id.saturating_sub(1))
+                        .is_some_and(|source| !source.deleted && source.page == host.page)
+            })
             && self.objects[circle - 1].kind.is_circle()
-            && [start, end].into_iter().all(|id| is_point_kind(&self.objects[id - 1].kind))
+            && [start, end]
+                .into_iter()
+                .all(|id| is_point_kind(&self.objects[id - 1].kind))
             && self.arc_geometry(path).is_none()
     }
 
     pub(super) fn undefined_transformed_arc(&self, path: usize) -> bool {
-        if let Some(Kind::Colorized(definition)) = path.checked_sub(1).and_then(|index| self.objects.get(index)).map(|object| &object.kind) {
+        if let Some(Kind::Colorized(definition)) = path
+            .checked_sub(1)
+            .and_then(|index| self.objects.get(index))
+            .map(|object| &object.kind)
+        {
             return self.undefined_transformed_arc(definition.source());
         }
-        self.objects.get(path.saturating_sub(1)).is_some_and(|host|
-            host.kind.is_arc() && host.kind.transform_definition().is_some())
+        self.objects
+            .get(path.saturating_sub(1))
+            .is_some_and(|host| host.kind.is_arc() && host.kind.transform_definition().is_some())
             && self.undefined_arc_plot(path, 0.5)
     }
 
@@ -541,8 +623,11 @@ impl Document {
                 return point;
             }
             let p = match &object.kind {
-                Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Point =>
-                    go(d, definition.source(), seen),
+                Kind::Colorized(definition)
+                    if definition.element() == super::transform_model::ElementType::Point =>
+                {
+                    go(d, definition.source(), seen)
+                }
                 Kind::Free(p) => Some(*p),
                 Kind::GraphHorizontalUnit(origin, step) => {
                     let origin = go(d, *origin, seen)?;
@@ -605,7 +690,10 @@ impl Document {
                     })
                 }
                 Kind::PathLiteralPoint(path, t) => {
-                    if matches!(d.objects.get(path.checked_sub(1)?)?.kind, Kind::SampledMapped(_)) {
+                    if matches!(
+                        d.objects.get(path.checked_sub(1)?)?.kind,
+                        Kind::SampledMapped(_)
+                    ) {
                         d.plotted_curve_position(*path, *t)
                     } else if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
                         d.point_at_polygon_parameter(*path, *t)
@@ -615,11 +703,18 @@ impl Document {
                 }
                 Kind::PathValuePoint(source, path) => {
                     let scalar = d.objects.get(source.checked_sub(1)?)?;
-                    if scalar.deleted || scalar.page != object.page || *source >= object.id
-                        || scalar.kind.numeric_unit() != Some(crate::table_records::NumericUnit::Scalar) { return None; }
+                    if scalar.deleted
+                        || scalar.page != object.page
+                        || *source >= object.id
+                        || scalar.kind.numeric_unit()
+                            != Some(crate::table_records::NumericUnit::Scalar)
+                    {
+                        return None;
+                    }
                     let value = d.numeric_value(*source)?;
-                    if super::curve_points::supported(&d.objects, *path, object.page, object.id) { d.plotted_curve_position(*path, value) }
-                    else if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
+                    if super::curve_points::supported(&d.objects, *path, object.page, object.id) {
+                        d.plotted_curve_position(*path, value)
+                    } else if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {
                         d.point_at_polygon_parameter(*path, value)
                     } else {
                         on_path(d, *path, value, seen)
@@ -670,8 +765,17 @@ impl Document {
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnSector(host, t) => d.point_on_sector(*host, *t),
                 Kind::PointOnCurve(host, t) => {
-                    if super::curve_points::free_supported(&d.objects, *host, object.page, object.id) { d.point_on_curve(*host, *t) } else { None }
-                },
+                    if super::curve_points::free_supported(
+                        &d.objects,
+                        *host,
+                        object.page,
+                        object.id,
+                    ) {
+                        d.point_on_curve(*host, *t)
+                    } else {
+                        None
+                    }
+                }
                 Kind::PointOnPolygon(host, edge, t) => d.point_on_polygon(*host, *edge, *t),
                 Kind::IterationPointAlias(_) => d.iteration_endpoint(id),
                 Kind::Midpoint(a, b) => {
@@ -701,7 +805,9 @@ impl Document {
                     let second = d.line_points(*b)?;
                     intersect_straight(first, second)
                 }
-                Kind::CurveIntersection(carrier, curve, branch) => d.curve_intersection_position(*carrier, *curve, *branch),
+                Kind::CurveIntersection(carrier, curve, branch) => {
+                    d.curve_intersection_position(*carrier, *curve, *branch)
+                }
                 Kind::BoundaryIntersection(a, b) => d.boundary_intersection(*a, *b),
                 Kind::LineCircleIntersection(a, b, variant) => {
                     d.straight_round_intersection(*a, *b, *variant)
@@ -766,50 +872,114 @@ impl Document {
 
     // Membership uses the actual sweep, never a clamped path projection.
     pub(super) fn circular_arc_contains(&self, arc: usize, point: Point) -> bool {
-        let Some((center, _, start, sweep, clockwise_y)) = self.arc_geometry(arc) else { return false; };
-        let angle = (if clockwise_y { center.y - point.y } else { point.y - center.y }).atan2(point.x - center.x);
-        let mut progress = if sweep >= 0. { (angle - start).rem_euclid(std::f64::consts::TAU) } else { (start - angle).rem_euclid(std::f64::consts::TAU) };
-        if std::f64::consts::TAU - progress <= 1e-10 { progress = 0.; }
+        let Some((center, _, start, sweep, clockwise_y)) = self.arc_geometry(arc) else {
+            return false;
+        };
+        let angle = (if clockwise_y {
+            center.y - point.y
+        } else {
+            point.y - center.y
+        })
+        .atan2(point.x - center.x);
+        let mut progress = if sweep >= 0. {
+            (angle - start).rem_euclid(std::f64::consts::TAU)
+        } else {
+            (start - angle).rem_euclid(std::f64::consts::TAU)
+        };
+        if std::f64::consts::TAU - progress <= 1e-10 {
+            progress = 0.;
+        }
         progress <= sweep.abs() + 1e-10
     }
 
-    fn round_round_intersection(&self, first: usize, second: usize, variant: usize) -> Option<Point> {
-        if variant > 1 { return None; }
+    fn round_round_intersection(
+        &self,
+        first: usize,
+        second: usize,
+        variant: usize,
+    ) -> Option<Point> {
+        if variant > 1 {
+            return None;
+        }
         let a = self.objects.get(first.checked_sub(1)?)?;
         let b = self.objects.get(second.checked_sub(1)?)?;
-        if a.deleted || b.deleted { return None; }
+        if a.deleted || b.deleted {
+            return None;
+        }
         if a.kind.is_circle() && b.kind.is_circle() {
-            return circle_circle_intersection(self.circle_points(first)?, self.circle_points(second)?, variant);
+            return circle_circle_intersection(
+                self.circle_points(first)?,
+                self.circle_points(second)?,
+                variant,
+            );
         }
         let frame = |id, kind: &Kind| {
-            if kind.is_circle() { self.circle_points(id) }
-            else if is_arc_kind(kind) { self.arc_geometry(id).map(|(center, radius, _, _, _)| (center, radius)) }
-            else { None }
+            if kind.is_circle() {
+                self.circle_points(id)
+            } else if is_arc_kind(kind) {
+                self.arc_geometry(id)
+                    .map(|(center, radius, _, _, _)| (center, radius))
+            } else {
+                None
+            }
         };
         let first_linear = self.linear_three_point_arc(first);
         let second_linear = self.linear_three_point_arc(second);
         if let (Some((a, b)), Some((c, d))) = (first_linear, second_linear) {
             return intersect_straight((a, b, LineMode::Segment), (c, d, LineMode::Segment));
         }
-        if let Some((start, end)) = first_linear.or(second_linear) {
-            let round = if first_linear.is_some() { second } else { first };
-            let kind = if first_linear.is_some() { &b.kind } else { &a.kind };
+        let mut hits = if let Some((start, end)) = first_linear.or(second_linear) {
+            let round = if first_linear.is_some() {
+                second
+            } else {
+                first
+            };
+            let kind = if first_linear.is_some() {
+                &b.kind
+            } else {
+                &a.kind
+            };
             let circle = frame(round, kind)?;
-            let mut hits: Vec<_> = (0..2)
-                .filter_map(|root| line_circle_intersection((start, end, LineMode::Segment), circle, root))
+            (0..2)
+                .filter_map(|root| {
+                    line_circle_intersection((start, end, LineMode::Segment), circle, root)
+                })
                 .filter(|point| !is_arc_kind(kind) || self.circular_arc_contains(round, *point))
-                .collect();
-            // Native 13/14 use the first linear arc's direction. When the
-            // linear arc is second, the ordered operand roles reverse them.
-            if first_linear.is_none() { hits.reverse(); }
-            return match hits.as_slice() { [point] => Some(*point), [_, _] => hits.get(variant).copied(), _ => None };
+                .collect::<Vec<_>>()
+        } else {
+            let first_frame = frame(first, &a.kind)?;
+            let second_frame = frame(second, &b.kind)?;
+            (0..2)
+                .filter_map(|root| circle_circle_intersection(first_frame, second_frame, root))
+                .filter(|point| {
+                    (!is_arc_kind(&a.kind) || self.circular_arc_contains(first, *point))
+                        && (!is_arc_kind(&b.kind) || self.circular_arc_contains(second, *point))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // Native code 13 is the first surviving hit along the second arc.
+        // If only the first operand is an arc, its traversal is reversed.
+        // Code 14 is the second hit. A sole hit remains valid for either code.
+        let (ordering_arc, reverse) = if is_arc_kind(&b.kind) {
+            (second, false)
+        } else {
+            (first, true)
+        };
+        hits.sort_by(|left, right| {
+            self.arc_parameter(ordering_arc, *left)
+                .unwrap_or_default()
+                .total_cmp(&self.arc_parameter(ordering_arc, *right).unwrap_or_default())
+        });
+        if reverse {
+            hits.reverse();
         }
-        let first_frame = frame(first, &a.kind)?;
-        let second_frame = frame(second, &b.kind)?;
-        let hits: Vec<_> = (0..2).filter_map(|root| circle_circle_intersection(first_frame, second_frame, root))
-            .filter(|point| (!is_arc_kind(&a.kind) || self.circular_arc_contains(first, *point))
-                && (!is_arc_kind(&b.kind) || self.circular_arc_contains(second, *point))).collect();
-        match hits.as_slice() { [point] => Some(*point), [_, _] => hits.get(variant).copied(), _ => None }
+        hits.dedup_by(|left, right| left.distance(*right) <= 1e-9);
+        match hits.as_slice() {
+            [point] => Some(*point),
+            [first, second] => Some(if variant == 1 { *first } else { *second }),
+            _ => None,
+        }
     }
 
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
@@ -827,8 +997,11 @@ impl Document {
             };
         }
         match &object.kind {
-            Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Polygon =>
-                self.polygon_points(definition.source()),
+            Kind::Colorized(definition)
+                if definition.element() == super::transform_model::ElementType::Polygon =>
+            {
+                self.polygon_points(definition.source())
+            }
             Kind::Polygon(vertices) => vertices
                 .iter()
                 .map(|&vertex| self.position(vertex))
@@ -853,7 +1026,9 @@ impl Document {
                 return None;
             }
             if object.kind.transform_definition().is_some() {
-                if object.kind.is_arc() { return None; }
+                if object.kind.is_arc() {
+                    return None;
+                }
                 let straight = match d.evaluate_transform(id).ok()? {
                     TransformGeometry::Straight { start, end, mode } => Some((start, end, mode)),
                     _ => None,
@@ -862,8 +1037,16 @@ impl Document {
                 return straight;
             }
             let result = match object.kind {
-                Kind::Colorized(ref definition) if matches!(definition.element(), super::transform_model::ElementType::Segment | super::transform_model::ElementType::Ray | super::transform_model::ElementType::Line) =>
-                    go(d, definition.source(), seen),
+                Kind::Colorized(ref definition)
+                    if matches!(
+                        definition.element(),
+                        super::transform_model::ElementType::Segment
+                            | super::transform_model::ElementType::Ray
+                            | super::transform_model::ElementType::Line
+                    ) =>
+                {
+                    go(d, definition.source(), seen)
+                }
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
                 Kind::CircleAxis(circle, axis @ (0 | 1)) => {
@@ -982,7 +1165,8 @@ impl Document {
         }
         if let Kind::Colorized(definition) = &object.kind {
             return (definition.element() == super::transform_model::ElementType::Circle)
-                .then(|| self.circle_points(definition.source())).flatten();
+                .then(|| self.circle_points(definition.source()))
+                .flatten();
         }
         if object.kind.transform_definition().is_some() {
             return match self.evaluate_transform(id).ok()? {
@@ -1001,7 +1185,9 @@ impl Document {
             Kind::CircleBySegment(center, radius_source) => {
                 let source = &self.objects.get(radius_source.checked_sub(1)?)?.kind;
                 let radius = if source.is_segment() {
-                    let (a, b, LineMode::Segment) = self.line_points(radius_source)? else { return None; };
+                    let (a, b, LineMode::Segment) = self.line_points(radius_source)? else {
+                        return None;
+                    };
                     a.distance(b)
                 } else {
                     self.distance_value_pixels(radius_source)?
@@ -1026,12 +1212,20 @@ impl Document {
             return None;
         }
         let geometry = match self.objects.get(id.checked_sub(1)?)?.kind {
-            Kind::Colorized(ref definition) if definition.element() == super::transform_model::ElementType::Arc =>
-                return self.arc_geometry(definition.source()),
+            Kind::Colorized(ref definition)
+                if definition.element() == super::transform_model::ElementType::Arc =>
+            {
+                return self.arc_geometry(definition.source());
+            }
             Kind::Transformed(_) if is_arc_kind(&self.objects[id - 1].kind) => {
                 match self.evaluate_transform(id).ok()? {
-                    TransformGeometry::Arc { center, radius, start, sweep, clockwise_y } =>
-                        (center, radius, start, sweep, clockwise_y),
+                    TransformGeometry::Arc {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                        clockwise_y,
+                    } => (center, radius, start, sweep, clockwise_y),
                     _ => return None,
                 }
             }
@@ -1072,14 +1266,19 @@ impl Document {
                 let end_point = self.position(end)?;
                 let radius = center.distance(start_point);
                 let end_radius = center.distance(end_point);
-                if !radius.is_finite() || radius <= 0.
-                    || !end_radius.is_finite() || end_radius <= 0. {
+                if !radius.is_finite()
+                    || radius <= 0.
+                    || !end_radius.is_finite()
+                    || end_radius <= 0.
+                {
                     return None;
                 }
                 let a = (center.y - start_point.y).atan2(start_point.x - center.x);
                 let b = (center.y - end_point.y).atan2(end_point.x - center.x);
                 let sweep = (b - a).rem_euclid(std::f64::consts::TAU);
-                if !sweep.is_finite() || sweep == 0. { return None; }
+                if !sweep.is_finite() || sweep == 0. {
+                    return None;
+                }
                 (center, radius, a, sweep, true)
             }
             _ => return None,
@@ -1253,12 +1452,16 @@ impl Document {
             }
             Some(Kind::PointOnCurve(host, _)) => {
                 let host = *host;
-                let Some(t) = self.curve_parameter(host, p) else { return false; };
+                let Some(t) = self.curve_parameter(host, p) else {
+                    return false;
+                };
                 Kind::PointOnCurve(host, t)
             }
             Some(Kind::PointOnSector(host, _)) => {
                 let host = *host;
-                let Some(t) = self.sector_boundary_projection(host, p) else { return false; };
+                let Some(t) = self.sector_boundary_projection(host, p) else {
+                    return false;
+                };
                 Kind::PointOnSector(host, t)
             }
             Some(Kind::PointOnArc(host, _)) => {
@@ -1332,16 +1535,32 @@ impl Document {
 
     /// Native axis constraints parameterize a fixed 200-pixel span centered
     /// on the origin. Coordinate unit vectors still govern equations and plots.
-    pub(super) fn point_constraint_line_points(&self, host: usize) -> Option<(Point, Point, LineMode)> {
+    pub(super) fn point_constraint_line_points(
+        &self,
+        host: usize,
+    ) -> Option<(Point, Point, LineMode)> {
         let (center, horizontal) = match &self.objects.get(host.checked_sub(1)?)?.kind {
             Kind::GraphAxis(origin, _, axis @ (0 | 1 | 0x1_0001))
-                | Kind::DistanceAxis(origin, _, axis @ (0 | 1)) => (self.position(*origin)?, *axis != 0),
-            Kind::CircleAxis(circle, axis @ (0 | 1)) => (self.circle_points(*circle)?.0, *axis != 0),
+            | Kind::DistanceAxis(origin, _, axis @ (0 | 1)) => {
+                (self.position(*origin)?, *axis != 0)
+            }
+            Kind::CircleAxis(circle, axis @ (0 | 1)) => {
+                (self.circle_points(*circle)?.0, *axis != 0)
+            }
             _ => return self.line_points(host),
         };
         let (dx, dy) = if horizontal { (100., 0.) } else { (0., 100.) };
-        Some((Point { x: center.x-dx, y: center.y-dy },
-              Point { x: center.x+dx, y: center.y+dy }, LineMode::Line))
+        Some((
+            Point {
+                x: center.x - dx,
+                y: center.y - dy,
+            },
+            Point {
+                x: center.x + dx,
+                y: center.y + dy,
+            },
+            LineMode::Line,
+        ))
     }
     pub fn constrained_point(&self, host: usize, p: Point) -> Option<Kind> {
         match self.objects.get(host.checked_sub(1)?)?.kind {
@@ -1367,14 +1586,27 @@ impl Document {
                 let length = dx.hypot(dy);
                 (length > 1e-9).then_some(Kind::PointOnCircle(host, dx / length, -dy / length))
             }
-            Kind::SectorBoundary(_) => self.sector_boundary_projection(host, p).map(|t| Kind::PointOnSector(host, t)),
+            Kind::SectorBoundary(_) => self
+                .sector_boundary_projection(host, p)
+                .map(|t| Kind::PointOnSector(host, t)),
             ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),
             ref kind if kind.is_arc() => self
                 .arc_parameter(host, p)
                 .map(|t| Kind::PointOnArc(host, t)),
-            ref kind if matches!(kind, Kind::Locus(..) | Kind::ParameterLocus(..) | Kind::FunctionPlot(..) | Kind::SampledMapped(_)) => self.curve_parameter(host, p).map(|t| Kind::PointOnCurve(host, t)),
+            ref kind
+                if matches!(
+                    kind,
+                    Kind::Locus(..)
+                        | Kind::ParameterLocus(..)
+                        | Kind::FunctionPlot(..)
+                        | Kind::SampledMapped(_)
+                ) =>
+            {
+                self.curve_parameter(host, p)
+                    .map(|t| Kind::PointOnCurve(host, t))
+            }
             _ => None,
         }
     }

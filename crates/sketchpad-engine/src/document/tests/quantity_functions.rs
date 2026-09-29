@@ -53,7 +53,8 @@ fn native_measurement_functions_import_update_and_keep_quantity_units() {
 
 #[test]
 fn rounded_quantities_drive_marked_distance_angle_and_live_depth() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/quantity_functions_iteration_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/quantity_functions_iteration_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -159,7 +160,8 @@ fn quantity_log_domains_suppress_depth_and_recover_typed_distances() {
 fn native_source_exponents_discard_units_and_follow_parameter_edits() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/source_exponent_area_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/source_exponent_quantities_native.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/source_exponent_quantities_native.gsp")
+            .as_slice(),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -199,7 +201,8 @@ fn native_source_exponents_discard_units_and_follow_parameter_edits() {
 
 #[test]
 fn native_exponent_syntax_controls_units_without_changing_values() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/dimensional_exponent_forms_native.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/dimensional_exponent_forms_native.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -341,19 +344,21 @@ fn native_dimensional_roots_and_generic_quantity_headers_roundtrip() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/area_square_root_native.gsp").as_slice(),
         include_bytes!("../../../../../tests/fixtures/area_fractional_power_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/dimensional_roots_powers_native.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/dimensional_roots_powers_native.gsp")
+            .as_slice(),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
         assert_eq!(doc.encode().unwrap(), bytes);
         let area = doc.numeric_value(4).unwrap();
         let cases = if doc.objects.len() == 5 {
-            let unit =
-                if bytes == include_bytes!("../../../../../tests/fixtures/area_square_root_native.gsp") {
-                    NumericUnit::Length
-                } else {
-                    NumericUnit::Scalar
-                };
+            let unit = if bytes
+                == include_bytes!("../../../../../tests/fixtures/area_square_root_native.gsp")
+            {
+                NumericUnit::Length
+            } else {
+                NumericUnit::Scalar
+            };
             vec![(5, area.sqrt(), unit)]
         } else {
             vec![
@@ -455,11 +460,13 @@ fn dimensional_root_chains_follow_edits_and_undefined_sources() {
 fn higher_unit_calculations_preserve_units_on_copy_and_page_copy() {
     for (bytes, ids) in [
         (
-            include_bytes!("../../../../../tests/fixtures/dimensional_roots_chain_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/dimensional_roots_chain_port.gsp")
+                .as_slice(),
             vec![8, 9, 10],
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/dimensional_roots_units_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/dimensional_roots_units_port.gsp")
+                .as_slice(),
             vec![7, 8, 9],
         ),
     ] {
@@ -496,7 +503,8 @@ fn higher_unit_calculations_preserve_units_on_copy_and_page_copy() {
 
 #[test]
 fn dimensional_roots_supply_marked_distance_and_live_iteration_depth() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/dimensional_roots_iteration_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/dimensional_roots_iteration_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);

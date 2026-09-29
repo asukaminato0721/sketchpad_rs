@@ -5,14 +5,31 @@ use sketchpad_engine::value_equation_records::ValueEquationKind;
 
 impl Editor {
     pub(super) fn attach_numeric_label_selected(&mut self) {
-        let point = self.doc.selected.iter().copied().find(|id| self.doc.position(*id).is_some());
-        let value = self.doc.selected.iter().copied().find(|id| self.doc.numeric_value(*id).is_some());
+        let point = self
+            .doc
+            .selected
+            .iter()
+            .copied()
+            .find(|id| self.doc.position(*id).is_some());
+        let value = self
+            .doc
+            .selected
+            .iter()
+            .copied()
+            .find(|id| self.doc.numeric_value(*id).is_some());
         let result = if self.doc.selected.len() == 2 {
-            point.zip(value).ok_or_else(|| "Select one point and one numeric value".to_string())
+            point
+                .zip(value)
+                .ok_or_else(|| "Select one point and one numeric value".to_string())
                 .and_then(|(point, value)| self.doc.add_point_numeric_label(point, value))
-        } else { Err("Select one point and one numeric value".into()) };
+        } else {
+            Err("Select one point and one numeric value".into())
+        };
         match result {
-            Ok(id) => { self.select_only(id); self.status = format!("Created attached numeric label {id}"); }
+            Ok(id) => {
+                self.select_only(id);
+                self.status = format!("Created attached numeric label {id}");
+            }
             Err(error) => self.status = error,
         }
     }
@@ -447,7 +464,9 @@ impl Editor {
             }
             (CircleMeasure::Radius, Some(_)) if is_circle => (Kind::CircleRadius(host), "radius"),
             (CircleMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
-            (CircleMeasure::Area, Some(kind)) if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) => {
+            (CircleMeasure::Area, Some(kind))
+                if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) =>
+            {
                 (Kind::PolygonArea(host), "area")
             }
             _ => {

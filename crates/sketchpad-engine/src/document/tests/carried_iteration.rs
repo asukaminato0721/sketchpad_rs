@@ -95,8 +95,9 @@ fn carried_circle_iteration_native_fixture_and_movement() {
 
 #[test]
 fn multiple_source_native_import_changes_copy_and_delete() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/calculation_multi_scalar_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/calculation_multi_scalar_native_verified.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);

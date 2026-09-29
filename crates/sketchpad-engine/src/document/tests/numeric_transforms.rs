@@ -4,7 +4,8 @@ use super::*;
 fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
     for (native_bytes, bytes, edited, image, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_point_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_point_native.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_ratio_point_port.gsp").as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_ratio_point_edited_port.gsp")
                 .as_slice(),
@@ -12,24 +13,30 @@ fn numeric_ratio_shapes_match_native_and_track_signed_parameter_edits() {
             Kind::CalculatedRatioScaledPoint(3, 2, 1),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_segment_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_segment_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_segment_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_segment_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_ratio_segment_edited_port.gsp")
                 .as_slice(),
             7,
             Kind::CalculatedRatioScaledSegment(6, 2, 1),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_circle_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_circle_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_circle_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_circle_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_ratio_circle_edited_port.gsp")
                 .as_slice(),
             7,
             Kind::CalculatedRatioScaledCircle(6, 2, 1),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_polygon_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_ratio_polygon_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_polygon_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_ratio_polygon_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_ratio_polygon_edited_port.gsp")
                 .as_slice(),
             7,
@@ -253,8 +260,14 @@ fn measured_numeric_ratio_is_pinned_and_undefined_calculations_recover() {
     let count = doc.objects.len();
     let scaled = doc.add_calculated_ratio_dilation(1, 2, degrees).unwrap();
     assert_eq!(doc.objects.len(), count + 1);
-    assert!((doc.position(scaled).unwrap().distance(doc.position(2).unwrap())
-        - 30. * doc.position(1).unwrap().distance(doc.position(2).unwrap())).abs() < 1e-8);
+    assert!(
+        (doc.position(scaled)
+            .unwrap()
+            .distance(doc.position(2).unwrap())
+            - 30. * doc.position(1).unwrap().distance(doc.position(2).unwrap()))
+        .abs()
+            < 1e-8
+    );
     assert!(
         !Document::from_bytes(&doc.encode().unwrap(), None)
             .unwrap()
@@ -266,22 +279,28 @@ fn measured_numeric_ratio_is_pinned_and_undefined_calculations_recover() {
 fn numeric_angle_shapes_match_native_records_and_follow_edits() {
     for (native_bytes, bytes, edited, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_segment_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_segment_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_segment_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_segment_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_angle_segment_edited_port.gsp")
                 .as_slice(),
             Kind::CalculatedAngleRotatedSegment(9, 1, 5),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_circle_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_circle_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_circle_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_circle_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_angle_circle_edited_port.gsp")
                 .as_slice(),
             Kind::CalculatedAngleRotatedCircle(9, 1, 5),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_polygon_native.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/numeric_angle_polygon_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_polygon_native.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_angle_polygon_port.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/numeric_angle_polygon_edited_port.gsp")
                 .as_slice(),
             Kind::CalculatedAngleRotatedPolygon(9, 1, 5),
@@ -446,14 +465,16 @@ fn calculated_angles_rotate_shapes_and_undefined_sources_recover() {
         );
         let scalar = doc.add_calculation_expression("2", (10, 120)).unwrap();
         let count = doc.objects.len();
-        doc.add_calculated_angle_rotation(source, 1, scalar).unwrap();
+        doc.add_calculated_angle_rotation(source, 1, scalar)
+            .unwrap();
         assert_eq!(doc.objects.len(), count + 1);
     }
 }
 
 #[test]
 fn measured_angles_drive_rotation_and_iteration_without_intermediate_calculation() {
-    let native_bytes = include_bytes!("../../../../../tests/fixtures/measured_angle_rotation_native.gsp");
+    let native_bytes =
+        include_bytes!("../../../../../tests/fixtures/measured_angle_rotation_native.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -461,7 +482,8 @@ fn measured_angles_drive_rotation_and_iteration_without_intermediate_calculation
         native.objects[6].kind,
         Kind::CalculatedAngleRotatedPoint(1, 2, 6)
     );
-    let bytes = include_bytes!("../../../../../tests/fixtures/measured_angle_segment_iteration_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/measured_angle_segment_iteration_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -499,7 +521,9 @@ fn measured_angles_drive_rotation_and_iteration_without_intermediate_calculation
     doc.move_point(5, Point { x: 150., y: 110. });
     assert_eq!(
         doc.encode().unwrap(),
-        include_bytes!("../../../../../tests/fixtures/measured_angle_segment_iteration_edited_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/measured_angle_segment_iteration_edited_port.gsp"
+        )
     );
     assert_eq!(doc.numeric_value(6), Some(135.));
     assert!(doc.point_iteration_images(9).unwrap()[0].distance(Point { x: 160., y: 240. }) < 1e-10);
@@ -534,8 +558,9 @@ fn measured_angles_drive_rotation_and_iteration_without_intermediate_calculation
 
 #[test]
 fn measured_arc_angle_is_pinned_during_circle_iteration_and_tracks_edits() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/measured_arc_angle_circle_iteration_port.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/measured_arc_angle_circle_iteration_port.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -577,11 +602,13 @@ fn calculated_transforms_accept_live_transformed_segment_and_circle_sources() {
     for (name, bytes) in [
         (
             "segment",
-            include_bytes!("../../../../../tests/fixtures/vector_rotated_segment_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/vector_rotated_segment_native.gsp")
+                .as_slice(),
         ),
         (
             "circle",
-            include_bytes!("../../../../../tests/fixtures/vector_rotated_circle_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/vector_rotated_circle_native.gsp")
+                .as_slice(),
         ),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();

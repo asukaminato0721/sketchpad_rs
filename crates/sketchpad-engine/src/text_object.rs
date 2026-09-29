@@ -12,14 +12,26 @@ const OBJECT_HEADER: [u8; 28] = [
 /// Native symbol-font tokens, shared by literal and live captions.
 pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
     Some(match code {
+        0x5c => "∴",
+        0x5e => "⊥",
         0x70 => "π",
+        0x71 => "θ",
         0x7e => "∼",
+        0xa3 => "≤",
+        0xa5 => "∞",
+        0xae => "→",
         0xb0 => "°",
+        0xb1 => "±",
+        0xb7 => "•",
+        0xb8 => "÷",
+        0xbb => "≈",
         0xd0 => "∠",
         0xd7 => "*",
         0xde => "⇒",
+        0xf2 => "∫",
+        0x100 => "⊙",
         0x102 => "△",
-        0x103 => "·",
+        0x103 => "−",
         _ => return None,
     })
 }
@@ -55,7 +67,8 @@ impl RichRunStyle {
         )
     }
     pub fn rgb_color(self) -> Option<[u8; 3]> {
-        self.rgb.filter(|channels| channels.iter().all(|value| (1..=256).contains(value)))
+        self.rgb
+            .filter(|channels| channels.iter().all(|value| (1..=256).contains(value)))
             .map(|channels| channels.map(|value| (value - 1) as u8))
     }
 }
@@ -82,8 +95,11 @@ impl RichTextTemplate {
     }
 
     pub fn math_nodes(&self) -> Option<Vec<crate::document::referenced_text::ReferencedNode>> {
-        let text = crate::document::referenced_text::ReferencedText::from_rich(&self.rich, 0).ok()?;
-        text.nodes().iter().any(crate::document::referenced_text::ReferencedNode::has_math_layout)
+        let text =
+            crate::document::referenced_text::ReferencedText::from_rich(&self.rich, 0).ok()?;
+        text.nodes()
+            .iter()
+            .any(crate::document::referenced_text::ReferencedNode::has_math_layout)
             .then(|| text.nodes().to_vec())
     }
 
@@ -122,7 +138,10 @@ pub fn encode_rich_runs(
             markup.extend_from_slice(b"<H");
         }
         for run in row {
-            let font_style = RichRunStyle { superscript_depth: 0, ..run.style };
+            let font_style = RichRunStyle {
+                superscript_depth: 0,
+                ..run.style
+            };
             for _ in 0..run.style.superscript_depth {
                 markup.extend_from_slice(b"<+<0>");
             }
@@ -141,7 +160,10 @@ pub fn encode_rich_runs(
                     markup.extend_from_slice(format!("+{level:X}").as_bytes());
                 }
                 if let Some([red, green, blue]) = run.style.rgb {
-                    if ![red, green, blue].iter().all(|channel| (1..=256).contains(channel)) {
+                    if ![red, green, blue]
+                        .iter()
+                        .all(|channel| (1..=256).contains(channel))
+                    {
                         return Err("Unsupported rich-text color channel".into());
                     }
                     markup.extend_from_slice(format!("R{red:X}G{green:X}L{blue:X}").as_bytes());
@@ -166,7 +188,10 @@ pub fn encode_rich_runs(
             if font_style != RichRunStyle::default() {
                 markup.push(b'>');
             }
-            markup.extend(std::iter::repeat_n(b'>', usize::from(run.style.superscript_depth)));
+            markup.extend(std::iter::repeat_n(
+                b'>',
+                usize::from(run.style.superscript_depth),
+            ));
         }
         if horizontal {
             markup.push(b'>');
@@ -388,7 +413,10 @@ impl MarkupParser<'_> {
         let rest = &self.markup[self.pos..];
         if rest.starts_with(b"<0>") {
             self.pos += 3;
-            return Ok(vec![vec![RichTextRun { text: String::new(), style }]]);
+            return Ok(vec![vec![RichTextRun {
+                text: String::new(),
+                style,
+            }]]);
         }
         if rest.starts_with(b"<+") {
             self.pos += 2;
@@ -401,18 +429,27 @@ impl MarkupParser<'_> {
             }
             self.pos += 1;
             self.depth -= 1;
-            base.last_mut().unwrap().extend(exponent.into_iter().flatten());
+            base.last_mut()
+                .unwrap()
+                .extend(exponent.into_iter().flatten());
             return Ok(base);
         }
         if rest.starts_with(b"<!") {
-            let end = rest.iter().position(|byte| *byte == b'>')
+            let end = rest
+                .iter()
+                .position(|byte| *byte == b'>')
                 .ok_or("Unterminated rich-text symbol")?;
             let code = usize::from_str_radix(
-                std::str::from_utf8(&rest[2..end]).map_err(|_| "Invalid rich-text symbol")?, 16,
-            ).map_err(|_| "Invalid rich-text symbol")?;
+                std::str::from_utf8(&rest[2..end]).map_err(|_| "Invalid rich-text symbol")?,
+                16,
+            )
+            .map_err(|_| "Invalid rich-text symbol")?;
             let text = markup_symbol(code).ok_or("Unsupported rich-text symbol")?;
             self.pos += end + 1;
-            return Ok(vec![vec![RichTextRun { text: text.into(), style }]]);
+            return Ok(vec![vec![RichTextRun {
+                text: text.into(),
+                style,
+            }]]);
         }
         if rest.starts_with(b"<T") {
             self.pos += 2;
@@ -482,10 +519,16 @@ impl MarkupParser<'_> {
                     match attribute {
                         b'#' if (8..=512).contains(&value) => style.size_code = Some(value),
                         b'P' => style.family_index = Some(value),
-                        b'+' => style.script_size = Some(u8::try_from(value)
-                            .map_err(|_| "Invalid script-size level")?),
+                        b'+' => {
+                            style.script_size =
+                                Some(u8::try_from(value).map_err(|_| "Invalid script-size level")?)
+                        }
                         b'R' | b'G' | b'L' if (1..=256).contains(&value) => {
-                            let index = match attribute { b'R' => 0, b'G' => 1, _ => 2 };
+                            let index = match attribute {
+                                b'R' => 0,
+                                b'G' => 1,
+                                _ => 2,
+                            };
                             if index != next_channel {
                                 return Err("Unsupported rich-text color channel order".into());
                             }
@@ -559,11 +602,25 @@ pub fn decode_rich_text(
     let lines = match parser.sequence(true, RichRunStyle::default()) {
         Ok(lines) if parser.pos == markup.len() => lines,
         _ => crate::document::referenced_text::ReferencedText::from_rich(rich, 0)?
-            .evaluate(|_, _| None).into_iter().map(|row| row.into_iter().map(|run| {
-                let mut style = run.style.font;
-                if let (Some(r), Some(g), Some(b)) = (run.style.red, run.style.green, run.style.blue) { style.rgb = Some([r,g,b]); }
-                RichTextRun { text: run.text, style }
-            }).collect()).collect(),
+            .evaluate(|_, _| None)
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|run| {
+                        let mut style = run.style.font;
+                        if let (Some(r), Some(g), Some(b)) =
+                            (run.style.red, run.style.green, run.style.blue)
+                        {
+                            style.rgb = Some([r, g, b]);
+                        }
+                        RichTextRun {
+                            text: run.text,
+                            style,
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
     };
     let word = |at| i16::from_le_bytes(bbox[at..at + 2].try_into().unwrap());
     let rect = TextRect {
@@ -716,14 +773,14 @@ fn encode_rich_markup(markup: &[u8], rect: TextRect) -> Result<Vec<u8>, String> 
     rich.extend_from_slice(&rect.left.to_le_bytes());
     rich.extend_from_slice(&rect.top.to_le_bytes());
     rich.extend_from_slice(&markup_len.to_le_bytes());
-    rich.extend_from_slice(&markup);
+    rich.extend_from_slice(markup);
     rich.push(0);
-    if rich.len() % 2 != 0 {
+    if !rich.len().is_multiple_of(2) {
         rich.push(0);
     }
     let inner_len = u32::try_from(rich.len()).map_err(|_| "Text payload is too large")?;
     rich[4..8].copy_from_slice(&inner_len.to_le_bytes());
-    while rich.len() % 4 != 0 {
+    while !rich.len().is_multiple_of(4) {
         rich.push(0);
     }
 
@@ -793,7 +850,7 @@ fn append_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) -> Result<(), Str
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(payload);
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         out.push(0);
     }
     Ok(())
@@ -828,16 +885,38 @@ mod tests {
 
     #[test]
     fn colored_run_round_trips_through_safe_move_encoding() {
-        let rect = TextRect { left: 10, top: 20, right: 100, bottom: 40 };
-        let style = RichRunStyle { rgb: Some([1, 2, 256]), ..Default::default() };
-        let rows = vec![vec![RichTextRun { text: "Blue".into(), style }]];
+        let rect = TextRect {
+            left: 10,
+            top: 20,
+            right: 100,
+            bottom: 40,
+        };
+        let style = RichRunStyle {
+            rgb: Some([1, 2, 256]),
+            ..Default::default()
+        };
+        let rows = vec![vec![RichTextRun {
+            text: "Blue".into(),
+            style,
+        }]];
         let template = encode_rich_runs(&rows, rect).unwrap();
-        assert!(markup(&template.rich).windows(b"R1G2L100".len()).any(|window| window == b"R1G2L100"));
+        assert!(
+            markup(&template.rich)
+                .windows(b"R1G2L100".len())
+                .any(|window| window == b"R1G2L100")
+        );
         assert_eq!(template.decode().unwrap().2, rows);
-        let moved = TextRect { left: 50, right: 140, ..rect };
+        let moved = TextRect {
+            left: 50,
+            right: 140,
+            ..rect
+        };
         let (edited_rich, edited_bbox) = template.encode_parts("Blue", moved).unwrap();
         let edited = RichTextTemplate::from_parts(&edited_rich, &edited_bbox).unwrap();
-        assert_eq!(edited.decode().unwrap().2[0][0].style.rgb_color(), Some([0, 1, 255]));
+        assert_eq!(
+            edited.decode().unwrap().2[0][0].style.rgb_color(),
+            Some([0, 1, 255])
+        );
         assert!(template.encode_parts("Bluer", rect).is_err());
     }
 
@@ -845,21 +924,24 @@ mod tests {
     fn native_mixed_style_runs_decode_without_losing_boundaries() {
         for (source, expected) in [
             (
-                include_bytes!("../../../tests/fixtures/text_mixed_bold_off_he_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/text_mixed_bold_off_he_original.gsp")
+                    .as_slice(),
                 RichRunStyle {
                     bold: Some(false),
                     ..Default::default()
                 },
             ),
             (
-                include_bytes!("../../../tests/fixtures/text_mixed_italic_he_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/text_mixed_italic_he_original.gsp")
+                    .as_slice(),
                 RichRunStyle {
                     italic: Some(true),
                     ..Default::default()
                 },
             ),
             (
-                include_bytes!("../../../tests/fixtures/text_mixed_underline_he_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/text_mixed_underline_he_original.gsp")
+                    .as_slice(),
                 RichRunStyle {
                     underline: Some(true),
                     ..Default::default()
@@ -875,14 +957,16 @@ mod tests {
                 },
             ),
             (
-                include_bytes!("../../../tests/fixtures/text_mixed_size36_he_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/text_mixed_size36_he_original.gsp")
+                    .as_slice(),
                 RichRunStyle {
                     size_code: Some(36),
                     ..Default::default()
                 },
             ),
             (
-                include_bytes!("../../../tests/fixtures/text_mixed_adventor_he_original.gsp").as_slice(),
+                include_bytes!("../../../tests/fixtures/text_mixed_adventor_he_original.gsp")
+                    .as_slice(),
                 RichRunStyle {
                     family_index: Some(1),
                     ..Default::default()
@@ -915,7 +999,8 @@ mod tests {
 
     #[test]
     fn mixed_style_edit_inherits_native_boundary_styles() {
-        let source = include_bytes!("../../../tests/fixtures/text_mixed_bold_italic_he_original.gsp");
+        let source =
+            include_bytes!("../../../tests/fixtures/text_mixed_bold_italic_he_original.gsp");
         let (rich, bbox) = text_payloads(source);
         let (_, rect, rows) = decode_rich_text(rich, bbox).unwrap();
         let inserted = remap_rich_text(&rows, "Hexllo", rect).unwrap();

@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn point_numeric_label_updates_and_remaps_both_parents() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/point_numeric_label_native_verified.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/point_numeric_label_native_verified.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -118,7 +119,8 @@ fn branching_polygon_native_paths_edits_copy_and_depth_parent_deletion() {
 
 #[test]
 fn branching_polygon_fixed_depth_and_mapping_validation() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/branch_polygon_iteration_fixed_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/branch_polygon_iteration_fixed_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);

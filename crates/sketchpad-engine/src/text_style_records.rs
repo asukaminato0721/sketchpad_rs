@@ -198,10 +198,7 @@ pub(crate) fn decode_font_family_payload(family_record: &[u8]) -> Result<String,
 }
 
 pub fn encode_font_family_payload(name: &str) -> Result<Vec<u8>, String> {
-    if name.is_empty()
-        || name.len() > 255
-        || name.chars().any(char::is_control)
-    {
+    if name.is_empty() || name.len() > 255 || name.chars().any(char::is_control) {
         return Err("Font family is empty, too long, or contains control characters".into());
     }
     let len = (2 + name.len() + 1 + 2).max(12);
@@ -323,7 +320,7 @@ mod tests {
             bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
             bytes.extend_from_slice(&kind.to_le_bytes());
             bytes.extend_from_slice(payload);
-            if payload.len() % 2 != 0 {
+            if !payload.len().is_multiple_of(2) {
                 bytes.push(0);
             }
         };

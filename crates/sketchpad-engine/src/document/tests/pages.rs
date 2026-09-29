@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn selected_page_persists_without_content_edits_and_native_bytes_match() {
-    let native = include_bytes!("../../../../../tests/fixtures/two_page_selection_native_verified.gsp");
+    let native =
+        include_bytes!("../../../../../tests/fixtures/two_page_selection_native_verified.gsp");
     let mut document = Document::from_bytes(native, None).unwrap();
     assert_eq!(document.active_page, 1);
     assert!(!document.dirty);

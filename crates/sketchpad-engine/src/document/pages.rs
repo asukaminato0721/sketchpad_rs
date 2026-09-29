@@ -182,39 +182,40 @@ impl Document {
             if object.page == page {
                 continue;
             }
-            if let Kind::LinkPageButton { target_page, .. } = &object.kind {
-                if *target_page < self.page_count && *target_page >= page {
-                    let header = object.header_offset.ok_or("Missing Page Link header")?;
-                    let group = rs
-                        .iter()
-                        .position(|record| record.kind == 0x07d0 && record.data.start == header)
-                        .ok_or("Missing Page Link group")?;
-                    let action = rs[group + 1..]
-                        .iter()
-                        .take_while(|record| record.kind != 0x07d7)
-                        .find(|record| record.kind == 0x0906 && record.data.len() == 24)
-                        .ok_or("Missing Page Link action")?;
-                    if u16::from_le_bytes(
-                        bytes[action.data.start + 14..action.data.start + 16]
-                            .try_into()
-                            .unwrap(),
-                    ) as usize
-                        != *target_page
-                    {
-                        return Err("Page Link target differs from its record".into());
-                    }
-                    // Native Sketchpad keeps a Page Link to a deleted page visible,
-                    // but invalidates its destination. Its saved target field is
-                    // 0xbd66 in both the two- and three-page cases observed here.
-                    let updated = if *target_page == page {
-                        broken_page_links += 1;
-                        BROKEN_PAGE_LINK_TARGET as u16
-                    } else {
-                        (*target_page - 1) as u16
-                    };
+            if let Kind::LinkPageButton { target_page, .. } = &object.kind
+                && *target_page < self.page_count
+                && *target_page >= page
+            {
+                let header = object.header_offset.ok_or("Missing Page Link header")?;
+                let group = rs
+                    .iter()
+                    .position(|record| record.kind == 0x07d0 && record.data.start == header)
+                    .ok_or("Missing Page Link group")?;
+                let action = rs[group + 1..]
+                    .iter()
+                    .take_while(|record| record.kind != 0x07d7)
+                    .find(|record| record.kind == 0x0906 && record.data.len() == 24)
+                    .ok_or("Missing Page Link action")?;
+                if u16::from_le_bytes(
                     bytes[action.data.start + 14..action.data.start + 16]
-                        .copy_from_slice(&updated.to_le_bytes());
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+                    != *target_page
+                {
+                    return Err("Page Link target differs from its record".into());
                 }
+                // Native Sketchpad keeps a Page Link to a deleted page visible,
+                // but invalidates its destination. Its saved target field is
+                // 0xbd66 in both the two- and three-page cases observed here.
+                let updated = if *target_page == page {
+                    broken_page_links += 1;
+                    BROKEN_PAGE_LINK_TARGET as u16
+                } else {
+                    (*target_page - 1) as u16
+                };
+                bytes[action.data.start + 14..action.data.start + 16]
+                    .copy_from_slice(&updated.to_le_bytes());
             }
         }
         let cut_start = metadata[page].start;
@@ -402,10 +403,10 @@ impl Document {
         for (index, (page, object)) in expected.into_iter().enumerate() {
             // Reordering intact page blocks preserves their embedded local IDs.
             let mut kind = object.kind.remap(&ids);
-            if let Kind::LinkPageButton { target_page, .. } = &mut kind {
-                if *target_page < new_page.len() {
-                    *target_page = new_page[*target_page];
-                }
+            if let Kind::LinkPageButton { target_page, .. } = &mut kind
+                && *target_page < new_page.len()
+            {
+                *target_page = new_page[*target_page];
             }
             if result.objects[index].page != page || result.objects[index].kind != kind {
                 return Err("Reordered pages change a surviving object".into());

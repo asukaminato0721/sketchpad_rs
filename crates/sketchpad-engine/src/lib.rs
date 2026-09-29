@@ -1,3 +1,7 @@
+// Clippy 1.98's `as_chunks` rewrite leaves array references incompatible with
+// the existing byte-decoding closures. `chunks_exact` is explicit and correct.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 pub mod action_records;
 pub mod coordinate_measure_records;
 pub mod document;

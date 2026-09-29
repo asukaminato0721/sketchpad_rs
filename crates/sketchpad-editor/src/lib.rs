@@ -1,6 +1,8 @@
 //! Desktop editor and renderer over the headless document engine.
 pub use sketchpad_engine::*;
-pub mod render;
 mod editor;
+pub mod render;
 
-pub fn run() { editor::run(); }
+pub fn run() {
+    editor::run();
+}

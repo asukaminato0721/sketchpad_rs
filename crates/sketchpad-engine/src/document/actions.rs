@@ -1,8 +1,8 @@
 use super::kind::{is_multi_page_addition_kind, is_point_kind, straight_kind_mode};
 use super::{Document, Kind, LineMode};
 use crate::action_records::{
-    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction,
-    VisibilityOptions,
+    AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions, ScrollPlacement,
+    VisibilityAction, VisibilityOptions,
 };
 
 impl Document {
@@ -415,7 +415,27 @@ impl Document {
         targets: &[usize],
         mode: PresentationMode,
     ) -> Result<usize, String> {
+        self.add_presentation_button_for_targets_with_options(
+            targets,
+            mode,
+            PresentationOptions::for_mode(mode),
+        )
+    }
+    pub fn add_presentation_button_for_targets_with_options(
+        &mut self,
+        targets: &[usize],
+        mode: PresentationMode,
+        options: PresentationOptions,
+    ) -> Result<usize, String> {
         self.can_add_presentation_button_for_targets(targets)?;
+        if mode == PresentationMode::Sequential
+            && options.stop != crate::action_records::PresentationStop::LastAction
+        {
+            return Err("A sequential Presentation has no simultaneous stop condition".into());
+        }
+        if options.native_state != 0 {
+            return Err("New Presentation buttons cannot start in a native progress state".into());
+        }
         let row = self
             .objects
             .iter()
@@ -427,6 +447,7 @@ impl Document {
         Ok(self.add(Kind::PresentationButton {
             targets: targets.to_vec(),
             mode,
+            options,
             label: "Run Presentation".into(),
             anchor: (10, y),
         }))
@@ -569,14 +590,16 @@ impl Document {
     pub fn animation_button_default_settings(&self, target: usize) -> Option<AnimationSettings> {
         let object = self.objects.get(target.checked_sub(1)?)?;
         let direction = match object.kind {
-            Kind::Free(_) | Kind::PointOnCircle(_, _, _) | Kind::PointOnPolygon(_, _, _) => {
-                crate::action_records::AnimationDirection::Forward
-            }
+            Kind::Free(_)
+            | Kind::PointOnCircle(_, _, _)
+            | Kind::PointOnPolygon(_, _, _)
+            | Kind::PointOnSector(_, _) => crate::action_records::AnimationDirection::Forward,
             Kind::Parameter(_)
             | Kind::PointOnSegment(_, _)
             | Kind::PointOnRay(_, _)
             | Kind::PointOnLine(_, _)
-            | Kind::PointOnArc(_, _) => crate::action_records::AnimationDirection::Bidirectional,
+            | Kind::PointOnArc(_, _)
+            | Kind::PointOnCurve(_, _) => crate::action_records::AnimationDirection::Bidirectional,
             _ => return None,
         };
         Some(AnimationSettings {
@@ -634,11 +657,12 @@ impl Document {
             .count();
         let mut y = (5usize + row * 30).min(i16::MAX as usize) as i16;
         for object in &self.objects {
-            if object.page == self.active_page && !object.deleted {
-                if let Kind::Parameter(group) = &object.kind {
-                    let (_, (_, bottom)) = group.bbox();
-                    y = y.max(bottom.saturating_add(3));
-                }
+            if object.page == self.active_page
+                && !object.deleted
+                && let Kind::Parameter(group) = &object.kind
+            {
+                let (_, (_, bottom)) = group.bbox();
+                y = y.max(bottom.saturating_add(3));
             }
         }
         if has_parameter {
@@ -707,6 +731,8 @@ impl Document {
                         | Kind::PointOnCircle(_, _, _)
                         | Kind::PointOnArc(_, _)
                         | Kind::PointOnPolygon(_, _, _)
+                        | Kind::PointOnCurve(_, _)
+                        | Kind::PointOnSector(_, _)
                 )
             {
                 return Err(

@@ -146,7 +146,11 @@ impl Document {
             Err(_) => {
                 let mut affected = BTreeSet::from([driver]);
                 for object in &self.objects {
-                    if object.construction_dependencies().iter().any(|id| affected.contains(id)) {
+                    if object
+                        .construction_dependencies()
+                        .iter()
+                        .any(|id| affected.contains(id))
+                    {
                         affected.insert(object.id);
                     }
                 }
@@ -202,10 +206,7 @@ impl Document {
 
     pub(super) fn set_evaluation_number(&mut self, id: usize, value: f64) -> Option<()> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted
-            || object.kind.numeric_unit().is_none()
-            || !value.is_finite()
-        {
+        if object.deleted || object.kind.numeric_unit().is_none() || !value.is_finite() {
             return None;
         }
         let context = self.evaluation_context.as_mut()?;

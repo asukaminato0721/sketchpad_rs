@@ -4,7 +4,7 @@ use super::{
 };
 use sketchpad_engine::action_records::{MovementSpeed, PresentationMode, ScrollPlacement};
 use sketchpad_engine::coordinate_measure_records::CoordinateMeasureKind;
-use sketchpad_engine::document::{Document, Kind, TextStyleCommand};
+use sketchpad_engine::document::{Document, ImagePlacement, Kind, TextStyleCommand};
 use sketchpad_engine::graph::GridForm;
 use sketchpad_engine::plot_points_records::PlotPointsMode;
 use sketchpad_engine::style_records::{LinePattern, LineWidth, PointStyle, RgbColor};
@@ -54,6 +54,16 @@ impl Editor {
                     }
                     if ui.button("Save As…").clicked() {
                         self.save(true);
+                        ui.close();
+                    }
+                    if ui.button("Page Setup…").clicked() {
+                        self.page_setup_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("Print Preview").clicked() {
+                        self.print_preview_texture = None;
+                        self.print_preview_error = None;
+                        self.print_preview_dialog = true;
                         ui.close();
                     }
                     if ui.button("Export SVG…").clicked() {
@@ -148,9 +158,9 @@ impl Editor {
                             self.animation_button_dialog = animation_draft;
                             ui.close();
                         }
-                        let movement_pairs = self.selection_order.chunks_exact(2)
+                        let movement_pairs = self.selection_order.as_chunks::<2>().0.iter()
                             .map(|pair| (pair[0], pair[1])).collect::<Vec<_>>();
-                        let movement_enabled = self.selection_order.len() % 2 == 0
+                        let movement_enabled = self.selection_order.len().is_multiple_of(2)
                             && self.doc.can_add_movement_button_for_pairs(&movement_pairs).is_ok();
                         if ui.add_enabled(movement_enabled, egui::Button::new("Movement")).clicked() {
                             self.movement_button_dialog = Some(MovementButtonDraft {
@@ -171,6 +181,9 @@ impl Editor {
                             self.presentation_button_dialog = Some(PresentationButtonDraft {
                                 targets: presentation_targets,
                                 mode: PresentationMode::Simultaneous,
+                                options: sketchpad_engine::action_records::PresentationOptions::for_mode(
+                                    PresentationMode::Simultaneous,
+                                ),
                             });
                             ui.close();
                         }
@@ -202,6 +215,140 @@ impl Editor {
                             ui.close();
                         }
                     });
+                    let crop_pair = if self.selection_order.len() == 2 {
+                        let picture = self.selection_order.iter().copied().find(|id| {
+                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                                matches!(
+                                    object.kind,
+                                    Kind::Image {
+                                        placement: ImagePlacement::Independent(_),
+                                        ..
+                                    }
+                                )
+                            })
+                        });
+                        let polygon = self.selection_order.iter().copied().find(|id| {
+                            self.doc
+                                .objects
+                                .get(id - 1)
+                                .is_some_and(|object| object.kind.is_polygon())
+                        });
+                        picture.zip(polygon).filter(|(picture, polygon)| {
+                            self.doc
+                                .can_crop_picture_to_polygon(*picture, *polygon)
+                                .is_ok()
+                        })
+                    } else {
+                        None
+                    };
+                    if ui
+                        .add_enabled(
+                            crop_pair.is_some(),
+                            egui::Button::new("Crop Picture to Polygon"),
+                        )
+                        .clicked()
+                    {
+                        let (picture, polygon) = crop_pair.unwrap();
+                        match self.doc.crop_picture_to_polygon(picture, polygon) {
+                            Ok(id) => {
+                                self.select_only(id);
+                                self.status = "Created a live cropped picture".into();
+                            }
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    let split_point = (self.doc.selected.len() == 1)
+                        .then(|| *self.doc.selected.iter().next().unwrap())
+                        .filter(|&id| self.doc.can_split_point(id));
+                    if ui
+                        .add_enabled(split_point.is_some(), egui::Button::new("Split Point"))
+                        .clicked()
+                    {
+                        let id = split_point.unwrap();
+                        match self.doc.split_point(id) {
+                            Ok(()) => self.status = format!("Split point {id} from its parents"),
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    let merge_points = {
+                        let ordered = self
+                            .selection_order
+                            .iter()
+                            .copied()
+                            .filter(|id| self.doc.selected.contains(id))
+                            .collect::<Vec<_>>();
+                        (ordered.len() == 2
+                            && self.doc.can_merge_points(ordered[0], ordered[1]))
+                        .then_some((ordered[0], ordered[1]))
+                    };
+                    if ui
+                        .add_enabled(merge_points.is_some(), egui::Button::new("Merge Points"))
+                        .clicked()
+                    {
+                        let (source, target) = merge_points.unwrap();
+                        match self.doc.merge_points(source, target) {
+                            Ok(()) => {
+                                self.selection_order = vec![target];
+                                self.status =
+                                    format!("Merged independent point {source} into point {target}");
+                            }
+                            Err(error) => self.status = error,
+                        }
+                        ui.close();
+                    }
+                    let edit_definition = if self.doc.selected.len() == 1 {
+                        let id = *self.doc.selected.iter().next().unwrap();
+                        self.doc.objects.get(id - 1).and_then(|object| {
+                            (object.page == self.doc.active_page && !object.deleted)
+                                .then_some(&object.kind)
+                        }).and_then(|kind| match kind {
+                            Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) => {
+                                Some((id, "Edit Function"))
+                            }
+                            Kind::Parameter(_) => Some((id, "Edit Parameter")),
+                            Kind::Calculation(_) => Some((id, "Edit Calculation")),
+                            _ => None,
+                        })
+                    } else {
+                        None
+                    };
+                    if ui
+                        .add_enabled(
+                            edit_definition.is_some(),
+                            egui::Button::new(
+                                edit_definition.map_or("Edit Definition", |(_, label)| label),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        let (id, _) = edit_definition.unwrap();
+                        if let Err(error) = self.begin_edit_definition(id) {
+                            self.status = error;
+                        }
+                        ui.close();
+                    }
+                    let properties_id = (self.doc.selected.len() == 1)
+                        .then(|| *self.doc.selected.iter().next().unwrap())
+                        .filter(|id| {
+                            self.doc.objects.get(id - 1).is_some_and(|object| {
+                                object.page == self.doc.active_page && !object.deleted
+                            })
+                        });
+                    if ui
+                        .add_enabled(properties_id.is_some(), egui::Button::new("Properties…"))
+                        .clicked()
+                    {
+                        self.properties_dialog = properties_id;
+                        self.properties_draft_for = None;
+                        ui.close();
+                    }
+                    if ui.button("Preferences…").clicked() {
+                        self.preferences_draft = self.preferences;
+                        self.preferences_dialog = true;
+                        ui.close();
+                    }
                     if ui
                         .add_enabled(!self.doc.undo.is_empty(), egui::Button::new("Undo"))
                         .clicked()
@@ -462,6 +609,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Calculate…").clicked() {
+                        self.calculation_edit_id = None;
                         self.calculation_draft = if self.doc.selected.len() >= 2 {
                             let ids = self.selection_order.iter().copied().filter(|id| self.doc.selected.contains(id)).collect::<Vec<_>>();
                             let argument = ids.iter().position(|id| self.doc.objects[*id - 1].kind.numeric_unit().is_some())
@@ -582,6 +730,40 @@ impl Editor {
                                 }
                                 Err(error) => self.status = error,
                             }
+                        }
+                        ui.close();
+                    }
+                    let selected_picture = match self.selection_order.as_slice() {
+                        [id]
+                            if self.doc.objects.get(id - 1).is_some_and(|object| {
+                                !object.deleted
+                                    && object.page == self.doc.active_page
+                                    && matches!(
+                                        object.kind,
+                                        Kind::Image {
+                                            placement: ImagePlacement::Independent(_),
+                                            ..
+                                        }
+                                    )
+                            }) => Some(*id),
+                        _ => None,
+                    };
+                    if ui
+                        .add_enabled(
+                            selected_picture.is_some(),
+                            egui::Button::new("Define Function from Picture"),
+                        )
+                        .clicked()
+                    {
+                        match self
+                            .doc
+                            .add_picture_function(selected_picture.unwrap(), self.center)
+                        {
+                            Ok(id) => {
+                                self.select_only(id);
+                                self.status = format!("Created picture function {id}");
+                            }
+                            Err(error) => self.status = error,
                         }
                         ui.close();
                     }
@@ -825,6 +1007,46 @@ impl Editor {
                         self.iterate_dialog = true;
                         ui.close();
                     }
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            self.can_define_custom_transform(),
+                            egui::Button::new("Define Custom Transform…"),
+                        )
+                        .clicked()
+                    {
+                        self.begin_define_custom_transform();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.custom_transforms.is_empty(),
+                            egui::Button::new("Edit Custom Transforms…"),
+                        )
+                        .clicked()
+                    {
+                        self.custom_transform_edit_selected = 0;
+                        self.edit_custom_transforms_dialog = true;
+                        ui.close();
+                    }
+                    if !self.custom_transforms.is_empty() {
+                        ui.separator();
+                    }
+                    for (index, definition) in self.custom_transforms.clone().into_iter().enumerate()
+                    {
+                        let enabled = self.selection_order.len() == 1
+                            && self
+                                .doc
+                                .custom_transform_carried(definition.seed, definition.output)
+                                .is_ok();
+                        if ui
+                            .add_enabled(enabled, egui::Button::new(definition.name))
+                            .clicked()
+                        {
+                            self.apply_custom_transform(index);
+                            ui.close();
+                        }
+                    }
                 });
                 ui.menu_button("Display", |ui| {
                     ui.menu_button("Text", |ui| {
@@ -847,10 +1069,7 @@ impl Editor {
                             ("Decrease Size", TextStyleCommand::DecreaseSize),
                         ] {
                             if ui.button(label).clicked() {
-                                self.status = match self.doc.toggle_selected_text_style(command) {
-                                    Ok(count) => format!("Formatted {count} text object(s)"),
-                                    Err(error) => error,
-                                };
+                                self.apply_selected_text_style(command);
                                 ui.close();
                             }
                         }
@@ -862,14 +1081,10 @@ impl Editor {
                             ("Medium", PointStyle::Medium),
                             ("Thick", PointStyle::Large),
                         ] {
-                            if ui.button(label).clicked() {
-                                self.status = match self.doc.set_selected_point_style(style) {
-                                    Ok(0) => "Select at least one point".into(),
-                                    Ok(count) => {
-                                        format!("Changed point style on {count} object(s)")
-                                    }
-                                    Err(error) => error,
-                                };
+                            let response = ui.button(label);
+                            if response.clicked() {
+                                let update_defaults = !ui.input(|input| input.modifiers.shift);
+                                self.apply_selected_point_style(style, update_defaults);
                                 ui.close();
                             }
                         }
@@ -881,12 +1096,10 @@ impl Editor {
                             ("Medium", LineWidth::Medium),
                             ("Thick", LineWidth::Thick),
                         ] {
-                            if ui.button(label).clicked() {
-                                self.status = match self.doc.set_selected_line_width(width) {
-                                    Ok(0) => "Select at least one line or circle".into(),
-                                    Ok(count) => format!("Changed line width on {count} object(s)"),
-                                    Err(error) => error,
-                                };
+                            let response = ui.button(label);
+                            if response.clicked() {
+                                let update_defaults = !ui.input(|input| input.modifiers.shift);
+                                self.apply_selected_line_width(width, update_defaults);
                                 ui.close();
                             }
                         }
@@ -897,14 +1110,10 @@ impl Editor {
                             ("Dashed", LinePattern::Dashed),
                             ("Dotted", LinePattern::Dotted),
                         ] {
-                            if ui.button(label).clicked() {
-                                self.status = match self.doc.set_selected_line_pattern(pattern) {
-                                    Ok(0) => "Select at least one line or circle".into(),
-                                    Ok(count) => {
-                                        format!("Changed line pattern on {count} object(s)")
-                                    }
-                                    Err(error) => error,
-                                };
+                            let response = ui.button(label);
+                            if response.clicked() {
+                                let update_defaults = !ui.input(|input| input.modifiers.shift);
+                                self.apply_selected_line_pattern(pattern, update_defaults);
                                 ui.close();
                             }
                         }
@@ -968,12 +1177,10 @@ impl Editor {
                                 },
                             ),
                         ] {
-                            if ui.button(label).clicked() {
-                                self.status = match self.doc.set_selected_color(color) {
-                                    Ok(0) => "Select a styled geometry object".into(),
-                                    Ok(count) => format!("Changed color on {count} object(s)"),
-                                    Err(error) => error,
-                                };
+                            let response = ui.button(label);
+                            if response.clicked() {
+                                let update_defaults = !ui.input(|input| input.modifiers.shift);
+                                self.apply_selected_color(color, update_defaults);
                                 ui.close();
                             }
                         }
@@ -1001,6 +1208,43 @@ impl Editor {
                     }
                     if ui.button("Show All Hidden").clicked() {
                         self.doc.show_all_hidden();
+                        ui.close();
+                    }
+                    let selected_labels = self
+                        .doc
+                        .selected
+                        .iter()
+                        .copied()
+                        .filter(|&id| {
+                            self.doc.can_edit_geometry_label(id)
+                                && self.doc.objects[id - 1].label.is_some()
+                        })
+                        .collect::<Vec<_>>();
+                    let labels_visible = !selected_labels.is_empty()
+                        && selected_labels.iter().all(|&id| {
+                            self.doc.objects[id - 1]
+                                .label
+                                .as_ref()
+                                .is_some_and(|label| label.visible())
+                        });
+                    if ui
+                        .add_enabled(
+                            !selected_labels.is_empty(),
+                            egui::Button::new(if labels_visible {
+                                "Hide Labels"
+                            } else {
+                                "Show Labels"
+                            }),
+                        )
+                        .clicked()
+                    {
+                        self.status = match self
+                            .doc
+                            .set_selected_geometry_label_visibility(!labels_visible)
+                        {
+                            Ok(count) => format!("Updated {count} object label(s)"),
+                            Err(error) => error,
+                        };
                         ui.close();
                     }
                     let tracing = !self.doc.selected.is_empty()
@@ -1068,6 +1312,17 @@ impl Editor {
                     }
                     if ui.button(if self.show_toolbox { "Hide Toolbox" } else { "Show Toolbox" }).clicked() {
                         self.show_toolbox = !self.show_toolbox;
+                        ui.close();
+                    }
+                    if ui
+                        .button(if self.show_text_palette {
+                            "Hide Text Palette"
+                        } else {
+                            "Show Text Palette"
+                        })
+                        .clicked()
+                    {
+                        self.show_text_palette = !self.show_text_palette;
                         ui.close();
                     }
                     if ui.button("Fit Sketch").clicked() {

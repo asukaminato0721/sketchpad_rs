@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn scientific_dimension_captions_follow_geometry_precision_and_copied_sources() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/scientific_dimension_native_verified.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/scientific_dimension_native_verified.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -40,7 +41,8 @@ fn scientific_dimension_captions_follow_geometry_precision_and_copied_sources() 
     assert_eq!(reopened.numeric_value(copied), Some(full_value));
     let (_, lines) = crate::render::number_lines_for_object(&reopened, copied).unwrap();
     assert!(lines[0].ends_with("1.5130 · 10⁹ cm²"));
-    let area_bytes = include_bytes!("../../../../../tests/fixtures/scientific_area_native_verified.gsp");
+    let area_bytes =
+        include_bytes!("../../../../../tests/fixtures/scientific_area_native_verified.gsp");
     let mut area = Document::from_bytes(area_bytes, None).unwrap();
     assert!(!area.partial_view);
     assert_eq!(area.encode().unwrap(), area_bytes);
@@ -61,8 +63,10 @@ fn scientific_dimension_captions_follow_geometry_precision_and_copied_sources() 
 fn native_scientific_captions_preserve_boundary_rounding_units_and_labels() {
     for (bytes, captions) in [
         (
-            include_bytes!("../../../../../tests/fixtures/scientific_calculation_native_verified.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/scientific_calculation_native_verified.gsp"
+            )
+            .as_slice(),
             vec![
                 "1000000.00",
                 "999999.99",
@@ -123,7 +127,8 @@ fn native_scientific_captions_preserve_boundary_rounding_units_and_labels() {
 
 #[test]
 fn calculation_precision_import_edit_undo_copy_and_numeric_labels() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/calculation_precision_native_verified.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/calculation_precision_native_verified.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -222,8 +227,9 @@ fn numeric_group_visibility_preserves_records_on_hide_show_and_paste() {
 
 #[test]
 fn extended_parameter_values_preserve_precision_and_dependencies() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/parameter_extended_range_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/parameter_extended_range_native_verified.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -288,8 +294,9 @@ fn extended_parameter_values_preserve_precision_and_dependencies() {
 }
 #[test]
 fn parameter_decimal_parsing_matches_native_rounding_boundary() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/parameter_rounding_boundary_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/parameter_rounding_boundary_native_verified.gsp"
+    );
     let doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -309,8 +316,9 @@ fn parameter_decimal_parsing_matches_native_rounding_boundary() {
 
 #[test]
 fn live_iteration_depth_truncates_native_parameter_and_calculation_values() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/iteration_fractional_depth_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/iteration_fractional_depth_native_verified.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(doc.encode().unwrap(), bytes);
@@ -351,17 +359,20 @@ fn live_iteration_depth_truncates_native_parameter_and_calculation_values() {
 fn decimal_parameters_roundtrip_and_drive_path_points() {
     for (bytes, id, value) in [
         (
-            include_bytes!("../../../../../tests/fixtures/table_t1_fraction_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_t1_fraction_original.gsp")
+                .as_slice(),
             1,
             3.25,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_t2_fraction_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_t2_fraction_original.gsp")
+                .as_slice(),
             2,
             2.5,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_t2_negative_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_t2_negative_original.gsp")
+                .as_slice(),
             2,
             -1.,
         ),
@@ -372,7 +383,8 @@ fn decimal_parameters_roundtrip_and_drive_path_points() {
             -2.5,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_t2_multidigit_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_t2_multidigit_original.gsp")
+                .as_slice(),
             2,
             12.34,
         ),
@@ -421,7 +433,9 @@ fn decimal_parameters_roundtrip_and_drive_path_points() {
     assert_eq!(line.position(5), Some(Point { x: 247.5, y: 152.5 }));
     assert_eq!(
         line.encode().unwrap(),
-        include_bytes!("../../../../../tests/fixtures/graph_plot_line_fraction_parameter_generated.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/graph_plot_line_fraction_parameter_generated.gsp"
+        )
     );
     let reopened = Document::from_bytes(&line.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
@@ -429,7 +443,8 @@ fn decimal_parameters_roundtrip_and_drive_path_points() {
 
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/table_pair_fraction_original.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/plot_table_fraction_base_original.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/plot_table_fraction_base_original.gsp")
+            .as_slice(),
         include_bytes!("../../../../../tests/fixtures/plot_table_fraction_original.gsp").as_slice(),
     ] {
         let document = Document::from_bytes(bytes, None).unwrap();
@@ -499,18 +514,22 @@ fn named_parameters_decode_create_and_edit() {
             2,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_parameter_speed_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_parameter_speed_original.gsp")
+                .as_slice(),
             "speed",
             1,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_parameter_speed_precision2_original.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/table_parameter_speed_precision2_original.gsp"
+            )
+            .as_slice(),
             "speed",
             2,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_parameter_test_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_parameter_test_original.gsp")
+                .as_slice(),
             "test",
             1,
         ),
@@ -592,8 +611,10 @@ fn named_parameter_tables_decode_and_save() {
             "3.25",
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/table_named_test_late_source_original.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/table_named_test_late_source_original.gsp"
+            )
+            .as_slice(),
             5,
             7,
             "test",

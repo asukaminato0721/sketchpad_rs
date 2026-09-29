@@ -25,6 +25,20 @@ impl Document {
                 ids[object.id] = kept;
             }
         }
+        for &source in self.merge_aliases.keys() {
+            let mut target = source;
+            let mut visited = BTreeSet::new();
+            while let Some(&next) = self.merge_aliases.get(&target) {
+                if !visited.insert(target) {
+                    return Err("Merged point aliases contain a cycle".into());
+                }
+                target = next;
+            }
+            ids[source] = *ids
+                .get(target)
+                .filter(|&&mapped| mapped != 0)
+                .ok_or("Merged point target was deleted")?;
+        }
         let rs = records(&bytes)?;
         let drawing_indices: BTreeSet<_> = document_record_indices(&rs).into_iter().collect();
         let mut out = bytes[..4].to_vec();
@@ -67,7 +81,7 @@ impl Document {
                 if record.kind == 0x7d2 {
                     let payload = &bytes[record.data.clone()];
                     if payload.len() < 4
-                        || (payload.len() - 4) % 4 != 0
+                        || !(payload.len() - 4).is_multiple_of(4)
                         || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
                     {
                         return Err("Invalid object references during deletion".into());
@@ -179,7 +193,7 @@ impl Document {
                     let page = current_page.ok_or("Object references outside page")?;
                     let payload = &bytes[record.data.clone()];
                     if payload.len() < 4
-                        || (payload.len() - 4) % 4 != 0
+                        || !(payload.len() - 4).is_multiple_of(4)
                         || u32_at(payload, 0) as usize != (payload.len() - 4) / 4
                     {
                         return Err("Invalid page-local references during deletion".into());
@@ -376,14 +390,22 @@ impl Document {
                     .to_le_bytes(),
             );
         }
-        if matches!(object.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_) | Kind::CircleInterior(_)) {
-            object_header[20..24].copy_from_slice(&object.interior_order.ok_or("Missing sector drawing order")?.to_le_bytes());
+        if matches!(
+            object.kind,
+            Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_) | Kind::CircleInterior(_)
+        ) {
+            object_header[20..24].copy_from_slice(
+                &object
+                    .interior_order
+                    .ok_or("Missing sector drawing order")?
+                    .to_le_bytes(),
+            );
         }
         put_record(groups, 0x07d0, &object_header);
-        if is_point_kind(&object.kind) {
-            if let Some(label) = &object.label {
-                groups.extend_from_slice(&crate::text_records::encode_point_label_records(label));
-            }
+        if is_point_kind(&object.kind)
+            && let Some(label) = &object.label
+        {
+            groups.extend_from_slice(&crate::text_records::encode_point_label_records(label));
         }
         let mut references = Vec::with_capacity(4 + refs.len() * 4);
         references.extend_from_slice(
@@ -486,8 +508,13 @@ impl Document {
             for (added_index, object) in new_objects.into_iter().enumerate() {
                 match &object.kind {
                     Kind::ReferencedText { parents, text } => {
-                        let refs = parents.iter().map(|id| self.multi_page_local_reference(page, object.id, *id)).collect::<Result<Vec<_>, _>>()?;
-                        groups.extend(super::referenced_captions::encode_group(object, &refs, text));
+                        let refs = parents
+                            .iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, *id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        groups.extend(super::referenced_captions::encode_group(
+                            object, &refs, text,
+                        ));
                     }
                     Kind::PlainText { text, rect } => {
                         let mut group = if let Some(template) = &object.rich_text_override {
@@ -502,28 +529,56 @@ impl Document {
                         groups.extend_from_slice(&group);
                     }
                     Kind::CoordinatePoint(definition) => {
-                        let refs = definition.native_references().into_iter().map(|id| self.multi_page_local_reference(page, object.id, id)).collect::<Result<Vec<_>, _>>()?;
-                        groups.extend(super::coordinate_points::encode_group(object, definition, &refs)?);
+                        let refs = definition
+                            .native_references()
+                            .into_iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        groups.extend(super::coordinate_points::encode_group(
+                            object, definition, &refs,
+                        )?);
                     }
                     Kind::Colorized(definition) => {
-                        put_record(&mut groups, 0x07d0, &self.colorized_object_header(object, definition)?);
+                        put_record(
+                            &mut groups,
+                            0x07d0,
+                            &self.colorized_object_header(object, definition)?,
+                        );
                         let ids = definition.native_references();
                         let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
-                        for id in ids { refs.extend_from_slice(&self.multi_page_local_reference(page, object.id, id)?.to_le_bytes()); }
+                        for id in ids {
+                            refs.extend_from_slice(
+                                &self
+                                    .multi_page_local_reference(page, object.id, id)?
+                                    .to_le_bytes(),
+                            );
+                        }
                         put_record(&mut groups, 0x07d2, &refs);
                         put_record(&mut groups, 0x07d3, &definition.native_payload());
-                        if let Some(label) = &object.label { groups.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
                         put_record(&mut groups, 0x07d7, &[]);
                     }
                     Kind::MappedElement(definition) => {
-                        let refs = definition.native_references().into_iter()
+                        let refs = definition
+                            .native_references()
+                            .into_iter()
                             .map(|id| self.multi_page_local_reference(page, object.id, id))
                             .collect::<Result<Vec<_>, _>>()?;
                         Self::append_multi_page_reference_group(&mut groups, object, 101, &refs)?;
                     }
                     Kind::IterationPointAlias(binding) => {
-                        let reference = self.multi_page_local_reference(page, object.id, *binding)?;
-                        Self::append_multi_page_reference_group(&mut groups, object, 88, &[reference])?;
+                        let reference =
+                            self.multi_page_local_reference(page, object.id, *binding)?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            88,
+                            &[reference],
+                        )?;
                     }
                     Kind::Free(point) => {
                         if !point.x.is_finite() || !point.y.is_finite() {
@@ -578,9 +633,19 @@ impl Document {
                             || matches!(object.kind, Kind::PointOnArc(_, _))
                                 && !is_arc_kind(&host_object.kind)
                             || matches!(object.kind, Kind::PointOnSector(..))
-                                && !super::sector_boundary::supported_host(&self.objects, *host, page, object.id)
+                                && !super::sector_boundary::supported_host(
+                                    &self.objects,
+                                    *host,
+                                    page,
+                                    object.id,
+                                )
                             || matches!(object.kind, Kind::PointOnCurve(..))
-                                && !super::curve_points::free_supported(&self.objects, *host, page, object.id)
+                                && !super::curve_points::free_supported(
+                                    &self.objects,
+                                    *host,
+                                    page,
+                                    object.id,
+                                )
                         {
                             return Err("Invalid point host on this page".into());
                         }
@@ -604,13 +669,20 @@ impl Document {
                         references.extend_from_slice(&local_host.to_le_bytes());
                         put_record(&mut groups, 0x07d2, &references);
                         let code = match object.kind {
-                            Kind::PointOnLine(host, _) => super::kind::straight_point_constraint_subtype(&self.objects[host - 1].kind)
-                                .ok_or("Invalid straight-point host")?,
+                            Kind::PointOnLine(host, _) => {
+                                super::kind::straight_point_constraint_subtype(
+                                    &self.objects[host - 1].kind,
+                                )
+                                .ok_or("Invalid straight-point host")?
+                            }
                             Kind::PointOnRay(_, _) => 13,
                             Kind::PointOnSegment(_, _) => 14,
                             Kind::PointOnArc(_, _) => 67,
                             Kind::PointOnSector(_, _) => 68,
-                            Kind::PointOnCurve(host, _) => super::curve_points::free_constraint_subtype(&self.objects, host).ok_or("Invalid curve-point host")?,
+                            Kind::PointOnCurve(host, _) => {
+                                super::curve_points::free_constraint_subtype(&self.objects, host)
+                                    .ok_or("Invalid curve-point host")?
+                            }
                             _ => unreachable!(),
                         };
                         let mut constraint = vec![15, 0, code, 0];
@@ -647,9 +719,14 @@ impl Document {
                         put_record(&mut groups, 0x7d2, &references);
                         let mut constraint = 15u16.to_le_bytes().to_vec();
                         constraint.extend_from_slice(
-                            &super::decode::polygon_constraint_subtype(&self.objects, &self.original, *host, count)
-                                .ok_or("Too many polygon vertices")?
-                                .to_le_bytes(),
+                            &super::decode::polygon_constraint_subtype(
+                                &self.objects,
+                                &self.original,
+                                *host,
+                                count,
+                            )
+                            .ok_or("Too many polygon vertices")?
+                            .to_le_bytes(),
                         );
                         constraint.extend_from_slice(&t.to_le_bytes());
                         constraint.extend_from_slice(&(*edge as u32).to_le_bytes());
@@ -849,21 +926,58 @@ impl Document {
                         )?;
                     }
                     Kind::CurveIntersection(a, b, branch) => {
-                        if !super::curve_intersection::supported(&self.objects, *a, *b, object.page, object.id) { return Err("Invalid curve intersection".into()); }
-                        let mut h = header(98); if !object.visible { h[2] = 1; } h[2] |= u8::from(object.presentation_suppressed) << 1; h[4] = u8::from(object.tracing);
-                        if let Some(style) = object.visual_style { style_records::set_visual_style(&mut h, style)?; }
+                        if !super::curve_intersection::supported(
+                            &self.objects,
+                            *a,
+                            *b,
+                            object.page,
+                            object.id,
+                        ) {
+                            return Err("Invalid curve intersection".into());
+                        }
+                        let mut h = header(98);
+                        if !object.visible {
+                            h[2] = 1;
+                        }
+                        h[2] |= u8::from(object.presentation_suppressed) << 1;
+                        h[4] = u8::from(object.tracing);
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut h, style)?;
+                        }
                         put_record(&mut groups, 0x7d0, &h);
-                        let mut refs = 2u32.to_le_bytes().to_vec(); for id in [*a, *b] { refs.extend_from_slice(&self.multi_page_local_reference(page, object.id, id)?.to_le_bytes()); }
+                        let mut refs = 2u32.to_le_bytes().to_vec();
+                        for id in [*a, *b] {
+                            refs.extend_from_slice(
+                                &self
+                                    .multi_page_local_reference(page, object.id, id)?
+                                    .to_le_bytes(),
+                            );
+                        }
                         put_record(&mut groups, 0x7d2, &refs);
-                        let mut payload = 98u32.to_le_bytes().to_vec(); payload.extend_from_slice(&branch.to_le_bytes()); put_record(&mut groups, 0x7d3, &payload);
-                        if let Some(label) = &object.label { groups.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                        let mut payload = 98u32.to_le_bytes().to_vec();
+                        payload.extend_from_slice(&branch.to_le_bytes());
+                        put_record(&mut groups, 0x7d3, &payload);
+                        if let Some(label) = &object.label {
+                            groups.extend_from_slice(
+                                &crate::text_records::encode_point_label_records(label),
+                            );
+                        }
                         put_record(&mut groups, 0x7d7, &[]);
                     }
                     Kind::BoundaryIntersection(a, b) => {
-                        if !super::boundary_intersection::supported(&self.objects, *a, *b, object.page, object.id) {
+                        if !super::boundary_intersection::supported(
+                            &self.objects,
+                            *a,
+                            *b,
+                            object.page,
+                            object.id,
+                        ) {
                             return Err("Invalid polygon boundary intersection".into());
                         }
-                        let refs = [self.multi_page_local_reference(page, object.id, *a)?, self.multi_page_local_reference(page, object.id, *b)?];
+                        let refs = [
+                            self.multi_page_local_reference(page, object.id, *a)?,
+                            self.multi_page_local_reference(page, object.id, *b)?,
+                        ];
                         Self::append_multi_page_reference_group(&mut groups, object, 93, &refs)?;
                     }
                     Kind::Intersection(a, b)
@@ -879,7 +993,9 @@ impl Document {
                             Kind::LineCircleIntersection(_, _, variant)
                                 if variant <= 1
                                     && self.line_points(*a).is_some()
-                                    && self.circle_points(*b).is_some() =>
+                                    && self.objects.get(b.saturating_sub(1)).is_some_and(
+                                        |round| round.kind.is_circle() || is_arc_kind(&round.kind),
+                                    ) =>
                             {
                                 if variant == 0 {
                                     12
@@ -889,7 +1005,11 @@ impl Document {
                             }
                             Kind::CircleCircleIntersection(_, _, variant)
                                 if variant <= 1
-                                    && [*a, *b].iter().all(|&id| self.objects.get(id.saturating_sub(1)).is_some_and(|o| o.kind.is_circle() || is_arc_kind(&o.kind))) =>
+                                    && [*a, *b].iter().all(|&id| {
+                                        self.objects.get(id.saturating_sub(1)).is_some_and(|o| {
+                                            o.kind.is_circle() || is_arc_kind(&o.kind)
+                                        })
+                                    }) =>
                             {
                                 if variant == 0 {
                                     14
@@ -945,8 +1065,16 @@ impl Document {
                         Self::append_multi_page_reference_group(&mut groups, object, code, &refs)?;
                     }
                     Kind::ArcOnCircle(circle, start, end) => {
-                        if !self.objects.get(circle.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && o.kind.is_circle())
-                            || [*start, *end].iter().any(|id| !self.objects.get(id.saturating_sub(1)).is_some_and(|o| !o.deleted && o.page == page && is_point_kind(&o.kind))) {
+                        if !self
+                            .objects
+                            .get(circle.saturating_sub(1))
+                            .is_some_and(|o| !o.deleted && o.page == page && o.kind.is_circle())
+                            || [*start, *end].iter().any(|id| {
+                                !self.objects.get(id.saturating_sub(1)).is_some_and(|o| {
+                                    !o.deleted && o.page == page && is_point_kind(&o.kind)
+                                })
+                            })
+                        {
                             return Err("Arc needs a circle and two points on this page".into());
                         }
                         let refs = [
@@ -960,7 +1088,9 @@ impl Document {
                         if !definition.supported(&self.objects, page, object.id) {
                             return Err("Invalid sampled mapped source roles".into());
                         }
-                        let refs = definition.native_references().into_iter()
+                        let refs = definition
+                            .native_references()
+                            .into_iter()
                             .map(|id| self.multi_page_local_reference(page, object.id, id))
                             .collect::<Result<Vec<_>, _>>()?;
                         Self::append_multi_page_reference_group(&mut groups, object, 102, &refs)?;
@@ -969,25 +1099,56 @@ impl Document {
                         put_record(&mut groups, 0x07d7, &[]);
                     }
                     Kind::CircleInterior(circle) => {
-                        if !super::circle_interior::supported_source(&self.objects, *circle, page, object.id) {
+                        if !super::circle_interior::supported_source(
+                            &self.objects,
+                            *circle,
+                            page,
+                            object.id,
+                        ) {
                             return Err("Circle interior needs a live circle on this page".into());
                         }
-                        let reference = self.multi_page_local_reference(page, object.id, *circle)?;
-                        Self::append_multi_page_reference_group(&mut groups, object, 10, &[reference])?;
+                        let reference =
+                            self.multi_page_local_reference(page, object.id, *circle)?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            10,
+                            &[reference],
+                        )?;
                     }
                     Kind::SectorBoundary(arc) => {
-                        if !super::sector_boundary::supported_source(&self.objects, *arc, page, object.id) {
+                        if !super::sector_boundary::supported_source(
+                            &self.objects,
+                            *arc,
+                            page,
+                            object.id,
+                        ) {
                             return Err("Sector needs a live arc on this page".into());
                         }
                         let reference = self.multi_page_local_reference(page, object.id, *arc)?;
-                        Self::append_multi_page_reference_group(&mut groups, object, 82, &[reference])?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            82,
+                            &[reference],
+                        )?;
                     }
                     Kind::CircularSegmentBoundary(arc) => {
-                        if !super::sector_boundary::supported_circular_segment_source(&self.objects, *arc, page, object.id) {
+                        if !super::sector_boundary::supported_circular_segment_source(
+                            &self.objects,
+                            *arc,
+                            page,
+                            object.id,
+                        ) {
                             return Err("Circular segment needs a live arc on this page".into());
                         }
                         let reference = self.multi_page_local_reference(page, object.id, *arc)?;
-                        Self::append_multi_page_reference_group(&mut groups, object, 83, &[reference])?;
+                        Self::append_multi_page_reference_group(
+                            &mut groups,
+                            object,
+                            83,
+                            &[reference],
+                        )?;
                     }
                     Kind::Polygon(vertices) => {
                         if vertices.len() < 3
@@ -1025,11 +1186,16 @@ impl Document {
                             Kind::SegmentLength(_) if is_segment_kind(host_kind) => {
                                 include_bytes!("../../../../assets/length_measurement_group.bin")
                             }
-                            Kind::PolygonPerimeter(_) if host_kind.is_polygon() || matches!(host_kind, Kind::SectorBoundary(_)) => {
+                            Kind::PolygonPerimeter(_)
+                                if host_kind.is_polygon()
+                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                            {
                                 include_bytes!("../../../../assets/perimeter_measurement_group.bin")
                             }
                             Kind::CircleCircumference(_) if host_kind.is_circle() => {
-                                include_bytes!("../../../../assets/circumference_measurement_group.bin")
+                                include_bytes!(
+                                    "../../../../assets/circumference_measurement_group.bin"
+                                )
                             }
                             Kind::CircleRadius(_) if host_kind.is_circle() => {
                                 include_bytes!("../../../../assets/radius_measurement_group.bin")
@@ -1037,14 +1203,22 @@ impl Document {
                             Kind::CircleArea(_) if host_kind.is_circle() => {
                                 include_bytes!("../../../../assets/area_measurement_group.bin")
                             }
-                            Kind::PolygonArea(_) if host_kind.is_polygon() || matches!(host_kind, Kind::SectorBoundary(_)) => {
+                            Kind::PolygonArea(_)
+                                if host_kind.is_polygon()
+                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                            {
                                 include_bytes!("../../../../assets/area_measurement_group.bin")
                             }
                             Kind::ArcAngle(_) if is_arc_kind(host_kind) => {
                                 include_bytes!("../../../../assets/arc_angle_measurement_group.bin")
                             }
-                            Kind::ArcLength(_) if is_arc_kind(host_kind) || matches!(host_kind, Kind::SectorBoundary(_)) => {
-                                include_bytes!("../../../../assets/arc_length_measurement_group.bin")
+                            Kind::ArcLength(_)
+                                if is_arc_kind(host_kind)
+                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                            {
+                                include_bytes!(
+                                    "../../../../assets/arc_length_measurement_group.bin"
+                                )
                             }
                             _ => return Err("Measurement needs a compatible host".into()),
                         };
@@ -1065,7 +1239,9 @@ impl Document {
                             match &object.kind {
                                 Kind::PointDistance(_, _) => (
                                     vec![*a, *b],
-                                    include_bytes!("../../../../assets/distance_measurement_group.bin"),
+                                    include_bytes!(
+                                        "../../../../assets/distance_measurement_group.bin"
+                                    ),
                                     64,
                                 ),
                                 Kind::PointLineDistance(_, _) => (
@@ -1077,12 +1253,16 @@ impl Document {
                                 ),
                                 Kind::AngleMeasurement(_, _, c) => (
                                     vec![*a, *b, *c],
-                                    include_bytes!("../../../../assets/angle_measurement_group.bin"),
+                                    include_bytes!(
+                                        "../../../../assets/angle_measurement_group.bin"
+                                    ),
                                     68,
                                 ),
                                 Kind::PointRatio(_, _, c) => (
                                     vec![*a, *b, *c],
-                                    include_bytes!("../../../../assets/ratio_measurement_group.bin"),
+                                    include_bytes!(
+                                        "../../../../assets/ratio_measurement_group.bin"
+                                    ),
                                     68,
                                 ),
                                 _ => unreachable!(),
@@ -1297,10 +1477,15 @@ impl Document {
                     Kind::PresentationButton {
                         targets,
                         mode,
+                        options,
                         label,
                         anchor,
                     } => {
                         if targets.is_empty()
+                            || options.native_state as usize > targets.len()
+                            || (*mode == crate::action_records::PresentationMode::Sequential
+                                && options.stop
+                                    != crate::action_records::PresentationStop::LastAction)
                             || targets.iter().any(|target| {
                                 self.objects
                                     .get(target.saturating_sub(1))
@@ -1316,7 +1501,7 @@ impl Document {
                         let mut group = PresentationButtonGroup::from_original_template_targets(
                             &ids, label, *anchor,
                         )?;
-                        group.set_mode(*mode);
+                        group.set_options(*mode, *options);
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
                     }
@@ -1550,8 +1735,13 @@ impl Document {
                 }
                 expected.kind = current.kind.clone();
             }
-            if let (Kind::CoordinatePoint(old), Kind::CoordinatePoint(new)) = (&saved.kind, &current.kind) {
-                if old.frame()==new.frame() && old.wire_flavor()==new.wire_flavor() && old.native_references()==new.native_references() { expected.kind=current.kind.clone(); }
+            if let (Kind::CoordinatePoint(old), Kind::CoordinatePoint(new)) =
+                (&saved.kind, &current.kind)
+                && old.frame() == new.frame()
+                && old.wire_flavor() == new.wire_flavor()
+                && old.native_references() == new.native_references()
+            {
+                expected.kind = current.kind.clone();
             }
             match (&saved.kind, &current.kind) {
                 (Kind::PointOnSegment(old_host, _), Kind::PointOnSegment(host, t))
@@ -1575,13 +1765,27 @@ impl Document {
                     expected.kind = current.kind.clone();
                 }
                 (Kind::PointOnSector(old_host, _), Kind::PointOnSector(host, t))
-                    if old_host == host && t.is_finite()
-                        && super::sector_boundary::supported_host(&self.objects, *host, current.page, current.id) => {
+                    if old_host == host
+                        && t.is_finite()
+                        && super::sector_boundary::supported_host(
+                            &self.objects,
+                            *host,
+                            current.page,
+                            current.id,
+                        ) =>
+                {
                     expected.kind = current.kind.clone();
                 }
                 (Kind::PointOnCurve(old_host, _), Kind::PointOnCurve(host, t))
-                    if old_host == host && t.is_finite()
-                        && super::curve_points::free_supported(&self.objects, *host, current.page, current.id) => {
+                    if old_host == host
+                        && t.is_finite()
+                        && super::curve_points::free_supported(
+                            &self.objects,
+                            *host,
+                            current.page,
+                            current.id,
+                        ) =>
+                {
                     expected.kind = current.kind.clone();
                 }
                 (Kind::PointOnPolygon(old_host, _, _), Kind::PointOnPolygon(host, edge, t))
@@ -1669,10 +1873,16 @@ impl Document {
                 out[at..at + 8].copy_from_slice(&point.x.to_le_bytes());
                 out[at + 8..at + 16].copy_from_slice(&point.y.to_le_bytes());
             }
-            if let Kind::CoordinatePoint(d)=&current.kind {
-                let at=current.constraint_offset.ok_or("Missing coordinate-point payload")?;
-                if out.get(at..at+4)!=Some(&d.native_payload()[..4]) { return Err("Invalid coordinate-point opcode".into()); }
-                out.get_mut(at..at+12).ok_or("Short coordinate-point payload")?.copy_from_slice(&d.native_payload());
+            if let Kind::CoordinatePoint(d) = &current.kind {
+                let at = current
+                    .constraint_offset
+                    .ok_or("Missing coordinate-point payload")?;
+                if out.get(at..at + 4) != Some(&d.native_payload()[..4]) {
+                    return Err("Invalid coordinate-point opcode".into());
+                }
+                out.get_mut(at..at + 12)
+                    .ok_or("Short coordinate-point payload")?
+                    .copy_from_slice(&d.native_payload());
             }
             if saved.kind != current.kind
                 && matches!(
@@ -1700,10 +1910,15 @@ impl Document {
                             .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnRay(host, t) | Kind::PointOnLine(host, t) => {
-                        let payload = out.get(at..at + 4).ok_or("Short straight-point constraint")?;
-                        if !super::kind::straight_point_constraint_matches(&self.objects[*host - 1].kind, payload)
-                            && !(matches!(current.kind, Kind::PointOnLine(_, _))
-                                && payload == [15, 0, 12, 0]) {
+                        let payload = out
+                            .get(at..at + 4)
+                            .ok_or("Short straight-point constraint")?;
+                        if !super::kind::straight_point_constraint_matches(
+                            &self.objects[*host - 1].kind,
+                            payload,
+                        ) && !(matches!(current.kind, Kind::PointOnLine(_, _))
+                            && payload == [15, 0, 12, 0])
+                        {
                             return Err("Invalid straight-point constraint".into());
                         }
                         out.get_mut(at + 4..at + 12)
@@ -1719,13 +1934,23 @@ impl Document {
                             .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnSector(_, t) => {
-                        if out.get(at..at + 4) != Some(&[15, 0, 68, 0]) { return Err("Invalid sector-point constraint".into()); }
-                        out.get_mut(at + 4..at + 12).ok_or("Short sector-point constraint")?.copy_from_slice(&t.to_le_bytes());
+                        if out.get(at..at + 4) != Some(&[15, 0, 68, 0]) {
+                            return Err("Invalid sector-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short sector-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnCurve(host, t) => {
-                        let subtype = super::curve_points::free_constraint_subtype(&self.objects, *host).ok_or("Invalid curve-point host")?;
-                        if out.get(at..at + 4) != Some(&[15, 0, subtype, 0]) { return Err("Invalid curve-point constraint".into()); }
-                        out.get_mut(at + 4..at + 12).ok_or("Short curve-point constraint")?.copy_from_slice(&t.to_le_bytes());
+                        let subtype =
+                            super::curve_points::free_constraint_subtype(&self.objects, *host)
+                                .ok_or("Invalid curve-point host")?;
+                        if out.get(at..at + 4) != Some(&[15, 0, subtype, 0]) {
+                            return Err("Invalid curve-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short curve-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnPolygon(_, edge, t) => {
                         if out.get(at..at + 2) != Some(&[15, 0]) {
@@ -1755,7 +1980,11 @@ impl Document {
             if saved.visible != current.visible {
                 let mut class = u32_at(&out, header);
                 if current.visible {
-                    class &= if matches!(current.kind, Kind::PathValuePoint(..)) { !0x5_0000 } else { !0x1_0000 };
+                    class &= if matches!(current.kind, Kind::PathValuePoint(..)) {
+                        !0x5_0000
+                    } else {
+                        !0x1_0000
+                    };
                 } else {
                     class |= 0x1_0000;
                 }
@@ -1803,7 +2032,7 @@ impl Document {
                 }
                 let mut payload = name.as_bytes().to_vec();
                 payload.push(0);
-                if payload.len() % 2 != 0 {
+                if !payload.len().is_multiple_of(2) {
                     payload.push(0);
                 }
                 put_record(&mut replacement, 0x044c, &payload);

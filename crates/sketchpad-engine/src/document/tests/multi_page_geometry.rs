@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn multi_page_point_additions_refuse_cross_page_hosts() {
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut document = Document::from_bytes(base, None).unwrap();
     document.active_page = 0;
     document.add(Kind::PointOnSegment(4, 0.5));
@@ -84,12 +85,14 @@ fn multi_page_points_on_lines_and_rays_reopen() {
 fn native_ray_and_line_point_values_follow_moved_points() {
     for (native, moved, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/point_on_line_value_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/point_on_line_value_native.gsp")
+                .as_slice(),
             Point { x: 243., y: 212. },
             -0.5,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/point_on_ray_value_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/point_on_ray_value_native.gsp")
+                .as_slice(),
             Point { x: 603., y: 234.5 },
             1.75,
         ),
@@ -119,7 +122,8 @@ fn native_ray_and_line_point_values_follow_moved_points() {
 fn native_arc_point_values_follow_moved_points() {
     for (native, point_id, moved, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/point_on_arc_value_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/point_on_arc_value_native.gsp")
+                .as_slice(),
             5,
             Point {
                 x: 209.17111318359585,
@@ -182,7 +186,8 @@ fn multi_page_constrained_point_additions_reopen() {
             include_bytes!("../../../../../tests/fixtures/two_page_arc_constrained_native.gsp")
                 .as_slice(),
             Kind::PointOnArc(5, 0.6887639439801854),
-            include_bytes!("../../../../../tests/fixtures/two_page_arc_extra_point_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/two_page_arc_extra_point_port.gsp")
+                .as_slice(),
         ),
     ] {
         let mut document = Document::from_bytes(base, None).unwrap();
@@ -336,8 +341,10 @@ fn multi_page_midpoint_and_circle_by_segment_match_native_groups() {
         (
             1,
             Kind::CircleBySegment(2, 4),
-            include_bytes!("../../../../../tests/fixtures/two_page_circle_segment_port.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/two_page_circle_segment_native.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/two_page_circle_segment_port.gsp")
+                .as_slice(),
+            include_bytes!("../../../../../tests/fixtures/two_page_circle_segment_native.gsp")
+                .as_slice(),
         ),
     ] {
         let mut document = Document::from_bytes(base, None).unwrap();
@@ -376,7 +383,9 @@ fn multi_page_midpoint_and_circle_by_new_segment_reopen() {
     document.save_to(&path).unwrap();
     assert_eq!(
         std::fs::read(&path).unwrap(),
-        include_bytes!("../../../../../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_midpoint_circle_segment_mixed_port.gsp"
+        )
     );
     assert_eq!(document.objects[midpoint - 1].midpoint_host, Some(segment));
     assert_eq!(
@@ -470,7 +479,9 @@ fn multi_page_derived_lines_and_intersections_save() {
             9,
         ),
         object_group_with_code(
-            include_bytes!("../../../../../tests/fixtures/two_page_straight_intersection_native.gsp"),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_straight_intersection_native.gsp"
+            ),
             9,
         )
     );
@@ -515,12 +526,78 @@ fn multi_page_derived_lines_and_intersections_save() {
     ));
     let reopened = saved(
         document,
-        include_bytes!("../../../../../tests/fixtures/two_page_circle_circle_intersections_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_circle_circle_intersections_port.gsp"
+        ),
         "circle_crossings",
     );
     assert_ne!(reopened.position(first), reopened.position(second));
     assert!(reopened.position(first).is_some());
     assert!(reopened.position(second).is_some());
+
+    let mut document = Document::from_bytes(
+        include_bytes!("../../../../../tests/fixtures/two_page_blank_native.gsp"),
+        None,
+    )
+    .unwrap();
+    document.active_page = 1;
+    let circle_center = document.add(Kind::Free(Point { x: 200., y: 200. }));
+    let circle_radius = document.add(Kind::Free(Point { x: 260., y: 200. }));
+    let circle = document.add(Kind::Circle(circle_center, circle_radius));
+    let arc_start = document.add(Kind::Free(Point { x: 240., y: 260. }));
+    let arc_middle = document.add(Kind::Free(Point { x: 180., y: 200. }));
+    let arc_end = document.add(Kind::Free(Point { x: 240., y: 140. }));
+    let left_arc = document.add(Kind::ThreePointArc(arc_start, arc_middle, arc_end));
+    let line_start = document.add(Kind::Free(Point { x: 220., y: 100. }));
+    let line_end = document.add(Kind::Free(Point { x: 220., y: 300. }));
+    let line = document.add(Kind::Line(line_start, line_end));
+    let line_arc = [
+        document.add(Kind::LineCircleIntersection(line, left_arc, 1)),
+        document.add(Kind::LineCircleIntersection(line, left_arc, 0)),
+    ];
+    let circle_arc = [
+        document.add(Kind::CircleCircleIntersection(circle, left_arc, 1)),
+        document.add(Kind::CircleCircleIntersection(circle, left_arc, 0)),
+    ];
+    let right_start = document.add(Kind::Free(Point { x: 200., y: 140. }));
+    let right_end = document.add(Kind::Free(Point { x: 200., y: 260. }));
+    let right_arc = document.add(Kind::ThreePointArc(right_start, circle_radius, right_end));
+    let arc_arc = [
+        document.add(Kind::CircleCircleIntersection(right_arc, left_arc, 1)),
+        document.add(Kind::CircleCircleIntersection(right_arc, left_arc, 0)),
+    ];
+    let bytes = document.encode().unwrap();
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    for pair in [line_arc, circle_arc, arc_arc] {
+        assert_ne!(reopened.position(pair[0]), reopened.position(pair[1]));
+        assert!(
+            pair.into_iter()
+                .all(|intersection| reopened.position(intersection).is_some())
+        );
+    }
+
+    let mut document = Document::from_bytes(
+        include_bytes!("../../../../../tests/fixtures/two_page_blank_native.gsp"),
+        None,
+    )
+    .unwrap();
+    document.active_page = 1;
+    let vertices = [
+        document.add(Kind::Free(Point { x: 150., y: 150. })),
+        document.add(Kind::Free(Point { x: 250., y: 150. })),
+        document.add(Kind::Free(Point { x: 250., y: 250. })),
+        document.add(Kind::Free(Point { x: 150., y: 250. })),
+    ];
+    let polygon = document.add(Kind::Polygon(vertices.to_vec()));
+    let origin = document.add(Kind::Free(Point { x: 180., y: 200. }));
+    let direction = document.add(Kind::Free(Point { x: 220., y: 200. }));
+    let line = document.add(Kind::Line(origin, direction));
+    let boundary = document.add(Kind::BoundaryIntersection(line, polygon));
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.position(boundary),
+        Some(Point { x: 250., y: 200. })
+    );
 }
 
 #[test]
@@ -617,7 +694,8 @@ fn multi_page_polygon_interiors_save_on_both_pages() {
     let c = document.add(Kind::Free(Point { x: 300., y: 180. }));
     document.add(Kind::Polygon(vec![a, b, c]));
     document.save_to(&path).unwrap();
-    let expected = include_bytes!("../../../../../tests/fixtures/two_page_polygons_both_pages_port.gsp");
+    let expected =
+        include_bytes!("../../../../../tests/fixtures/two_page_polygons_both_pages_port.gsp");
     assert_eq!(std::fs::read(&path).unwrap(), expected);
     let reopened = Document::from_bytes(expected, None).unwrap();
     assert_eq!(reopened.objects[3].kind, Kind::Polygon(vec![1, 2, 3]));
@@ -673,7 +751,8 @@ fn multi_page_one_host_measurements_save() {
 }
 #[test]
 fn multi_page_point_measurements_append_after_existing_labels() {
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_one_host_measurements_port.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_one_host_measurements_port.gsp");
     let mut document = Document::from_bytes(base, None).unwrap();
     document.active_page = 1;
     let target = document.add(Kind::Free(Point { x: 210., y: 180. }));
@@ -685,7 +764,8 @@ fn multi_page_point_measurements_append_after_existing_labels() {
         std::process::id()
     ));
     document.save_to(&path).unwrap();
-    let expected = include_bytes!("../../../../../tests/fixtures/two_page_point_measurements_port.gsp");
+    let expected =
+        include_bytes!("../../../../../tests/fixtures/two_page_point_measurements_port.gsp");
     assert_eq!(std::fs::read(&path).unwrap(), expected);
     let reopened = Document::from_bytes(expected, None).unwrap();
     assert_eq!(reopened.objects[17].kind, Kind::PointDistance(2, 4));

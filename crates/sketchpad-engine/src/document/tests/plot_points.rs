@@ -82,10 +82,10 @@ fn new_plotted_points_save_and_reopen() {
         let expected = doc.position(9).unwrap();
         let saved = doc.encode().unwrap();
         let original = match mode {
-            PlotPointsMode::Cartesian => {
-                include_bytes!("../../../../../tests/fixtures/plot_points_table_single_original.gsp")
-                    .as_slice()
-            }
+            PlotPointsMode::Cartesian => include_bytes!(
+                "../../../../../tests/fixtures/plot_points_table_single_original.gsp"
+            )
+            .as_slice(),
             PlotPointsMode::Polar => {
                 include_bytes!("../../../../../tests/fixtures/plot_points_table_polar_original.gsp")
                     .as_slice()
@@ -101,7 +101,8 @@ fn new_plotted_points_save_and_reopen() {
 
 #[test]
 fn named_parameter_table_plot_matches_original_point_group() {
-    let original = include_bytes!("../../../../../tests/fixtures/plot_points_named_speed_original.gsp");
+    let original =
+        include_bytes!("../../../../../tests/fixtures/plot_points_named_speed_original.gsp");
     let native = Document::from_bytes(original, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), original);
@@ -205,7 +206,8 @@ fn repeated_plot_points_round_trip_and_reject_invalid_coordinates() {
 
 #[test]
 fn frame_only_plot_point_matches_original() {
-    let original = include_bytes!("../../../../../tests/fixtures/plot_points_frame_only_original.gsp");
+    let original =
+        include_bytes!("../../../../../tests/fixtures/plot_points_frame_only_original.gsp");
     let native = Document::from_bytes(original, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), original);
@@ -237,11 +239,13 @@ fn frame_only_plot_point_matches_original() {
 fn plot_points_anchor_to_first_object_in_mixed_sketches() {
     for (original, text_first) in [
         (
-            include_bytes!("../../../../../tests/fixtures/plot_points_prepoint_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/plot_points_prepoint_original.gsp")
+                .as_slice(),
             false,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/plot_points_pretext_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/plot_points_pretext_original.gsp")
+                .as_slice(),
             true,
         ),
     ] {
@@ -280,7 +284,8 @@ fn plot_points_anchor_to_first_object_in_mixed_sketches() {
 
 #[test]
 fn polar_table_data_matches_original_point_group() {
-    let original = include_bytes!("../../../../../tests/fixtures/plot_table_fraction_polar_original.gsp");
+    let original =
+        include_bytes!("../../../../../tests/fixtures/plot_table_fraction_polar_original.gsp");
     let native = Document::from_bytes(original, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), original);
@@ -289,7 +294,8 @@ fn polar_table_data_matches_original_point_group() {
         Kind::PlottedPoint(9, PlotPointsMode::Polar, [2.5, angle])
             if angle == plot_points_records::DEGREES_TO_RADIANS
     ));
-    let base = include_bytes!("../../../../../tests/fixtures/plot_table_fraction_base_original.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/plot_table_fraction_base_original.gsp");
     let mut generated = Document::from_bytes(base, None).unwrap();
     assert_eq!(
         generated.plot_pair_table_data(3, PlotPointsMode::Polar),
@@ -309,7 +315,8 @@ fn polar_table_data_matches_original_point_group() {
 
 #[test]
 fn distinct_polar_table_rows_plot_and_round_trip() {
-    let original = include_bytes!("../../../../../tests/fixtures/plot_table_distinct_polar_original.gsp");
+    let original =
+        include_bytes!("../../../../../tests/fixtures/plot_table_distinct_polar_original.gsp");
     let native = Document::from_bytes(original, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), original);
@@ -320,7 +327,8 @@ fn distinct_polar_table_rows_plot_and_round_trip() {
                 if r == radius && angle == plot_points_records::DEGREES_TO_RADIANS
         ));
     }
-    let base = include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
     let mut generated = Document::from_bytes(base, None).unwrap();
     assert_eq!(
         generated.plot_pair_table_data(3, PlotPointsMode::Polar),
@@ -347,7 +355,8 @@ fn three_row_pair_table_edits_live_row_and_plots_distinct_values() {
             if group.pair_values() == Some(vec![[1., 1.], [2., 1.], [2., 1.]])
     ));
 
-    let base = include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
     let mut doc = Document::from_bytes(base, None).unwrap();
     doc.change_table_rows(3, true).unwrap();
     assert!(matches!(
@@ -373,17 +382,20 @@ fn three_row_pair_table_edits_live_row_and_plots_distinct_values() {
 
 #[test]
 fn five_distinct_pair_rows_plot_and_stay_fixed_after_parameter_edit() {
-    let native_four = include_bytes!("../../../../../tests/fixtures/table_pair_four_rows_original.gsp");
+    let native_four =
+        include_bytes!("../../../../../tests/fixtures/table_pair_four_rows_original.gsp");
     let imported = Document::from_bytes(native_four, None).unwrap();
     assert!(!imported.partial_view);
     assert_eq!(imported.encode().unwrap(), native_four);
-    let cross_opened =
-        include_bytes!("../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+    let cross_opened = include_bytes!(
+        "../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp"
+    );
     let imported = Document::from_bytes(cross_opened, None).unwrap();
     assert!(!imported.partial_view);
     assert_eq!(imported.encode().unwrap(), cross_opened);
 
-    let base = include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
     let mut doc = Document::from_bytes(base, None).unwrap();
     for next in [3.25, 4.5, 5.75] {
         doc.change_table_rows(3, true).unwrap();
@@ -419,8 +431,9 @@ fn five_distinct_pair_rows_plot_and_stay_fixed_after_parameter_edit() {
 
 #[test]
 fn removing_pair_rows_preserves_earlier_cached_values() {
-    let five =
-        include_bytes!("../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+    let five = include_bytes!(
+        "../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp"
+    );
     let mut plotted_doc = Document::from_bytes(five, None).unwrap();
     let positions = (10..=14)
         .map(|id| plotted_doc.position(id).unwrap())
@@ -428,7 +441,9 @@ fn removing_pair_rows_preserves_earlier_cached_values() {
     plotted_doc.change_table_rows(3, false).unwrap();
     assert_eq!(
         plotted_doc.encode().unwrap(),
-        include_bytes!("../../../../../tests/fixtures/table_pair_four_rows_after_remove_generated.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/table_pair_four_rows_after_remove_generated.gsp"
+        )
     );
     assert_eq!(
         (10..=14)
@@ -437,7 +452,8 @@ fn removing_pair_rows_preserves_earlier_cached_values() {
         positions
     );
 
-    let base = include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/plot_table_distinct_base_original.gsp");
     let mut doc = Document::from_bytes(base, None).unwrap();
     for next in [3.25, 4.5, 5.75] {
         doc.change_table_rows(3, true).unwrap();
@@ -471,8 +487,9 @@ fn removing_pair_rows_preserves_earlier_cached_values() {
 
 #[test]
 fn pair_table_can_be_plotted_again_after_parameter_edit() {
-    let five =
-        include_bytes!("../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp");
+    let five = include_bytes!(
+        "../../../../../tests/fixtures/table_pair_five_distinct_polar_generated.gsp"
+    );
     let mut doc = Document::from_bytes(five, None).unwrap();
     let first_positions = (10..=14)
         .map(|id| doc.position(id).unwrap())
@@ -561,7 +578,9 @@ fn pair_table_caches_and_plots_both_parameter_values() {
     let bytes = doc.encode().unwrap();
     assert_eq!(
         bytes,
-        include_bytes!("../../../../../tests/fixtures/table_pair_both_columns_cartesian_generated.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/table_pair_both_columns_cartesian_generated.gsp"
+        )
     );
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
@@ -588,7 +607,8 @@ fn pair_table_caches_and_plots_both_parameter_values() {
 fn pair_table_preserves_native_wide_cells_and_plots_mixed_rows() {
     for (bytes, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/table_pair_negative_x_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/table_pair_negative_x_original.gsp")
+                .as_slice(),
             [-2.5, 1.0],
         ),
         (
@@ -665,7 +685,8 @@ fn pair_table_preserves_native_wide_cells_and_plots_mixed_rows() {
 
 #[test]
 fn original_two_row_plotted_point_is_editable() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/plot_points_table_two_rows_original.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/plot_points_table_two_rows_original.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert!(matches!(doc.objects[1].kind, Kind::ValueTable(1, ref table) if table.rows() == 2));

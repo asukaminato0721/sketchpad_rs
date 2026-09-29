@@ -4,8 +4,9 @@ use crate::style_records::{
 };
 
 impl Document {
-    fn update_selected_visual_style(
+    fn update_visual_style(
         &mut self,
+        ids: &std::collections::BTreeSet<usize>,
         update: impl Fn(VisualStyle) -> Option<VisualStyle>,
     ) -> Result<usize, String> {
         if self.partial_view && self.page_count == 1 {
@@ -15,10 +16,7 @@ impl Document {
             .objects
             .iter()
             .filter_map(|object| {
-                if object.deleted
-                    || object.page != self.active_page
-                    || !self.selected.contains(&object.id)
-                {
+                if object.deleted || object.page != self.active_page || !ids.contains(&object.id) {
                     return None;
                 }
                 let old = object.visual_style?;
@@ -76,6 +74,13 @@ impl Document {
         *self = candidate;
         Ok(changes.len())
     }
+    fn update_selected_visual_style(
+        &mut self,
+        update: impl Fn(VisualStyle) -> Option<VisualStyle>,
+    ) -> Result<usize, String> {
+        let selected = self.selected.clone();
+        self.update_visual_style(&selected, update)
+    }
     pub fn set_selected_point_style(&mut self, shape: PointStyle) -> Result<usize, String> {
         self.update_selected_visual_style(|style| match style {
             VisualStyle::Point { color, .. } => Some(VisualStyle::Point { shape, color }),
@@ -108,5 +113,25 @@ impl Document {
                 VisualStyle::Polygon { opacity, .. } => VisualStyle::Polygon { color, opacity },
             })
         })
+    }
+    pub fn set_object_polygon_opacity(&mut self, id: usize, opacity: u16) -> Result<bool, String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid object ID")?)
+            .ok_or("Invalid object ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Object is not on the active page".into());
+        }
+        if !matches!(object.visual_style, Some(VisualStyle::Polygon { .. })) {
+            return Err("Object does not have polygon opacity".into());
+        }
+        let changed = self.update_visual_style(
+            &std::collections::BTreeSet::from([id]),
+            |style| match style {
+                VisualStyle::Polygon { color, .. } => Some(VisualStyle::Polygon { color, opacity }),
+                _ => None,
+            },
+        )?;
+        Ok(changed != 0)
     }
 }

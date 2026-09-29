@@ -48,8 +48,9 @@ impl Document {
             Kind::SlopeMeasurement(_, _) => self.slope_value(id),
             Kind::AngleMeasurement(_, _, _) => self.angle_degrees(id),
             Kind::AngleMarker(a, vertex, c, _) => self.signed_angle_degrees(*a, *vertex, *c),
-            Kind::PolarAngleValue(_, _, _) | Kind::VertexAngleValue(_, _, _) =>
-                self.directed_angle_degrees(id),
+            Kind::PolarAngleValue(_, _, _) | Kind::VertexAngleValue(_, _, _) => {
+                self.directed_angle_degrees(id)
+            }
             Kind::NumericAlias { source, .. } => self.numeric_value(*source),
             Kind::ArcAngle(_) => self.arc_angle_degrees(id),
             Kind::SegmentLength(_) => self.segment_length_cm(id),
@@ -88,7 +89,9 @@ impl Document {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let name = match object.kind {
             Kind::NumericAlias { source, .. } => {
-                let named = object.label.as_ref()
+                let named = object
+                    .label
+                    .as_ref()
                     .and_then(|label| label.name_utf8().ok())
                     .filter(|name| !name.is_empty())
                     .map(str::to_owned);
@@ -100,16 +103,29 @@ impl Document {
                         | Kind::AngleMarker(a, b, c, _) => (a, b, c),
                         _ => return None,
                     };
-                    let point_name = |id: usize| self.objects.get(id.checked_sub(1)?)?
-                        .label.as_ref()?.name_utf8().ok().filter(|name| !name.is_empty()).map(str::to_owned);
-                    Some(format!("∠{}{}{}",
+                    let point_name = |id: usize| {
+                        self.objects
+                            .get(id.checked_sub(1)?)?
+                            .label
+                            .as_ref()?
+                            .name_utf8()
+                            .ok()
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned)
+                    };
+                    Some(format!(
+                        "∠{}{}{}",
                         point_name(first).unwrap_or_else(|| "P".into()),
                         point_name(vertex).unwrap_or_else(|| "Q".into()),
-                        point_name(last).unwrap_or_else(|| "R".into())))
+                        point_name(last).unwrap_or_else(|| "R".into())
+                    ))
                 };
                 let name = named.or_else(generated)?;
                 let radians = self.angle_unit_radians
-                    && matches!(self.objects.get(source.checked_sub(1)?)?.kind, Kind::AngleMarker(..));
+                    && matches!(
+                        self.objects.get(source.checked_sub(1)?)?.kind,
+                        Kind::AngleMarker(..)
+                    );
                 let value = if radians {
                     crate::table_records::format_numeric_value(
                         self.numeric_value(id)?.to_radians(),
@@ -118,7 +134,11 @@ impl Document {
                 } else {
                     self.measurement_value_text(id)?
                 };
-                let unit = if radians { String::new() } else { object.kind.numeric_unit()?.suffix() };
+                let unit = if radians {
+                    String::new()
+                } else {
+                    object.kind.numeric_unit()?.suffix()
+                };
                 return Some(format!("{name} = {value}{unit}"));
             }
             Kind::SegmentLength(_) => "Length",
@@ -310,30 +330,46 @@ impl Document {
     /// Format current numeric values, including scoped substitutions, using the
     /// source's own precision and quantity suffix.
     pub fn numeric_value_text(&self, id: usize) -> Option<String> {
-        let object=self.objects.get(id.checked_sub(1)?)?;
-        let value=self.numeric_value(id)?;
-        if value.is_nan(){return Some("undefined".into())}
-        let precision=match &object.kind {
-            Kind::Parameter(group)=>group.precision(),
-            Kind::ParameterCalculation(_,group)=>group.precision(),
-            Kind::Calculation(group)=>group.precision(),
-            Kind::MeasuredCalculation(_,group)=>group.precision(),
-            Kind::LengthPairCalculation(_,_,group)=>group.precision(),
-            _=>usize::from(object.measurement_precision?),
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let value = self.numeric_value(id)?;
+        if value.is_nan() {
+            return Some("undefined".into());
+        }
+        let precision = match &object.kind {
+            Kind::Parameter(group) => group.precision(),
+            Kind::ParameterCalculation(_, group) => group.precision(),
+            Kind::Calculation(group) => group.precision(),
+            Kind::MeasuredCalculation(_, group) => group.precision(),
+            Kind::LengthPairCalculation(_, _, group) => group.precision(),
+            _ => usize::from(object.measurement_precision?),
         };
-        let number=if value==f64::INFINITY {"∞".into()}
-            else if value==f64::NEG_INFINITY {"−∞".into()}
-            else {crate::table_records::format_numeric_value(value,precision)};
-        Some(format!("{number}{}",object.kind.numeric_unit()?.suffix()))
+        let number = if value == f64::INFINITY {
+            "∞".into()
+        } else if value == f64::NEG_INFINITY {
+            "−∞".into()
+        } else {
+            crate::table_records::format_numeric_value(value, precision)
+        };
+        Some(format!("{number}{}", object.kind.numeric_unit()?.suffix()))
     }
     pub fn point_numeric_label(&self, id: usize) -> Option<(Point, String)> {
         let o = self.objects.get(id.checked_sub(1)?)?;
-        if let Kind::PointReferencedText { point, source, text } = &o.kind {
-            if o.deleted { return None; }
+        if let Kind::PointReferencedText {
+            point,
+            source,
+            text,
+        } = &o.kind
+        {
+            if o.deleted {
+                return None;
+            }
             let position = self.position(*point)?;
             let rows = self.evaluate_referenced_text(&[*point, *source], text);
-            let content = rows.into_iter().map(|row| row.into_iter().map(|run| run.text).collect::<String>())
-                .collect::<Vec<_>>().join("\n");
+            let content = rows
+                .into_iter()
+                .map(|row| row.into_iter().map(|run| run.text).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
             return Some((position, content));
         }
         let Kind::PointNumericLabel(point, source) = o.kind else {
@@ -433,8 +469,11 @@ impl Document {
         match kind {
             ValueEquationKind::PointValue => {
                 if let Kind::PointOnCurve(host, t) = self.objects.get(first - 1)?.kind
-                    && host == second {
-                    return self.curve_point_value(host, t).map(EquationValue::PointValue);
+                    && host == second
+                {
+                    return self
+                        .curve_point_value(host, t)
+                        .map(EquationValue::PointValue);
                 }
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
@@ -458,10 +497,10 @@ impl Document {
                         }
                     }
                     ref kind if kind.is_circle() => {
-                        if let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind {
-                            if host == second {
-                                return value_equation_records::circle_point_value(x, y);
-                            }
+                        if let Kind::PointOnCircle(host, x, y) = self.objects.get(first - 1)?.kind
+                            && host == second
+                        {
+                            return value_equation_records::circle_point_value(x, y);
                         }
                         let (center, _) = self.circle_points(second)?;
                         let dx = point.x - center.x;
@@ -475,10 +514,10 @@ impl Document {
                     Kind::ThreePointArc(_, _, _)
                     | Kind::ArcOnCircle(_, _, _)
                     | Kind::CenterArc(_, _, _) => {
-                        if let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind {
-                            if host == second {
-                                return t.is_finite().then_some(EquationValue::PointValue(t));
-                            }
+                        if let Kind::PointOnArc(host, t) = self.objects.get(first - 1)?.kind
+                            && host == second
+                        {
+                            return t.is_finite().then_some(EquationValue::PointValue(t));
                         }
                         self.arc_parameter(
                             second,
@@ -490,7 +529,8 @@ impl Document {
                         .map(EquationValue::PointValue)
                     }
                     ref kind if kind.is_polygon() => {
-                        if let Kind::PointOnPolygon(host, edge, t) = self.objects.get(first - 1)?.kind
+                        if let Kind::PointOnPolygon(host, edge, t) =
+                            self.objects.get(first - 1)?.kind
                             && host == second
                         {
                             return self
@@ -689,8 +729,14 @@ impl Document {
         self.ratio_for_points(a, b, c)
     }
     pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
-        if self.objects.get(id.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
-            return self.sector_perimeter_pixels(id).map(|value| value / 37.79527559055118);
+        if self
+            .objects
+            .get(id.checked_sub(1)?)
+            .is_some_and(|o| o.kind.is_sector())
+        {
+            return self
+                .sector_perimeter_pixels(id)
+                .map(|value| value / 37.79527559055118);
         }
         let points = self.polygon_points(id)?;
         if points.len() < 3 {
@@ -758,8 +804,14 @@ impl Document {
         let Kind::PolygonArea(polygon) = object.kind else {
             return None;
         };
-        if self.objects.get(polygon.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
-            return self.sector_area_pixels2(polygon).map(|value| value / 37.79527559055118_f64.powi(2));
+        if self
+            .objects
+            .get(polygon.checked_sub(1)?)
+            .is_some_and(|o| o.kind.is_sector())
+        {
+            return self
+                .sector_area_pixels2(polygon)
+                .map(|value| value / 37.79527559055118_f64.powi(2));
         }
         let points = self.polygon_points(polygon)?;
         if points.len() < 3 {
@@ -796,8 +848,14 @@ impl Document {
         let Kind::ArcLength(arc) = object.kind else {
             return None;
         };
-        if self.objects.get(arc.checked_sub(1)?).is_some_and(|o| o.kind.is_sector()) {
-            return self.sector_arc_length_pixels(arc).map(|value| value / 37.79527559055118);
+        if self
+            .objects
+            .get(arc.checked_sub(1)?)
+            .is_some_and(|o| o.kind.is_sector())
+        {
+            return self
+                .sector_arc_length_pixels(arc)
+                .map(|value| value / 37.79527559055118);
         }
         if let Some((start, end)) = self.linear_three_point_arc(arc) {
             return Some(start.distance(end) / 37.79527559055118);
@@ -866,14 +924,23 @@ impl Document {
 impl Document {
     /// A repeated anchored label inherits its source font without creating a
     /// separate editable font record on the generic iteration binding.
-    pub fn numeric_label_font_state(&self, id: usize) -> Option<crate::text_style_records::FontState> {
+    pub fn numeric_label_font_state(
+        &self,
+        id: usize,
+    ) -> Option<crate::text_style_records::FontState> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if let Kind::IterationBinding(source, _) = object.kind {
-            if self.objects.get(source.checked_sub(1)?).is_some_and(|object| {
-                matches!(object.kind, Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. })
-            }) {
-                return self.text_font_state(source);
-            }
+        if let Kind::IterationBinding(source, _) = object.kind
+            && self
+                .objects
+                .get(source.checked_sub(1)?)
+                .is_some_and(|object| {
+                    matches!(
+                        object.kind,
+                        Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }
+                    )
+                })
+        {
+            return self.text_font_state(source);
         }
         self.text_font_state(id)
     }

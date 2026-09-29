@@ -1,12 +1,12 @@
 use super::calculations::calculation_source_ids;
 use super::embedded_tools::document_records;
 use super::kind::{
-    is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, polygon_vertex_count_for_encoding,
-    straight_kind_mode,
+    is_arc_kind, is_locus_polygon_kind, is_locus_straight_kind, is_straight_kind,
+    polygon_vertex_count_for_encoding, straight_kind_mode,
 };
 use super::records::{header, polygon_subtype, put_record, records, u32_at};
 use super::transform_model::{ElementType, NativeTransformFlavor};
-use super::{Document, IterationDepth, Kind, LineMode, Object};
+use super::{Document, ImagePlacement, IterationDepth, Kind, LineMode, Object};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkUrlButtonGroup, MovementButtonGroup,
     PresentationButtonGroup, ScrollButtonGroup,
@@ -22,12 +22,19 @@ use crate::{
 };
 
 impl Document {
-    pub(super) fn caption_group_with_label(group: &[u8], label: Option<&crate::text_records::LabelAux>) -> Result<Vec<u8>, String> {
-        let Some(label) = label else { return Ok(group.to_vec()); };
+    pub(super) fn caption_group_with_label(
+        group: &[u8],
+        label: Option<&crate::text_records::LabelAux>,
+    ) -> Result<Vec<u8>, String> {
+        let Some(label) = label else {
+            return Ok(group.to_vec());
+        };
         let mut framed = b"GSP4".to_vec();
         framed.extend_from_slice(group);
         let entries = records(&framed)?;
-        let font = entries.iter().find(|r| r.kind == 0x07d8)
+        let font = entries
+            .iter()
+            .find(|r| r.kind == 0x07d8)
             .ok_or("Caption is missing its font reference")?;
         let mut encoded = Vec::new();
         encoded.extend_from_slice(&group[..font.start - 4]);
@@ -36,36 +43,62 @@ impl Document {
         Ok(encoded)
     }
 
-    pub(super) fn colorized_object_header(&self, object: &Object, definition: &super::colorized::ColorizedDefinition) -> Result<[u8; 28], String> {
+    pub(super) fn colorized_object_header(
+        &self,
+        object: &Object,
+        definition: &super::colorized::ColorizedDefinition,
+    ) -> Result<[u8; 28], String> {
         let mut h = header(match definition.element() {
-            ElementType::Point => 0, ElementType::Segment => 2,
-            ElementType::Ray => 64, ElementType::Line => 63,
-            ElementType::Circle => 3, ElementType::Arc => 80, ElementType::Polygon => 8,
-            ElementType::Sector => 82, ElementType::Disk => 10,
+            ElementType::Point => 0,
+            ElementType::Segment => 2,
+            ElementType::Ray => 64,
+            ElementType::Line => 63,
+            ElementType::Circle => 3,
+            ElementType::Arc => 80,
+            ElementType::Polygon => 8,
+            ElementType::Sector => 82,
+            ElementType::Disk => 10,
+            ElementType::Image => return Err("Colorized pictures are not supported".into()),
         });
         h[..2].copy_from_slice(&75u16.to_le_bytes());
         h[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
         h[4] = u8::from(object.tracing);
-        if matches!(definition.element(), ElementType::Disk | ElementType::Sector) {
-            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing region drawing order")?.to_le_bytes());
+        if matches!(
+            definition.element(),
+            ElementType::Disk | ElementType::Sector
+        ) {
+            h[20..24].copy_from_slice(
+                &object
+                    .interior_order
+                    .ok_or("Missing region drawing order")?
+                    .to_le_bytes(),
+            );
         }
         if definition.element() == ElementType::Polygon {
             let count = polygon_vertex_count_for_encoding(&self.objects, definition.source())
                 .ok_or("Colorized polygon has no supported source vertices")?;
-            let native_polygon_profile = matches!(self.objects[definition.source() - 1].kind, Kind::Polygon(_))
-                && matches!(definition.native_operation(), 0x12 | 0x22 | 0x32 | 0x42)
-                && definition.range().0 == 0.
-                && (definition.range().1 == 1.
-                    || (definition.native_operation() == 0x12 && definition.range().1 == 2.));
+            let native_polygon_profile =
+                matches!(self.objects[definition.source() - 1].kind, Kind::Polygon(_))
+                    && matches!(definition.native_operation(), 0x12 | 0x22 | 0x32 | 0x42)
+                    && definition.range().0 == 0.
+                    && (definition.range().1 == 1.
+                        || (definition.native_operation() == 0x12 && definition.range().1 == 2.));
             let subtype = if native_polygon_profile {
                 15
             } else {
                 polygon_subtype(count).ok_or("Polygon has too many vertices")?
             };
             h[8..10].copy_from_slice(&subtype.to_le_bytes());
-            h[20..24].copy_from_slice(&object.interior_order.ok_or("Missing polygon drawing order")?.to_le_bytes());
+            h[20..24].copy_from_slice(
+                &object
+                    .interior_order
+                    .ok_or("Missing polygon drawing order")?
+                    .to_le_bytes(),
+            );
         }
-        if let Some(style) = object.visual_style { crate::style_records::set_visual_style(&mut h, style)?; }
+        if let Some(style) = object.visual_style {
+            crate::style_records::set_visual_style(&mut h, style)?;
+        }
         Ok(h)
     }
     pub fn encode(&self) -> Result<Vec<u8>, String> {
@@ -80,7 +113,9 @@ impl Document {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
         let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
-        self.encode_page_names(self.patch_active_page(self.patch_measurement_precisions(self.patch_angle_marker_styles(bytes)?)?)?)
+        self.encode_page_names(self.patch_active_page(
+            self.patch_measurement_precisions(self.patch_angle_marker_styles(bytes)?)?,
+        )?)
     }
     fn encode_core(&self) -> Result<Vec<u8>, String> {
         if !self.dirty {
@@ -140,9 +175,17 @@ impl Document {
                 }
                 if matches!(o.kind, Kind::PathValuePoint(..)) {
                     if (class & 0x5_0000 == 0) != o.visible {
-                        if o.visible { class &= !0x5_0000; } else { class |= 0x1_0000; }
+                        if o.visible {
+                            class &= !0x5_0000;
+                        } else {
+                            class |= 0x1_0000;
+                        }
                     }
-                } else if o.visible { class &= !0x1_0000; } else { class |= 0x1_0000; }
+                } else if o.visible {
+                    class &= !0x1_0000;
+                } else {
+                    class |= 0x1_0000;
+                }
                 out[i..i + 4].copy_from_slice(&class.to_le_bytes());
                 if o.kind.transform_definition().is_some_and(|definition| {
                     definition.element() == ElementType::Polygon
@@ -161,9 +204,15 @@ impl Document {
                 out[i + 8..i + 16].copy_from_slice(&p.y.to_le_bytes());
             }
             if let Kind::CoordinatePoint(d) = &o.kind {
-                let i=o.constraint_offset.ok_or("Missing coordinate-point payload")?;
-                if out.get(i..i+4)!=Some(&d.native_payload()[..4]) { return Err("Invalid coordinate-point opcode".into()); }
-                out.get_mut(i..i+12).ok_or("Short coordinate-point payload")?.copy_from_slice(&d.native_payload());
+                let i = o
+                    .constraint_offset
+                    .ok_or("Missing coordinate-point payload")?;
+                if out.get(i..i + 4) != Some(&d.native_payload()[..4]) {
+                    return Err("Invalid coordinate-point opcode".into());
+                }
+                out.get_mut(i..i + 12)
+                    .ok_or("Short coordinate-point payload")?
+                    .copy_from_slice(&d.native_payload());
             }
             if let Some(i) = o.constraint_offset {
                 match o.kind {
@@ -197,17 +246,33 @@ impl Document {
                     Kind::PointOnSegment(_, t) if out.get(i..i + 4) == Some(&[15, 0, 14, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnRay(host, t) if out.get(i..i + 4).is_some_and(|payload|
-                        super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
+                    Kind::PointOnRay(host, t)
+                        if out.get(i..i + 4).is_some_and(|payload| {
+                            super::kind::straight_point_constraint_matches(
+                                &self.objects[host - 1].kind,
+                                payload,
+                            )
+                        }) =>
+                    {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnLine(host, t)
-                        if out.get(i..i + 4).is_some_and(|payload|
+                        if out.get(i..i + 4).is_some_and(|payload| {
                             payload == [15, 0, 12, 0]
-                                || super::kind::straight_point_constraint_matches(&self.objects[host - 1].kind, payload)) => {
+                                || super::kind::straight_point_constraint_matches(
+                                    &self.objects[host - 1].kind,
+                                    payload,
+                                )
+                        }) =>
+                    {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
-                    Kind::PointOnCurve(host, t) if super::curve_points::free_constraint_subtype(&self.objects, host).is_some_and(|subtype| out.get(i..i + 4) == Some(&[15, 0, subtype, 0])) => {
+                    Kind::PointOnCurve(host, t)
+                        if super::curve_points::free_constraint_subtype(&self.objects, host)
+                            .is_some_and(|subtype| {
+                                out.get(i..i + 4) == Some(&[15, 0, subtype, 0])
+                            }) =>
+                    {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnSector(_, t) if out.get(i..i + 4) == Some(&[15, 0, 68, 0]) => {
@@ -350,6 +415,7 @@ impl Document {
                 Kind::PresentationButton {
                     targets,
                     mode,
+                    options,
                     label,
                     anchor,
                 },
@@ -374,7 +440,7 @@ impl Document {
                         .map(|&target| target as u32)
                         .collect::<Vec<_>>(),
                 )?;
-                group.set_mode(*mode);
+                group.set_options(*mode, *options);
                 group.set_label(label)?;
                 group.set_screen_anchor(*anchor);
                 group.set_hidden(!o.visible);
@@ -416,7 +482,10 @@ impl Document {
             }
         }
         if !self.image_read_only
-            && let Some(Kind::Image { transform, .. }) = self
+            && let Some(Kind::Image {
+                placement: ImagePlacement::Independent(transform),
+                ..
+            }) = self
                 .objects
                 .iter()
                 .take(self.source_count)
@@ -428,14 +497,15 @@ impl Document {
             picture.set_transform(*transform)?;
             out = picture.encode().to_vec();
         }
-        let mut page_index = 0;
-        for record in document_records(&rs).filter(|r| r.kind == 0x3e8) {
+        for (page_index, record) in document_records(&rs)
+            .filter(|r| r.kind == 0x3e8)
+            .enumerate()
+        {
             if self.objects.iter().any(|o| {
                 o.page == page_index && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
             }) {
                 out[record.data.start + 10] = u8::from(self.snap_points[page_index]);
             }
-            page_index += 1;
         }
         for object in self
             .objects
@@ -510,9 +580,9 @@ impl Document {
         if self.objects.len() == self.source_count {
             let out = self.patch_marked_coordinate_link(out)?;
             let out = self.patch_text_font_overrides(self.patch_visual_styles(
-                self.patch_trace_flags(self.patch_text_and_labels(
+                self.patch_trace_flags(self.patch_split_points(self.patch_text_and_labels(
                     self.patch_hide_show_groups(self.compact_deleted(out)?)?,
-                )?)?,
+                )?)?)?,
             )?)?;
             return self.patch_last_moved_marker(out);
         }
@@ -554,23 +624,41 @@ impl Document {
                 continue;
             }
             if let Kind::CoordinatePoint(definition) = &o.kind {
-                let refs = definition.native_references().into_iter().map(|id| id as u32).collect::<Vec<_>>();
-                added.extend(super::coordinate_points::encode_group(o, definition, &refs)?);
+                let refs = definition
+                    .native_references()
+                    .into_iter()
+                    .map(|id| id as u32)
+                    .collect::<Vec<_>>();
+                added.extend(super::coordinate_points::encode_group(
+                    o, definition, &refs,
+                )?);
                 continue;
             }
             if let Kind::ReferencedText { parents, text } = &o.kind {
-                let refs = parents.iter().map(|id| u32::try_from(*id).map_err(|_| "Caption reference is too large")).collect::<Result<Vec<_>, _>>()?;
+                let refs = parents
+                    .iter()
+                    .map(|id| u32::try_from(*id).map_err(|_| "Caption reference is too large"))
+                    .collect::<Result<Vec<_>, _>>()?;
                 added.extend(super::referenced_captions::encode_group(o, &refs, text));
                 continue;
             }
             if let Kind::Colorized(ref definition) = o.kind {
-                put_record(&mut added, 0x07d0, &self.colorized_object_header(o, definition)?);
+                put_record(
+                    &mut added,
+                    0x07d0,
+                    &self.colorized_object_header(o, definition)?,
+                );
                 let ids = definition.native_references();
                 let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
-                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for id in ids {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &refs);
                 put_record(&mut added, 0x07d3, &definition.native_payload());
-                if let Some(label) = &o.label { added.extend_from_slice(&crate::text_records::encode_point_label_records(label)); }
+                if let Some(label) = &o.label {
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
@@ -583,11 +671,14 @@ impl Document {
                 }
                 put_record(&mut added, 0x07d0, &h);
                 if let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 let ids = definition.native_references();
                 let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
-                for id in ids { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for id in ids {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &refs);
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
@@ -600,7 +691,8 @@ impl Document {
                 final_only,
             } = o.kind
             {
-                let mut header = *include_bytes!("../../../../assets/mapped_point_iteration_header.bin");
+                let mut header =
+                    *include_bytes!("../../../../assets/mapped_point_iteration_header.bin");
                 header[..2].copy_from_slice(
                     &(if matches!(depth, IterationDepth::Fixed(_)) {
                         76u16
@@ -649,7 +741,8 @@ impl Document {
                 depth,
             } = o.kind
             {
-                let template = include_bytes!("../../../../assets/branch_polygon_iteration_group.bin");
+                let template =
+                    include_bytes!("../../../../assets/branch_polygon_iteration_group.bin");
                 let mut header = template[8..36].to_vec();
                 header[..2].copy_from_slice(
                     &(if matches!(depth, IterationDepth::Fixed(_)) {
@@ -696,7 +789,8 @@ impl Document {
             {
                 let (mut group, shift) = match depth {
                     IterationDepth::Fixed(_) => (
-                        include_bytes!("../../../../assets/point_parameter_iteration_group.bin").to_vec(),
+                        include_bytes!("../../../../assets/point_parameter_iteration_group.bin")
+                            .to_vec(),
                         0,
                     ),
                     IterationDepth::Value(id) => {
@@ -729,8 +823,9 @@ impl Document {
                 continue;
             }
             if let Kind::IterationValues(iteration, calculation) = o.kind {
-                let mut group =
-                    *include_bytes!("../../../../assets/point_parameter_iteration_values_group.bin");
+                let mut group = *include_bytes!(
+                    "../../../../assets/point_parameter_iteration_values_group.bin"
+                );
                 group[48..52].copy_from_slice(&(iteration as u32).to_le_bytes());
                 group[52..56].copy_from_slice(&(calculation as u32).to_le_bytes());
                 group[100..102].copy_from_slice(&0u16.to_le_bytes());
@@ -753,8 +848,17 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::PointReferencedText { point, source, ref text } = o.kind {
-                let mut group = super::referenced_captions::encode_group(o, &[point as u32, source as u32], text);
+            if let Kind::PointReferencedText {
+                point,
+                source,
+                ref text,
+            } = o.kind
+            {
+                let mut group = super::referenced_captions::encode_group(
+                    o,
+                    &[point as u32, source as u32],
+                    text,
+                );
                 group[8..10].copy_from_slice(&90u16.to_le_bytes());
                 added.extend_from_slice(&group);
                 continue;
@@ -787,9 +891,10 @@ impl Document {
                         0,
                     ),
                     IterationDepth::Value(id) => {
-                        let mut group =
-                            include_bytes!("../../../../assets/segment_value_depth_iteration_group.bin")
-                                .to_vec();
+                        let mut group = include_bytes!(
+                            "../../../../assets/segment_value_depth_iteration_group.bin"
+                        )
+                        .to_vec();
                         group[48..52].copy_from_slice(&(id as u32).to_le_bytes());
                         (group, 4)
                     }
@@ -817,9 +922,10 @@ impl Document {
                         0,
                     ),
                     IterationDepth::Value(id) => {
-                        let mut group =
-                            include_bytes!("../../../../assets/point_value_depth_iteration_group.bin")
-                                .to_vec();
+                        let mut group = include_bytes!(
+                            "../../../../assets/point_value_depth_iteration_group.bin"
+                        )
+                        .to_vec();
                         group[48..52].copy_from_slice(&(id as u32).to_le_bytes());
                         (group, 4)
                     }
@@ -850,10 +956,26 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::Image { png, transform, anchor } = &o.kind {
-                if anchor.is_some() {
-                    return Err("Adding a point-anchored picture is not supported".into());
+            if let Kind::CroppedImage { source, polygon } = o.kind {
+                let Kind::Image { png, .. } = &self.objects[source - 1].kind else {
+                    return Err("Cropped picture source is not a picture".into());
+                };
+                let dimensions = ImageFile::png_size(png)?;
+                let mut group = ImageFile::cropped_picture_group(
+                    u32::try_from(source).map_err(|_| "Picture reference is too large")?,
+                    u32::try_from(polygon).map_err(|_| "Polygon reference is too large")?,
+                    dimensions,
+                )?;
+                if !o.visible {
+                    group[10] |= 1;
                 }
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::Image { png, placement } = &o.kind {
+                let ImagePlacement::Independent(transform) = placement else {
+                    return Err("Adding an attached picture is not supported".into());
+                };
                 let picture = ImageFile::independent_from_png(png, *transform)?;
                 let mut group = picture.picture_group().to_vec();
                 if !o.visible {
@@ -1001,6 +1123,7 @@ impl Document {
             if let Kind::PresentationButton {
                 targets,
                 mode,
+                options,
                 label,
                 anchor,
             } = &o.kind
@@ -1011,7 +1134,7 @@ impl Document {
                     .collect::<Vec<_>>();
                 let mut group =
                     PresentationButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
-                group.set_mode(*mode);
+                group.set_options(*mode, *options);
                 group.set_hidden(!o.visible);
                 added.extend_from_slice(&group.encode());
                 continue;
@@ -1028,6 +1151,26 @@ impl Document {
                 continue;
             }
             if let Some(group) = self.graph_template_group(o)? {
+                added.extend_from_slice(&group);
+                continue;
+            }
+            if let Kind::DataFunction {
+                source,
+                frame,
+                smoothing,
+            } = o.kind
+            {
+                let mut group =
+                    super::data_function::data_function_group(source, frame, smoothing)?;
+                if let Some(anchor) = o.function_anchor {
+                    function_records::set_group_expression_anchor(&mut group, anchor)?;
+                }
+                if let Some(name) = &o.function_name {
+                    function_records::set_group_definition_name(&mut group, name)?;
+                }
+                if !o.visible {
+                    group[10] |= 1;
+                }
                 added.extend_from_slice(&group);
                 continue;
             }
@@ -1151,8 +1294,12 @@ impl Document {
             if let Kind::PathValuePoint(source, axis) = o.kind {
                 let mut group = plot_axis_records::encode_group([source as u32, axis as u32])?;
                 group[12] = u8::from(o.tracing);
-                if let Some(style) = o.visual_style { crate::style_records::set_visual_style(&mut group[8..36], style)?; }
-                if o.presentation_suppressed { group[10] |= 2; }
+                if let Some(style) = o.visual_style {
+                    crate::style_records::set_visual_style(&mut group[8..36], style)?;
+                }
+                if o.presentation_suppressed {
+                    group[10] |= 2;
+                }
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -1169,7 +1316,9 @@ impl Document {
                 if let Some(style) = o.visual_style {
                     crate::style_records::set_visual_style(&mut group[8..36], style)?;
                 }
-                if o.presentation_suppressed { group[10] |= 2; }
+                if o.presentation_suppressed {
+                    group[10] |= 2;
+                }
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -1182,15 +1331,20 @@ impl Document {
             }
             if let Kind::SampledMapped(ref definition) = o.kind {
                 let mut h = header(102);
-                if !o.visible { h[2] |= 1; }
+                if !o.visible {
+                    h[2] |= 1;
+                }
                 put_record(&mut added, 0x07d0, &h);
                 let refs = definition.native_references();
                 let mut references = (refs.len() as u32).to_le_bytes().to_vec();
-                for id in refs { references.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for id in refs {
+                    references.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &references);
                 put_record(&mut added, 0x0902, definition.range_payload());
                 if let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
@@ -1239,7 +1393,9 @@ impl Document {
                     .ok_or("Missing locus target")?
                     .kind;
                 let straight_target = is_locus_straight_kind(target_kind);
-                let curved_target = target_kind.is_circle() || is_arc_kind(target_kind);
+                let curved_target = target_kind.is_circle()
+                    || is_arc_kind(target_kind)
+                    || super::kind::is_locus_curve_collection(&self.objects, target);
                 let polygon_target = is_locus_polygon_kind(target_kind);
                 if polygon_target {
                     h[8] = 43;
@@ -1290,10 +1446,13 @@ impl Document {
                     references.extend_from_slice(&(id as u32).to_le_bytes());
                 }
                 put_record(&mut added, 0x07d2, &references);
+                let path = *refs.get(1).ok_or("Locus has no path")?;
                 let driver = *refs.get(2).ok_or("Locus has no moving point")?;
-                let (_, closure) = super::locus::locus_driver_range_info(&self.objects, driver)
-                    .ok_or("Unsupported locus moving point")?;
-                let [minimum, maximum] = self.locus_sampling_interval(o.id)
+                let (_, closure) =
+                    super::locus::locus_driver_range_info_for_path(&self.objects, driver, path)
+                        .ok_or("Unsupported locus moving point")?;
+                let [minimum, maximum] = self
+                    .locus_sampling_interval(o.id)
                     .ok_or("Invalid locus interval")?;
                 let mut range = Vec::with_capacity(40);
                 range.extend_from_slice(&minimum.to_le_bytes());
@@ -1467,7 +1626,8 @@ impl Document {
                 continue;
             }
             if let Kind::PolygonPerimeter(polygon) = o.kind {
-                let mut group = *include_bytes!("../../../../assets/perimeter_measurement_group.bin");
+                let mut group =
+                    *include_bytes!("../../../../assets/perimeter_measurement_group.bin");
                 group[48..52].copy_from_slice(&(polygon as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
@@ -1477,7 +1637,8 @@ impl Document {
                 continue;
             }
             if let Kind::CircleCircumference(circle) = o.kind {
-                let mut group = *include_bytes!("../../../../assets/circumference_measurement_group.bin");
+                let mut group =
+                    *include_bytes!("../../../../assets/circumference_measurement_group.bin");
                 group[48..52].copy_from_slice(&(circle as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
@@ -1517,7 +1678,8 @@ impl Document {
                 continue;
             }
             if let Kind::ArcAngle(arc) = o.kind {
-                let mut group = *include_bytes!("../../../../assets/arc_angle_measurement_group.bin");
+                let mut group =
+                    *include_bytes!("../../../../assets/arc_angle_measurement_group.bin");
                 group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
@@ -1527,7 +1689,8 @@ impl Document {
                 continue;
             }
             if let Kind::ArcLength(arc) = o.kind {
-                let mut group = *include_bytes!("../../../../assets/arc_length_measurement_group.bin");
+                let mut group =
+                    *include_bytes!("../../../../assets/arc_length_measurement_group.bin");
                 group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
                 Self::place_measurement(&mut group, 60, &mut measurement_row)?;
                 if !o.visible {
@@ -1536,21 +1699,29 @@ impl Document {
                 added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
-            if let Kind::PolarAngleValue(a, b, c) | Kind::VertexAngleValue(a, b, c)
-                | Kind::AngleMarker(a, b, c, _) = o.kind {
+            if let Kind::PolarAngleValue(a, b, c)
+            | Kind::VertexAngleValue(a, b, c)
+            | Kind::AngleMarker(a, b, c, _) = o.kind
+            {
                 let code = match o.kind {
                     Kind::PolarAngleValue(..) => 115,
                     Kind::VertexAngleValue(..) => 116,
                     _ => 113,
                 };
                 let mut h = header(code);
-                if !o.visible { h[2] |= 1; }
-                if let Some(style) = o.visual_style { crate::style_records::set_visual_style(&mut h, style)?; }
+                if !o.visible {
+                    h[2] |= 1;
+                }
+                if let Some(style) = o.visual_style {
+                    crate::style_records::set_visual_style(&mut h, style)?;
+                }
                 let presentation = o.angle_marker_style.unwrap();
                 h[16..18].copy_from_slice(&presentation.opacity.to_le_bytes());
                 put_record(&mut added, 0x07d0, &h);
                 let mut refs = 3_u32.to_le_bytes().to_vec();
-                for id in [a, b, c] { refs.extend_from_slice(&(id as u32).to_le_bytes()); }
+                for id in [a, b, c] {
+                    refs.extend_from_slice(&(id as u32).to_le_bytes());
+                }
                 put_record(&mut added, 0x07d2, &refs);
                 let mut marker = [1, 0, 1, 0, 0, 0, 0, 0, 254, 254, 254, 0];
                 if let Kind::AngleMarker(_, _, _, style) = o.kind {
@@ -1559,20 +1730,28 @@ impl Document {
                 marker[2..4].copy_from_slice(&u16::from(presentation.arrow).to_le_bytes());
                 put_record(&mut added, 0x090e, &marker);
                 if let Some(label) = &o.label {
-                    added.extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
                 }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
-            if let Kind::NumericAlias { source, unit: crate::table_records::NumericUnit::Degrees } = o.kind {
-                let mut group = include_bytes!("../../../../assets/angle_measurement_group.bin").to_vec();
+            if let Kind::NumericAlias {
+                source,
+                unit: crate::table_records::NumericUnit::Degrees,
+            } = o.kind
+            {
+                let mut group =
+                    include_bytes!("../../../../assets/angle_measurement_group.bin").to_vec();
                 group[8..10].copy_from_slice(&120_u16.to_le_bytes());
                 group[36..40].copy_from_slice(&8_u32.to_le_bytes());
                 group[44..48].copy_from_slice(&1_u32.to_le_bytes());
                 group[48..52].copy_from_slice(&(source as u32).to_le_bytes());
                 group.drain(52..60);
                 Self::place_measurement(&mut group, 60, &mut measurement_row)?;
-                if !o.visible { group[10] = 1; }
+                if !o.visible {
+                    group[10] = 1;
+                }
                 added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
@@ -1615,7 +1794,10 @@ impl Document {
                         visible: o.visible,
                         label: o.label.as_ref(),
                         polygon,
-                        region_order: if matches!(definition.element(), ElementType::Sector | ElementType::Disk) {
+                        region_order: if matches!(
+                            definition.element(),
+                            ElementType::Sector | ElementType::Disk
+                        ) {
                             Some(o.interior_order.ok_or("Missing region drawing order")?)
                         } else {
                             None
@@ -1704,7 +1886,9 @@ impl Document {
                     | Kind::BoundaryIntersection(..)
                     | Kind::LineCircleIntersection(..)
                     | Kind::CircleCircleIntersection(..)
-            );
+            ) || is_straight_kind(&o.kind)
+                || o.kind.is_circle()
+                || is_arc_kind(&o.kind);
             let label_after_constraint = matches!(
                 o.kind,
                 Kind::CurveIntersection(..)
@@ -1741,7 +1925,8 @@ impl Document {
                 }
                 match o.kind {
                     Kind::CurveIntersection(_, _, branch) => {
-                        let mut payload = 98u32.to_le_bytes().to_vec(); payload.extend_from_slice(&branch.to_le_bytes());
+                        let mut payload = 98u32.to_le_bytes().to_vec();
+                        payload.extend_from_slice(&branch.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::PointOnSegment(_, t) => {
@@ -1750,14 +1935,18 @@ impl Document {
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::PointOnRay(host, t) | Kind::PointOnLine(host, t) => {
-                        let code = super::kind::straight_point_constraint_subtype(&self.objects[host - 1].kind)
-                            .ok_or("Invalid straight-point host")?;
+                        let code = super::kind::straight_point_constraint_subtype(
+                            &self.objects[host - 1].kind,
+                        )
+                        .ok_or("Invalid straight-point host")?;
                         let mut payload = vec![15, 0, code, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }
                     Kind::PointOnCurve(host, t) => {
-                        let subtype = super::curve_points::free_constraint_subtype(&self.objects, host).ok_or("Invalid curve-point host")?;
+                        let subtype =
+                            super::curve_points::free_constraint_subtype(&self.objects, host)
+                                .ok_or("Invalid curve-point host")?;
                         let mut payload = vec![15, 0, subtype, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
@@ -1775,8 +1964,13 @@ impl Document {
                     Kind::PointOnPolygon(host, edge, t) => {
                         let count = polygon_vertex_count_for_encoding(&self.objects, host)
                             .ok_or("Missing polygon boundary host")?;
-                        let subtype = super::decode::polygon_constraint_subtype(&self.objects, &self.original, host, count)
-                            .ok_or("Too many polygon vertices")?;
+                        let subtype = super::decode::polygon_constraint_subtype(
+                            &self.objects,
+                            &self.original,
+                            host,
+                            count,
+                        )
+                        .ok_or("Too many polygon vertices")?;
                         let mut payload = 15u16.to_le_bytes().to_vec();
                         payload.extend_from_slice(&subtype.to_le_bytes());
                         payload.extend_from_slice(&t.to_le_bytes());
@@ -1834,6 +2028,7 @@ impl Document {
                     Kind::FunctionDefinition(_)
                         | Kind::ReferencedFunction(_, _)
                         | Kind::DerivativeFunction(_, _)
+                        | Kind::DataFunction { .. }
                         | Kind::FunctionPlot(_, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
@@ -1873,8 +2068,10 @@ impl Document {
             out.splice(resource_at..resource_at, resource);
         }
         let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
-            self.patch_visual_styles(self.patch_trace_flags(self.patch_text_and_labels(
-                self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+            self.patch_visual_styles(self.patch_trace_flags(self.patch_split_points(
+                self.patch_text_and_labels(
+                    self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+                )?,
             )?)?)?,
         )?)?;
         self.patch_last_moved_marker(out)

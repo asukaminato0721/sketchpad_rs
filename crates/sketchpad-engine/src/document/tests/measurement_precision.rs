@@ -3,11 +3,16 @@ use super::*;
 #[test]
 fn scalar_measurement_precision_native_values_copy_and_undefined_slope() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/scalar_precision_coordinates_native_verified.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/scalar_precision_coordinates_native_verified.gsp"
+        )
+        .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/scalar_precision_coordinates_port.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/scalar_precision_coordinates_port.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/scalar_precision_coordinates_edited_port.gsp")
-            .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/scalar_precision_coordinates_edited_port.gsp"
+        )
+        .as_slice(),
     ] {
         let doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -141,12 +146,16 @@ fn point_value_precision_retains_full_calculation_and_iteration_depth() {
 #[test]
 fn measurement_precision_preserves_values_undo_clipboard_and_all_native_kinds() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/measurement_precision_basic_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/measurement_precision_basic_port.gsp")
+            .as_slice(),
         include_bytes!("../../../../../tests/fixtures/measurement_precision_basic_edited_port.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/measurement_precision_polygon_ratio_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/measurement_precision_polygon_ratio_port.gsp"
+        )
+        .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/measurement_precision_arc_port.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/measurement_precision_arc_port.gsp").as_slice(),
     ] {
         let doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);

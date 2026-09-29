@@ -107,11 +107,17 @@ impl SampledMappedDefinition {
         }
         let path = &objects[self.path - 1].kind;
         let flag = u32::from_le_bytes(self.native_range[20..24].try_into().unwrap());
-        let closure = if path.is_circle() || path.is_polygon() { Some(0) }
-            else if is_arc_kind(path) { Some(1) }
-            else { super::kind::locus_straight_source_mode(objects, self.path).map(|mode| match mode {
-                LineMode::Segment => 1, LineMode::Ray => 2, LineMode::Line => 3,
-            }) };
+        let closure = if path.is_circle() || path.is_polygon() {
+            Some(0)
+        } else if is_arc_kind(path) {
+            Some(1)
+        } else {
+            super::kind::locus_straight_source_mode(objects, self.path).map(|mode| match mode {
+                LineMode::Segment => 1,
+                LineMode::Ray => 2,
+                LineMode::Line => 3,
+            })
+        };
         let path_ok = closure.is_some_and(|closure| flag == (4 | (closure << 16)))
             && u32::from_le_bytes(self.native_range[32..36].try_into().unwrap()) <= 1;
         path_ok
@@ -265,7 +271,8 @@ impl SampledMappedEvaluator {
     pub(super) fn logical_point_value(&self, fraction: f64) -> Option<f64> {
         match self.path {
             PathGeometry::Straight(..) => fraction.is_finite().then(|| fraction.clamp(0., 1.)),
-            PathGeometry::Polygon(..) => fraction.is_finite()
+            PathGeometry::Polygon(..) => fraction
+                .is_finite()
                 .then(|| fraction.clamp(0., 1.).rem_euclid(1.)),
             _ => self.literal_fraction(fraction),
         }

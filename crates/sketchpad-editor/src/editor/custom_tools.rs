@@ -1,6 +1,79 @@
 use super::{Editor, Tool};
-use sketchpad_engine::document::{EmbeddedToolInputKind, EmbeddedToolSummary, Kind, LineMode, Point};
 use crate::render::Viewport;
+use sketchpad_engine::document::{
+    Document, EmbeddedToolInput, EmbeddedToolInputKind, EmbeddedToolSummary, Kind, LineMode, Point,
+};
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToolSource {
+    Embedded(usize),
+    Folder { document: usize, tool: usize },
+}
+
+pub(super) struct ToolFolder {
+    path: PathBuf,
+    documents: Vec<ToolDocument>,
+    skipped: usize,
+}
+
+struct ToolDocument {
+    path: PathBuf,
+    document: Document,
+    tools: Vec<EmbeddedToolSummary>,
+}
+
+impl ToolFolder {
+    fn load(path: &Path) -> Result<Self, String> {
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("Cannot open tool folder: {error}"))?;
+        let mut files = std::fs::read_dir(&path)
+            .map_err(|error| format!("Cannot read tool folder: {error}"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|entry| {
+                entry.is_file()
+                    && entry
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("gsp"))
+            })
+            .collect::<Vec<_>>();
+        files.sort();
+        let mut documents = Vec::new();
+        let mut skipped = 0;
+        for file in files {
+            let Ok(document) = Document::open(&file) else {
+                skipped += 1;
+                continue;
+            };
+            let Ok(tools) = document.embedded_tools() else {
+                skipped += 1;
+                continue;
+            };
+            if !tools.is_empty() {
+                documents.push(ToolDocument {
+                    path: file,
+                    document,
+                    tools,
+                });
+            }
+        }
+        Ok(Self {
+            path,
+            documents,
+            skipped,
+        })
+    }
+
+    fn tool_count(&self) -> usize {
+        self.documents
+            .iter()
+            .map(|document| document.tools.len())
+            .sum()
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum PathStart {
@@ -23,15 +96,20 @@ impl Editor {
             self.custom_tool_inputs.clear();
             self.custom_tool_path_start = None;
         }
+        self.properties_draft_for = None;
         self.selection_order = self.doc.selected.iter().copied().collect();
     }
 
     pub(super) fn cancel_custom_tool(&mut self) {
+        self.cancel_custom_tool_state();
+        self.status = "Custom tool input selection cancelled".into();
+    }
+
+    fn cancel_custom_tool_state(&mut self) {
         self.tool = Tool::Select;
         self.pending = None;
         self.custom_tool_inputs.clear();
         self.custom_tool_path_start = None;
-        self.status = "Custom tool input selection cancelled".into();
     }
 
     pub(super) fn custom_tools_menu(&mut self, ui: &mut egui::Ui) {
@@ -41,6 +119,7 @@ impl Editor {
             ui.close();
         }
         ui.separator();
+        ui.label("Current Document");
         match self.doc.embedded_tools() {
             Ok(tools) if tools.is_empty() => {
                 ui.label("No custom tools in this document");
@@ -52,11 +131,11 @@ impl Editor {
                             ui.label(format!("{} input(s), in order", inputs.len()));
                         }
                         if ui.button("Apply to Selected Inputs").clicked() {
-                            self.invoke_selected_tool(index);
+                            self.invoke_selected_tool(ToolSource::Embedded(index));
                             ui.close();
                         }
                         if ui.button("Choose Inputs by Clicking").clicked() {
-                            self.begin_custom_tool(index);
+                            self.begin_custom_tool(ToolSource::Embedded(index));
                             ui.close();
                         }
                     });
@@ -66,6 +145,104 @@ impl Editor {
                 ui.label(error);
             }
         }
+        if let Some(folder) = &self.tool_folder {
+            let entries = folder
+                .documents
+                .iter()
+                .enumerate()
+                .flat_map(|(document_index, document)| {
+                    document
+                        .tools
+                        .iter()
+                        .enumerate()
+                        .map(move |(tool_index, tool)| {
+                            (
+                                ToolSource::Folder {
+                                    document: document_index,
+                                    tool: tool_index,
+                                },
+                                tool_name(tool_index, tool),
+                                tool.input_ids.as_ref().map(Vec::len),
+                                document
+                                    .path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("tool document")
+                                    .to_owned(),
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+            ui.separator();
+            ui.label(format!("Tool Folder: {}", folder.path.display()));
+            if entries.is_empty() {
+                ui.label("No custom tools in this folder");
+            }
+            for (source, name, input_count, file_name) in entries {
+                ui.menu_button(format!("{name} — {file_name}"), |ui| {
+                    if let Some(input_count) = input_count {
+                        ui.label(format!("{input_count} input(s), in order"));
+                    }
+                    if ui.button("Apply to Selected Inputs").clicked() {
+                        self.invoke_selected_tool(source);
+                        ui.close();
+                    }
+                    if ui.button("Choose Inputs by Clicking").clicked() {
+                        self.begin_custom_tool(source);
+                        ui.close();
+                    }
+                });
+            }
+        }
+        ui.separator();
+        if ui.button("Choose Tool Folder…").clicked() {
+            self.choose_tool_folder();
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                self.tool_folder.is_some(),
+                egui::Button::new("Forget Tool Folder"),
+            )
+            .clicked()
+        {
+            self.forget_tool_folder();
+            ui.close();
+        }
+    }
+
+    fn choose_tool_folder(&mut self) {
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(folder) = &self.tool_folder {
+            dialog = dialog.set_directory(&folder.path);
+        }
+        let Some(path) = dialog.pick_folder() else {
+            return;
+        };
+        match ToolFolder::load(&path) {
+            Ok(folder) => {
+                self.cancel_custom_tool_state();
+                let tool_count = folder.tool_count();
+                let document_count = folder.documents.len();
+                let skipped = folder.skipped;
+                self.tool_folder = Some(folder);
+                self.status = format!(
+                    "Loaded {tool_count} tool(s) from {document_count} document(s){}",
+                    if skipped == 0 {
+                        String::new()
+                    } else {
+                        format!("; skipped {skipped} unreadable file(s)")
+                    }
+                );
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn forget_tool_folder(&mut self) {
+        self.cancel_custom_tool_state();
+        self.tool_folder = None;
+        self.status = "Forgot the tool folder".into();
     }
 
     pub(super) fn create_selected_tool(&mut self) -> bool {
@@ -108,14 +285,29 @@ impl Editor {
         }
     }
 
-    pub(super) fn invoke_selected_tool(&mut self, index: usize) -> bool {
+    pub(super) fn invoke_selected_tool(&mut self, source: ToolSource) -> bool {
         let inputs: Vec<_> = self
             .selection_order
             .iter()
             .copied()
             .filter(|id| self.doc.selected.contains(id))
             .collect();
-        match self.doc.invoke_embedded_tool(index, &inputs) {
+        let result = match source {
+            ToolSource::Embedded(index) => self.doc.invoke_embedded_tool(index, &inputs),
+            ToolSource::Folder { document, tool } => {
+                let Some(source) = self
+                    .tool_folder
+                    .as_ref()
+                    .and_then(|folder| folder.documents.get(document))
+                else {
+                    self.status = "Tool folder entry no longer exists".into();
+                    return false;
+                };
+                self.doc
+                    .invoke_tool_from_document(&source.document, tool, &inputs)
+            }
+        };
+        match result {
             Ok(outputs) => {
                 self.selection_order = outputs
                     .into_iter()
@@ -137,19 +329,37 @@ impl Editor {
         }
     }
 
-    fn custom_tool_binding(&self, index: usize) -> Result<(String, usize), String> {
-        let tools = self.doc.embedded_tools()?;
+    fn custom_tool_document(&self, source: ToolSource) -> Result<(&Document, usize), String> {
+        match source {
+            ToolSource::Embedded(index) => Ok((&self.doc, index)),
+            ToolSource::Folder { document, tool } => self
+                .tool_folder
+                .as_ref()
+                .and_then(|folder| folder.documents.get(document))
+                .map(|source| (&source.document, tool))
+                .ok_or_else(|| "Tool folder entry no longer exists".into()),
+        }
+    }
+
+    fn custom_tool_inputs(&self, source: ToolSource) -> Result<Vec<EmbeddedToolInput>, String> {
+        let (document, index) = self.custom_tool_document(source)?;
+        document.embedded_tool_inputs(index)
+    }
+
+    fn custom_tool_binding(&self, source: ToolSource) -> Result<(String, usize), String> {
+        let (document, index) = self.custom_tool_document(source)?;
+        let tools = document.embedded_tools()?;
         let tool = tools.get(index).ok_or("Custom tool does not exist")?;
         let inputs = tool
             .input_ids
             .as_ref()
             .ok_or("Custom tool input declaration is unsupported")?;
-        let prototype = self.doc.embedded_tool_document(index)?;
+        let prototype = document.embedded_tool_document(index)?;
         if prototype.partial_view {
             return Err("Tool prototype contains unsupported records or constructions".into());
         }
         if inputs.is_empty()
-            || self.doc.embedded_tool_inputs(index)?.iter().any(|input| {
+            || document.embedded_tool_inputs(index)?.iter().any(|input| {
                 !prototype
                     .objects
                     .get(input.local_id - 1)
@@ -171,11 +381,11 @@ impl Editor {
         Ok((tool_name(index, tool), inputs.len()))
     }
 
-    pub(super) fn begin_custom_tool(&mut self, index: usize) {
-        let result = self.custom_tool_binding(index);
+    pub(super) fn begin_custom_tool(&mut self, source: ToolSource) {
+        let result = self.custom_tool_binding(source);
         match result {
             Ok((name, count)) => {
-                self.tool = Tool::Custom(index);
+                self.tool = Tool::Custom(source);
                 self.pending = None;
                 self.custom_tool_inputs.clear();
                 self.custom_tool_path_start = None;
@@ -187,13 +397,18 @@ impl Editor {
         }
     }
 
-    pub(super) fn custom_tool_click(&mut self, index: usize, viewport: &Viewport, at: egui::Pos2) {
+    pub(super) fn custom_tool_click(
+        &mut self,
+        source: ToolSource,
+        viewport: &Viewport,
+        at: egui::Pos2,
+    ) {
         let result = (|| {
-            let (name, count) = self.custom_tool_binding(index)?;
+            let (name, count) = self.custom_tool_binding(source)?;
             if self.custom_tool_inputs.len() >= count {
                 return Err("Choose the custom tool again to restart its inputs".into());
             }
-            let input = self.doc.embedded_tool_inputs(index)?[self.custom_tool_inputs.len()];
+            let input = self.custom_tool_inputs(source)?[self.custom_tool_inputs.len()];
             let id = if matches!(
                 input.kind(),
                 Some(EmbeddedToolInputKind::Path | EmbeddedToolInputKind::Segment)
@@ -259,7 +474,7 @@ impl Editor {
                 self.selection_order.push(id);
                 self.doc.selected.insert(id);
                 if self.selection_order.len() == count {
-                    self.invoke_selected_tool(index);
+                    self.invoke_selected_tool(source);
                     self.custom_tool_inputs.clear();
                     self.custom_tool_path_start = None;
                 } else {
@@ -366,7 +581,8 @@ impl Editor {
                             segment_distance(at, viewport.screen(pair[0]), viewport.screen(pair[1]))
                         })
                         .min_by(f32::total_cmp)?
-                } else if let Some(points) = self.doc.polygon_points(object.id) {
+                } else {
+                    let points = self.doc.polygon_points(object.id)?;
                     let points: Vec<_> = points
                         .into_iter()
                         .map(|point| viewport.screen(point))
@@ -389,8 +605,6 @@ impl Editor {
                             .map(|(a, b)| segment_distance(at, *a, *b))
                             .min_by(f32::total_cmp)?
                     }
-                } else {
-                    return None;
                 };
                 (distance < 7.).then_some((object.id, distance))
             })
@@ -407,4 +621,68 @@ fn segment_distance(at: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
         ((at - a).dot(direction) / direction.length_sq()).clamp(0., 1.)
     };
     at.distance(a + direction * fraction)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn folder_tool_catalog_invokes_survives_open_and_forgets_without_drawing_edits() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "sketchpad-tool-folder-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let source_path = directory.join("segment-and-midpoint.gsp");
+
+        let mut source = Document::new();
+        let a = source.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = source.add(Kind::Free(Point { x: 40., y: 0. }));
+        let segment = source.add(Kind::Segment(a, b));
+        let midpoint = source.add(Kind::Midpoint(a, b));
+        source.selected = BTreeSet::from([a, b, segment, midpoint]);
+        source.create_embedded_tool("Segment and midpoint").unwrap();
+        source.save_to(&source_path).unwrap();
+
+        let folder = ToolFolder::load(&directory).unwrap();
+        assert_eq!(folder.tool_count(), 1);
+        let mut editor = Editor::new(Document::new());
+        editor.tool_folder = Some(folder);
+        let left = editor.doc.add(Kind::Free(Point { x: 100., y: 100. }));
+        let right = editor.doc.add(Kind::Free(Point { x: 180., y: 100. }));
+        editor.doc.selected = BTreeSet::from([left, right]);
+        editor.selection_order = vec![right, left];
+        assert!(editor.invoke_selected_tool(ToolSource::Folder {
+            document: 0,
+            tool: 0,
+        }));
+        assert_eq!(editor.selection_order.len(), 2);
+        assert!(
+            editor
+                .selection_order
+                .iter()
+                .any(|&id| matches!(editor.doc.objects[id - 1].kind, Kind::Segment(_, _)))
+        );
+        let object_count = editor.doc.objects.len();
+
+        editor.forget_tool_folder();
+        assert!(editor.tool_folder.is_none());
+        assert_eq!(editor.doc.objects.len(), object_count);
+
+        editor.tool_folder = Some(ToolFolder::load(&directory).unwrap());
+        editor.replace_document(Document::new());
+        assert_eq!(editor.tool_folder.as_ref().unwrap().tool_count(), 1);
+        editor.forget_tool_folder();
+        assert!(editor.tool_folder.is_none());
+        assert!(editor.doc.objects.is_empty());
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

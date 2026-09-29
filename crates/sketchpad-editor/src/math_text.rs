@@ -15,7 +15,11 @@ pub(crate) struct Run {
     pub color: Color32,
     pub position: Pos2,
     pub baseline: f32,
+    // Canvas-only fields are intentionally unused when render.rs is compiled
+    // inside sketchpad-engine's SVG regression tests.
+    #[allow(dead_code)]
     pub galley: Arc<egui::Galley>,
+    #[allow(dead_code)]
     pub reference: Option<usize>,
 }
 #[derive(Clone)]
@@ -35,6 +39,7 @@ impl Layout {
     pub fn height(&self) -> f32 {
         self.above + self.below
     }
+    #[allow(dead_code)]
     pub fn paint(&self, painter: &egui::Painter, at: Pos2) {
         for run in &self.runs {
             let position = at + run.position.to_vec2();
@@ -273,17 +278,53 @@ fn node_layout(
             reference,
             measure,
         ),
+        ReferencedNode::FrameMetrics(_) => Layout::default(),
         ReferencedNode::Horizontal(children) => row(children, style, families, reference, measure),
         ReferencedNode::Styled {
             style: next,
             children,
-        } => row(
-            children,
-            &style.child(next, families),
-            families,
-            reference,
-            measure,
-        ),
+        } => {
+            let child_style = style.child(next, families);
+            let mut out = row(children, &child_style, families, reference, measure);
+            if let Some(decoration) = next.geometry_decoration {
+                let y = -out.above - 1.;
+                let width = out.width.max(2.);
+                let points = match decoration {
+                    5 => vec![
+                        egui::pos2(0., y + 1.5),
+                        egui::pos2(width / 2., y - 1.5),
+                        egui::pos2(width, y + 1.5),
+                    ],
+                    _ => vec![egui::pos2(0., y), egui::pos2(width, y)],
+                };
+                out.rules.push(Rule {
+                    points,
+                    color: child_style.color,
+                });
+                if matches!(decoration, 3 | 4) {
+                    out.rules.push(Rule {
+                        points: vec![
+                            egui::pos2(width - 3., y - 2.),
+                            egui::pos2(width, y),
+                            egui::pos2(width - 3., y + 2.),
+                        ],
+                        color: child_style.color,
+                    });
+                }
+                if decoration == 4 {
+                    out.rules.push(Rule {
+                        points: vec![
+                            egui::pos2(3., y - 2.),
+                            egui::pos2(0., y),
+                            egui::pos2(3., y + 2.),
+                        ],
+                        color: child_style.color,
+                    });
+                }
+                out.above += 4.;
+            }
+            out
+        }
         ReferencedNode::Reference { slot, cached, .. } => row(
             cached.as_deref().unwrap_or_default(),
             style,
@@ -291,18 +332,31 @@ fn node_layout(
             Some(*slot),
             measure,
         ),
-        ReferencedNode::Vertical(children) => {
+        ReferencedNode::Vertical(children) | ReferencedNode::VerticalCentered(children) => {
+            let centered = matches!(node, ReferencedNode::VerticalCentered(_));
+            let children = children
+                .iter()
+                .map(|child| node_layout(child, style, families, reference, measure))
+                .collect::<Vec<_>>();
             let mut out = Layout::default();
             let mut top = 0.;
+            out.width = children
+                .iter()
+                .map(|child| child.width)
+                .fold(0.0_f32, f32::max);
             for child in children {
-                let child = node_layout(child, style, families, reference, measure);
+                let x = if centered {
+                    (out.width - child.width) / 2.
+                } else {
+                    0.
+                };
                 out.width = out.width.max(child.width);
                 if top == 0. {
                     out.above = child.above;
                 }
                 let y = top + child.above - out.above;
                 top += child.height();
-                out.append(child, 0., y);
+                out.append(child, x, y);
             }
             out.below = top - out.above;
             out

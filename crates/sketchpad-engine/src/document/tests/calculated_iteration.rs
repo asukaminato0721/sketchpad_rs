@@ -4,7 +4,8 @@ use super::*;
 fn numeric_iteration_multiple_sources_map_all_seed_occurrences_and_remap() {
     for (bytes, iteration, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/numeric_iteration_multi_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/numeric_iteration_multi_port.gsp")
+                .as_slice(),
             7,
             vec!["5.00", "7.00", "9.00", "11.00"],
         ),
@@ -166,8 +167,10 @@ fn numeric_iteration_multiple_sources_map_all_seed_occurrences_and_remap() {
 fn multiple_source_native_iterations_keep_external_angle_and_update_depth() {
     for (bytes, depth, angle) in [
         (
-            include_bytes!("../../../../../tests/fixtures/calculation_multi_angle_iteration_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/calculation_multi_angle_iteration_port.gsp"
+            )
+            .as_slice(),
             2,
             45_f64,
         ),
@@ -201,8 +204,10 @@ fn multiple_source_native_iterations_keep_external_angle_and_update_depth() {
     }
     for (bytes, depth) in [
         (
-            include_bytes!("../../../../../tests/fixtures/calculation_multi_lengths_iteration_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/calculation_multi_lengths_iteration_port.gsp"
+            )
+            .as_slice(),
             2,
         ),
         (
@@ -222,8 +227,9 @@ fn multiple_source_native_iterations_keep_external_angle_and_update_depth() {
 
 #[test]
 fn source_free_calculations_native_import_rotation_depth_and_copy() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/calculation_constants_only_native_verified.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/calculation_constants_only_native_verified.gsp"
+    );
     let original = Document::from_bytes(bytes, None).unwrap();
     assert!(!original.partial_view);
     assert_eq!(original.encode().unwrap(), bytes);
@@ -296,7 +302,7 @@ fn inverse_angle_calculation_drives_rotation_and_iteration() {
         .unwrap();
     for value in [0.5, -0.5, 0.8] {
         doc.set_parameter_value(n, value).unwrap();
-        let degrees = value.asin() / 3.1415926535898 * 180.;
+        let degrees = value.asin() / CALCULATOR_PI * 180.;
         assert!((doc.numeric_value(angle).unwrap() - degrees).abs() < 1e-12);
         let expected = rotate_point_about(
             doc.position(seed).unwrap(),

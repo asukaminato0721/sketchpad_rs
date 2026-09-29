@@ -46,7 +46,9 @@ fn four_source_polygon_button_moves_all_vertices() {
 fn six_source_polygon_button_moves_all_vertices() {
     let mut editor = Editor::new(
         Document::from_bytes(
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_hexagon_port.gsp"),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_hexagon_port.gsp"
+            ),
             None,
         )
         .unwrap(),
@@ -227,7 +229,8 @@ fn arc_animation_bounces_and_pause_holds_position() {
 
 #[test]
 fn animation_stopped_file_from_desktop_roundtrips() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/animation_segment_locus_saved_by_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/animation_segment_locus_saved_by_port.gsp");
     let document = Document::from_bytes(bytes, None).unwrap();
     assert!(!document.partial_view);
     assert_eq!(document.encode().unwrap(), bytes);
@@ -270,7 +273,8 @@ fn free_point_animation_wanders_within_canvas_and_saves() {
 
 #[test]
 fn free_point_animation_desktop_file_roundtrips() {
-    let bytes = include_bytes!("../../../../../tests/fixtures/animation_free_point_saved_by_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/animation_free_point_saved_by_port.gsp");
     let document = Document::from_bytes(bytes, None).unwrap();
     assert!(!document.partial_view);
     assert_eq!(document.encode().unwrap(), bytes);

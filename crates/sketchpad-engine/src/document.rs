@@ -2,13 +2,16 @@
 //! in the private `document/` modules.
 
 mod actions;
-mod calculations;
+mod boundary_intersection;
 mod button_encoding;
-mod coordinates;
+mod calculations;
+mod circle_interior;
 pub mod colorized;
 pub mod coordinate_points;
-pub mod referenced_text;
-mod referenced_captions;
+mod coordinates;
+mod curve_intersection;
+mod curve_points;
+mod data_function;
 mod decode;
 mod embedded_tools;
 mod encode;
@@ -22,14 +25,12 @@ mod history;
 mod images;
 mod iteration;
 mod iteration_endpoint;
-mod nested_iteration_scope;
-mod boundary_intersection;
-mod sector_boundary;
-mod circle_interior;
-mod point_curve;
-mod curve_points;
-mod curve_intersection;
 mod movement;
+mod nested_iteration_scope;
+mod point_curve;
+mod referenced_captions;
+pub mod referenced_text;
+mod sector_boundary;
 pub use movement::MovementValue;
 mod kind;
 mod legacy;
@@ -38,14 +39,14 @@ pub use locus::LocusStroke;
 pub mod mapped_element;
 mod sampled_mapped;
 pub use sampled_mapped::SampledMappedDefinition;
-mod measurements;
 mod angle_marker;
+mod measurements;
 pub use angle_marker::{AngleMarkerGeometry, AngleMarkerStyle};
-mod point_numeric_labels;
+mod measurement_names;
 mod pages;
 mod parameter_names;
-mod measurement_names;
 mod plotting;
+mod point_numeric_labels;
 mod records;
 mod save;
 mod selection;
@@ -54,25 +55,28 @@ mod tables;
 mod text;
 mod tool_creation;
 mod tool_inputs;
+mod transform_decode;
 pub mod transform_evaluator;
 pub mod transform_model;
-mod transform_decode;
 mod transform_validation;
 mod transform_wire;
 mod transforms;
 mod validation;
 
 use crate::action_records::{
-    AnimationSettings, MovementSpeed, PresentationMode, ScrollPlacement, VisibilityAction, VisibilityOptions,
+    AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions, ScrollPlacement,
+    VisibilityAction, VisibilityOptions,
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::function_records::SimpleFunction;
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
-use crate::style_records::VisualStyle;
+use crate::style_records::{
+    LinePattern, LineWidth, PointStyle, RgbColor, SegmentLineStyle, VisualStyle,
+};
 use crate::table_records::{
-    CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup,
-    NumericUnit, ParameterCalculationGroup, ParameterGroup, TableGroup,
+    CalculationGroup, LengthPairCalculationGroup, MeasuredCalculationGroup, NumericUnit,
+    ParameterCalculationGroup, ParameterGroup, TableGroup,
 };
 use crate::text_object;
 use crate::text_object::TextRect;
@@ -87,12 +91,340 @@ pub use embedded_tools::EmbeddedToolSummary;
 pub use records::{Record, records};
 pub use tool_inputs::{EmbeddedToolInput, EmbeddedToolInputKind};
 
-pub use sketchpad_ir::{Point, LineMode, ObjectNode, DependencyIndex};
+pub use sketchpad_ir::{DependencyIndex, LineMode, ObjectNode, Point};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IterationDepth {
     Fixed(u32),
     Value(usize),
+}
+
+/// Session-local colors applied to newly constructed objects. These are editor
+/// preferences, not part of the saved sketch, so decoding a document starts
+/// with the native defaults and leaves every imported object unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectColorDefaults {
+    pub point: RgbColor,
+    pub straight: RgbColor,
+    pub round: RgbColor,
+    pub interior: RgbColor,
+    pub point_locus: RgbColor,
+    pub plot: RgbColor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ObjectClass {
+    Point,
+    Straight,
+    Round,
+    Interior,
+    PointLocus,
+    Plot,
+}
+
+impl ObjectColorDefaults {
+    pub fn color(self, class: ObjectClass) -> RgbColor {
+        match class {
+            ObjectClass::Point => self.point,
+            ObjectClass::Straight => self.straight,
+            ObjectClass::Round => self.round,
+            ObjectClass::Interior => self.interior,
+            ObjectClass::PointLocus => self.point_locus,
+            ObjectClass::Plot => self.plot,
+        }
+    }
+
+    pub fn set_color(&mut self, class: ObjectClass, color: RgbColor) {
+        match class {
+            ObjectClass::Point => self.point = color,
+            ObjectClass::Straight => self.straight = color,
+            ObjectClass::Round => self.round = color,
+            ObjectClass::Interior => self.interior = color,
+            ObjectClass::PointLocus => self.point_locus = color,
+            ObjectClass::Plot => self.plot = color,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LineStyleOverrides {
+    width: Option<LineWidth>,
+    pattern: Option<LinePattern>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ObjectStyleDefaults {
+    point: Option<PointStyle>,
+    straight: LineStyleOverrides,
+    round: LineStyleOverrides,
+    point_locus: LineStyleOverrides,
+    plot: LineStyleOverrides,
+}
+
+impl ObjectStyleDefaults {
+    fn line_mut(&mut self, class: ObjectClass) -> Option<&mut LineStyleOverrides> {
+        match class {
+            ObjectClass::Straight => Some(&mut self.straight),
+            ObjectClass::Round => Some(&mut self.round),
+            ObjectClass::PointLocus => Some(&mut self.point_locus),
+            ObjectClass::Plot => Some(&mut self.plot),
+            ObjectClass::Point | ObjectClass::Interior => None,
+        }
+    }
+
+    pub fn set_point_style(&mut self, style: PointStyle) {
+        self.point = Some(style);
+    }
+
+    pub fn set_line_width(&mut self, class: ObjectClass, width: LineWidth) -> bool {
+        let Some(line) = self.line_mut(class) else {
+            return false;
+        };
+        line.width = Some(width);
+        true
+    }
+
+    pub fn set_line_pattern(&mut self, class: ObjectClass, pattern: LinePattern) -> bool {
+        let Some(line) = self.line_mut(class) else {
+            return false;
+        };
+        line.pattern = Some(pattern);
+        true
+    }
+
+    fn apply(self, class: ObjectClass, style: VisualStyle) -> VisualStyle {
+        match (class, style) {
+            (ObjectClass::Point, VisualStyle::Point { shape, color }) => VisualStyle::Point {
+                shape: self.point.unwrap_or(shape),
+                color,
+            },
+            (class, VisualStyle::Stroke { line, color }) => {
+                let overrides = match class {
+                    ObjectClass::Straight => self.straight,
+                    ObjectClass::Round => self.round,
+                    ObjectClass::PointLocus => self.point_locus,
+                    ObjectClass::Plot => self.plot,
+                    ObjectClass::Point | ObjectClass::Interior => {
+                        return VisualStyle::Stroke { line, color };
+                    }
+                };
+                VisualStyle::Stroke {
+                    line: SegmentLineStyle {
+                        width: overrides.width.unwrap_or(line.width),
+                        pattern: overrides.pattern.unwrap_or(line.pattern),
+                    },
+                    color,
+                }
+            }
+            (_, style) => style,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeasurementPrecisionDefaults {
+    angle: u16,
+    distance: u16,
+    other: u16,
+}
+
+impl MeasurementPrecisionDefaults {
+    pub fn new(angle: u16, distance: u16, other: u16) -> Result<Self, String> {
+        if [angle, distance, other]
+            .into_iter()
+            .any(|precision| precision > 5)
+        {
+            return Err("Precision must be between 0 and 5 decimal places".into());
+        }
+        Ok(Self {
+            angle,
+            distance,
+            other,
+        })
+    }
+
+    fn for_kind(self, kind: &Kind) -> u16 {
+        match kind.numeric_unit() {
+            Some(NumericUnit::Degrees) => self.angle,
+            Some(NumericUnit::Length | NumericUnit::Area) => self.distance,
+            _ => self.other,
+        }
+    }
+}
+
+impl Default for MeasurementPrecisionDefaults {
+    fn default() -> Self {
+        Self {
+            angle: 2,
+            distance: 2,
+            other: 2,
+        }
+    }
+}
+
+impl Default for ObjectColorDefaults {
+    fn default() -> Self {
+        Self {
+            point: RgbColor {
+                red: 255,
+                green: 0,
+                blue: 0,
+            },
+            straight: RgbColor {
+                red: 0,
+                green: 0,
+                blue: 128,
+            },
+            round: RgbColor {
+                red: 0,
+                green: 128,
+                blue: 0,
+            },
+            interior: RgbColor {
+                red: 255,
+                green: 128,
+                blue: 0,
+            },
+            point_locus: RgbColor {
+                red: 128,
+                green: 0,
+                blue: 0,
+            },
+            plot: RgbColor {
+                red: 128,
+                green: 0,
+                blue: 128,
+            },
+        }
+    }
+}
+
+fn object_class(kind: &Kind) -> Option<ObjectClass> {
+    match kind {
+        Kind::FunctionPlot(..) | Kind::ParametricPlot(..) => Some(ObjectClass::Plot),
+        Kind::ParameterLocus(..) => Some(ObjectClass::PointLocus),
+        Kind::CircleInterior(..)
+        | Kind::SectorBoundary(..)
+        | Kind::CircularSegmentBoundary(..)
+        | Kind::Polygon(..) => Some(ObjectClass::Interior),
+        _ => match kind
+            .transform_definition()
+            .map(|definition| definition.element())
+            .or_else(|| match kind {
+                Kind::Colorized(definition) => Some(definition.element()),
+                _ => None,
+            }) {
+            Some(transform_model::ElementType::Point) => Some(ObjectClass::Point),
+            Some(
+                transform_model::ElementType::Segment
+                | transform_model::ElementType::Ray
+                | transform_model::ElementType::Line,
+            ) => Some(ObjectClass::Straight),
+            Some(transform_model::ElementType::Circle | transform_model::ElementType::Arc) => {
+                Some(ObjectClass::Round)
+            }
+            Some(
+                transform_model::ElementType::Polygon
+                | transform_model::ElementType::Sector
+                | transform_model::ElementType::Disk,
+            ) => Some(ObjectClass::Interior),
+            Some(transform_model::ElementType::Image) => None,
+            None if kind::is_point_kind(kind) => Some(ObjectClass::Point),
+            None if kind::is_straight_kind(kind) => Some(ObjectClass::Straight),
+            None if kind.is_circle() || kind::is_arc_kind(kind) => Some(ObjectClass::Round),
+            None => None,
+        },
+    }
+}
+
+const RANDOM_INTERIOR_COLORS: [RgbColor; 12] = [
+    RgbColor {
+        red: 255,
+        green: 0,
+        blue: 0,
+    },
+    RgbColor {
+        red: 255,
+        green: 128,
+        blue: 0,
+    },
+    RgbColor {
+        red: 220,
+        green: 180,
+        blue: 0,
+    },
+    RgbColor {
+        red: 0,
+        green: 160,
+        blue: 0,
+    },
+    RgbColor {
+        red: 0,
+        green: 160,
+        blue: 160,
+    },
+    RgbColor {
+        red: 0,
+        green: 96,
+        blue: 255,
+    },
+    RgbColor {
+        red: 0,
+        green: 0,
+        blue: 128,
+    },
+    RgbColor {
+        red: 128,
+        green: 0,
+        blue: 128,
+    },
+    RgbColor {
+        red: 255,
+        green: 0,
+        blue: 255,
+    },
+    RgbColor {
+        red: 128,
+        green: 0,
+        blue: 0,
+    },
+    RgbColor {
+        red: 138,
+        green: 102,
+        blue: 217,
+    },
+    RgbColor {
+        red: 0,
+        green: 192,
+        blue: 255,
+    },
+];
+
+fn initial_interior_color_cursor() -> usize {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.subsec_nanos() as usize % RANDOM_INTERIOR_COLORS.len()
+        })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImagePlacement {
+    Independent([f64; 6]),
+    Point {
+        anchor: usize,
+        relative: [f64; 6],
+    },
+    Rectangle {
+        bottom_right: usize,
+        top_left: usize,
+    },
+    Parallelogram {
+        top_left: usize,
+        bottom_right: usize,
+        bottom_left: usize,
+    },
+    Transformed(transform_model::TransformDefinition),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +440,7 @@ pub enum Kind {
     PresentationButton {
         targets: Vec<usize>,
         mode: PresentationMode,
+        options: PresentationOptions,
         label: String,
         anchor: (i16, i16),
     },
@@ -152,9 +485,12 @@ pub enum Kind {
     Free(Point),
     Image {
         png: Vec<u8>,
-        transform: [f64; 6],
-        /// A live point anchor; `transform` is then relative to that point.
-        anchor: Option<usize>,
+        placement: ImagePlacement,
+    },
+    /// A live view of an imported picture clipped to a polygon.
+    CroppedImage {
+        source: usize,
+        polygon: usize,
     },
     PlainText {
         text: String,
@@ -206,6 +542,12 @@ pub enum Kind {
     FunctionDefinition(SimpleFunction),
     ReferencedFunction(Vec<usize>, SimpleFunction),
     DerivativeFunction(usize, SimpleFunction),
+    /// Code 122: a scalar function sampled from a drawing or picture's top edge.
+    DataFunction {
+        source: usize,
+        frame: usize,
+        smoothing: u32,
+    },
     FunctionPlot(usize, usize, f64, f64, u32),
     ParametricPlot(usize, usize, usize, f64, f64, u32, PlotPointsMode),
     PathLiteralPoint(usize, f64),
@@ -232,12 +574,22 @@ pub enum Kind {
     /// A displayed three-point angle mark with a native arc count.
     AngleMarker(usize, usize, usize, u16),
     /// A named numeric display whose value remains bound to its source.
-    NumericAlias { source: usize, unit: NumericUnit },
+    NumericAlias {
+        source: usize,
+        unit: NumericUnit,
+    },
     PointDistance(usize, usize),
     PointLineDistance(usize, usize),
     PointNumericLabel(usize, usize),
-    PointReferencedText { point: usize, source: usize, text: referenced_text::ReferencedText },
-    ReferencedText { parents: Vec<usize>, text: referenced_text::ReferencedText },
+    PointReferencedText {
+        point: usize,
+        source: usize,
+        text: referenced_text::ReferencedText,
+    },
+    ReferencedText {
+        parents: Vec<usize>,
+        text: referenced_text::ReferencedText,
+    },
     PointParameterIteration(usize, usize, usize, usize, usize, IterationDepth),
     BranchingPolygonIteration {
         seed: usize,
@@ -353,15 +705,25 @@ struct ClipboardObject {
 
 impl std::ops::Deref for Object {
     type Target = ObjectNode<Kind>;
-    fn deref(&self) -> &Self::Target { &self.node }
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
 }
 impl std::ops::DerefMut for Object {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.node }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.node
+    }
 }
 impl sketchpad_ir::DependencyNode for Object {
-    fn id(&self) -> usize { self.id }
-    fn page(&self) -> usize { self.page }
-    fn dependencies(&self) -> Vec<usize> { self.construction_dependencies() }
+    fn id(&self) -> usize {
+        self.id
+    }
+    fn page(&self) -> usize {
+        self.page
+    }
+    fn dependencies(&self) -> Vec<usize> {
+        self.construction_dependencies()
+    }
 }
 impl Document {
     /// Derive dependency indexes from the authoritative semantic objects.
@@ -395,6 +757,7 @@ impl Clipboard {
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     objects: Vec<Object>,
+    merge_aliases: BTreeMap<usize, usize>,
     measurement_names: BTreeMap<usize, u32>,
     snap_points: Vec<bool>,
     grid_dotted: Vec<bool>,
@@ -427,6 +790,13 @@ pub struct Document {
     pub angle_unit_radians: bool,
     pub marked_coordinate_system: Vec<Option<usize>>,
     pub frame_styles: BTreeMap<usize, (GridForm, bool)>,
+    object_color_defaults: ObjectColorDefaults,
+    object_style_defaults: ObjectStyleDefaults,
+    measurement_precision_defaults: MeasurementPrecisionDefaults,
+    new_polygon_opacity: u16,
+    randomize_interior_colors: bool,
+    interior_color_cursor: usize,
+    merge_aliases: BTreeMap<usize, usize>,
     measurement_names: BTreeMap<usize, u32>,
     evaluation_context: Option<evaluation_context::EvaluationContext>,
     original: Vec<u8>,
@@ -437,6 +807,12 @@ pub struct Document {
     image_read_only: bool,
     pub undo: Vec<DocumentSnapshot>,
     pub redo: Vec<DocumentSnapshot>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Document {
@@ -456,6 +832,57 @@ impl Document {
         self.checkpoint();
         self.append_object(kind)
     }
+    pub fn set_object_color_defaults(&mut self, defaults: ObjectColorDefaults) {
+        self.object_color_defaults = defaults;
+    }
+    pub fn object_color_defaults(&self) -> ObjectColorDefaults {
+        self.object_color_defaults
+    }
+    pub fn set_object_style_defaults(&mut self, defaults: ObjectStyleDefaults) {
+        self.object_style_defaults = defaults;
+    }
+    pub fn set_measurement_precision_defaults(&mut self, defaults: MeasurementPrecisionDefaults) {
+        self.measurement_precision_defaults = defaults;
+    }
+    pub fn set_new_polygon_opacity(&mut self, opacity: u16) {
+        self.new_polygon_opacity = opacity;
+    }
+    pub fn set_randomize_interior_colors(&mut self, randomize: bool) {
+        self.randomize_interior_colors = randomize;
+    }
+    pub fn object_class(&self, id: usize) -> Option<ObjectClass> {
+        let mut current = id;
+        for _ in 0..self.objects.len() {
+            let object = self.objects.get(current.checked_sub(1)?)?;
+            if object.deleted {
+                return None;
+            }
+            match &object.kind {
+                Kind::Locus(refs, _)
+                    if refs
+                        .first()
+                        .and_then(|target| self.objects.get(target.saturating_sub(1)))
+                        .is_some_and(|target| kind::is_point_kind(&target.kind)) =>
+                {
+                    return Some(ObjectClass::PointLocus);
+                }
+                Kind::IterationBinding(source, _) if *source != current => current = *source,
+                kind => return object_class(kind),
+            }
+        }
+        None
+    }
+    fn apply_default_calculation_precision(&self, kind: &mut Kind) {
+        let precision = self.measurement_precision_defaults.for_kind(kind);
+        match kind {
+            Kind::Calculation(group) => group.set_precision(precision),
+            Kind::MeasuredCalculation(_, group) => group.set_precision(precision),
+            Kind::LengthPairCalculation(_, _, group) => group.set_precision(precision),
+            Kind::ParameterCalculation(_, group) => group.set_precision(precision),
+            _ => return,
+        }
+        .expect("validated default precision must fit native calculation groups");
+    }
     fn append_object(&mut self, kind: Kind) -> usize {
         let (kind, explicit_midpoint_host) = match kind {
             Kind::SegmentMidpoint(host) => {
@@ -466,6 +893,7 @@ impl Document {
             }
             other => (other, None),
         };
+        let precision = self.measurement_precision_defaults.for_kind(&kind);
         self.last_moved_object = None;
         let id = self.objects.len() + 1;
         let inherited_transform_source = kind
@@ -482,55 +910,106 @@ impl Document {
                 )
             })
             .map(|definition| definition.source());
-        let visual_style = if let Kind::IterationBinding(source, parent) = &kind {
-            let header = &self.iteration_binding_template(*source, *parent)[8..36];
-            if self
-                .objects
-                .get(source.saturating_sub(1))
-                .is_some_and(|o| kind::is_point_kind(&o.kind))
-            {
-                crate::style_records::iteration_point_binding_visual_style(header)
-            } else if self
-                .objects
-                .get(source.saturating_sub(1))
-                .is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::CircleInterior(_)))
-            {
-                crate::style_records::iteration_binding_visual_style(header, true)
-            } else if self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
-                kind::is_straight_kind(&o.kind) || o.kind.is_circle() || kind::is_arc_kind(&o.kind)
-                    || kind::is_straight_locus(&self.objects, &o.kind)
-                    || locus::is_point_locus(&self.objects, &o.kind)
-                    || matches!(o.kind, Kind::SampledMapped(..))
-            }) {
-                crate::style_records::iteration_binding_visual_style(header, false)
-            } else {
-                None
-            }
-        } else if let Some(source) = inherited_transform_source {
-            self.objects
-                .get(source.saturating_sub(1))
-                .and_then(|object| object.visual_style)
-                .or_else(|| default_visual_style(&kind))
-        } else if let Kind::Locus(refs, _) = &kind {
-            refs.first()
-                .and_then(|id| id.checked_sub(1))
-                .and_then(|at| self.objects.get(at))
-                .and_then(|target| {
-                    if kind::is_point_kind(&target.kind) {
-                        Some(kind::point_locus_visual_style())
-                    } else if kind::is_locus_straight_kind(&target.kind) {
-                        Some(VisualStyle::Stroke {
-                            line: crate::style_records::SegmentLineStyle {
-                                width: crate::style_records::LineWidth::Thin,
-                                pattern: crate::style_records::LinePattern::Solid,
-                            },
-                            color: crate::style_records::RgbColor { red: 102, green: 102, blue: 178 },
-                        })
-                    } else { None }
-                })
-        } else {
-            default_visual_style(&kind)
+        let recolor = |style: VisualStyle, color: RgbColor| match style {
+            VisualStyle::Point { shape, .. } => VisualStyle::Point { shape, color },
+            VisualStyle::Stroke { line, .. } => VisualStyle::Stroke { line, color },
+            VisualStyle::Polygon { opacity, .. } => VisualStyle::Polygon { opacity, color },
         };
+        let object_color_defaults = self.object_color_defaults;
+        let object_style_defaults = self.object_style_defaults;
+        let new_polygon_opacity = self.new_polygon_opacity;
+        let randomize_interior_colors = self.randomize_interior_colors;
+        let mut interior_color_cursor = self.interior_color_cursor;
+        let mut default_style = |kind: &Kind| {
+            let style = default_visual_style(kind)?;
+            Some(if let Some(class) = object_class(kind) {
+                let color = if class == ObjectClass::Interior && randomize_interior_colors {
+                    let color = RANDOM_INTERIOR_COLORS[interior_color_cursor];
+                    interior_color_cursor =
+                        (interior_color_cursor + 5) % RANDOM_INTERIOR_COLORS.len();
+                    color
+                } else {
+                    object_color_defaults.color(class)
+                };
+                let style = object_style_defaults.apply(class, recolor(style, color));
+                if matches!(kind, Kind::Polygon(_)) {
+                    match style {
+                        VisualStyle::Polygon { color, .. } => VisualStyle::Polygon {
+                            color,
+                            opacity: new_polygon_opacity,
+                        },
+                        style => style,
+                    }
+                } else {
+                    style
+                }
+            } else {
+                style
+            })
+        };
+        let visual_style =
+            if let Kind::IterationBinding(source, parent) = &kind {
+                let header = &self.iteration_binding_template(*source, *parent)[8..36];
+                if self
+                    .objects
+                    .get(source.saturating_sub(1))
+                    .is_some_and(|o| kind::is_point_kind(&o.kind))
+                {
+                    crate::style_records::iteration_point_binding_visual_style(header)
+                } else if self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
+                    o.kind.is_polygon() || matches!(o.kind, Kind::CircleInterior(_))
+                }) {
+                    crate::style_records::iteration_binding_visual_style(header, true)
+                } else if self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
+                    kind::is_straight_kind(&o.kind)
+                        || o.kind.is_circle()
+                        || kind::is_arc_kind(&o.kind)
+                        || kind::is_straight_locus(&self.objects, &o.kind)
+                        || locus::is_point_locus(&self.objects, &o.kind)
+                        || matches!(o.kind, Kind::SampledMapped(..))
+                }) {
+                    crate::style_records::iteration_binding_visual_style(header, false)
+                } else {
+                    None
+                }
+            } else if let Some(source) = inherited_transform_source {
+                self.objects
+                    .get(source.saturating_sub(1))
+                    .and_then(|object| object.visual_style)
+                    .or_else(|| default_style(&kind))
+            } else if let Kind::Locus(refs, _) = &kind {
+                refs.first()
+                    .and_then(|id| id.checked_sub(1))
+                    .and_then(|at| self.objects.get(at))
+                    .and_then(|target| {
+                        if kind::is_point_kind(&target.kind) {
+                            Some(self.object_style_defaults.apply(
+                                ObjectClass::PointLocus,
+                                recolor(
+                                    kind::point_locus_visual_style(),
+                                    self.object_color_defaults.point_locus,
+                                ),
+                            ))
+                        } else if kind::is_locus_straight_kind(&target.kind) {
+                            Some(VisualStyle::Stroke {
+                                line: crate::style_records::SegmentLineStyle {
+                                    width: crate::style_records::LineWidth::Thin,
+                                    pattern: crate::style_records::LinePattern::Solid,
+                                },
+                                color: crate::style_records::RgbColor {
+                                    red: 102,
+                                    green: 102,
+                                    blue: 178,
+                                },
+                            })
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                default_style(&kind)
+            };
+        self.interior_color_cursor = interior_color_cursor;
         let midpoint_host = if explicit_midpoint_host.is_some() {
             explicit_midpoint_host
         } else if let Kind::Midpoint(a, b) = kind {
@@ -544,8 +1023,12 @@ impl Document {
         } else {
             None
         };
-        let measurement_precision = kind.has_measurement_precision().then_some(2);
-        let interior_order = if matches!(kind, Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)) || kind.is_circle_interior() {
+        let measurement_precision = kind.has_measurement_precision().then_some(precision);
+        let interior_order = if matches!(
+            kind,
+            Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
+        ) || kind.is_circle_interior()
+        {
             Some(0)
         } else if kind.is_filled_region() {
             Some(1)

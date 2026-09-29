@@ -289,8 +289,9 @@ fn calculated_marked_angle_and_depth_create_regular_polygon() {
 
 #[test]
 fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/point_calculated_rotation_live_depth_port.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/point_calculated_rotation_live_depth_port.gsp"
+    );
     let mut document = Document::from_bytes(bytes, None).unwrap();
     document.selected.insert(7);
     document.clear_selected().unwrap();
@@ -328,7 +329,9 @@ fn selected_point_mapping_and_calculation_create_live_depth_iteration() {
 #[test]
 fn mapped_midpoint_iteration_point_binding_is_pickable_and_styles_survive_save() {
     let doc = Document::from_bytes(
-        include_bytes!("../../../../../tests/fixtures/mapped_midpoint_triangle_native_verified.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/mapped_midpoint_triangle_native_verified.gsp"
+        ),
         None,
     )
     .unwrap();

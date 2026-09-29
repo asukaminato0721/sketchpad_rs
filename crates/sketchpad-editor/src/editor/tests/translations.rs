@@ -388,7 +388,9 @@ fn marked_and_mixed_rectangular_translation_accepts_segments_and_circles() {
 #[test]
 fn typed_length_parameter_can_be_marked_and_drives_editor_translation() {
     let doc = Document::from_bytes(
-        include_bytes!("../../../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/numeric_typed_parameters_native_verified.gsp"
+        ),
         None,
     )
     .unwrap();

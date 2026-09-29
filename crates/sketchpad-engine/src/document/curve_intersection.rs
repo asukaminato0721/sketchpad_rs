@@ -168,18 +168,18 @@ impl Document {
             if carrier.residual(point).abs() > 1e-7 {
                 return;
             }
-            if let Some(parameter) = carrier.parameter(self, point) {
-                if parameter.is_finite() && !hits.iter().any(|(_, old)| old.distance(point) <= 1e-7)
-                {
-                    hits.push((
-                        if curve_order {
-                            curve_parameter
-                        } else {
-                            parameter
-                        },
-                        point,
-                    ));
-                }
+            if let Some(parameter) = carrier.parameter(self, point)
+                && parameter.is_finite()
+                && !hits.iter().any(|(_, old)| old.distance(point) <= 1e-7)
+            {
+                hits.push((
+                    if curve_order {
+                        curve_parameter
+                    } else {
+                        parameter
+                    },
+                    point,
+                ));
             }
         };
         let intervals = curve.intervals;
@@ -236,10 +236,10 @@ impl Document {
         }
         // Function and geometric traces exclude the maximum; parameter traces
         // include both ends. All three include the minimum.
-        if let Some((point, value)) = values[0] {
-            if value == 0. {
-                record(point, 0.);
-            }
+        if let Some((point, value)) = values[0]
+            && value == 0.
+        {
+            record(point, 0.);
         }
         // A sampled zero is a crossing only when its two defined neighbors have
         // opposite signs. A touch or an overlapping span is not an intersection.
@@ -257,10 +257,11 @@ impl Document {
                 record(point, i as f64 / intervals as f64);
             }
         }
-        if include_max && let Some((point, value)) = values[intervals] {
-            if value == 0. {
-                record(point, 1.);
-            }
+        if include_max
+            && let Some((point, value)) = values[intervals]
+            && value == 0.
+        {
+            record(point, 1.);
         }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         Some(hits.into_iter().map(|(_, point)| point).collect())

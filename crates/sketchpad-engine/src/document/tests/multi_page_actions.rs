@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn multi_page_points_and_link_append_with_page_local_references() {
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut document = Document::from_bytes(base, None).unwrap();
     document.active_page = 0;
     let first = document.add(Kind::Free(Point { x: 150., y: 200. }));
@@ -33,15 +34,19 @@ fn multi_page_points_and_link_append_with_page_local_references() {
 #[test]
 fn multi_page_hide_show_buttons_append_with_page_local_targets() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_second_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_second_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_second_native.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_second_port.gsp")
+            .as_slice(),
         include_bytes!(
             "../../../../../tests/fixtures/two_page_hide_show_second_port_clicked_by_wine.gsp"
         )
         .as_slice(),
         include_bytes!("../../../../../tests/fixtures/two_page_hide_show_both_port.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_immediate_port.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_new_hide_show_link_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_hide_show_immediate_port.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_new_hide_show_link_port.gsp")
+            .as_slice(),
         include_bytes!(
             "../../../../../tests/fixtures/two_page_new_hide_show_link_port_clicked_by_wine.gsp"
         )
@@ -61,8 +66,7 @@ fn multi_page_hide_show_buttons_append_with_page_local_targets() {
         let references = records(bytes)
             .unwrap()
             .into_iter()
-            .filter(|record| record.kind == 0x07d2)
-            .last()
+            .rfind(|record| record.kind == 0x07d2)
             .unwrap();
         bytes[references.data]
             .chunks_exact(4)
@@ -82,7 +86,8 @@ fn multi_page_hide_show_buttons_append_with_page_local_targets() {
         vec![2, 1, 3]
     );
 
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut second = Document::from_bytes(base, None).unwrap();
     second.active_page = 1;
     assert_eq!(second.add_hide_show_button_for_targets(&[2, 4]).unwrap(), 6);
@@ -187,8 +192,7 @@ fn multi_page_presentation_buttons_use_page_local_actions() {
     let references = records(&bytes)
         .unwrap()
         .into_iter()
-        .filter(|record| record.kind == 0x07d2)
-        .last()
+        .rfind(|record| record.kind == 0x07d2)
         .unwrap();
     let refs = bytes[references.data]
         .chunks_exact(4)
@@ -205,6 +209,46 @@ fn multi_page_presentation_buttons_use_page_local_actions() {
             ..
         } if targets == &[6, 7]
     ));
+    let mut configured = Document::from_bytes(base, None).unwrap();
+    configured.active_page = 1;
+    configured
+        .add_presentation_button_for_targets_with_options(
+            &[6, 7],
+            PresentationMode::Simultaneous,
+            PresentationOptions {
+                deselect: true,
+                stop_animations: true,
+                erase_traces: true,
+                stop: PresentationStop::FirstAction,
+                time_tenths: 25,
+                native_state: 0,
+            },
+        )
+        .unwrap();
+    let mut configured_bytes = configured.encode().unwrap();
+    let action = records(&configured_bytes)
+        .unwrap()
+        .into_iter()
+        .rfind(|record| record.kind == 0x0906)
+        .unwrap();
+    configured_bytes[action.data.start + 18..action.data.start + 20]
+        .copy_from_slice(&1u16.to_le_bytes());
+    let configured = Document::from_bytes(&configured_bytes, None).unwrap();
+    assert!(matches!(
+        configured.objects[7].kind,
+        Kind::PresentationButton {
+            options: PresentationOptions {
+                deselect: true,
+                stop_animations: true,
+                erase_traces: true,
+                stop: PresentationStop::FirstAction,
+                time_tenths: 25,
+                native_state: 1,
+            },
+            ..
+        }
+    ));
+    assert_eq!(configured.encode().unwrap(), configured_bytes);
     let mut sequential = Document::from_bytes(base, None).unwrap();
     sequential.active_page = 1;
     sequential
@@ -226,7 +270,9 @@ fn multi_page_presentation_buttons_use_page_local_actions() {
     ));
     assert_eq!(sequential_reopened.encode().unwrap(), sequential_bytes);
     let clicked = Document::from_bytes(
-        include_bytes!("../../../../../tests/fixtures/two_page_presentation_port_clicked_by_wine.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/two_page_presentation_port_clicked_by_wine.gsp"
+        ),
         None,
     )
     .unwrap();
@@ -268,20 +314,26 @@ fn multi_page_clear_remaps_action_buttons_and_dependents() {
         (
             6,
             vec![6, 8],
-            include_bytes!("../../../../../tests/fixtures/two_page_presentation_parent_cleared_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_presentation_parent_cleared_port.gsp"
+            )
+            .as_slice(),
         ),
         (
             2,
             vec![2, 4, 5, 6, 8],
-            include_bytes!("../../../../../tests/fixtures/two_page_presentation_target_cleared_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_presentation_target_cleared_port.gsp"
+            )
+            .as_slice(),
         ),
         (
             5,
             vec![5],
-            include_bytes!("../../../../../tests/fixtures/two_page_presentation_point_cleared_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/two_page_presentation_point_cleared_port.gsp"
+            )
+            .as_slice(),
         ),
     ] {
         let mut document = Document::from_bytes(base, None).unwrap();
@@ -311,7 +363,8 @@ fn multi_page_clear_remaps_action_buttons_and_dependents() {
         Kind::PresentationButton { ref targets, .. } if targets == &[5, 6]
     ));
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_port.gsp")
+            .as_slice(),
         include_bytes!("../../../../../tests/fixtures/two_page_movement_port.gsp").as_slice(),
         include_bytes!("../../../../../tests/fixtures/two_page_scroll_port.gsp").as_slice(),
     ] {
@@ -329,10 +382,14 @@ fn multi_page_clear_remaps_action_buttons_and_dependents() {
 #[test]
 fn multi_page_animation_buttons_append_with_page_local_targets() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_port.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_native.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_point_port.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_native.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_port.gsp")
+            .as_slice(),
         include_bytes!(
             "../../../../../tests/fixtures/two_page_animation_segment_port_clicked_by_wine.gsp"
         )
@@ -347,8 +404,7 @@ fn multi_page_animation_buttons_append_with_page_local_targets() {
         let references = records(bytes)
             .unwrap()
             .into_iter()
-            .filter(|record| record.kind == 0x07d2)
-            .last()
+            .rfind(|record| record.kind == 0x07d2)
             .unwrap();
         bytes[references.data]
             .chunks_exact(4)
@@ -356,12 +412,15 @@ fn multi_page_animation_buttons_append_with_page_local_targets() {
             .collect::<Vec<_>>()
     };
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_native.gsp").as_slice(),
-        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_native.gsp")
+            .as_slice(),
+        include_bytes!("../../../../../tests/fixtures/two_page_animation_segment_port.gsp")
+            .as_slice(),
     ] {
         assert_eq!(local_targets(bytes), vec![2, 2, 1]);
     }
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut point = Document::from_bytes(base, None).unwrap();
     point.active_page = 1;
     let point_settings = point.animation_button_default_settings(5).unwrap();
@@ -427,8 +486,7 @@ fn multi_page_movement_buttons_append_with_page_local_points() {
         let references = records(bytes)
             .unwrap()
             .into_iter()
-            .filter(|record| record.kind == 0x07d2)
-            .last()
+            .rfind(|record| record.kind == 0x07d2)
             .unwrap();
         bytes[references.data]
             .chunks_exact(4)
@@ -441,7 +499,8 @@ fn multi_page_movement_buttons_append_with_page_local_points() {
     ] {
         assert_eq!(local_targets(bytes), vec![2, 1, 2]);
     }
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut second = Document::from_bytes(base, None).unwrap();
     second.active_page = 1;
     assert_eq!(
@@ -503,12 +562,12 @@ fn multi_page_scroll_buttons_append_with_page_local_points() {
         let references = records(bytes)
             .unwrap()
             .into_iter()
-            .filter(|record| record.kind == 0x07d2)
-            .last()
+            .rfind(|record| record.kind == 0x07d2)
             .unwrap();
         assert_eq!(&bytes[references.data], &[1, 0, 0, 0, 1, 0, 0, 0]);
     }
-    let base = include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
+    let base =
+        include_bytes!("../../../../../tests/fixtures/two_page_segment_constrained_native.gsp");
     let mut second = Document::from_bytes(base, None).unwrap();
     second.active_page = 1;
     assert_eq!(

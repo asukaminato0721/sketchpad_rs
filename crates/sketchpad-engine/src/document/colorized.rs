@@ -272,6 +272,7 @@ pub(super) fn decode_colorized(
                         && (p[16..24] == 1f64.to_le_bytes()
                             || (operation == 0x12 && p[16..24] == 2f64.to_le_bytes()))))
         }
+        ElementType::Image => false,
     };
     if !matches_header {
         return None;
@@ -375,11 +376,7 @@ impl Document {
                 }
                 ColorRangeBehavior::Reflect => {
                     let q = q.rem_euclid(2.);
-                    if q <= 1. {
-                        q
-                    } else {
-                        2. - q
-                    }
+                    if q <= 1. { q } else { 2. - q }
                 }
             })
         };

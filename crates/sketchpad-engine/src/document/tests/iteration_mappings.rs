@@ -102,7 +102,9 @@ fn marked_translation_iterations_pin_measurements_and_follow_source_edits() {
 #[test]
 fn marked_rectangular_and_mixed_iterations_carry_geometry() {
     let doc = Document::from_bytes(
-        include_bytes!("../../../../../tests/fixtures/marked_rectangular_segment_iteration_port.gsp"),
+        include_bytes!(
+            "../../../../../tests/fixtures/marked_rectangular_segment_iteration_port.gsp"
+        ),
         None,
     )
     .unwrap();
@@ -231,8 +233,10 @@ fn marked_angle_and_ratio_iterations_substitute_every_direct_seed_input() {
 fn iteration_centers_from_external_constructions_are_pinned() {
     for (bytes, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/rotation_derived_center_iteration_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/rotation_derived_center_iteration_port.gsp"
+            )
+            .as_slice(),
             vec![
                 Point { x: 100., y: 180. },
                 Point { x: 160., y: 240. },
@@ -240,8 +244,10 @@ fn iteration_centers_from_external_constructions_are_pinned() {
             ],
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/dilation_derived_center_iteration_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/dilation_derived_center_iteration_port.gsp"
+            )
+            .as_slice(),
             vec![
                 Point { x: 175., y: 180. },
                 Point { x: 167.5, y: 180. },
@@ -262,7 +268,8 @@ fn iteration_centers_from_external_constructions_are_pinned() {
 fn vector_iteration_substitutes_repeated_seeds_and_pins_external_inputs() {
     for (bytes, iteration, xs) in [
         (
-            include_bytes!("../../../../../tests/fixtures/vector_point_iteration_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/vector_point_iteration_port.gsp")
+                .as_slice(),
             5,
             vec![180., 220., 260.],
         ),
@@ -273,13 +280,16 @@ fn vector_iteration_substitutes_repeated_seeds_and_pins_external_inputs() {
             vec![140., 140., 140.],
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/vector_seed_end_iteration_port.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/vector_seed_end_iteration_port.gsp")
+                .as_slice(),
             4,
             vec![180., 260.],
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/vector_external_dependency_iteration_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/vector_external_dependency_iteration_port.gsp"
+            )
+            .as_slice(),
             7,
             vec![160., 180., 200.],
         ),
@@ -389,7 +399,9 @@ fn reflected_iterations_alternate_and_keep_external_mirrors_pinned() {
     doc.move_point(2, Point { x: 120., y: 80. });
     assert_eq!(
         doc.encode().unwrap(),
-        include_bytes!("../../../../../tests/fixtures/reflection_segment_iteration_edited_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/reflection_segment_iteration_edited_port.gsp"
+        )
     );
     let lines = doc.segment_iteration_images(7).unwrap();
     assert!(lines[0].0.distance(doc.position(5).unwrap()) < 1e-10);
@@ -532,7 +544,8 @@ fn dilated_point_and_numeric_iterations_preserve_geometric_and_numeric_steps() {
 #[test]
 fn dilated_carried_geometry_scales_radii_and_tracks_ratio_dependencies() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/dilation_segment_iteration_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/dilation_segment_iteration_port.gsp")
+            .as_slice(),
         include_bytes!("../../../../../tests/fixtures/dilation_segment_iteration_edited_port.gsp")
             .as_slice(),
     ] {
@@ -562,7 +575,8 @@ fn dilated_carried_geometry_scales_radii_and_tracks_ratio_dependencies() {
             (Point { x: 115., y: 180. }, 7.5),
         ]
     );
-    let bytes = include_bytes!("../../../../../tests/fixtures/dilation_ratio_ray_iteration_port.gsp");
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/dilation_ratio_ray_iteration_port.gsp");
     let mut ratio = Document::from_bytes(bytes, None).unwrap();
     assert!(!ratio.partial_view);
     assert_eq!(
@@ -573,7 +587,9 @@ fn dilated_carried_geometry_scales_radii_and_tracks_ratio_dependencies() {
     ratio.set_parameter_value(8, 4.).unwrap();
     assert_eq!(
         ratio.encode().unwrap(),
-        include_bytes!("../../../../../tests/fixtures/dilation_ratio_ray_iteration_edited_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/dilation_ratio_ray_iteration_edited_port.gsp"
+        )
     );
     assert_eq!(
         ratio.ray_iteration_images(9).unwrap()[0],

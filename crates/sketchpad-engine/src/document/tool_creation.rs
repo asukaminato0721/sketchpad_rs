@@ -144,12 +144,14 @@ impl Document {
         let mut title = name.as_bytes().to_vec();
         title.push(0);
         // Native tool names include their even-byte padding in the payload.
-        if title.len() % 2 != 0 {
+        if !title.len().is_multiple_of(2) {
             title.push(0);
         }
         put_record(&mut section, 0x044c, &title);
         if numeric_boundary.is_some() {
-            section.extend_from_slice(include_bytes!("../../../../assets/native_numeric_tool_fonts.bin"));
+            section.extend_from_slice(include_bytes!(
+                "../../../../assets/native_numeric_tool_fonts.bin"
+            ));
         } else {
             for record in prototype_records
                 .iter()
@@ -526,7 +528,9 @@ fn numeric_template_groups(
     graph: &NumericToolGraph,
 ) -> Result<Vec<u8>, String> {
     let mut template = b"GSP4".to_vec();
-    template.extend_from_slice(include_bytes!("../../../../assets/native_numeric_tool_given.bin"));
+    template.extend_from_slice(include_bytes!(
+        "../../../../assets/native_numeric_tool_given.bin"
+    ));
     let mut groups = Vec::new();
     let mut mapping = vec![0u32; document.objects.len() + 1];
     for (index, &given) in graph.inputs.iter().enumerate() {

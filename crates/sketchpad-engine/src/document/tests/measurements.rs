@@ -116,7 +116,8 @@ fn point_line_distance_preserves_multi_page_parent_references() {
 
 #[test]
 fn point_distance_matches_original_and_updates_after_edit() {
-    let original = Document::open(Path::new("../../tests/fixtures/wine_point_distance.gsp")).unwrap();
+    let original =
+        Document::open(Path::new("../../tests/fixtures/wine_point_distance.gsp")).unwrap();
     assert_eq!(original.objects[5].kind, Kind::PointDistance(1, 2));
     assert!((original.point_distance_cm(6).unwrap() - 2.6458333333333335).abs() < 1e-10);
     let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_distance.gsp")).unwrap();
@@ -146,11 +147,16 @@ fn point_distance_matches_original_and_updates_after_edit() {
 }
 #[test]
 fn circumference_matches_original_and_updates_after_resize() {
-    let original =
-        Document::open(Path::new("../../tests/fixtures/wine_circle_circumference.gsp")).unwrap();
+    let original = Document::open(Path::new(
+        "../../tests/fixtures/wine_circle_circumference.gsp",
+    ))
+    .unwrap();
     assert_eq!(original.objects[3].kind, Kind::CircleCircumference(3));
     assert!((original.circle_circumference_cm(4).unwrap() - 16.62426112524599).abs() < 1e-10);
-    let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_circumference.gsp")).unwrap();
+    let moved = Document::open(Path::new(
+        "../../tests/fixtures/wine_moved_circumference.gsp",
+    ))
+    .unwrap();
     assert_eq!(moved.objects[3].kind, Kind::CircleCircumference(3));
     assert!((moved.circle_circumference_cm(4).unwrap() - 24.936391687868986).abs() < 1e-10);
 
@@ -182,7 +188,8 @@ fn circumference_matches_original_and_updates_after_resize() {
 }
 #[test]
 fn radius_matches_original_and_updates_after_resize() {
-    let original = Document::open(Path::new("../../tests/fixtures/wine_circle_radius.gsp")).unwrap();
+    let original =
+        Document::open(Path::new("../../tests/fixtures/wine_circle_radius.gsp")).unwrap();
     assert_eq!(original.objects[3].kind, Kind::CircleRadius(3));
     assert!((original.circle_radius_cm(4).unwrap() - 2.6458333333333335).abs() < 1e-10);
     let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_radius.gsp")).unwrap();
@@ -216,8 +223,10 @@ fn angle_matches_original_and_updates_after_drag() {
     let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_angle.gsp")).unwrap();
     assert_eq!(moved.objects[3].kind, Kind::AngleMeasurement(1, 2, 3));
     assert!((moved.angle_degrees(4).unwrap() - 135.).abs() < 1e-10);
-    let edited_generated =
-        Document::open(Path::new("../../tests/fixtures/wine_moved_generated_angle.gsp")).unwrap();
+    let edited_generated = Document::open(Path::new(
+        "../../tests/fixtures/wine_moved_generated_angle.gsp",
+    ))
+    .unwrap();
     assert_eq!(
         edited_generated.objects[3].kind,
         Kind::AngleMeasurement(1, 2, 3)
@@ -264,8 +273,10 @@ fn circle_area_matches_original_and_updates_after_resize() {
     let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_area.gsp")).unwrap();
     assert_eq!(moved.objects[3].kind, Kind::CircleArea(3));
     assert!((moved.circle_area_cm2(4).unwrap() - 49.483152255615025).abs() < 1e-10);
-    let generated_moved =
-        Document::open(Path::new("../../tests/fixtures/wine_moved_generated_area.gsp")).unwrap();
+    let generated_moved = Document::open(Path::new(
+        "../../tests/fixtures/wine_moved_generated_area.gsp",
+    ))
+    .unwrap();
     assert_eq!(generated_moved.objects[3].kind, Kind::CircleArea(3));
     assert!((generated_moved.circle_area_cm2(4).unwrap() - 49.483152255615025).abs() < 1e-10);
 
@@ -297,11 +308,14 @@ fn transformed_circle_measurements_follow_their_sources() {
             )
             .as_slice(),
             7,
-            include_bytes!("../../../../../tests/fixtures/transformed_circle_measurements_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/transformed_circle_measurements_port.gsp"
+            )
+            .as_slice(),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/ratio_dilation_circle_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/ratio_dilation_circle_original.gsp")
+                .as_slice(),
             8,
             include_bytes!("../../../../../tests/fixtures/scaled_circle_measurements_port.gsp")
                 .as_slice(),
@@ -329,7 +343,10 @@ fn transformed_circle_measurements_follow_their_sources() {
 
 #[test]
 fn multiple_measurements_use_original_label_spacing() {
-    let original = Document::open(Path::new("../../tests/fixtures/wine_circle_area_radius.gsp")).unwrap();
+    let original = Document::open(Path::new(
+        "../../tests/fixtures/wine_circle_area_radius.gsp",
+    ))
+    .unwrap();
     assert_eq!(original.objects[3].kind, Kind::CircleArea(3));
     assert_eq!(original.objects[4].kind, Kind::CircleRadius(3));
 
@@ -387,7 +404,8 @@ fn arc_length_matches_original_and_updates_after_drag() {
     let original = Document::open(Path::new("../../tests/fixtures/wine_arc_length.gsp")).unwrap();
     assert_eq!(original.objects[4].kind, Kind::ArcLength(4));
     assert!((original.arc_length_cm(5).unwrap() - 4.49).abs() < 0.01);
-    let moved = Document::open(Path::new("../../tests/fixtures/wine_moved_arc_length.gsp")).unwrap();
+    let moved =
+        Document::open(Path::new("../../tests/fixtures/wine_moved_arc_length.gsp")).unwrap();
     assert_eq!(moved.objects[4].kind, Kind::ArcLength(4));
     assert!((moved.arc_length_cm(5).unwrap() - 6.76).abs() < 0.01);
 

@@ -3,31 +3,45 @@ use sketchpad_engine::document::{Kind, LineMode};
 
 impl Editor {
     fn append_transformed_selection(&mut self, source: usize, kind: Kind) {
-        let element = self.doc.objects.get(source.saturating_sub(1)).and_then(|object| {
-            use sketchpad_engine::document::transform_model::ElementType;
-            if object.kind.is_circle_interior() {
-                Some(ElementType::Disk)
-            } else if object.kind.is_sector() {
-                Some(ElementType::Sector)
-            } else if object.kind.is_arc() {
-                Some(ElementType::Arc)
-            } else {
-                match object.kind.fixed_transform_straight_mode() {
-                    Some(LineMode::Ray) => Some(ElementType::Ray),
-                    Some(LineMode::Line) => Some(ElementType::Line),
-                    _ => None,
+        let element = self
+            .doc
+            .objects
+            .get(source.saturating_sub(1))
+            .and_then(|object| {
+                use sketchpad_engine::document::transform_model::ElementType;
+                if object.kind.is_circle_interior() {
+                    Some(ElementType::Disk)
+                } else if object.kind.is_sector() {
+                    Some(ElementType::Sector)
+                } else if object.kind.is_arc() {
+                    Some(ElementType::Arc)
+                } else {
+                    match object.kind.fixed_transform_straight_mode() {
+                        Some(LineMode::Ray) => Some(ElementType::Ray),
+                        Some(LineMode::Line) => Some(ElementType::Line),
+                        _ => None,
+                    }
                 }
-            }
-        });
+            });
         let kind = if let Some(element) = element {
-            let definition = kind.transform_definition().expect("Transform command creates a transform");
+            let definition = kind
+                .transform_definition()
+                .expect("Transform command creates a transform");
             match sketchpad_engine::document::transform_model::TransformDefinition::new(
-                source, element, definition.transform().clone(), definition.wire_flavor(),
+                source,
+                element,
+                definition.transform().clone(),
+                definition.wire_flavor(),
             ) {
                 Ok(definition) => Kind::Transformed(definition),
-                Err(error) => { self.status = error; return; }
+                Err(error) => {
+                    self.status = error;
+                    return;
+                }
             }
-        } else { kind };
+        } else {
+            kind
+        };
         let id = self.doc.add(kind);
         self.select_only(id);
     }
@@ -44,9 +58,14 @@ impl Editor {
         let source = self.selection_order[0];
         let source_is_arc = self.doc.objects[source - 1].kind.is_arc();
         let source_is_unbounded_straight = self.doc.objects[source - 1]
-            .kind.fixed_transform_straight_mode().is_some()
+            .kind
+            .fixed_transform_straight_mode()
+            .is_some()
             && self.doc.line_points(source).is_some()
-            && matches!(self.translation_mode, TranslationMode::FixedPolar | TranslationMode::MarkedVector);
+            && matches!(
+                self.translation_mode,
+                TranslationMode::FixedPolar | TranslationMode::MarkedVector
+            );
         let source_is_segment = matches!(
             self.doc
                 .objects
@@ -341,9 +360,14 @@ impl Editor {
         }
         let kind = if self.doc.position(source).is_some() {
             Kind::ReflectedPoint(source, mirror)
-        } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
+        } else if self.doc.circle_points(source).is_some()
+            || self.doc.objects[source - 1].kind.is_arc()
+        {
             Kind::ReflectedCircle(source, mirror)
-        } else if self.doc.objects.get(source.saturating_sub(1))
+        } else if self
+            .doc
+            .objects
+            .get(source.saturating_sub(1))
             .is_some_and(|object| object.kind.fixed_transform_straight_mode().is_some())
             && self.doc.line_points(source).is_some()
         {
@@ -471,8 +495,7 @@ impl Editor {
             .filter(|&id| self.doc.position(id).is_some())
             .collect::<Vec<_>>();
         if points.len() < 3 {
-            self.status =
-                "Select three points or one numeric value to mark an angle".into();
+            self.status = "Select three points or one numeric value to mark an angle".into();
             return;
         }
         let angle = [
@@ -627,7 +650,9 @@ impl Editor {
             }
             if self.doc.position(source).is_some() {
                 Kind::RatioScaledPoint(source, center, origin, base, target)
-            } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
+            } else if self.doc.circle_points(source).is_some()
+                || self.doc.objects[source - 1].kind.is_arc()
+            {
                 Kind::RatioScaledCircle(source, center, origin, base, target)
             } else if matches!(
                 self.doc
@@ -652,7 +677,9 @@ impl Editor {
             }
         } else if self.doc.position(source).is_some() {
             Kind::ScaledPoint(source, center, self.dilation_factor)
-        } else if self.doc.circle_points(source).is_some() || self.doc.objects[source - 1].kind.is_arc() {
+        } else if self.doc.circle_points(source).is_some()
+            || self.doc.objects[source - 1].kind.is_arc()
+        {
             Kind::ScaledCircle(source, center, self.dilation_factor)
         } else if matches!(
             self.doc
@@ -725,7 +752,8 @@ impl Editor {
             .objects
             .get(source.saturating_sub(1))
             .map(|o| &o.kind);
-        let source_arc = source_kind.is_some_and(|kind| kind.is_arc()) && self.doc.arc_points(source, 1).is_some();
+        let source_arc = source_kind.is_some_and(|kind| kind.is_arc())
+            && self.doc.arc_points(source, 1).is_some();
         let source_point = self.doc.position(source).is_some();
         let source_segment = source_kind.is_some_and(|kind| {
             matches!(kind, Kind::Segment(_, _))
@@ -748,7 +776,9 @@ impl Editor {
                 && kind.fixed_transform_straight_mode() == Some(LineMode::Line)
         }) && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| {
-            matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
+            matches!(kind, Kind::Polygon(_))
+                || kind.is_circle_interior()
+                || kind.is_sector()
                 || (self.rotation_use_marked
                     && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
                     && kind.is_polygon())

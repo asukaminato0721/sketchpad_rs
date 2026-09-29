@@ -34,14 +34,7 @@ pub(super) fn calculation_source_units(
             }
             match kind {
                 CalculationSourceKind::Numeric => parent.kind.numeric_unit(),
-                CalculationSourceKind::Function
-                    if matches!(
-                        parent.kind,
-                        Kind::FunctionDefinition(_)
-                            | Kind::ReferencedFunction(_, _)
-                            | Kind::DerivativeFunction(_, _)
-                    ) =>
-                {
+                CalculationSourceKind::Function if parent.kind.is_function() => {
                     Some(NumericUnit::Scalar)
                 }
                 _ => None,
@@ -74,17 +67,17 @@ pub(super) fn parse_numeric_calculation(
             if objects[*first - 1].kind.is_distance_value()
                 && objects[*second - 1].kind.is_distance_value() =>
         {
-            if let Ok(pair) = LengthPairCalculationGroup::parse(bytes) {
-                if pair.sources() == [(*first - page_base) as u32, (*second - page_base) as u32] {
-                    return Some(Kind::LengthPairCalculation(*first, *second, pair));
-                }
+            if let Ok(pair) = LengthPairCalculationGroup::parse(bytes)
+                && pair.sources() == [(*first - page_base) as u32, (*second - page_base) as u32]
+            {
+                return Some(Kind::LengthPairCalculation(*first, *second, pair));
             }
         }
         [source] if objects[*source - 1].kind.is_distance_value() => {
-            if let Ok(measured) = MeasuredCalculationGroup::parse(bytes) {
-                if measured.source_id() as usize == *source - page_base {
-                    return Some(Kind::MeasuredCalculation(*source, measured));
-                }
+            if let Ok(measured) = MeasuredCalculationGroup::parse(bytes)
+                && measured.source_id() as usize == *source - page_base
+            {
+                return Some(Kind::MeasuredCalculation(*source, measured));
             }
         }
         _ => {}
@@ -199,15 +192,16 @@ impl Document {
         }
         if matches!(group.name(), "t[1]" | "t[2]") {
             for (index, object) in self.objects.iter().enumerate() {
-                if let Kind::ValueTablePair(first, second, table) = &object.kind {
-                    if !object.deleted && (*first == id || *second == id) {
-                        if object.page != page {
-                            return Err("Parameter table crosses sketch pages".into());
-                        }
-                        let mut changed = table.clone();
-                        changed.set_last_pair_axis_value(usize::from(*second == id), value)?;
-                        tables.push((index, *first, *second, changed));
+                if let Kind::ValueTablePair(first, second, table) = &object.kind
+                    && !object.deleted
+                    && (*first == id || *second == id)
+                {
+                    if object.page != page {
+                        return Err("Parameter table crosses sketch pages".into());
                     }
+                    let mut changed = table.clone();
+                    changed.set_last_pair_axis_value(usize::from(*second == id), value)?;
+                    tables.push((index, *first, *second, changed));
                 }
             }
         }
@@ -243,7 +237,9 @@ impl Document {
         let mut group = CalculationGroup::from_expression(expression)?;
         group.set_anchor(anchor)?;
         self.checkpoint();
-        Ok(self.append_object(Kind::Calculation(group)))
+        let mut kind = Kind::Calculation(group);
+        self.apply_default_calculation_precision(&mut kind);
+        Ok(self.append_object(kind))
     }
     pub fn set_calculation_expression(
         &mut self,
@@ -453,15 +449,14 @@ impl Document {
                 }
             }
             Kind::ParameterCalculation(first, group) => {
-                if group.display_mode() == 3 {
-                    if let Some(name) = object
+                if group.display_mode() == 3
+                    && let Some(name) = object
                         .label
                         .as_ref()
                         .and_then(|label| label.name_utf8().ok())
                         .filter(|name| !name.is_empty())
-                    {
-                        return numeric_named_caption_layout(base, name);
-                    }
+                {
+                    return numeric_named_caption_layout(base, name);
                 }
                 if group.display_mode() != 0 && !group.caption_is_flat() {
                     return Err(
@@ -663,7 +658,9 @@ impl Document {
             return Err("Calculation is undefined for the current source value".into());
         }
         self.checkpoint();
-        Ok(self.append_object(Kind::ParameterCalculation(source, group)))
+        let mut kind = Kind::ParameterCalculation(source, group);
+        self.apply_default_calculation_precision(&mut kind);
+        Ok(self.append_object(kind))
     }
     pub fn add_multi_calculation(
         &mut self,
@@ -681,15 +678,9 @@ impl Document {
                     .get(id.saturating_sub(1))
                     .filter(|o| !o.deleted && o.page == self.active_page)
                     .and_then(|o| {
-                        o.kind.numeric_unit().or_else(|| {
-                            matches!(
-                                o.kind,
-                                Kind::FunctionDefinition(_)
-                                    | Kind::ReferencedFunction(_, _)
-                                    | Kind::DerivativeFunction(_, _)
-                            )
-                            .then_some(NumericUnit::Scalar)
-                        })
+                        o.kind
+                            .numeric_unit()
+                            .or_else(|| o.kind.is_function().then_some(NumericUnit::Scalar))
                     })
             })
             .collect::<Option<Vec<_>>>()
@@ -702,7 +693,9 @@ impl Document {
         calculation_source_units(&group, sources, &self.objects)
             .ok_or("Calculation reference type disagrees with its expression")?;
         self.checkpoint();
-        Ok(self.append_object(Kind::ParameterCalculation(sources[0], group)))
+        let mut kind = Kind::ParameterCalculation(sources[0], group);
+        self.apply_default_calculation_precision(&mut kind);
+        Ok(self.append_object(kind))
     }
     pub fn add_measured_length_calculation(
         &mut self,
@@ -757,7 +750,9 @@ impl Document {
             return Err("Calculation is undefined for these lengths".into());
         }
         self.checkpoint();
-        Ok(self.append_object(Kind::LengthPairCalculation(first, second, group)))
+        let mut kind = Kind::LengthPairCalculation(first, second, group);
+        self.apply_default_calculation_precision(&mut kind);
+        Ok(self.append_object(kind))
     }
     pub fn length_pair_calculation_cm(&self, id: usize) -> Option<f64> {
         let Kind::LengthPairCalculation(_, _, group) = &self.objects.get(id.checked_sub(1)?)?.kind
@@ -813,7 +808,9 @@ impl Document {
             MeasuredCalculationGroup::multiply(source, factor, anchor)?
         };
         self.checkpoint();
-        Ok(self.append_object(Kind::MeasuredCalculation(source as usize, group)))
+        let mut kind = Kind::MeasuredCalculation(source as usize, group);
+        self.apply_default_calculation_precision(&mut kind);
+        Ok(self.append_object(kind))
     }
     pub fn measured_calculation_cm(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
@@ -925,7 +922,8 @@ impl Document {
         let name = match &source_object.kind {
             Kind::FunctionDefinition(_)
             | Kind::ReferencedFunction(_, _)
-            | Kind::DerivativeFunction(_, _) => self.function_symbol(*source)?,
+            | Kind::DerivativeFunction(_, _)
+            | Kind::DataFunction { .. } => self.function_symbol(*source)?,
             Kind::Parameter(parameter) => {
                 let name = self.parameter_display_name(*source)?;
                 if parameter.display_mode() == 0 {

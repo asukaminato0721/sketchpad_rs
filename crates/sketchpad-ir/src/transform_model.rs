@@ -17,6 +17,8 @@ pub enum ElementType {
     Sector,
     /// Filled circular region; currently admitted as a color carrier only.
     Disk,
+    /// Raster picture transformed through its live affine placement.
+    Image,
 }
 
 #[derive(Clone, Debug, PartialEq)]

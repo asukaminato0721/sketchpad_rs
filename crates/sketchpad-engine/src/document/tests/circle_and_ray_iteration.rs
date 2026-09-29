@@ -74,8 +74,9 @@ fn calculated_circle_iteration_updates_copies_and_clears() {
 
 #[test]
 fn carried_segment_iteration_import_generation_and_parent_edit() {
-    let native_bytes =
-        include_bytes!("../../../../../tests/fixtures/point_translation_carried_segment_native.gsp");
+    let native_bytes = include_bytes!(
+        "../../../../../tests/fixtures/point_translation_carried_segment_native.gsp"
+    );
     let native = Document::from_bytes(native_bytes, None).unwrap();
     assert!(!native.partial_view);
     assert_eq!(native.encode().unwrap(), native_bytes);
@@ -124,8 +125,9 @@ fn rotated_ray_iteration_preserves_orbit_and_dynamic_depth() {
             2,
         ),
         (
-            &include_bytes!("../../../../../tests/fixtures/ray_calculated_rotation_live_depth_port.gsp")
-                [..],
+            &include_bytes!(
+                "../../../../../tests/fixtures/ray_calculated_rotation_live_depth_port.gsp"
+            )[..],
             8,
             5,
             3,
@@ -229,8 +231,9 @@ fn carried_ray_iteration_import_generation_and_live_parameter() {
     native.set_parameter_value(4, 5.5).unwrap();
     assert_eq!(native.ray_iteration_images(5).unwrap().len(), 5);
 
-    let port_bytes =
-        include_bytes!("../../../../../tests/fixtures/point_translation_carried_ray_depth5_port.gsp");
+    let port_bytes = include_bytes!(
+        "../../../../../tests/fixtures/point_translation_carried_ray_depth5_port.gsp"
+    );
     let mut port = Document::from_bytes(port_bytes, None).unwrap();
     assert!(!port.partial_view);
     assert_eq!(port.encode().unwrap(), port_bytes);

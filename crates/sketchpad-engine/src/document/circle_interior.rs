@@ -40,9 +40,15 @@ impl Document {
         if let Some(value) = self.evaluation_circle(id) {
             return value;
         }
-        if object.kind.transform_definition().is_some_and(|d| d.element() == super::transform_model::ElementType::Disk) {
+        if object
+            .kind
+            .transform_definition()
+            .is_some_and(|d| d.element() == super::transform_model::ElementType::Disk)
+        {
             return match self.evaluate_transform(id).ok()? {
-                super::transform_evaluator::TransformGeometry::Circle { center, radius } => Some((center, radius)),
+                super::transform_evaluator::TransformGeometry::Circle { center, radius } => {
+                    Some((center, radius))
+                }
                 _ => None,
             };
         }
@@ -50,7 +56,9 @@ impl Document {
             Kind::CircleInterior(source) => *source,
             Kind::Colorized(definition)
                 if definition.element() == super::transform_model::ElementType::Disk =>
-                    return self.circle_interior_geometry(definition.source()),
+            {
+                return self.circle_interior_geometry(definition.source());
+            }
             _ => return None,
         };
         let (center, radius) = self.circle_points(source)?;

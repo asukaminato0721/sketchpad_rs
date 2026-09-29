@@ -12,7 +12,8 @@ fn trace_flags_follow_undo_and_round_trip_for_supported_shapes() {
             3,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/trace_port_point_saved_by_wine.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/trace_port_point_saved_by_wine.gsp")
+                .as_slice(),
             1,
         ),
         (
@@ -96,22 +97,26 @@ fn trace_flags_follow_undo_and_round_trip_for_supported_shapes() {
 fn coordinate_measurements_decode_track_drag_and_reopen() {
     for (source, kind, expected) in [
         (
-            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu257.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu257.gsp")
+                .as_slice(),
             CoordinateMeasureKind::Coordinates,
             -1.296458333333333,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu274.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu274.gsp")
+                .as_slice(),
             CoordinateMeasureKind::Abscissa,
             -1.296458333333333,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu291.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu291.gsp")
+                .as_slice(),
             CoordinateMeasureKind::Ordinate,
             0.132291666666667,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu308.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/coordinate_measure_menu308.gsp")
+                .as_slice(),
             CoordinateMeasureKind::CoordinateDistance,
             1.3032,
         ),

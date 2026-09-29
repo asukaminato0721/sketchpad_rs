@@ -13,9 +13,39 @@ fn animation_moves_constrained_points_and_their_dependents() {
     let edge = editor.doc.add(Kind::Free(Point { x: 220., y: 200. }));
     let circle = editor.doc.add(Kind::Circle(center, edge));
     let orbit = editor.doc.add(Kind::PointOnCircle(circle, 1., 0.));
-    editor.doc.selected.extend([moving, orbit]);
+    let plot = editor
+        .doc
+        .plot_new_function(SimpleFunction::Identity, Point { x: 300., y: 300. })
+        .unwrap();
+    let curve_point = editor.doc.add(Kind::PointOnCurve(plot, 0.25));
+    let sector_center = editor.doc.add(Kind::Free(Point { x: 400., y: 200. }));
+    let sector_start = editor.doc.add(Kind::Free(Point { x: 420., y: 200. }));
+    let sector_end = editor.doc.add(Kind::Free(Point { x: 400., y: 180. }));
+    let arc = editor
+        .doc
+        .add(Kind::CenterArc(sector_center, sector_start, sector_end));
+    let sector = editor.doc.add_sector_boundary(arc).unwrap();
+    let sector_point = editor.doc.add_point_on_sector(sector, 0.25).unwrap();
+    let curve_before = editor.doc.position(curve_point).unwrap();
+    let sector_before = editor.doc.position(sector_point).unwrap();
+    assert_eq!(
+        editor.doc.animation_button_default_settings(curve_point),
+        Some(AnimationSettings::default())
+    );
+    assert_eq!(
+        editor
+            .doc
+            .animation_button_default_settings(sector_point)
+            .unwrap()
+            .direction,
+        AnimationDirection::Forward
+    );
+    editor
+        .doc
+        .selected
+        .extend([moving, orbit, curve_point, sector_point]);
     editor.animate_selected();
-    assert_eq!(editor.animations.len(), 2);
+    assert_eq!(editor.animations.len(), 4);
     for _ in 0..10 {
         editor.tick_animation(0.1);
     }
@@ -23,6 +53,8 @@ fn animation_moves_constrained_points_and_their_dependents() {
     assert!((editor.doc.position(midpoint).unwrap().x - 37.5).abs() < 1e-9);
     assert!((editor.doc.position(orbit).unwrap().x - 180.).abs() < 1e-9);
     assert!((editor.doc.position(orbit).unwrap().y - 200.).abs() < 1e-9);
+    assert_ne!(editor.doc.position(curve_point), Some(curve_before));
+    assert_ne!(editor.doc.position(sector_point), Some(sector_before));
     assert!(
         !Document::from_bytes(&editor.doc.encode().unwrap(), None)
             .unwrap()
@@ -44,15 +76,20 @@ fn selected_segment_and_circle_animate_their_source_points() {
                 .as_slice(),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_circle_base.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/animation_indirect_circle_base.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/animation_indirect_circle_native.gsp")
                 .as_slice(),
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_segment_hidden_base.gsp")
-                .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_segment_hidden_native.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/animation_indirect_segment_hidden_base.gsp"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/animation_indirect_segment_hidden_native.gsp"
+            )
+            .as_slice(),
         ),
     ] {
         let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
@@ -127,19 +164,26 @@ fn selected_segment_and_circle_create_buttons_for_reversed_source_order() {
         (
             include_bytes!("../../../../../tests/fixtures/animation_indirect_segment_base.gsp")
                 .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_segment_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_segment_port.gsp"
+            )
+            .as_slice(),
             "Animate Segment",
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_circle_base.gsp").as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_circle_port.gsp")
+            include_bytes!("../../../../../tests/fixtures/animation_indirect_circle_base.gsp")
                 .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_circle_port.gsp"
+            )
+            .as_slice(),
             "Animate Circle",
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_segment_hidden_base.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/animation_indirect_segment_hidden_base.gsp"
+            )
+            .as_slice(),
             include_bytes!(
                 "../../../../../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp"
             )
@@ -174,8 +218,10 @@ fn indirect_segment_animation_button_moves_both_endpoints() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/action_animation_indirect_segment_port.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp")
-            .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/action_animation_indirect_segment_hidden_port.gsp"
+        )
+        .as_slice(),
     ] {
         let mut editor = Editor::new(Document::from_bytes(bytes, None).unwrap());
         let viewport = Viewport {
@@ -205,7 +251,8 @@ fn indirect_segment_animation_button_moves_both_endpoints() {
 fn selected_lines_rays_and_polygons_create_native_button_targets() {
     for (base, port, source, targets, label) in [
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_line_base.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/animation_indirect_line_base.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/action_animation_indirect_line_port.gsp")
                 .as_slice(),
             3,
@@ -213,7 +260,8 @@ fn selected_lines_rays_and_polygons_create_native_button_targets() {
             "Animate Line",
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_ray_base.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/animation_indirect_ray_base.gsp")
+                .as_slice(),
             include_bytes!("../../../../../tests/fixtures/action_animation_indirect_ray_port.gsp")
                 .as_slice(),
             3,
@@ -223,15 +271,19 @@ fn selected_lines_rays_and_polygons_create_native_button_targets() {
         (
             include_bytes!("../../../../../tests/fixtures/animation_indirect_polygon_base.gsp")
                 .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_polygon_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_polygon_port.gsp"
+            )
+            .as_slice(),
             4,
             &[3, 2, 1][..],
             "Animate Triangle",
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/animation_indirect_quadrilateral_base.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/animation_indirect_quadrilateral_base.gsp"
+            )
+            .as_slice(),
             include_bytes!(
                 "../../../../../tests/fixtures/action_animation_indirect_quadrilateral_port.gsp"
             )
@@ -243,8 +295,10 @@ fn selected_lines_rays_and_polygons_create_native_button_targets() {
         (
             include_bytes!("../../../../../tests/fixtures/animation_indirect_pentagon_base.gsp")
                 .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_pentagon_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_pentagon_port.gsp"
+            )
+            .as_slice(),
             6,
             &[5, 4, 3, 2, 1][..],
             "Animate Pentagon",
@@ -252,8 +306,10 @@ fn selected_lines_rays_and_polygons_create_native_button_targets() {
         (
             include_bytes!("../../../../../tests/fixtures/animation_indirect_hexagon_base.gsp")
                 .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_hexagon_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_hexagon_port.gsp"
+            )
+            .as_slice(),
             7,
             &[6, 5, 4, 3, 2, 1][..],
             "Animate Hexagon",
@@ -261,8 +317,10 @@ fn selected_lines_rays_and_polygons_create_native_button_targets() {
         (
             include_bytes!("../../../../../tests/fixtures/animation_indirect_heptagon_base.gsp")
                 .as_slice(),
-            include_bytes!("../../../../../tests/fixtures/action_animation_indirect_heptagon_port.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_indirect_heptagon_port.gsp"
+            )
+            .as_slice(),
             8,
             &[7, 6, 5, 4, 3, 2, 1][..],
             "Animate Polygon",

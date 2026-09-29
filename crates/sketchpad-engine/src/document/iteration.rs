@@ -49,9 +49,9 @@ fn iteration_transform_inputs_supported(
     let point = |id: usize| get(id).is_some_and(|object| is_point_kind(&object.kind));
     let numeric = |expression: &NumericExpr| match *expression {
         NumericExpr::Literal { .. } => true,
-        NumericExpr::ObjectValue { id, unit } => get(id).is_some_and(|object| {
-            object.kind.is_transform_operand(unit)
-        }),
+        NumericExpr::ObjectValue { id, unit } => {
+            get(id).is_some_and(|object| object.kind.is_transform_operand(unit))
+        }
         NumericExpr::DirectedAngle {
             first,
             vertex,
@@ -63,7 +63,8 @@ fn iteration_transform_inputs_supported(
             target,
         } => [origin, base, target].into_iter().all(point),
     };
-    let supported = match definition.transform() {
+
+    match definition.transform() {
         Transform::Translate(DisplacementExpr::Cartesian {
             horizontal,
             vertical,
@@ -79,8 +80,7 @@ fn iteration_transform_inputs_supported(
         Transform::Reflect { mirror } => {
             get(*mirror).is_some_and(|object| is_straight_kind(&object.kind))
         }
-    };
-    supported
+    }
 }
 
 pub(super) fn supported_point_iteration_mapping(
@@ -110,6 +110,7 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
         ElementType::Polygon => source.kind.is_polygon(),
         ElementType::Sector => source.kind.is_sector(),
         ElementType::Disk => source.kind.is_circle_interior(),
+        ElementType::Image => false,
     };
     !source.deleted && source_matches && iteration_transform_inputs_supported(objects, definition)
 }
@@ -153,8 +154,13 @@ fn mapped_value_construction(kind: &Kind) -> bool {
 }
 
 pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
-    matches!(kind, Kind::PointNumericLabel(..) | Kind::Image { .. } | Kind::Locus(..) | Kind::SampledMapped(..))
-        || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
+    matches!(
+        kind,
+        Kind::PointNumericLabel(..)
+            | Kind::Image { .. }
+            | Kind::Locus(..)
+            | Kind::SampledMapped(..)
+    ) || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
         || is_point_kind(kind)
         || is_straight_kind(kind)
         || kind.is_circle()
@@ -248,9 +254,7 @@ pub(super) fn supported_mapped_point_iteration(
         || seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len()
         || carried.iter().copied().collect::<BTreeSet<_>>().len() != carried.len()
         || !seeds.iter().all(|id| {
-            get(*id).is_some_and(|o| {
-                is_point_kind(&o.kind) || o.kind.numeric_unit().is_some()
-            })
+            get(*id).is_some_and(|o| is_point_kind(&o.kind) || o.kind.numeric_unit().is_some())
         })
         || branches.iter().any(|b| {
             b.len() != seeds.len()
@@ -280,9 +284,9 @@ pub(super) fn supported_mapped_point_iteration(
     }) {
         return false;
     }
-    let Some(terminal_structures) = super::nested_iteration_scope::terminal_structures(
-        objects, page, seeds, branches, carried,
-    ) else {
+    let Some(terminal_structures) =
+        super::nested_iteration_scope::terminal_structures(objects, page, seeds, branches, carried)
+    else {
         return false;
     };
     let mut pending: Vec<_> = branches.iter().flatten().chain(carried).copied().collect();
@@ -447,11 +451,26 @@ fn mapped_iteration_kind(
         && let [branch] = branches
         && let [image, calculation] = branch.as_slice()
         && let [carried_value, carried_point, label] = carried
-        && calculation == carried_value && image == carried_point
+        && calculation == carried_value
+        && image == carried_point
         && !matches!(depth, IterationDepth::Value(id) if id == *parameter)
-        && supported_point_parameter_iteration(objects,*seed,*parameter,*image,*calculation,*label)
+        && supported_point_parameter_iteration(
+            objects,
+            *seed,
+            *parameter,
+            *image,
+            *calculation,
+            *label,
+        )
     {
-        return Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,depth);
+        return Kind::PointParameterIteration(
+            *seed,
+            *parameter,
+            *image,
+            *calculation,
+            *label,
+            depth,
+        );
     }
     if !final_only && let [seed] = seeds {
         if let [branch] = branches
@@ -519,7 +538,10 @@ impl Document {
                 include_bytes!("../../../../assets/sampled_iteration_binding_group.bin")
             } else if matches!(source, Kind::Locus(..)) {
                 include_bytes!("../../../../assets/locus_iteration_binding_group.bin")
-            } else if matches!(source, Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }) {
+            } else if matches!(
+                source,
+                Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }
+            ) {
                 include_bytes!("../../../../assets/point_parameter_iteration_label_binding.bin")
             } else if source.is_filled_region() {
                 include_bytes!("../../../../assets/branch_polygon_iteration_polygon_binding.bin")
@@ -839,38 +861,53 @@ impl Document {
         {
             return None;
         }
-        if matches!(self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::PointParameterIteration(_,_,_,_,label,_) if label==source) {
+        if matches!(self.objects.get(iteration.checked_sub(1)?)?.kind,Kind::PointParameterIteration(_,_,_,_,label,_) if label==source)
+        {
             return self.point_parameter_iteration_labels(iteration);
         }
         self.mapped_iteration_images(source, iteration, |sample, source| {
-            sample.frozen_evaluation_document(source)
+            sample
+                .frozen_evaluation_document(source)
                 .unwrap_or(sample)
                 .point_numeric_label(source)
         })
     }
     /// Preserve mathematical structure while reevaluating each anchored caption
     /// in its own iteration environment.
-    pub fn point_math_labels(&self, id: usize) -> Option<Vec<(Point, Vec<super::referenced_text::ReferencedNode>)>> {
-        if let Kind::PointReferencedText { point, .. } = &self.objects.get(id.checked_sub(1)?)?.kind {
+    pub fn point_math_labels(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, Vec<super::referenced_text::ReferencedNode>)>> {
+        if let Kind::PointReferencedText { point, .. } = &self.objects.get(id.checked_sub(1)?)?.kind
+        {
             return Some(vec![(self.position(*point)?, self.text_math_nodes(id)?)]);
         }
         let object = self.objects.get(id.checked_sub(1)?)?;
-        let Kind::IterationBinding(source, iteration) = object.kind else { return None; };
-        if object.deleted || !matches!(self.objects.get(source.checked_sub(1)?)?.kind, Kind::PointReferencedText { .. }) {
+        let Kind::IterationBinding(source, iteration) = object.kind else {
+            return None;
+        };
+        if object.deleted
+            || !matches!(
+                self.objects.get(source.checked_sub(1)?)?.kind,
+                Kind::PointReferencedText { .. }
+            )
+        {
             return None;
         }
         self.text_math_nodes(source)?;
         self.mapped_iteration_images(source, iteration, |sample, source| {
             let sample = sample.frozen_evaluation_document(source).unwrap_or(sample);
-            let Kind::PointReferencedText { point, .. } = sample.objects.get(source - 1)?.kind else { return None; };
+            let Kind::PointReferencedText { point, .. } = sample.objects.get(source - 1)?.kind
+            else {
+                return None;
+            };
             Some((sample.position(point)?, sample.text_math_nodes(source)?))
         })
     }
 
     pub(super) fn mapped_terminal_point(&self, source: usize, iteration: usize) -> Option<Point> {
-        let outputs = self.mapped_scoped_outputs(source, iteration, true, |sample, id| {
-            sample.position(id)
-        })?;
+        let outputs =
+            self.mapped_scoped_outputs(source, iteration, true, |sample, id| sample.position(id))?;
         (outputs.len() == 1).then(|| outputs[0]).flatten()
     }
     /// Replay a stored mapping in its caller or frozen entry environment.
@@ -936,7 +973,9 @@ impl Document {
             }
         } else {
             match *depth {
-                IterationDepth::Fixed(value) => self.numeric_iteration_depth(IterationDepth::Fixed(value))?,
+                IterationDepth::Fixed(value) => {
+                    self.numeric_iteration_depth(IterationDepth::Fixed(value))?
+                }
                 IterationDepth::Value(id) => mapped_value_depth(id, 1.)?,
             }
         };
@@ -1125,7 +1164,11 @@ impl Document {
             return None;
         };
         if object.deleted
-            || !self.objects.get(source.checked_sub(1)?)?.kind.is_circle_interior()
+            || !self
+                .objects
+                .get(source.checked_sub(1)?)?
+                .kind
+                .is_circle_interior()
         {
             return None;
         }
@@ -1135,7 +1178,10 @@ impl Document {
     }
 
     /// Per-generation analytic disks and colors from one carried color binding.
-    pub fn colorized_disk_iteration_images(&self, id: usize) -> Option<Vec<(Point, f64, RgbColor)>> {
+    pub fn colorized_disk_iteration_images(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, f64, RgbColor)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -1143,7 +1189,10 @@ impl Document {
         if object.deleted
             || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,
                 Kind::Colorized(ref definition) if definition.element() == ElementType::Disk)
-            || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind, Kind::MappedPointIteration { .. })
+            || !matches!(
+                self.objects.get(iteration.checked_sub(1)?)?.kind,
+                Kind::MappedPointIteration { .. }
+            )
         {
             return None;
         }
@@ -1155,7 +1204,10 @@ impl Document {
     }
 
     /// Filled polygons and their colors evaluated in the same mapped state.
-    pub fn colorized_polygon_iteration_images(&self, id: usize) -> Option<Vec<(Vec<Point>, RgbColor)>> {
+    pub fn colorized_polygon_iteration_images(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Vec<Point>, RgbColor)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -1163,12 +1215,18 @@ impl Document {
         if object.deleted
             || !matches!(self.objects.get(source.checked_sub(1)?)?.kind,
                 Kind::Colorized(ref definition) if matches!(definition.element(), ElementType::Polygon | ElementType::Sector))
-            || !matches!(self.objects.get(iteration.checked_sub(1)?)?.kind, Kind::MappedPointIteration { .. })
+            || !matches!(
+                self.objects.get(iteration.checked_sub(1)?)?.kind,
+                Kind::MappedPointIteration { .. }
+            )
         {
             return None;
         }
         self.mapped_iteration_images(source, iteration, |sample, id| {
-            Some((sample.filled_region_points(id)?, sample.colorized_color(id)?))
+            Some((
+                sample.filled_region_points(id)?,
+                sample.colorized_color(id)?,
+            ))
         })
     }
 

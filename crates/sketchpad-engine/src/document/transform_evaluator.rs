@@ -7,10 +7,10 @@ use super::{Document, Kind, LineMode, Point};
 use crate::table_records::NumericUnit;
 use std::collections::BTreeSet;
 
-pub use sketchpad_ir::affine::{
-    AffineMatrix, TransformSequence, TransformGeometry, TransformEvaluationError,
-};
 use sketchpad_ir::affine::MatrixEvaluation;
+pub use sketchpad_ir::affine::{
+    AffineMatrix, TransformEvaluationError, TransformGeometry, TransformSequence,
+};
 
 use TransformEvaluationError as Error;
 
@@ -136,15 +136,28 @@ impl Document {
                 TransformGeometry::Circle { center, radius }
             }
             ElementType::Disk if kind.is_circle_interior() => {
-                let (center, radius) = self.circle_interior_geometry(source).ok_or(Error::Undefined)?;
+                let (center, radius) = self
+                    .circle_interior_geometry(source)
+                    .ok_or(Error::Undefined)?;
                 TransformGeometry::Circle { center, radius }
             }
             ElementType::Arc if is_arc_kind(kind) => {
                 if let Some((start, end)) = self.linear_three_point_arc(source) {
-                    TransformGeometry::Straight { start, end, mode: LineMode::Segment }
+                    TransformGeometry::Straight {
+                        start,
+                        end,
+                        mode: LineMode::Segment,
+                    }
                 } else {
-                    let (center, radius, start, sweep, clockwise_y) = self.arc_geometry(source).ok_or(Error::Undefined)?;
-                    TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }
+                    let (center, radius, start, sweep, clockwise_y) =
+                        self.arc_geometry(source).ok_or(Error::Undefined)?;
+                    TransformGeometry::Arc {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                        clockwise_y,
+                    }
                 }
             }
             ElementType::Polygon if kind.is_polygon() => {
@@ -163,6 +176,83 @@ impl Document {
             }
             _ => return Err(Error::WrongElement(source)),
         };
+        let (matrix, radius_factor) = self.transform_operation_matrix(&definition)?;
+        let apply = |p| -> Result<Point, Error> {
+            matrix
+                .apply(p)
+                .filter(|p| p.x.is_finite() && p.y.is_finite())
+                .ok_or(Error::Undefined)
+        };
+        match &mut geometry {
+            TransformGeometry::Point(p) => *p = apply(*p)?,
+            TransformGeometry::Straight { start, end, mode } => {
+                *start = apply(*start)?;
+                *end = apply(*end)?;
+                if *mode != LineMode::Segment && start == end {
+                    return Err(Error::Undefined);
+                }
+            }
+            TransformGeometry::Circle { center, radius } => {
+                *center = apply(*center)?;
+                *radius *= radius_factor;
+                if !radius.is_finite() || *radius <= 0. {
+                    return Err(Error::Undefined);
+                }
+            }
+            TransformGeometry::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+                clockwise_y,
+            }
+            | TransformGeometry::Sector {
+                center,
+                radius,
+                start,
+                sweep,
+                clockwise_y,
+            } => {
+                let first = Point {
+                    x: center.x + *radius * start.cos(),
+                    y: center.y
+                        + if *clockwise_y {
+                            -*radius * start.sin()
+                        } else {
+                            *radius * start.sin()
+                        },
+                };
+                let first = apply(first)?;
+                *center = apply(*center)?;
+                *radius *= radius_factor;
+                if !radius.is_finite() || *radius <= 0. {
+                    return Err(Error::Undefined);
+                }
+                *start = (if *clockwise_y {
+                    center.y - first.y
+                } else {
+                    first.y - center.y
+                })
+                .atan2(first.x - center.x);
+                if matches!(definition.transform(), Transform::Reflect { .. }) {
+                    *sweep = -*sweep;
+                }
+            }
+            TransformGeometry::Polygon(vertices) => {
+                for p in vertices {
+                    *p = apply(*p)?;
+                }
+            }
+        }
+        Ok((geometry, matrix))
+    }
+
+    /// Evaluate one live affine operation independently of its source geometry.
+    /// Pictures use this to compose the operation with their source placement.
+    pub(super) fn transform_operation_matrix(
+        &self,
+        definition: &super::transform_model::TransformDefinition,
+    ) -> Result<(AffineMatrix, f64), Error> {
         let point = |id| self.position(id).ok_or(Error::Undefined);
         let numeric = |expr: &NumericExpr| -> Result<f64, Error> {
             let value = match *expr {
@@ -170,7 +260,11 @@ impl Document {
                     magnitude, scale, ..
                 } => Some(magnitude * scale),
                 NumericExpr::ObjectValue { id, unit } => {
-                    let parent = &self.objects[id - 1].kind;
+                    let parent = &self
+                        .objects
+                        .get(id.checked_sub(1).ok_or(Error::InvalidReference(id))?)
+                        .ok_or(Error::InvalidReference(id))?
+                        .kind;
                     if !parent.is_transform_operand(unit) {
                         return Err(Error::WrongUnit { id, expected: unit });
                     }
@@ -236,7 +330,10 @@ impl Document {
                 if factor == 0.
                     && matches!(
                         definition.element(),
-                        ElementType::Ray | ElementType::Line | ElementType::Circle | ElementType::Arc
+                        ElementType::Ray
+                            | ElementType::Line
+                            | ElementType::Circle
+                            | ElementType::Arc
                     )
                 {
                     return Err(Error::Undefined);
@@ -269,359 +366,6 @@ impl Document {
                 )
             }
         };
-        let apply = |p| -> Result<Point, Error> {
-            matrix
-                .apply(p)
-                .filter(|p| p.x.is_finite() && p.y.is_finite())
-                .ok_or(Error::Undefined)
-        };
-        match &mut geometry {
-            TransformGeometry::Point(p) => *p = apply(*p)?,
-            TransformGeometry::Straight { start, end, mode } => {
-                *start = apply(*start)?;
-                *end = apply(*end)?;
-                if *mode != LineMode::Segment && start == end {
-                    return Err(Error::Undefined);
-                }
-            }
-            TransformGeometry::Circle { center, radius } => {
-                *center = apply(*center)?;
-                *radius *= radius_factor;
-                if !radius.is_finite() || *radius <= 0. {
-                    return Err(Error::Undefined);
-                }
-            }
-            TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }
-            | TransformGeometry::Sector { center, radius, start, sweep, clockwise_y } => {
-                let first = Point {
-                    x: center.x + *radius * start.cos(),
-                    y: center.y + if *clockwise_y { -*radius * start.sin() } else { *radius * start.sin() },
-                };
-                let first = apply(first)?;
-                *center = apply(*center)?;
-                *radius *= radius_factor;
-                if !radius.is_finite() || *radius <= 0. { return Err(Error::Undefined); }
-                *start = (if *clockwise_y { center.y - first.y } else { first.y - center.y })
-                    .atan2(first.x - center.x);
-                if matches!(definition.transform(), Transform::Reflect { .. }) { *sweep = -*sweep; }
-            }
-            TransformGeometry::Polygon(vertices) => {
-                for p in vertices {
-                    *p = apply(*p)?;
-                }
-            }
-        }
-        Ok((geometry, matrix))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn close(a: Point, b: Point) {
-        assert!(
-            (a.x - b.x).abs() < 1e-8 && (a.y - b.y).abs() < 1e-8,
-            "{a:?} != {b:?}"
-        );
-    }
-    fn compare(document: &Document, id: usize) {
-        let definition = document.objects[id - 1]
-            .kind
-            .transform_definition()
-            .unwrap();
-        let result = document.evaluate_transform(id);
-        match definition.element() {
-            ElementType::Point => match document.position(id) {
-                Some(expected) => match result {
-                    Ok(TransformGeometry::Point(p)) => close(p, expected),
-                    other => panic!("point{id}: {other:?}"),
-                },
-                None => assert_eq!(result, Err(Error::Undefined)),
-            },
-            ElementType::Segment | ElementType::Ray | ElementType::Line => {
-                match document.line_points(id) {
-                    Some((a, b, expected_mode)) => match result {
-                        Ok(TransformGeometry::Straight { start, end, mode }) => {
-                            close(start, a);
-                            close(end, b);
-                            assert_eq!(mode, expected_mode);
-                        }
-                        other => panic!("straight{id}: {other:?}"),
-                    },
-                    None => assert_eq!(result, Err(Error::Undefined)),
-                }
-            }
-            ElementType::Circle => match document.circle_points(id) {
-                Some((p, r)) => match result {
-                    Ok(TransformGeometry::Circle { center, radius }) => {
-                        close(center, p);
-                        assert!((radius - r).abs() < 1e-8);
-                    }
-                    other => panic!("circle{id}: {other:?}"),
-                },
-                None => assert_eq!(result, Err(Error::Undefined)),
-            },
-            ElementType::Arc => {
-                if let Some((center, radius, start, sweep, clockwise_y)) = document.arc_geometry(id) {
-                    assert_eq!(result, Ok(TransformGeometry::Arc { center, radius, start, sweep, clockwise_y }));
-                } else if let Some((start, end)) = document.linear_three_point_arc(id) {
-                    assert_eq!(result, Ok(TransformGeometry::Straight { start, end, mode: LineMode::Segment }));
-                } else { assert_eq!(result, Err(Error::Undefined)); }
-            }
-            ElementType::Polygon => match document.polygon_points(id) {
-                Some(expected) => match result {
-                    Ok(TransformGeometry::Polygon(points)) => {
-                        assert_eq!(points.len(), expected.len());
-                        for (a, b) in points.into_iter().zip(expected) {
-                            close(a, b);
-                        }
-                    }
-                    other => panic!("polygon{id}: {other:?}"),
-                },
-                None => assert_eq!(result, Err(Error::Undefined)),
-            },
-            ElementType::Sector => match document.sector_arc_geometry(id) {
-                Some((center, radius, start, sweep, clockwise_y)) => assert_eq!(
-                    result,
-                    Ok(TransformGeometry::Sector {
-                        center,
-                        radius,
-                        start,
-                        sweep,
-                        clockwise_y,
-                    }),
-                ),
-                None => assert_eq!(result, Err(Error::Undefined)),
-            },
-            ElementType::Disk => match document.circle_interior_geometry(id) {
-                Some((center, radius)) => assert_eq!(result, Ok(TransformGeometry::Circle { center, radius })),
-                None => assert_eq!(result, Err(Error::Undefined)),
-            },
-        }
-    }
-    #[test]
-    fn shared_evaluator_matches_native_fixture_geometry_without_mutating_records() {
-        let mut flavors = BTreeSet::new();
-        let mut elements = BTreeSet::new();
-        let mut count = 0;
-        for name in [
-            "point_translation.gsp",
-            "polar_segment_translation_original.gsp",
-            "polar_circle_translation_original.gsp",
-            "polar_translation_polygon_original.gsp",
-            "rectangular_fixed_translation_original.gsp",
-            "rectangular_segment_translation_original.gsp",
-            "rectangular_circle_translation_original.gsp",
-            "rectangular_mixed_horizontal_original.gsp",
-            "rectangular_mixed_vertical_original.gsp",
-            "rectangular_marked_translation_original.gsp",
-            "marked_distance_translation_original.gsp",
-            "marked_distance_polygon_translation_original.gsp",
-            "vector_translation_polygon_generated.gsp",
-            "angle_rotation_original.gsp",
-            "angle_rotation_segment_original.gsp",
-            "angle_rotation_circle_original.gsp",
-            "ratio_dilation_segment_original.gsp",
-            "ratio_dilation_circle_original.gsp",
-            "reflection_polygon_original.gsp",
-            "fixed_rotation_polygon_original.gsp",
-            "fixed_dilation_polygon_original.gsp",
-            "mixed_chain_writer_fresh_native_verified.gsp",
-            "mixed_chain_writer_edited_native_verified.gsp",
-            "mixed_chain_writer_negative_native_verified.gsp",
-            "mixed_chain_writer_source_zero_native_verified.gsp",
-            "mixed_chain_writer_source_undefined_native_verified.gsp",
-            "mixed_chain_writer_child_zero_native_verified.gsp",
-            "mixed_chain_writer_fixed_zero_native_verified.gsp",
-            "mixed_chain_writer_copied_deleted_native_verified.gsp",
-        ] {
-            let bytes = std::fs::read(format!("../../tests/fixtures/{name}")).unwrap();
-            let d = Document::from_bytes(&bytes, None).unwrap();
-            for object in &d.objects {
-                if let Some(definition) = object.kind.transform_definition() {
-                    let Kind::Transformed(stored) = &object.kind else {
-                        panic!(
-                            "native transform {} in {name} must use shared storage",
-                            object.id
-                        );
-                    };
-                    assert_eq!(stored, &definition);
-                    assert_eq!(object.kind.dependencies(), definition.native_references());
-                    compare(&d, object.id);
-                    match d.evaluate_transform(object.id) {
-                        Ok(geometry) => {
-                            let sequence = d.transform_sequence(object.id).unwrap();
-                            let apply = |point| sequence.apply(point).unwrap();
-                            match geometry {
-                                TransformGeometry::Point(expected) => {
-                                    close(apply(d.position(sequence.source).unwrap()), expected)
-                                }
-                                TransformGeometry::Straight { start, end, .. } => {
-                                    let (a, b) = if sequence.element == ElementType::Arc {
-                                        d.linear_three_point_arc(sequence.source).unwrap()
-                                    } else {
-                                        let (a, b, _) = d.line_points(sequence.source).unwrap();
-                                        (a, b)
-                                    };
-                                    close(apply(a), start);
-                                    close(apply(b), end);
-                                }
-                                TransformGeometry::Circle { center, .. } => close(
-                                    apply(d.circle_points(sequence.source).unwrap().0),
-                                    center,
-                                ),
-                                TransformGeometry::Arc { center, .. } => {
-                                    close(apply(d.arc_geometry(sequence.source).unwrap().0), center);
-                                    for t in [0., 0.25, 0.5, 1.] {
-                                        close(apply(d.point_on_arc(sequence.source, t).unwrap()), d.point_on_arc(object.id, t).unwrap());
-                                    }
-                                }
-                                TransformGeometry::Polygon(points) => {
-                                    for (source, expected) in d
-                                        .polygon_points(sequence.source)
-                                        .unwrap()
-                                        .into_iter()
-                                        .zip(points)
-                                    {
-                                        close(apply(source), expected);
-                                    }
-                                }
-                                TransformGeometry::Sector { center, .. } => {
-                                    close(apply(d.sector_arc_geometry(sequence.source).unwrap().0), center);
-                                    for t in [0., 0.25, 0.5, 1.] {
-                                        close(
-                                            apply(d.point_on_sector(sequence.source, t).unwrap()),
-                                            d.point_on_sector(object.id, t).unwrap(),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => assert_eq!(d.transform_sequence(object.id), Err(error)),
-                    }
-                    count += 1;
-                    flavors.insert(definition.wire_flavor().code());
-                    elements.insert(format!("{:?}", definition.element()));
-                }
-            }
-            assert_eq!(d.encode().unwrap(), bytes, "{name}");
-        }
-        assert_eq!(flavors.len(), 14);
-        assert_eq!(elements.len(), 6);
-        assert!(count > 200);
-    }
-    #[test]
-    fn matrix_sequence_preserves_order_and_refreshes_live_dependencies() {
-        let mut d = Document::new();
-        let seed = d.add(Kind::Free(Point { x: 20., y: 30. }));
-        let center = d.add(Kind::Free(Point { x: 10., y: 10. }));
-        let n = d.add_named_parameter("n", 4., (10, 10)).unwrap();
-        let angle = d.add_parameter_calculation(n, "360°/n", (10, 40)).unwrap();
-        let rotated = d
-            .add_calculated_angle_rotation(seed, center, angle)
-            .unwrap();
-        let image = d.add(Kind::ScaledPoint(rotated, center, -2.));
-        let sequence = d.transform_sequence(image).unwrap();
-        assert_eq!(sequence.source, seed);
-        assert_eq!(sequence.element, ElementType::Point);
-        assert_eq!(sequence.matrices.len(), 2);
-        close(
-            sequence.apply(d.position(seed).unwrap()).unwrap(),
-            Point { x: -30., y: 30. },
-        );
-        close(
-            sequence
-                .combined_matrix()
-                .apply(d.position(seed).unwrap())
-                .unwrap(),
-            d.position(image).unwrap(),
-        );
-        d.set_parameter_value(n, 2.).unwrap();
-        assert!(d.move_point(center, Point { x: 0., y: 0. }));
-        let changed = d.transform_sequence(image).unwrap();
-        assert_ne!(changed, sequence);
-        close(
-            changed.apply(d.position(seed).unwrap()).unwrap(),
-            Point { x: 40., y: 60. },
-        );
-        close(
-            changed
-                .combined_matrix()
-                .apply(d.position(seed).unwrap())
-                .unwrap(),
-            d.position(image).unwrap(),
-        );
-        d.set_parameter_value(n, 0.).unwrap();
-        assert_eq!(d.transform_sequence(image), Err(Error::Undefined));
-        assert_eq!(d.transform_sequence(seed), Err(Error::NotTransform));
-        assert_eq!(d.transform_sequence(0), Err(Error::InvalidReference(0)));
-    }
-
-    #[test]
-    fn matrix_product_applies_noncommuting_operations_in_execution_order() {
-        let translation = AffineMatrix::from_rows([[1., 0., 10.], [0., 1., -5.]]);
-        let rotation = AffineMatrix::from_rows([[0., 1., 0.], [-1., 0., 0.]]);
-        let p = Point { x: 2., y: 3. };
-        close(
-            translation.then(rotation).apply(p).unwrap(),
-            Point { x: -2., y: -12. },
-        );
-        close(
-            rotation.then(translation).apply(p).unwrap(),
-            Point { x: 13., y: -7. },
-        );
-    }
-
-    #[test]
-    fn shared_undefined_dependency_dag_does_not_expand_repeated_parent_paths() {
-        let mut d = Document::new();
-        let source = d.add(Kind::Free(Point { x: 20., y: 30. }));
-        let center = d.add(Kind::Free(Point { x: 0., y: 0. }));
-        let parameter = d.add_named_parameter("n", 4., (10, 10)).unwrap();
-        let angle = d
-            .add_parameter_calculation(parameter, "360°/n", (10, 40))
-            .unwrap();
-        let mut image = d
-            .add_calculated_angle_rotation(source, center, angle)
-            .unwrap();
-        // Each layer names the same previous node three times. Validation must
-        // complete each node once instead of walking 3^40 equivalent paths.
-        for _ in 0..40 {
-            image = d.add(Kind::VectorTranslatedPoint(image, image, image));
-        }
-        d.set_parameter_value(parameter, 0.).unwrap();
-        assert_eq!(d.evaluate_transform(image), Err(Error::Undefined));
-        assert!(d.position(image).is_none());
-    }
-
-    #[test]
-    fn source_first_domains_units_and_invalid_dependencies_are_distinct() {
-        let bytes =
-            include_bytes!("../../../../tests/fixtures/mixed_chain_writer_fresh_native_verified.gsp");
-        let mut d = Document::from_bytes(bytes, None).unwrap();
-        d.objects[50].kind = Kind::CalculatedRatioScaledLine(19, 1, 1);
-        assert_eq!(
-            d.evaluate_transform(51),
-            Err(Error::WrongUnit {
-                id: 1,
-                expected: NumericUnit::Scalar
-            })
-        );
-        d.set_parameter_value(6, 0.).unwrap();
-        assert_eq!(d.evaluate_transform(51), Err(Error::Undefined));
-        d.set_parameter_value(6, 4.).unwrap();
-        d.objects[18].deleted = true;
-        assert_eq!(d.evaluate_transform(51), Err(Error::InvalidReference(19)));
-        assert_eq!(d.evaluate_transform(1), Err(Error::NotTransform));
-        assert_eq!(d.evaluate_transform(0), Err(Error::InvalidReference(0)));
-        let mut malformed = Document::from_bytes(bytes, None).unwrap();
-        malformed.objects[35].kind = Kind::RotatedRay(0, 1, 90.);
-        assert_eq!(
-            malformed.evaluate_transform(36),
-            Err(Error::InvalidReference(0))
-        );
-        let mut d = Document::from_bytes(bytes, None).unwrap();
-        d.objects[35].kind = Kind::RotatedLine(16, 1, 90.);
-        assert_eq!(d.evaluate_transform(36), Err(Error::WrongElement(16)));
+        Ok((matrix, radius_factor))
     }
 }

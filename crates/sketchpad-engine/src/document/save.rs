@@ -49,6 +49,7 @@ impl Document {
             self.selected.clear();
         }
         self.original = data;
+        self.merge_aliases.clear();
         self.run_font_families.clear();
         self.source_count = self.objects.len();
         self.path = Some(path.to_path_buf());

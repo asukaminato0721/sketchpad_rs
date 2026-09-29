@@ -169,9 +169,10 @@ fn copy_and_paste_segment_to_first_page() {
     editor.paste();
     assert_eq!(editor.selection_order, vec![5, 6, 7]);
     assert_eq!(editor.doc.encode().unwrap(), {
-        let mut expected =
-            include_bytes!("../../../../../tests/fixtures/two_page_pasted_segment_first_page_port.gsp")
-                .to_vec();
+        let mut expected = include_bytes!(
+            "../../../../../tests/fixtures/two_page_pasted_segment_first_page_port.gsp"
+        )
+        .to_vec();
         let record = sketchpad_engine::document::records(&expected)
             .unwrap()
             .into_iter()

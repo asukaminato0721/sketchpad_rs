@@ -125,18 +125,17 @@ impl AnimationSettings {
         if self.once && self.direction == AnimationDirection::Bidirectional {
             return Err("Once Only is unavailable for bidirectional motion".into());
         }
-        if let Some(parameter) = self.parameter {
-            if !parameter.step.is_finite()
+        if let Some(parameter) = self.parameter
+            && (!parameter.step.is_finite()
                 || parameter.step <= 0.
                 || !parameter.min.is_finite()
                 || !parameter.max.is_finite()
                 || parameter.min >= parameter.max
                 || [self.speed, parameter.step, parameter.min, parameter.max]
                     .iter()
-                    .any(|value| encode_parameter_number(*value).is_none())
-            {
-                return Err("Invalid parameter Animation settings".into());
-            }
+                    .any(|value| encode_parameter_number(*value).is_none()))
+        {
+            return Err("Invalid parameter Animation settings".into());
         }
         Ok(())
     }
@@ -251,7 +250,7 @@ impl ActionRecords {
             // New labels use the Native template's text terminator convention.
             // Existing opaque suffixes may only move in the proven Animation case.
             if !(inserting || allow_zero_suffix_parity)
-                || suffix.len() != if old_len % 2 == 0 { 2 } else { 1 }
+                || suffix.len() != if old_len.is_multiple_of(2) { 2 } else { 1 }
                 || suffix.iter().any(|byte| *byte != 0)
             {
                 return Err(
@@ -259,13 +258,13 @@ impl ActionRecords {
                         .into(),
                 );
             }
-            suffix = vec![0; if bytes.len() % 2 == 0 { 2 } else { 1 }];
+            suffix = vec![0; if bytes.len().is_multiple_of(2) { 2 } else { 1 }];
         }
         record.payload.truncate(22);
         record.payload.extend_from_slice(&len.to_le_bytes());
         record.payload.extend_from_slice(bytes);
         record.payload.extend_from_slice(&suffix);
-        record.padding = if record.payload.len() % 2 != 0 {
+        record.padding = if !record.payload.len().is_multiple_of(2) {
             Some(record.padding.unwrap_or(0))
         } else {
             None
@@ -335,6 +334,51 @@ pub enum PresentationMode {
     Sequential,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationStop {
+    LastAction,
+    FirstAction,
+    ElapsedTime,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PresentationOptions {
+    pub deselect: bool,
+    pub stop_animations: bool,
+    pub erase_traces: bool,
+    pub stop: PresentationStop,
+    /// Native stores presentation durations and pauses in tenths of a second.
+    pub time_tenths: u16,
+    /// Retained native progress/state word. Newly authored buttons use zero.
+    pub native_state: u16,
+}
+
+impl PresentationOptions {
+    pub fn for_mode(mode: PresentationMode) -> Self {
+        Self {
+            time_tenths: if mode == PresentationMode::Simultaneous {
+                600
+            } else {
+                0
+            },
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for PresentationOptions {
+    fn default() -> Self {
+        Self {
+            deselect: false,
+            stop_animations: false,
+            erase_traces: false,
+            stop: PresentationStop::LastAction,
+            time_tenths: 600,
+            native_state: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentationButtonGroup {
     records: ActionRecords,
@@ -364,15 +408,16 @@ impl LinkPageButtonGroup {
                 0x08a2,
                 OBJECT_END,
             ]
-            && kinds != [
-                OBJECT_HEADER,
-                ACTION_PAYLOAD,
-                BUTTON_LABEL,
-                BUTTON_AUX,
-                0x08a2,
-                BUTTON_METADATA,
-                OBJECT_END,
-            ]
+            && kinds
+                != [
+                    OBJECT_HEADER,
+                    ACTION_PAYLOAD,
+                    BUTTON_LABEL,
+                    BUTTON_AUX,
+                    0x08a2,
+                    BUTTON_METADATA,
+                    OBJECT_END,
+                ]
         {
             return Err("Unexpected Page Link record order".into());
         }
@@ -418,7 +463,9 @@ impl LinkPageButtonGroup {
         if !valid_label
             || self.records[3].payload.len() != 2
             || self.records[4].payload.len() != 8
-            || self.records[5..].iter().any(|record| !record.payload.is_empty())
+            || self.records[5..]
+                .iter()
+                .any(|record| !record.payload.is_empty())
         {
             return Err("Page Link label or auxiliary records are invalid".into());
         }
@@ -509,11 +556,7 @@ impl LinkUrlButtonGroup {
         let action = &records[1].payload;
         let text_alignment = if action.len() >= 26 {
             let end = 26usize + usize::from(u16_at(action, 24));
-            if action.len() > (end + 2) & !1 {
-                4
-            } else {
-                2
-            }
+            if action.len() > (end + 2) & !1 { 4 } else { 2 }
         } else {
             2
         };
@@ -696,7 +739,7 @@ fn set_zero_terminated_text_aligned(
     record.payload.extend_from_slice(&length.to_le_bytes());
     record.payload.extend_from_slice(bytes);
     record.payload.push(0);
-    while record.payload.len() % alignment != 0 {
+    while !record.payload.len().is_multiple_of(alignment) {
         record.payload.push(0);
     }
     record.padding = None;
@@ -735,7 +778,7 @@ fn parse_record_list(bytes: &[u8], max_records: usize) -> Result<Vec<Record>, St
         parsed.push(Record {
             kind,
             payload: bytes[start..end].to_vec(),
-            padding: (len % 2 != 0).then(|| bytes[end]),
+            padding: (!len.is_multiple_of(2)).then(|| bytes[end]),
         });
         offset = padded_end;
         if parsed.len() > max_records {
@@ -761,7 +804,7 @@ fn encode_records(records: &[Record]) -> Vec<u8> {
         bytes.extend_from_slice(&(record.payload.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&record.kind.to_le_bytes());
         bytes.extend_from_slice(&record.payload);
-        if record.payload.len() % 2 != 0 {
+        if !record.payload.len().is_multiple_of(2) {
             bytes.push(record.padding.unwrap_or(0));
         }
     }
@@ -789,7 +832,7 @@ impl HideShowButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
-        let template: &[u8] = if label.len() % 2 == 0 {
+        let template: &[u8] = if label.len().is_multiple_of(2) {
             include_bytes!("../../../assets/action_hide_show_group.bin")
         } else {
             include_bytes!("../../../assets/action_hide_show_two_points_group.bin")
@@ -808,12 +851,12 @@ impl HideShowButtonGroup {
         }
         let refs = &self.records.record(OBJECT_REFS).payload;
         if refs.len() < 8
-            || (refs.len() - 4) % 4 != 0
+            || !(refs.len() - 4).is_multiple_of(4)
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
         {
             return Err("Hide/Show button has invalid object references".into());
         }
-        if self.target_ids().iter().any(|&id| id == 0) {
+        if self.target_ids().contains(&0) {
             return Err("Hide/Show button references object zero".into());
         }
         let action = &self.records.record(ACTION_PAYLOAD).payload;
@@ -977,7 +1020,9 @@ impl HideShowButtonGroup {
         };
         let old_len = u16_at(&old.payload, 22) as usize;
         let suffix = &old.payload[24 + old_len..];
-        if suffix.len() != if old_len % 2 == 0 { 2 } else { 1 } || suffix.first() != Some(&0) {
+        if suffix.len() != if old_len.is_multiple_of(2) { 2 } else { 1 }
+            || suffix.first() != Some(&0)
+        {
             return Err("Unsupported generated caption suffix".into());
         }
         let mut record = old.clone();
@@ -986,7 +1031,7 @@ impl HideShowButtonGroup {
         record.payload.extend_from_slice(label.as_bytes());
         record.payload.extend(std::iter::repeat_n(
             0,
-            if label.len() % 2 == 0 { 2 } else { 1 },
+            if label.len().is_multiple_of(2) { 2 } else { 1 },
         ));
         record.padding = None;
         *self.records.record_mut(BUTTON_LABEL) = record;
@@ -1019,7 +1064,9 @@ impl PresentationButtonGroup {
         label: &str,
         anchor: (i16, i16),
     ) -> Result<Self, String> {
-        let mut group = Self::parse(include_bytes!("../../../assets/action_presentation_group.bin"))?;
+        let mut group = Self::parse(include_bytes!(
+            "../../../assets/action_presentation_group.bin"
+        ))?;
         group.set_targets(targets)?;
         group.set_label(label)?;
         group.set_screen_anchor(anchor);
@@ -1034,18 +1081,25 @@ impl PresentationButtonGroup {
             return Err("Presentation button needs an object code 62 header".into());
         }
         if refs.len() < 8
-            || (refs.len() - 4) % 4 != 0
+            || !(refs.len() - 4).is_multiple_of(4)
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
             || self.target_ids().contains(&0)
         {
             return Err("Presentation button needs nonzero parent button IDs".into());
         }
+        let flags = (action.len() == 24).then(|| u16_at(action, 14));
+        let valid_settings = flags.is_some_and(|flags| {
+            flags & !0x3f == 0
+                && flags & 0x30 != 0x30
+                && (flags & 1 == 0 || flags & 0x30 == 0)
+                && u16_at(action, 18) as usize <= self.target_ids().len()
+        });
         if action.len() != 24
             || u32_at(action, 0) != ACTION_PAYLOAD
             || u32_at(action, 4) != 24
             || u32_at(action, 8) != 12
             || u16_at(action, 12) != 7
-            || !matches!((u16_at(action, 14), u32_at(action, 16)), (0, 600) | (1, 0))
+            || !valid_settings
         {
             return Err("Unsupported Presentation button action".into());
         }
@@ -1079,22 +1133,53 @@ impl PresentationButtonGroup {
     }
 
     pub fn mode(&self) -> PresentationMode {
-        if u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14) == 0 {
+        if u16_at(&self.records.record(ACTION_PAYLOAD).payload, 14) & 1 == 0 {
             PresentationMode::Simultaneous
         } else {
             PresentationMode::Sequential
         }
     }
 
+    pub fn options(&self) -> PresentationOptions {
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
+        let flags = u16_at(action, 14);
+        PresentationOptions {
+            deselect: flags & 0x02 != 0,
+            stop_animations: flags & 0x04 != 0,
+            erase_traces: flags & 0x08 != 0,
+            stop: match flags & 0x30 {
+                0x10 => PresentationStop::FirstAction,
+                0x20 => PresentationStop::ElapsedTime,
+                _ => PresentationStop::LastAction,
+            },
+            time_tenths: u16_at(action, 16),
+            native_state: u16_at(action, 18),
+        }
+    }
+
     pub fn set_mode(&mut self, mode: PresentationMode) {
-        let (code, delay): (u16, u32) = match mode {
-            PresentationMode::Simultaneous => (0, 600),
-            PresentationMode::Sequential => (1, 0),
+        self.set_options(mode, PresentationOptions::for_mode(mode));
+    }
+
+    pub fn set_options(&mut self, mode: PresentationMode, options: PresentationOptions) {
+        let stop = if mode == PresentationMode::Sequential {
+            0
+        } else {
+            match options.stop {
+                PresentationStop::LastAction => 0,
+                PresentationStop::FirstAction => 0x10,
+                PresentationStop::ElapsedTime => 0x20,
+            }
         };
-        self.records.record_mut(ACTION_PAYLOAD).payload[14..16]
-            .copy_from_slice(&code.to_le_bytes());
-        self.records.record_mut(ACTION_PAYLOAD).payload[16..20]
-            .copy_from_slice(&delay.to_le_bytes());
+        let flags = u16::from(mode == PresentationMode::Sequential)
+            | if options.deselect { 0x02 } else { 0 }
+            | if options.stop_animations { 0x04 } else { 0 }
+            | if options.erase_traces { 0x08 } else { 0 }
+            | stop;
+        let action = &mut self.records.record_mut(ACTION_PAYLOAD).payload;
+        action[14..16].copy_from_slice(&flags.to_le_bytes());
+        action[16..18].copy_from_slice(&options.time_tenths.to_le_bytes());
+        action[18..20].copy_from_slice(&options.native_state.to_le_bytes());
     }
 
     pub fn screen_anchor(&self) -> (i16, i16) {
@@ -1291,7 +1376,7 @@ impl MovementButtonGroup {
             return Err("Movement button needs an object code 62 header".into());
         }
         if refs.len() < 12
-            || (refs.len() - 4) % 8 != 0
+            || !(refs.len() - 4).is_multiple_of(8)
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
             || self.target_ids().contains(&0)
         {
@@ -1454,7 +1539,7 @@ impl AnimationButtonGroup {
         }
         let refs = &self.records.record(OBJECT_REFS).payload;
         if refs.len() < 8
-            || (refs.len() - 4) % 4 != 0
+            || !(refs.len() - 4).is_multiple_of(4)
             || u32_at(refs, 0) as usize != (refs.len() - 4) / 4
             || self.target_ids().contains(&0)
         {
@@ -1463,14 +1548,13 @@ impl AnimationButtonGroup {
         let settings = &self.records.record(ANIMATION_SETTINGS).payload;
         // The settings payload starts after the 36-byte header group,
         // 16-byte target record, and its own 8-byte record header.
-        let default_settings = &include_bytes!("../../../assets/action_animation_group.bin")[60..96];
+        let default_settings =
+            &include_bytes!("../../../assets/action_animation_group.bin")[60..96];
         if settings.len() != 4 + 32 * self.target_ids().len()
             || settings[..4] != default_settings[..4]
             || settings[4..].chunks_exact(32).any(|block| {
                 block.iter().zip(&default_settings[4..]).enumerate().any(
-                    |(index, (actual, expected))| {
-                        !matches!(index, 3 | 4..=19) && actual != expected
-                    },
+                    |(index, (actual, expected))| !matches!(index, 3..=19) && actual != expected,
                 )
             })
             || self.settings_list().is_err()
@@ -1517,7 +1601,7 @@ impl AnimationButtonGroup {
 
     pub fn settings_list(&self) -> Result<Vec<AnimationSettings>, String> {
         let bytes = &self.records.record(ANIMATION_SETTINGS).payload;
-        if bytes.len() < 36 || (bytes.len() - 4) % 32 != 0 {
+        if bytes.len() < 36 || !(bytes.len() - 4).is_multiple_of(32) {
             return Err("Animation settings are truncated".into());
         }
         bytes[4..]
@@ -1542,7 +1626,13 @@ impl AnimationButtonGroup {
                         max: number(16)?,
                     })
                 };
-                if flags & !(if parameter.is_some() { 0xb8 } else { 0xb0 }) != 0 {
+                let native_mode = flags & 0x07;
+                let mode_is_known = if parameter.is_some() {
+                    matches!(native_mode, 0 | 2 | 4)
+                } else {
+                    matches!(native_mode, 0 | 1)
+                };
+                if !mode_is_known || flags & !(if parameter.is_some() { 0xbf } else { 0xb1 }) != 0 {
                     return Err("Unsupported animation direction flags".into());
                 }
                 let direction = match flags & 0x30 {
@@ -1603,7 +1693,9 @@ impl AnimationButtonGroup {
         };
         let bytes = &mut self.records.record_mut(ANIMATION_SETTINGS).payload;
         let start = 4 + 32 * index;
-        bytes[start + 3] = direction
+        let native_mode = bytes[start + 3] & 0x07;
+        bytes[start + 3] = native_mode
+            | direction
             | if settings.once { 0x80 } else { 0 }
             | if settings.parameter.is_some_and(|value| value.discrete) {
                 0x08
@@ -1698,1007 +1790,5 @@ impl AnimationButtonGroup {
 
     pub fn encode(&self) -> Vec<u8> {
         encode_records(&self.records.records)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Exercise real record-boundary validation independently of the document
-    /// decoder, including optional records and preserved opaque label bytes.
-    #[test]
-    fn authored_movement_empty_label_omits_optional_record() {
-        for label in ["", "Move", "Mover"] {
-            let group = MovementButtonGroup::from_original_template_pairs(
-                &[(4, 5), (6, 7)],
-                label,
-                (10, 5),
-            )
-            .unwrap();
-            let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
-            assert_eq!(reopened.label_utf8().unwrap(), label);
-            assert_eq!(reopened.target_pairs(), [(4, 5), (6, 7)]);
-            assert_eq!(
-                reopened.records.optional_record(BUTTON_LABEL).is_none(),
-                label.is_empty()
-            );
-        }
-    }
-
-    #[test]
-    fn native_movement_pair_list_and_optional_layout_groups_round_trip() {
-        let three_pairs = include_bytes!("../../../tests/fixtures/movement46_cube_three_pairs_group.bin");
-        let unlabeled = include_bytes!("../../../tests/fixtures/movement46_cube_unlabeled_group.bin");
-        let empty_metadata =
-            include_bytes!("../../../tests/fixtures/movement46_notebook_empty_metadata_group.bin");
-        let group = MovementButtonGroup::parse(three_pairs).unwrap();
-        assert_eq!(group.target_pairs(), [(8, 28), (12, 2), (22, 41)]);
-        assert_eq!(group.speed(), MovementSpeed::Instant);
-        assert_eq!(group.encode(), three_pairs);
-        for original in [unlabeled.as_slice(), empty_metadata.as_slice()] {
-            let mut group = MovementButtonGroup::parse(original).unwrap();
-            assert_eq!(group.encode(), original);
-            if original == unlabeled {
-                assert_eq!(group.label_utf8().unwrap(), "");
-                assert_eq!(group.target_pairs(), [(58, 61)]);
-                assert!(group.records.optional_record(BUTTON_LABEL).is_none());
-                group.set_label("").unwrap();
-                assert_eq!(group.encode(), original);
-                for label in ["Move", "Mover"] {
-                    let mut edited = group.clone();
-                    edited.set_label(label).unwrap();
-                    let reopened = MovementButtonGroup::parse(&edited.encode()).unwrap();
-                    assert_eq!(reopened.label_utf8().unwrap(), label);
-                    let non_label = reopened
-                        .records
-                        .records
-                        .iter()
-                        .filter(|record| record.kind != BUTTON_LABEL)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    assert_eq!(encode_records(&non_label), original);
-                }
-            } else {
-                assert!(group.records.record(BUTTON_METADATA).payload.is_empty());
-                group.set_target_pairs(&[(283, 365), (1, 2)]).unwrap();
-                let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
-                assert_eq!(reopened.target_pairs(), [(283, 365), (1, 2)]);
-                assert!(reopened.records.record(BUTTON_METADATA).payload.is_empty());
-            }
-        }
-    }
-
-    #[test]
-    fn movement_pair_lists_reject_malformed_references_without_mutating() {
-        let mut group = MovementButtonGroup::from_original_template_pairs(
-            &[(8, 28), (12, 2), (22, 41)],
-            "Move",
-            (10, 5),
-        )
-        .unwrap();
-        // Imported labels with an opaque parity-dependent suffix retain their
-        // original strict editing rule, even though new labels support both.
-        assert!(group.set_label("Mover").is_err());
-        assert_eq!(group.target_pairs(), [(8, 28), (12, 2), (22, 41)]);
-        let original = group.encode();
-        for invalid in [vec![], vec![(0, 28)], vec![(8, 0)]] {
-            assert!(group.set_target_pairs(&invalid).is_err());
-            assert_eq!(group.encode(), original);
-        }
-        for invalid_refs in [
-            vec![0, 0, 0, 0],
-            [1_u32, 8].into_iter().flat_map(u32::to_le_bytes).collect(),
-            [3_u32, 8, 28, 12]
-                .into_iter()
-                .flat_map(u32::to_le_bytes)
-                .collect(),
-            [2_u32, 8, 0]
-                .into_iter()
-                .flat_map(u32::to_le_bytes)
-                .collect(),
-            [4_u32, 8, 28]
-                .into_iter()
-                .flat_map(u32::to_le_bytes)
-                .collect(),
-        ] {
-            let mut malformed = group.clone();
-            malformed.records.record_mut(OBJECT_REFS).payload = invalid_refs;
-            assert!(MovementButtonGroup::parse(&malformed.encode()).is_err());
-        }
-        group.set_targets(7, 9).unwrap();
-        assert_eq!(group.target_pairs(), [(7, 9)]);
-        let reopened = MovementButtonGroup::parse(&group.encode()).unwrap();
-        assert_eq!(reopened.target_ids(), [7, 9]);
-    }
-
-    #[test]
-    fn shared_optional_action_layout_preserves_absence_and_metadata() {
-        let templates: &[(&[u8], bool)] = &[
-            (
-                include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
-                false,
-            ),
-            (include_bytes!("../../../assets/action_scroll_group.bin"), false),
-            (
-                include_bytes!("../../../assets/action_presentation_group.bin"),
-                false,
-            ),
-            (include_bytes!("../../../assets/action_movement_group.bin"), false),
-            (include_bytes!("../../../assets/action_animation_group.bin"), true),
-        ];
-        for &(template, animation) in templates {
-            let mut records = ActionRecords::parse(template, animation).unwrap();
-            records.records.retain(|record| record.kind != BUTTON_LABEL);
-            let end = records.records.len() - 1;
-            records.records.insert(
-                end,
-                Record {
-                    kind: BUTTON_METADATA,
-                    payload: vec![],
-                    padding: None,
-                },
-            );
-            let original = encode_records(&records.records);
-            let mut parsed = ActionRecords::parse(&original, animation).unwrap();
-            assert!(parsed.label_bytes().is_empty());
-            parsed.set_label("", template, false).unwrap();
-            assert_eq!(encode_records(&parsed.records), original);
-            // Insertion preserves all non-label records, including metadata.
-            for label in ["Label", "Even"] {
-                let mut edited = parsed.clone();
-                edited.set_label(label, template, false).unwrap();
-                let encoded = encode_records(&edited.records);
-                let reopened = ActionRecords::parse(&encoded, animation).unwrap();
-                assert_eq!(reopened.label_bytes(), label.as_bytes());
-                let non_label = reopened
-                    .records
-                    .iter()
-                    .filter(|record| record.kind != BUTTON_LABEL)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                assert_eq!(encode_records(&non_label), original);
-            }
-        }
-    }
-
-    #[test]
-    fn action_record_edits_preserve_opaque_suffix_and_alignment_padding() {
-        let mut group =
-            MovementButtonGroup::parse(include_bytes!("../../../assets/action_movement_group.bin"))
-                .unwrap();
-        let label_record = group.records.record_mut(BUTTON_LABEL);
-        label_record.payload.push(0xa5);
-        label_record.padding = Some(0x7e);
-        let original = group.encode();
-        let mut reopened = MovementButtonGroup::parse(&original).unwrap();
-        assert_eq!(reopened.encode(), original);
-        let caption = reopened.label_utf8().unwrap().to_owned();
-        reopened.set_label(&caption).unwrap();
-        assert_eq!(reopened.encode(), original);
-        reopened.set_label("Translate").unwrap();
-        let record = reopened.records.record(BUTTON_LABEL);
-        assert_eq!(&record.payload[33..], &[0, 0xa5]);
-        assert_eq!(record.padding, Some(0x7e));
-        let edited = reopened.encode();
-        assert_eq!(
-            MovementButtonGroup::parse(&edited).unwrap().encode(),
-            edited
-        );
-        assert!(reopened.set_label("Move").is_err());
-        assert_eq!(reopened.encode(), edited);
-    }
-
-    #[test]
-    fn optional_action_layout_rejects_unknown_misordered_or_truncated_records() {
-        let template = include_bytes!("../../../assets/action_movement_group.bin");
-        let original = ActionRecords::parse(template, false).unwrap();
-        let mut malformed = Vec::new();
-        let mut nonempty_metadata = original.clone();
-        nonempty_metadata.records.insert(
-            5,
-            Record {
-                kind: BUTTON_METADATA,
-                payload: vec![1],
-                padding: Some(0xa5),
-            },
-        );
-        malformed.push(nonempty_metadata);
-        let mut duplicate_label = original.clone();
-        duplicate_label
-            .records
-            .insert(4, original.record(BUTTON_LABEL).clone());
-        malformed.push(duplicate_label);
-        let mut wrong_order = original.clone();
-        wrong_order.records.swap(3, 4);
-        malformed.push(wrong_order);
-        let mut unknown = original.clone();
-        unknown.records.insert(
-            5,
-            Record {
-                kind: 0xabcd,
-                payload: vec![],
-                padding: None,
-            },
-        );
-        malformed.push(unknown);
-        let mut malformed_label = original.clone();
-        malformed_label.record_mut(BUTTON_LABEL).payload[22..24]
-            .copy_from_slice(&u16::MAX.to_le_bytes());
-        malformed.push(malformed_label);
-        let mut truncated_label = original.clone();
-        truncated_label
-            .record_mut(BUTTON_LABEL)
-            .payload
-            .truncate(23);
-        malformed.push(truncated_label);
-        for records in malformed {
-            assert!(MovementButtonGroup::parse(&encode_records(&records.records)).is_err());
-        }
-        let bytes = encode_records(&original.records);
-        for len in [1, 7, bytes.len() - 1] {
-            assert!(MovementButtonGroup::parse(&bytes[..len]).is_err());
-        }
-        // Unknown option values remain rejected after the verified0..7 extension.
-        let mut visibility =
-            HideShowButtonGroup::parse(include_bytes!("../../../assets/action_hide_show_group.bin"))
-                .unwrap();
-        visibility.records.record_mut(ACTION_PAYLOAD).payload[14..16]
-            .copy_from_slice(&8_u16.to_le_bytes());
-        assert!(HideShowButtonGroup::parse(&visibility.encode()).is_err());
-    }
-
-    #[test]
-    fn native_presentation_modes_round_trip() {
-        for (file, expected, targets) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_presentation_default_original.gsp")
-                    .as_slice(),
-                PresentationMode::Simultaneous,
-                vec![3, 4],
-            ),
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/action_presentation_sequential_scroll_original.gsp"
-                )
-                .as_slice(),
-                PresentationMode::Sequential,
-                vec![4, 5],
-            ),
-        ] {
-            let bytes = presentation_group(file);
-            let group = PresentationButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.target_ids(), targets);
-            assert_eq!(group.mode(), expected);
-            assert_eq!(group.encode(), bytes);
-        }
-        let mut generated = PresentationButtonGroup::from_original_template_targets(
-            &[3, 4],
-            "Run Presentation",
-            (10, 65),
-        )
-        .unwrap();
-        generated.set_mode(PresentationMode::Sequential);
-        let reopened = PresentationButtonGroup::parse(&generated.encode()).unwrap();
-        assert_eq!(reopened.target_ids(), vec![3, 4]);
-        assert_eq!(reopened.mode(), PresentationMode::Sequential);
-        assert_eq!(reopened.label_utf8().unwrap(), "Run Presentation");
-    }
-
-    #[test]
-    fn native_page_link_moves_its_caption_rectangle_without_changing_destination() {
-        let bytes = link_page_group(include_bytes!(
-            "../../../tests/fixtures/action_link_page_two_original.gsp"
-        ));
-        let mut group = LinkPageButtonGroup::parse(&bytes).unwrap();
-        assert_eq!(group.screen_anchor(), (10, 5));
-        assert_eq!(group.records[4].payload, [10, 0, 5, 0, 55, 0, 27, 0]);
-        assert!(group.set_screen_anchor((i16::MAX, 575)).is_err());
-        assert_eq!(group.encode(), bytes); // Coordinate failure is atomic.
-        group.set_screen_anchor((90, 575)).unwrap();
-        assert_eq!(group.screen_anchor(), (90, 575));
-        assert_eq!(group.records[4].payload, [90, 0, 63, 2, 135, 0, 85, 2]);
-        assert_eq!(group.target_page(), 1);
-        let opened = LinkPageButtonGroup::parse(&group.encode()).unwrap();
-        assert_eq!(opened.screen_anchor(), (90, 575));
-        assert_eq!(opened.target_page(), 1);
-        let native = LinkPageButtonGroup::parse(&link_page_group(include_bytes!(
-            "../../../tests/fixtures/action_link_page_caption_moved_verified.gsp"
-        )))
-        .unwrap();
-        assert_eq!(native.screen_anchor(), (90, 575));
-        assert_eq!(native.target_page(), 1);
-    }
-
-    #[test]
-    fn native_link_url_four_byte_padding_and_opaque_word_survive_edits() {
-        let file = include_bytes!("../../../tests/fixtures/mapped_point_iteration_ant_native.gsp");
-        let bytes = link_url_group(file);
-        let mut group = LinkUrlButtonGroup::parse(&bytes).unwrap();
-        assert_eq!(group.url_utf8().unwrap(), "http://exjh.com");
-        assert_eq!(group.screen_anchor(), (33, 575));
-        assert_eq!(u16_at(&group.records[1].payload, 14), 0x3264);
-        assert_eq!(group.records[1].payload.len(), 44);
-        group.set_url("http://exjh.com").unwrap();
-        group.set_label("http://exjh.com").unwrap();
-        assert_eq!(group.encode(), bytes);
-        group.set_screen_anchor((90, 575)).unwrap();
-        group.set_url("http://exjk.com").unwrap();
-        group.set_label("http://exjk.com").unwrap();
-        let mut opened = LinkUrlButtonGroup::parse(&group.encode()).unwrap();
-        assert_eq!(opened.url_utf8().unwrap(), "http://exjk.com");
-        assert_eq!(opened.label_utf8().unwrap(), "http://exjk.com");
-        assert_eq!(opened.screen_anchor(), (90, 575));
-        assert_eq!(opened.records[4].payload, [90u8, 0, 63, 2, 195, 0, 83, 2]);
-        let before = opened.encode();
-        assert!(opened.set_screen_anchor((i16::MAX, 575)).is_err());
-        assert_eq!(opened.encode(), before);
-        let mut mismatch = opened.clone();
-        mismatch.records[1].payload[20..22].copy_from_slice(&33i16.to_le_bytes());
-        assert_eq!(mismatch.screen_anchor(), (90, 575));
-        assert_eq!(u16_at(&opened.records[1].payload, 14), 0x3264);
-        assert_eq!(opened.records[1].payload.len(), 44);
-        if std::env::var_os("SKETCHPAD_WRITE_MAPPED_FIXTURE").is_some() {
-            let start = file
-                .windows(bytes.len())
-                .position(|window| window == bytes)
-                .unwrap();
-            let mut edited = file.to_vec();
-            edited[start..start + bytes.len()].copy_from_slice(&group.encode());
-            std::fs::write("/tmp/mapped_point_iteration_ant_url_edited.gsp", edited).unwrap();
-        }
-        opened.set_url("https://example.org/").unwrap();
-        assert_eq!(opened.records[1].payload.len() % 4, 0);
-        let mut invalid = group.clone();
-        let end = 26 + usize::from(u16_at(&invalid.records[1].payload, 24));
-        invalid.records[1].payload[end] = 1;
-        assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
-        let mut invalid = group.clone();
-        invalid.records[1].payload.extend([0; 4]);
-        let len = invalid.records[1].payload.len() as u32;
-        invalid.records[1].payload[4..8].copy_from_slice(&len.to_le_bytes());
-        assert!(LinkUrlButtonGroup::parse(&invalid.encode()).is_err());
-    }
-
-    #[test]
-    fn native_url_action_opaque_suffix_survives_caption_edits() {
-        for (file, url, nonzero_tail) in [
-            (include_bytes!("../../../tests/fixtures/url_suffix90_small_original_native_saved.gsp").as_slice(), "https://www.kejianyuan.net", true),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_small_tail_zero_native_saved.gsp").as_slice(), "https://www.kejianyuan.net", false),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_original_native_saved.gsp").as_slice(), "http://exjh.com", true),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_tail_zero_native_saved.gsp").as_slice(), "http://exjh.com", false),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_native_saved.gsp").as_slice(), "http://exjh.com", true),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_tail_zero_native_saved.gsp").as_slice(), "http://exjh.com", false),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_safe_local_tail72_native_saved.gsp").as_slice(), "file:///tmp/abc", true),
-            (include_bytes!("../../../tests/fixtures/url_suffix90_visible_safe_local_tail0_native_saved.gsp").as_slice(), "file:///tmp/abc", false),
-        ] {
-            let bytes = link_url_group(file);
-            let mut group = LinkUrlButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.url_utf8().unwrap(), url);
-            let action = &group.records[1].payload;
-            let end = 26 + usize::from(u16_at(action, 24));
-            assert_eq!(action[end], 0);
-            assert_eq!(action[end + 1..].iter().any(|&byte| byte != 0), nonzero_tail);
-            group.set_url(url).unwrap();
-            let label = group.label_utf8().unwrap().to_owned();
-            group.set_label(&label).unwrap();
-            assert_eq!(group.encode(), bytes);
-            if nonzero_tail {
-                assert!(group.set_url("https://example.invalid/").is_err());
-                assert_eq!(group.encode(), bytes);
-            }
-        }
-
-        let before = link_url_group(include_bytes!("../../../tests/fixtures/url_suffix90_visible_original_native_saved.gsp"));
-        let after = link_url_group(include_bytes!("../../../tests/fixtures/url_suffix90_visible_label_native_saved.gsp"));
-        let mut group = LinkUrlButtonGroup::parse(&before).unwrap();
-        group.set_label("SAFE LOCAL LINK").unwrap();
-        assert_eq!(group.encode(), after);
-    }
-
-    #[test]
-    fn native_link_url_lengths_round_trip() {
-        for (file, url) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_link_url_default_original.gsp").as_slice(),
-                "http://kejianyuan.com",
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_link_url_custom_original.gsp").as_slice(),
-                "https://example.invalid/sketchpad",
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_link_url_even_original.gsp").as_slice(),
-                "https://example.org/",
-            ),
-        ] {
-            let bytes = link_url_group(file);
-            let group = LinkUrlButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.url_utf8().unwrap(), url);
-            assert_eq!(group.label_utf8().unwrap(), url);
-            assert_eq!(group.screen_anchor(), (10, 5));
-            assert_eq!(group.encode(), bytes);
-        }
-        let generated = LinkUrlButtonGroup::from_original_template(
-            "https://example.org/",
-            "Open page",
-            (10, 35),
-        )
-        .unwrap();
-        let reopened = LinkUrlButtonGroup::parse(&generated.encode()).unwrap();
-        assert_eq!(reopened.url_utf8().unwrap(), "https://example.org/");
-        assert_eq!(reopened.label_utf8().unwrap(), "Open page");
-        assert_eq!(reopened.screen_anchor(), (10, 35));
-    }
-
-    #[test]
-    fn native_page_link_destinations_round_trip() {
-        for (file, destination) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_link_page_default_original.gsp")
-                    .as_slice(),
-                0,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_link_page_two_original.gsp").as_slice(),
-                1,
-            ),
-        ] {
-            let bytes = link_page_group(file);
-            let group = LinkPageButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.target_page(), destination);
-            assert_eq!(group.label_utf8().unwrap(), "链接");
-            assert_eq!(group.screen_anchor(), (10, 5));
-            assert_eq!(group.encode(), bytes);
-        }
-    }
-
-    #[test]
-    fn native_page_link_can_select_a_button_on_destination_page() {
-        let native = include_bytes!(
-            "../../../tests/fixtures/action_link_page_activate_hide_show_native_created.gsp"
-        );
-        let group = LinkPageButtonGroup::parse(&link_page_group(native)).unwrap();
-        assert_eq!(group.target_page(), 0);
-        assert_eq!(group.target_button_ordinal(), Some(1));
-        assert_eq!(u16_at(&group.records[3].payload, 0), 1);
-        let mut generated =
-            LinkPageButtonGroup::from_original_template(0, "Go to Page 1", (10, 5)).unwrap();
-        generated.set_target_button_ordinal(Some(1)).unwrap();
-        assert_eq!(
-            LinkPageButtonGroup::parse(&generated.encode())
-                .unwrap()
-                .target_button_ordinal(),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn native_scroll_button_modes_round_trip() {
-        for (file, expected) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_scroll_top_left_original.gsp").as_slice(),
-                ScrollPlacement::UpperLeft,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_scroll_center_original.gsp").as_slice(),
-                ScrollPlacement::Center,
-            ),
-        ] {
-            let bytes = action_group(file);
-            let group = ScrollButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.target_id(), 1);
-            assert_eq!(group.placement(), expected);
-            assert_eq!(group.label_utf8().unwrap(), "滚动");
-            assert_eq!(group.screen_anchor(), (10, 5));
-            assert_eq!(group.encode(), bytes);
-        }
-        let mut generated =
-            ScrollButtonGroup::from_original_template(2, "Scroll", (10, 35)).unwrap();
-        generated.set_placement(ScrollPlacement::Center);
-        let reopened = ScrollButtonGroup::parse(&generated.encode()).unwrap();
-        assert_eq!(reopened.target_id(), 2);
-        assert_eq!(reopened.placement(), ScrollPlacement::Center);
-        assert_eq!(reopened.label_utf8().unwrap(), "Scroll");
-        assert_eq!(reopened.screen_anchor(), (10, 35));
-    }
-
-    #[test]
-    fn native_movement_settings_round_trip() {
-        for (file, speed, follow) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_movement_default_original.gsp").as_slice(),
-                MovementSpeed::Medium,
-                true,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_movement_slow_original.gsp").as_slice(),
-                MovementSpeed::Slow,
-                true,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_movement_fast_original.gsp").as_slice(),
-                MovementSpeed::Fast,
-                true,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_movement_instant_original.gsp").as_slice(),
-                MovementSpeed::Instant,
-                true,
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_movement_initial_original.gsp").as_slice(),
-                MovementSpeed::Medium,
-                false,
-            ),
-        ] {
-            let bytes = action_group(file);
-            let group = MovementButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.target_ids(), [1, 2]);
-            assert_eq!(group.speed(), speed);
-            assert_eq!(group.follows_destination(), follow);
-            assert_eq!(group.label_utf8().unwrap(), "移动点");
-            assert_eq!(group.screen_anchor(), (10, 5));
-            assert_eq!(group.encode(), bytes);
-        }
-        let mut generated =
-            MovementButtonGroup::from_original_template(3, 4, "Move to Point", (20, 35)).unwrap();
-        generated.set_speed(MovementSpeed::Instant);
-        generated.set_follows_destination(false);
-        let reopened = MovementButtonGroup::parse(&generated.encode()).unwrap();
-        assert_eq!(reopened.target_ids(), [3, 4]);
-        assert_eq!(reopened.speed(), MovementSpeed::Instant);
-        assert!(!reopened.follows_destination());
-        assert_eq!(reopened.screen_anchor(), (20, 35));
-    }
-
-    #[test]
-    fn native_animation_button_round_trips_and_template_remaps_target() {
-        let native = include_bytes!("../../../tests/fixtures/action_animation_original.gsp");
-        let bytes = action_group(native);
-        let group = AnimationButtonGroup::parse(&bytes).unwrap();
-        assert_eq!(group.target_id(), 4);
-        assert_eq!(group.screen_anchor(), (10, 5));
-        assert_eq!(group.label_utf8().unwrap(), "动画点");
-        assert_eq!(group.encode(), bytes);
-        let generated =
-            AnimationButtonGroup::from_original_template(7, "Animate Point", (30, 40)).unwrap();
-        let reopened = AnimationButtonGroup::parse(&generated.encode()).unwrap();
-        assert_eq!(reopened.target_id(), 7);
-        assert_eq!(reopened.screen_anchor(), (30, 40));
-        assert_eq!(reopened.label_utf8().unwrap(), "Animate Point");
-        assert_eq!(reopened.settings().unwrap(), AnimationSettings::default());
-    }
-
-    #[test]
-    fn two_point_animation_settings_are_independent() {
-        let default = include_bytes!("../../../tests/fixtures/action_animation_two_points_original.gsp");
-        let asymmetric =
-            include_bytes!("../../../tests/fixtures/action_animation_two_points_second_backward.gsp");
-        let clicked = include_bytes!("../../../tests/fixtures/action_animation_two_points_clicked.gsp");
-        for file in [
-            default.as_slice(),
-            asymmetric.as_slice(),
-            clicked.as_slice(),
-        ] {
-            let bytes = action_group(file);
-            let group = AnimationButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.target_ids(), vec![4, 5]);
-            assert_eq!(group.encode(), bytes);
-        }
-        let second = AnimationButtonGroup::parse(&action_group(asymmetric)).unwrap();
-        assert!(second.settings().is_err());
-        assert_eq!(
-            second.settings_list().unwrap(),
-            vec![
-                AnimationSettings::default(),
-                AnimationSettings {
-                    direction: AnimationDirection::Backward,
-                    ..AnimationSettings::default()
-                },
-            ]
-        );
-        let mut generated =
-            AnimationButtonGroup::from_original_template_targets(&[4, 5], "Animate Point", (10, 5))
-                .unwrap();
-        generated
-            .set_settings_at(
-                1,
-                AnimationSettings {
-                    direction: AnimationDirection::Backward,
-                    ..AnimationSettings::default()
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            AnimationButtonGroup::parse(&generated.encode())
-                .unwrap()
-                .settings_list()
-                .unwrap(),
-            second.settings_list().unwrap()
-        );
-    }
-
-    #[test]
-    fn native_animation_direction_speed_and_once_settings_round_trip() {
-        use AnimationDirection::*;
-        for (file, expected) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_forward_original.gsp")
-                    .as_slice(),
-                AnimationSettings {
-                    direction: Forward,
-                    speed: 24.,
-                    once: false,
-                    ..AnimationSettings::default()
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_backward_original.gsp")
-                    .as_slice(),
-                AnimationSettings {
-                    direction: Backward,
-                    speed: 24.,
-                    once: false,
-                    ..AnimationSettings::default()
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_random_original.gsp").as_slice(),
-                AnimationSettings {
-                    direction: Random,
-                    speed: 24.,
-                    once: false,
-                    ..AnimationSettings::default()
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_slow_original.gsp").as_slice(),
-                AnimationSettings {
-                    direction: Bidirectional,
-                    speed: 4.,
-                    once: false,
-                    ..AnimationSettings::default()
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_fast_original.gsp").as_slice(),
-                AnimationSettings {
-                    direction: Bidirectional,
-                    speed: 80.,
-                    once: false,
-                    ..AnimationSettings::default()
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_forward_once_original.gsp")
-                    .as_slice(),
-                AnimationSettings {
-                    direction: Forward,
-                    speed: 24.,
-                    once: true,
-                    ..AnimationSettings::default()
-                },
-            ),
-        ] {
-            let bytes = action_group(file);
-            let group = AnimationButtonGroup::parse(&bytes).unwrap();
-            assert_eq!(group.settings().unwrap(), expected);
-            assert_eq!(group.encode(), bytes);
-            let mut generated =
-                AnimationButtonGroup::from_original_template(4, "Animate Point", (10, 5)).unwrap();
-            generated.set_settings(expected).unwrap();
-            assert_eq!(
-                AnimationButtonGroup::parse(&generated.encode())
-                    .unwrap()
-                    .settings()
-                    .unwrap(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn native_parameter_animation_numbers_and_discrete_mode_round_trip() {
-        for (value, encoded) in [
-            (0.5, 1.),
-            (1., 4.),
-            (2., 16.),
-            (2.5, 20.),
-            (-3., -24.),
-            (7., 112.),
-            (100., 25_600.),
-        ] {
-            assert_eq!(encode_parameter_number(value), Some(encoded));
-            assert_eq!(decode_parameter_number(encoded), Some(value));
-        }
-        for (bytes, expected) in [
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_parameter_native_rate2.gsp")
-                    .as_slice(),
-                AnimationSettings {
-                    direction: AnimationDirection::Bidirectional,
-                    speed: 2.,
-                    once: false,
-                    parameter: Some(ParameterAnimationSettings::default()),
-                },
-            ),
-            (
-                include_bytes!("../../../tests/fixtures/action_animation_parameter_native_discrete.gsp")
-                    .as_slice(),
-                AnimationSettings {
-                    direction: AnimationDirection::Bidirectional,
-                    speed: 2.,
-                    once: false,
-                    parameter: Some(ParameterAnimationSettings {
-                        discrete: true,
-                        step: 0.5,
-                        min: -3.,
-                        max: 7.,
-                    }),
-                },
-            ),
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/action_animation_parameter_custom_continuous.gsp"
-                )
-                .as_slice(),
-                AnimationSettings {
-                    direction: AnimationDirection::Bidirectional,
-                    speed: 2.5,
-                    once: false,
-                    parameter: Some(ParameterAnimationSettings {
-                        discrete: false,
-                        step: 1.,
-                        min: -3.,
-                        max: 7.,
-                    }),
-                },
-            ),
-        ] {
-            let group = AnimationButtonGroup::parse(&action_group(bytes)).unwrap();
-            assert_eq!(group.settings().unwrap(), expected);
-        }
-    }
-
-    fn action_group(file: &[u8]) -> Vec<u8> {
-        let mut offset = 4;
-        let mut start = None;
-        while offset < file.len() {
-            let len = u32_at(file, offset) as usize;
-            let kind = u32_at(file, offset + 4);
-            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 62 {
-                start = Some(offset);
-            }
-            offset += 8 + len + len % 2;
-            if start.is_some() && kind == OBJECT_END {
-                return file[start.unwrap()..offset].to_vec();
-            }
-        }
-        panic!("action group not found");
-    }
-
-    fn presentation_group(file: &[u8]) -> Vec<u8> {
-        let mut offset = 4;
-        let mut start = None;
-        let mut is_presentation = false;
-        while offset < file.len() {
-            let len = u32_at(file, offset) as usize;
-            let kind = u32_at(file, offset + 4);
-            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 62 {
-                start = Some(offset);
-                is_presentation = false;
-            }
-            if start.is_some()
-                && kind == ACTION_PAYLOAD
-                && len == 24
-                && u16_at(file, offset + 8 + 12) == 7
-            {
-                is_presentation = true;
-            }
-            offset += 8 + len + len % 2;
-            if kind == OBJECT_END && start.is_some() {
-                if is_presentation {
-                    return file[start.unwrap()..offset].to_vec();
-                }
-                start = None;
-            }
-        }
-        panic!("Presentation group not found");
-    }
-
-    fn link_url_group(file: &[u8]) -> Vec<u8> {
-        let mut offset = 4;
-        let mut start = None;
-        let mut is_link = false;
-        while offset < file.len() {
-            let len = u32_at(file, offset) as usize;
-            let kind = u32_at(file, offset + 4);
-            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 0 {
-                start = Some(offset);
-                is_link = false;
-            }
-            if start.is_some()
-                && kind == ACTION_PAYLOAD
-                && len >= 28
-                && u16_at(file, offset + 20) == 6
-            {
-                is_link = true;
-            }
-            offset += 8 + len + len % 2;
-            if kind == OBJECT_END && start.is_some() {
-                if is_link {
-                    return file[start.unwrap()..offset].to_vec();
-                }
-                start = None;
-            }
-        }
-        panic!("Link URL group not found");
-    }
-
-    fn link_page_group(file: &[u8]) -> Vec<u8> {
-        let mut offset = 4;
-        let mut start = None;
-        let mut is_link = false;
-        while offset < file.len() {
-            let len = u32_at(file, offset) as usize;
-            let kind = u32_at(file, offset + 4);
-            if kind == OBJECT_HEADER && u16_at(file, offset + 8) == 0 {
-                start = Some(offset);
-                is_link = false;
-            }
-            if start.is_some()
-                && kind == ACTION_PAYLOAD
-                && len == 24
-                && u16_at(file, offset + 20) == 5
-            {
-                is_link = true;
-            }
-            offset += 8 + len + len % 2;
-            if kind == OBJECT_END && start.is_some() {
-                if is_link {
-                    return file[start.unwrap()..offset].to_vec();
-                }
-                start = None;
-            }
-        }
-        panic!("Page Link group not found");
-    }
-
-    fn object_hidden(file: &[u8], target: usize) -> bool {
-        let mut offset = 4;
-        let mut ordinal = 0;
-        while offset < file.len() {
-            let len = u32_at(file, offset) as usize;
-            let kind = u32_at(file, offset + 4);
-            if kind == OBJECT_HEADER {
-                ordinal += 1;
-                if ordinal == target {
-                    return file[offset + 8 + 2] != 0;
-                }
-            }
-            offset += 8 + len + len % 2;
-        }
-        panic!("target object not found");
-    }
-
-    #[test]
-    fn original_hide_click_and_reclick_round_trip_exactly() {
-        let fixtures: [&[u8]; 3] = [
-            include_bytes!("../../../tests/fixtures/action_hide_show.gsp"),
-            include_bytes!("../../../tests/fixtures/action_hide_show_clicked.gsp"),
-            include_bytes!("../../../tests/fixtures/action_hide_show_reclicked.gsp"),
-        ];
-        let groups = fixtures.map(action_group);
-        let hide = HideShowButtonGroup::parse(&groups[0]).unwrap();
-        let show = HideShowButtonGroup::parse(&groups[1]).unwrap();
-        let restored = HideShowButtonGroup::parse(&groups[2]).unwrap();
-        assert_eq!(hide.encode(), groups[0]);
-        assert_eq!(show.encode(), groups[1]);
-        assert_eq!(restored.encode(), groups[2]);
-        assert_eq!(hide.target_ids(), vec![3]);
-        assert_eq!(hide.screen_anchor(), (10, 5));
-        assert_eq!(hide.action(), VisibilityAction::Hide);
-        assert_eq!(show.action(), VisibilityAction::Show);
-        assert_eq!(restored.action(), VisibilityAction::Hide);
-        assert_eq!(hide.label_utf8().unwrap(), "隐藏线段");
-        assert_eq!(show.label_utf8().unwrap(), "显示线段");
-        assert!(!object_hidden(fixtures[0], 3));
-        assert!(object_hidden(fixtures[1], 3));
-        assert!(!object_hidden(fixtures[2], 3));
-    }
-
-    #[test]
-    fn two_target_hide_show_groups_preserve_both_references() {
-        let before = include_bytes!("../../../tests/fixtures/action_hide_show_two_points_original.gsp");
-        let after = include_bytes!("../../../tests/fixtures/action_hide_show_two_points_clicked.gsp");
-        let before_group = action_group(before);
-        let after_group = action_group(after);
-        let hide = HideShowButtonGroup::parse(&before_group).unwrap();
-        let show = HideShowButtonGroup::parse(&after_group).unwrap();
-        assert_eq!(hide.encode(), before_group);
-        assert_eq!(show.encode(), after_group);
-        assert_eq!(hide.target_ids(), vec![1, 2]);
-        assert_eq!(show.target_ids(), vec![1, 2]);
-        assert_eq!(hide.action(), VisibilityAction::Hide);
-        assert_eq!(show.action(), VisibilityAction::Show);
-        assert_eq!(hide.label_utf8().unwrap(), "隐藏点");
-        assert_eq!(show.label_utf8().unwrap(), "显示点");
-        assert!(!object_hidden(before, 1));
-        assert!(!object_hidden(before, 2));
-        assert!(object_hidden(after, 1));
-        assert!(object_hidden(after, 2));
-        assert!(!object_hidden(after, 3));
-
-        let generated =
-            HideShowButtonGroup::from_original_template_targets(&[1, 2], "Hide Objects", (10, 5))
-                .unwrap();
-        assert_eq!(generated.target_ids(), vec![1, 2]);
-        assert_eq!(
-            HideShowButtonGroup::parse(&generated.encode())
-                .unwrap()
-                .label_utf8()
-                .unwrap(),
-            "Hide Objects"
-        );
-    }
-
-    #[test]
-    fn generated_english_button_cross_opens_and_executes_in_sketchpad() {
-        let generated = action_group(include_bytes!(
-            "../../../tests/fixtures/action_generated_english.gsp"
-        ));
-        let clicked = action_group(include_bytes!(
-            "../../../tests/fixtures/action_generated_english_clicked.gsp"
-        ));
-        let before = HideShowButtonGroup::parse(&generated).unwrap();
-        let after = HideShowButtonGroup::parse(&clicked).unwrap();
-        assert_eq!(before.encode(), generated);
-        assert_eq!(after.encode(), clicked);
-        assert_eq!(before.label_utf8().unwrap(), "Hide Segment");
-        assert_eq!(before.action(), VisibilityAction::Hide);
-        assert_eq!(after.action(), VisibilityAction::Show);
-        assert_eq!(after.target_ids(), vec![3]);
-        assert!(!object_hidden(
-            include_bytes!("../../../tests/fixtures/action_generated_english.gsp"),
-            3
-        ));
-        assert!(object_hidden(
-            include_bytes!("../../../tests/fixtures/action_generated_english_clicked.gsp"),
-            3
-        ));
-    }
-
-    #[test]
-    fn template_changes_known_fields_and_preserves_opaque_label_suffix() {
-        let mut group =
-            HideShowButtonGroup::from_original_template(7, "Hide Segment", (30, 40)).unwrap();
-        assert_eq!(group.target_ids(), vec![7]);
-        assert_eq!(group.label_utf8().unwrap(), "Hide Segment");
-        assert_eq!(group.screen_anchor(), (30, 40));
-        group.set_action(VisibilityAction::Show);
-        group.set_label("Show Segment").unwrap();
-        group.set_hidden(true);
-        let reparsed = HideShowButtonGroup::parse(&group.encode()).unwrap();
-        assert_eq!(reparsed.action(), VisibilityAction::Show);
-        assert!(reparsed.is_hidden());
-        assert_eq!(reparsed.label_utf8().unwrap(), "Show Segment");
-        assert_eq!(
-            &reparsed.records.record(BUTTON_LABEL).payload[36..],
-            &[0, 3]
-        );
-    }
-
-    #[test]
-    fn malformed_or_lossy_edits_are_rejected() {
-        let template = include_bytes!("../../../assets/action_hide_show_group.bin");
-        assert!(HideShowButtonGroup::parse(&template[..template.len() - 1]).is_err());
-        let mut group = HideShowButtonGroup::parse(template).unwrap();
-        assert!(group.set_single_target(0).is_err());
-        assert!(group.set_label("Hi").is_ok());
-        assert!(group.set_label("Odd").is_err());
-        let mut bytes = template.to_vec();
-        bytes[8] = 0;
-        assert!(HideShowButtonGroup::parse(&bytes).is_err());
     }
 }

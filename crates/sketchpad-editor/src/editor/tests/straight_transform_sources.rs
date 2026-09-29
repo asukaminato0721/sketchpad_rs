@@ -11,7 +11,11 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
         let mut d = Document::new();
         d.add(Kind::Free(Point { x: 100., y: 100. }));
         d.add(Kind::Free(Point { x: 160., y: 100. }));
-        let source = d.add(if ray { Kind::Ray(1, 2) } else { Kind::Line(1, 2) });
+        let source = d.add(if ray {
+            Kind::Ray(1, 2)
+        } else {
+            Kind::Line(1, 2)
+        });
         d.add(Kind::Free(Point { x: 0., y: 0. }));
         d.add(Kind::Free(Point { x: 0., y: 100. }));
         let mirror = d.add(Kind::Line(4, 5));
@@ -36,13 +40,40 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
         let rotated = e.doc.objects.len();
         let y = 100. - 37.79527559055118;
         for (id, flavor, start, end) in [
-            (vector, NativeTransformFlavor::Vector, Point { x: 160., y: 100. }, Point { x: 220., y: 100. }),
-            (reflected, NativeTransformFlavor::Reflection, Point { x: -160., y: 100. }, Point { x: -220., y: 100. }),
-            (polar, NativeTransformFlavor::FixedPolar, Point { x: -160., y }, Point { x: -220., y }),
-            (rotated, NativeTransformFlavor::FixedRotation, Point { x: y, y: 160. }, Point { x: y, y: 220. }),
+            (
+                vector,
+                NativeTransformFlavor::Vector,
+                Point { x: 160., y: 100. },
+                Point { x: 220., y: 100. },
+            ),
+            (
+                reflected,
+                NativeTransformFlavor::Reflection,
+                Point { x: -160., y: 100. },
+                Point { x: -220., y: 100. },
+            ),
+            (
+                polar,
+                NativeTransformFlavor::FixedPolar,
+                Point { x: -160., y },
+                Point { x: -220., y },
+            ),
+            (
+                rotated,
+                NativeTransformFlavor::FixedRotation,
+                Point { x: y, y: 160. },
+                Point { x: y, y: 220. },
+            ),
         ] {
             let def = e.doc.objects[id - 1].kind.transform_definition().unwrap();
-            assert_eq!(def.element(), if ray { ElementType::Ray } else { ElementType::Line });
+            assert_eq!(
+                def.element(),
+                if ray {
+                    ElementType::Ray
+                } else {
+                    ElementType::Line
+                }
+            );
             assert_eq!(def.wire_flavor(), flavor);
             let (a, b, mode) = e.doc.line_points(id).unwrap();
             assert_eq!(mode, if ray { LineMode::Ray } else { LineMode::Line });
@@ -52,14 +83,20 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
         let sequence = e.doc.transform_sequence(rotated).unwrap();
         assert_eq!(sequence.source, source);
         assert_eq!(sequence.matrices.len(), 4);
-        close(sequence.apply(Point { x: 100., y: 100. }).unwrap(), Point { x: y, y: 160. });
+        close(
+            sequence.apply(Point { x: 100., y: 100. }).unwrap(),
+            Point { x: y, y: 160. },
+        );
         let saved = e.doc.encode().unwrap();
         let reopened = Document::from_bytes(&saved, None).unwrap();
         assert!(!reopened.partial_view);
         assert_eq!(reopened.line_points(rotated), e.doc.line_points(rotated));
         e.doc.checkpoint();
         assert!(e.doc.move_point(2, Point { x: 180., y: 100. }));
-        close(e.doc.line_points(vector).unwrap().0, Point { x: 180., y: 100. });
+        close(
+            e.doc.line_points(vector).unwrap().0,
+            Point { x: 180., y: 100. },
+        );
         assert_ne!(e.doc.line_points(rotated), reopened.line_points(rotated));
         e.doc.undo();
         assert_eq!(e.doc.encode().unwrap(), saved);

@@ -5,6 +5,114 @@ use crate::graph::GridForm;
 use std::collections::BTreeSet;
 
 impl Document {
+    pub fn can_split_point(&self, id: usize) -> bool {
+        if self.page_count != 1 || !self.safe_structure {
+            return false;
+        }
+        self.objects
+            .get(id.saturating_sub(1))
+            .is_some_and(|object| {
+                !object.deleted
+                    && object.page == self.active_page
+                    && matches!(
+                        object.kind,
+                        Kind::PointOnSegment(..)
+                            | Kind::PointOnRay(..)
+                            | Kind::PointOnLine(..)
+                            | Kind::PointOnCircle(..)
+                            | Kind::PointOnArc(..)
+                            | Kind::PointOnSector(..)
+                            | Kind::PointOnCurve(..)
+                            | Kind::PointOnPolygon(..)
+                            | Kind::SegmentMidpoint(..)
+                            | Kind::Midpoint(..)
+                            | Kind::Intersection(..)
+                            | Kind::BoundaryIntersection(..)
+                            | Kind::CurveIntersection(..)
+                            | Kind::LineCircleIntersection(..)
+                            | Kind::CircleCircleIntersection(..)
+                            | Kind::PathLiteralPoint(..)
+                            | Kind::PathValuePoint(..)
+                            | Kind::PlottedPoint(..)
+                            | Kind::NumericCoordinatePoint(..)
+                            | Kind::CoordinatePoint(..)
+                    )
+                    && self.position(id).is_some()
+            })
+    }
+
+    pub fn split_point(&mut self, id: usize) -> Result<(), String> {
+        if !self.can_split_point(id) {
+            return Err(
+                "Select one supported constructed point in a safe single-page sketch".into(),
+            );
+        }
+        let position = self.position(id).ok_or("Selected point is undefined")?;
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let object = &mut candidate.objects[id - 1];
+        object.kind = Kind::Free(position);
+        object.midpoint_host = None;
+        object.constraint_offset = None;
+        object.point_offset = None;
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        candidate.validate_reparsed(&reparsed)?;
+        *self = candidate;
+        Ok(())
+    }
+
+    pub fn can_merge_points(&self, source: usize, target: usize) -> bool {
+        if source == target || self.page_count != 1 || !self.safe_structure {
+            return false;
+        }
+        let Some(source_object) = self.objects.get(source.saturating_sub(1)) else {
+            return false;
+        };
+        let Some(target_object) = self.objects.get(target.saturating_sub(1)) else {
+            return false;
+        };
+        !source_object.deleted
+            && !target_object.deleted
+            && source_object.page == self.active_page
+            && target_object.page == self.active_page
+            && matches!(source_object.kind, Kind::Free(_))
+            && target_object.kind.is_point()
+            && self.position(target).is_some()
+    }
+
+    pub fn merge_points(&mut self, source: usize, target: usize) -> Result<(), String> {
+        if !self.can_merge_points(source, target) {
+            return Err(
+                "Select an independent point first and a defined target point second in a safe single-page sketch"
+                    .into(),
+            );
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let mut ids: Vec<_> = (0..=candidate.objects.len()).collect();
+        ids[source] = target;
+        for object in &mut candidate.objects {
+            if object.deleted || object.id == source {
+                continue;
+            }
+            object.kind = object.kind.remap_checked(&ids)?;
+            object.midpoint_host = object.midpoint_host.map(|host| ids[host]);
+        }
+        candidate.objects[source - 1].deleted = true;
+        candidate.merge_aliases.insert(source, target);
+        candidate.selected.clear();
+        candidate.selected.insert(target);
+        candidate
+            .dependency_index()
+            .map_err(|error| error.to_string())?;
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        candidate.validate_reparsed(&reparsed)?;
+        *self = candidate;
+        Ok(())
+    }
+
     // Native auxiliary objects have defined geometry while flag 2 suppresses
     // presentation. Ordinary hide/show leaves this independent flag intact.
     // Clipboard copies convert suppressed prerequisites to ordinary hidden.
@@ -230,10 +338,11 @@ impl Document {
                 Kind::SegmentMidpoint(host) => Some(host),
                 _ => None,
             };
-            if let Some(host) = host {
-                if !self.selected.contains(&host) && included.contains(&host) {
-                    hide_on_paste.insert(host);
-                }
+            if let Some(host) = host
+                && !self.selected.contains(&host)
+                && included.contains(&host)
+            {
+                hide_on_paste.insert(host);
             }
         }
         let rename_on_paste = self.objects.iter().find_map(|object| {
@@ -440,7 +549,7 @@ impl Document {
             }
             let id = candidate.objects.len() + 1;
             let interior_order = interior_order.or_else(|| {
-                remapped.is_polygon().then(|| {
+                remapped.is_polygon().then_some({
                     if matches!(remapped, Kind::Polygon(_)) {
                         0
                     } else {
@@ -483,7 +592,8 @@ impl Document {
             ids[*old_id] = id;
             created.push(id);
         }
-        if let Some((form, dotted)) = candidate.active_coordinate_system()
+        if let Some((form, dotted)) = candidate
+            .active_coordinate_system()
             .and_then(|frame| candidate.frame_styles.get(&frame).copied())
         {
             candidate.grid_form[candidate.active_page] = form;
@@ -598,6 +708,24 @@ impl Document {
         if !visible {
             self.selected.clear();
         }
+    }
+    pub fn set_object_visibility(&mut self, id: usize, visible: bool) -> Result<bool, String> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid object")?)
+            .ok_or("Invalid object")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Object is not on the active page".into());
+        }
+        if self.is_presentation_suppressed(id) {
+            return Err("This object's presentation is suppressed".into());
+        }
+        if object.visible == visible {
+            return Ok(false);
+        }
+        self.checkpoint();
+        self.objects[id - 1].visible = visible;
+        Ok(true)
     }
     pub fn set_selected_tracing(&mut self, tracing: bool) -> Result<usize, String> {
         if self.partial_view && self.page_count == 1 {

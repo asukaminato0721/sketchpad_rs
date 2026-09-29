@@ -43,7 +43,9 @@ impl Document {
     pub(super) fn function_symbol(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         match object.kind {
-            Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) => Some(
+            Kind::FunctionDefinition(_)
+            | Kind::ReferencedFunction(_, _)
+            | Kind::DataFunction { .. } => Some(
                 object
                     .function_name
                     .as_deref()
@@ -60,7 +62,9 @@ impl Document {
     pub fn function_sources(&self, id: usize) -> Option<&[usize]> {
         match &self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::ReferencedFunction(sources, _) => Some(sources),
-            Kind::FunctionDefinition(_) | Kind::DerivativeFunction(_, _) => Some(&[]),
+            Kind::FunctionDefinition(_)
+            | Kind::DerivativeFunction(_, _)
+            | Kind::DataFunction { .. } => Some(&[]),
             _ => None,
         }
     }
@@ -71,6 +75,9 @@ impl Document {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if !argument.is_finite() || object.deleted {
             return None;
+        }
+        if matches!(object.kind, Kind::DataFunction { .. }) {
+            return self.data_function_value(id, argument);
         }
         let sources = self.function_sources(id)?;
         let parent = |index: usize| {
@@ -128,6 +135,10 @@ impl Document {
         self.function_value(id, argument)
     }
     pub fn function_display_text(&self, id: usize) -> Option<String> {
+        if let Kind::DataFunction { source, .. } = self.objects.get(id.checked_sub(1)?)?.kind {
+            let symbol = self.function_symbol(id)?;
+            return Some(format!("{symbol}(x): picture {source}"));
+        }
         let expression = self.function_expression(id)?;
         let symbol = self.function_symbol(id)?;
         let text = if let Kind::ReferencedFunction(sources, _) = &self.objects[id - 1].kind {
@@ -300,12 +311,7 @@ impl Document {
                 object.id == definition
                     && object.page == self.active_page
                     && !object.deleted
-                    && matches!(
-                        object.kind,
-                        Kind::FunctionDefinition(_)
-                            | Kind::ReferencedFunction(_, _)
-                            | Kind::DerivativeFunction(_, _)
-                    )
+                    && self.function_expression(definition).is_some()
             })
         {
             return Err("Select one function definition".into());
@@ -470,12 +476,7 @@ impl Document {
                     object.id == id
                         && object.page == self.active_page
                         && !object.deleted
-                        && matches!(
-                            object.kind,
-                            Kind::FunctionDefinition(_)
-                                | Kind::ReferencedFunction(_, _)
-                                | Kind::DerivativeFunction(_, _)
-                        )
+                        && self.function_expression(id).is_some()
                 })
             {
                 return Err("Select two distinct functions".into());

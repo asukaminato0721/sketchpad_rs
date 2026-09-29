@@ -38,6 +38,7 @@ pub(super) fn encode_group(
         E::Polygon => 8,
         E::Sector => 82,
         E::Disk => 10,
+        E::Image => return Err("Writing transformed pictures is not supported".into()),
     });
     h[..2].copy_from_slice(&code.to_le_bytes());
     let modern_stroke = matches!(
@@ -93,11 +94,6 @@ pub(super) fn encode_group(
     }
     let mut group = Vec::new();
     put_record(&mut group, 0x07d0, &h);
-    if element != E::Point
-        && let Some(label) = presentation.label
-    {
-        group.extend_from_slice(&crate::text_records::encode_point_label_records(label));
-    }
     let references = definition.native_references();
     let mut payload = (references.len() as u32).to_le_bytes().to_vec();
     for reference in references {
@@ -111,9 +107,7 @@ pub(super) fn encode_group(
     if let Some(payload) = literal_payload(definition)? {
         put_record(&mut group, 0x07d3, &payload);
     }
-    if element == E::Point
-        && let Some(label) = presentation.label
-    {
+    if let Some(label) = presentation.label {
         group.extend_from_slice(&crate::text_records::encode_point_label_records(label));
     }
     put_record(&mut group, 0x07d7, &[]);
@@ -137,7 +131,8 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
             let mut payload = if definition.wire_flavor() == F::FixedPolar {
                 include_bytes!("../../../../assets/polar_translation_payload.bin").to_vec()
             } else {
-                include_bytes!("../../../../assets/marked_distance_translation_payload.bin").to_vec()
+                include_bytes!("../../../../assets/marked_distance_translation_payload.bin")
+                    .to_vec()
             };
             // Preserve the original exact cardinal template, including its cache.
             if angle != 90. {
@@ -158,7 +153,8 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
         }
         F::FixedCartesian => {
             let mut payload =
-                include_bytes!("../../../../assets/rectangular_fixed_translation_payload.bin").to_vec();
+                include_bytes!("../../../../assets/rectangular_fixed_translation_payload.bin")
+                    .to_vec();
             let x = value(R::HorizontalMagnitude)?;
             let y = value(R::VerticalMagnitude)?;
             payload[4..12].copy_from_slice(&(value(R::HorizontalUnitsToPixels)? * x).to_le_bytes());
@@ -169,7 +165,8 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
         }
         F::FixedHorizontal | F::FixedVertical => {
             let mut payload =
-                include_bytes!("../../../../assets/mixed_rectangular_translation_payload.bin").to_vec();
+                include_bytes!("../../../../assets/mixed_rectangular_translation_payload.bin")
+                    .to_vec();
             let centimeters = value(R::FixedCentimeters)?;
             payload[0] = definition.wire_flavor().code() as u8;
             payload[4..12].copy_from_slice(&(centimeters * 37.79527559055118).to_le_bytes());

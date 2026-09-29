@@ -3,7 +3,12 @@ use super::*;
 #[test]
 fn reflected_polygon_imports_and_tracks_mirror() {
     for (path, polygon, mirror, image) in [
-        ("../../tests/fixtures/reflection_polygon_original.gsp", 7, 3, 8),
+        (
+            "../../tests/fixtures/reflection_polygon_original.gsp",
+            7,
+            3,
+            8,
+        ),
         ("../../tests/fixtures/reflection.gsp", 9, 4, 13),
     ] {
         let bytes = fs::read(path).unwrap();
@@ -20,8 +25,10 @@ fn reflected_polygon_imports_and_tracks_mirror() {
         );
     }
 
-    let mut native =
-        Document::open(Path::new("../../tests/fixtures/reflection_polygon_original.gsp")).unwrap();
+    let mut native = Document::open(Path::new(
+        "../../tests/fixtures/reflection_polygon_original.gsp",
+    ))
+    .unwrap();
     let before = native.polygon_points(8).unwrap();
     assert_eq!(
         before,
@@ -126,6 +133,24 @@ fn vector_translated_polygon_imports_and_tracks_vector() {
         Kind::VectorTranslatedPolygon(7, 1, 2)
     );
     assert_eq!(document.encode().unwrap(), bytes);
+    let source_header = document.objects[6].header_offset.unwrap();
+    let image_header = document.objects[7].header_offset.unwrap();
+    let mut generic = bytes.clone();
+    generic[source_header + 8..source_header + 10].copy_from_slice(&15_u16.to_le_bytes());
+    generic[image_header + 8..image_header + 10].copy_from_slice(&15_u16.to_le_bytes());
+    let generic_document = Document::from_bytes(&generic, None).unwrap();
+    assert!(!generic_document.partial_view);
+    assert_eq!(
+        generic_document.objects[7].kind,
+        Kind::VectorTranslatedPolygon(7, 1, 2)
+    );
+    assert_eq!(generic_document.encode().unwrap(), generic);
+
+    let mut mismatched = bytes.clone();
+    mismatched[image_header + 8..image_header + 10].copy_from_slice(&15_u16.to_le_bytes());
+    let mismatched = Document::from_bytes(&mismatched, None).unwrap();
+    assert!(mismatched.partial_view);
+    assert_eq!(mismatched.objects[7].kind, Kind::Unsupported(16));
     assert_eq!(
         document.polygon_points(8),
         Some(vec![
@@ -405,9 +430,11 @@ fn marked_ratio_circle_dilation_imports_and_tracks_ratio_points() {
 
 #[test]
 fn native_polygon_order_is_signed_presentation_preserved_by_edits_and_copy() {
-    let original = include_bytes!("../../../../../tests/fixtures/polygon_order_original_native.gsp");
+    let original =
+        include_bytes!("../../../../../tests/fixtures/polygon_order_original_native.gsp");
     let swapped = include_bytes!("../../../../../tests/fixtures/polygon_order_swapped_native.gsp");
-    let negative = include_bytes!("../../../../../tests/fixtures/polygon_order_negative_native.gsp");
+    let negative =
+        include_bytes!("../../../../../tests/fixtures/polygon_order_negative_native.gsp");
     for (bytes, ranks) in [
         (original.as_slice(), [0, 1]),
         (swapped.as_slice(), [1, 0]),
@@ -454,8 +481,9 @@ fn native_polygon_order_is_signed_presentation_preserved_by_edits_and_copy() {
 
 #[test]
 fn native_calculated_rotation_of_vector_polygon_keeps_count_rank_and_live_sources() {
-    let bytes =
-        include_bytes!("../../../../../tests/fixtures/polygon_rotation_of_vector_corpus_native.gsp");
+    let bytes = include_bytes!(
+        "../../../../../tests/fixtures/polygon_rotation_of_vector_corpus_native.gsp"
+    );
     let mut doc = Document::from_bytes(bytes, None).unwrap();
     assert!(!doc.partial_view);
     assert_eq!(
@@ -549,7 +577,9 @@ fn legacy_clock_polygon_headers_have_no_rank_and_stay_short_after_geometry_edits
     let edited = doc.encode().unwrap();
     assert_eq!(
         edited,
-        include_bytes!("../../../../../tests/fixtures/legacy_polygon_rank_edited_native_verified.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/legacy_polygon_rank_edited_native_verified.gsp"
+        )
     );
     assert_eq!(&edited[header..header + 16], raw_header);
     let rs = records(&edited).unwrap();
@@ -571,10 +601,14 @@ fn legacy_clock_polygon_headers_have_no_rank_and_stay_short_after_geometry_edits
 #[test]
 fn authored_polygon_transform_chains_preserve_native_subtypes_and_live_geometry() {
     for bytes in [
-        include_bytes!("../../../../../tests/fixtures/polygon_transform_chains_generated_verified.gsp")
-            .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/polygon_transform_chains_edited_verified.gsp")
-            .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/polygon_transform_chains_generated_verified.gsp"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/polygon_transform_chains_edited_verified.gsp"
+        )
+        .as_slice(),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
         assert!(!doc.partial_view);
@@ -662,4 +696,31 @@ fn supported_polygon_transform_families_accept_native_signed_drawing_orders() {
         }
         assert_eq!(reopened.encode().unwrap(), saved, "{path}");
     }
+}
+
+#[test]
+fn polygon_opacity_property_is_undoable_and_survives_save() {
+    let mut document = Document::new();
+    let a = document.add(Kind::Free(Point { x: 100., y: 100. }));
+    let b = document.add(Kind::Free(Point { x: 200., y: 100. }));
+    let c = document.add(Kind::Free(Point { x: 150., y: 180. }));
+    let polygon = document.add(Kind::Polygon(vec![a, b, c]));
+
+    assert!(document.set_object_polygon_opacity(polygon, 49151).unwrap());
+    assert!(matches!(
+        document.objects[polygon - 1].visual_style,
+        Some(VisualStyle::Polygon { opacity: 49151, .. })
+    ));
+    document.undo();
+    assert!(matches!(
+        document.objects[polygon - 1].visual_style,
+        Some(VisualStyle::Polygon { opacity: 32767, .. })
+    ));
+    document.redo();
+
+    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    assert!(matches!(
+        reopened.objects[polygon - 1].visual_style,
+        Some(VisualStyle::Polygon { opacity: 49151, .. })
+    ));
 }

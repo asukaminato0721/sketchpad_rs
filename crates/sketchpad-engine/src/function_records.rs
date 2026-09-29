@@ -430,7 +430,7 @@ impl<'a> ArithmeticParser<'a> {
                     _ => unreachable!(),
                 }
             }
-            0..=9 | 0x000a => {
+            0..=0x000a => {
                 self.index -= 1;
                 self.number()?
             }
@@ -798,10 +798,10 @@ impl<'a> SymbolicParser<'a> {
                 self.index += 1;
                 SymbolicExpr::Call(word, Box::new(argument))
             }
-            0..=9 | 0x000a => {
+            0..=0x000a => {
                 self.index -= 1;
                 let mut text = String::new();
-                while let Some(word @ (0..=9 | 0x000a)) = self.words.get(self.index) {
+                while let Some(word @ (0..=0x000a)) = self.words.get(self.index) {
                     text.push(if *word == 0x000a {
                         '.'
                     } else {
@@ -888,7 +888,7 @@ fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     Ok(records)
 }
 
-fn payload<'a>(bytes: &'a [u8], record: Record) -> &'a [u8] {
+fn payload(bytes: &[u8], record: Record) -> &[u8] {
     let length = u32_at(bytes, record.start) as usize;
     &bytes[record.payload_start..record.payload_start + length]
 }
@@ -904,12 +904,12 @@ pub fn decode_expression_with_sources(
     // The 0x0907 payload has a 92-byte wrapper followed by little-endian
     // infix tokens. Bytes 48..92 contain session-dependent presentation data.
     if data.len() < 94
-        || (data.len() - 92) % 2 != 0
+        || !(data.len() - 92).is_multiple_of(2)
         || (data.len() - 92) / 2 > MAX_EXPRESSION_WORDS
-        || &data[..12]
-            != &include_bytes!("../../../tests/fixtures/function_plot_identity.gsp")[0x96c..0x978]
-        || &data[16..18]
-            != &include_bytes!("../../../tests/fixtures/function_plot_identity.gsp")[0x97c..0x97e]
+        || data[..12]
+            != include_bytes!("../../../tests/fixtures/function_plot_identity.gsp")[0x96c..0x978]
+        || data[16..18]
+            != include_bytes!("../../../tests/fixtures/function_plot_identity.gsp")[0x97c..0x97e]
         || &data[18..22] != b"<0>\0"
         || u32_at(data, 32) != 0x0907
         || u32_at(data, 36) as usize != data.len() - 32
@@ -975,7 +975,7 @@ pub fn encode_expression_record_with_sources(
     record.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     record.extend_from_slice(&0x0907u32.to_le_bytes());
     record.extend_from_slice(&payload);
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         record.push(0);
     }
     Ok(record)
@@ -1000,7 +1000,7 @@ fn group_expression_payload_start(group: &[u8]) -> Result<usize, String> {
         .filter(|record| matches!(record.kind, 0x07d2 | 0x07d3))
     {
         let refs = payload(&file, *record);
-        if refs.len() < 4 || (refs.len() - 4) % 4 != 0 {
+        if refs.len() < 4 || !(refs.len() - 4).is_multiple_of(4) {
             return Err("Invalid function group references".into());
         }
         let count = u32_at(refs, 0) as usize;
@@ -1094,10 +1094,10 @@ fn group_ranges(bytes: &[u8], records: &[Record]) -> Result<Vec<(usize, usize, u
                 index,
                 u16::from_le_bytes(payload(bytes, *record)[..2].try_into().unwrap()),
             ));
-        } else if record.kind == 0x07d7 {
-            if let Some((start, code)) = open.take() {
-                groups.push((start, index, code));
-            }
+        } else if record.kind == 0x07d7
+            && let Some((start, code)) = open.take()
+        {
+            groups.push((start, index, code));
         }
     }
     if open.is_some() {
@@ -1127,7 +1127,7 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
         }
         let definition_id = u32_at(refs, 4) as usize;
         let coordinate_system_id = u32_at(refs, 8) as usize;
-        if definition_id == 0 || definition_id >= ordinal + 1 || coordinate_system_id == 0 {
+        if definition_id == 0 || definition_id > ordinal || coordinate_system_id == 0 {
             return Err("Invalid function plot dependencies".into());
         }
         let &(definition_start, definition_end, definition_code) = groups
@@ -1530,665 +1530,4 @@ pub fn encode_minimal_plot_document(expression: SimpleFunction) -> Result<Vec<u8
         return Err("Encoded function plot failed to reparse".into());
     }
     Ok(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn built_in_functions_nested_calls_and_variable_power_derivatives() {
-        for (source, x, expected) in [
-            ("abs(x)", -3., 3.),
-            ("sqrt(x)", 9., 3.),
-            ("ln(x)", 1., 0.),
-            ("log(x)", 100., 2.),
-            ("sqrt(abs(x))+log(x^2)", -4., 2. + 16_f64.log10()),
-            ("ln(sqrt(x))", 4., 2_f64.ln()),
-        ] {
-            let function = SimpleFunction::parse(source).unwrap();
-            assert!((function.evaluate(x) - expected).abs() < 1e-12, "{source}");
-            assert_eq!(
-                SimpleFunction::parse(function.display().strip_prefix("f(x) = ").unwrap()).unwrap(),
-                function
-            );
-            assert!(!function.uses_trigonometry());
-            let bytes = encode_minimal_plot_document(function).unwrap();
-            assert_eq!(decode_minimal_plot(&bytes).unwrap().expression, function);
-        }
-        for source in [
-            "abs(x)",
-            "sqrt(x)",
-            "ln(x)",
-            "log(x)",
-            "x^x",
-            "2^x",
-            "(x+1)^(x-1)",
-            "ln(sqrt(x))",
-        ] {
-            let function = SimpleFunction::parse(source).unwrap();
-            let derivative = function.symbolic_derivative().unwrap();
-            let x = 1.3;
-            let slope = (function.evaluate(x + 1e-6) - function.evaluate(x - 1e-6)) / 2e-6;
-            assert!(
-                (derivative.evaluate(x) - slope).abs() < 1e-6,
-                "{source}: {}",
-                derivative.display()
-            );
-        }
-        for source in ["sqrt(-1)", "ln(-1)", "log(-1)"] {
-            assert!(SimpleFunction::parse(source).unwrap().evaluate(0.).is_nan());
-        }
-        assert!(
-            SimpleFunction::parse("abs(x)")
-                .unwrap()
-                .symbolic_derivative()
-                .unwrap()
-                .evaluate(0.)
-                .is_nan()
-        );
-        for source in ["sqrt()", "log(x", "abs x", "ln(x))", "sqrtx", "sgnx(x)"] {
-            assert!(SimpleFunction::parse(source).is_err(), "{source}");
-        }
-    }
-
-    #[test]
-    fn native_compact_unary_arguments_decode_with_their_terminators() {
-        let source = include_bytes!("../../../tests/fixtures/function_plot_identity.gsp");
-        let record = records(source)
-            .unwrap()
-            .into_iter()
-            .find(|record| record.kind == 0x0907)
-            .unwrap();
-        for (words, text) in [
-            (vec![0x2007, 6, 0x000c], "sqrt(6)"),
-            (vec![0x2008, 0x000f, 0x000c], "ln(x)"),
-            (vec![0x2006, 0x000f, 0x1001, 2, 0x000c], "abs(x-2)"),
-            (vec![0x2007, 0x2006, 0x000f, 0x000c, 0x000c], "sqrt(abs(x))"),
-        ] {
-            let mut data = payload(source, record)[..92].to_vec();
-            data[36..40].copy_from_slice(&((60 + words.len() * 2) as u32).to_le_bytes());
-            data[44..48].copy_from_slice(&(words.len() as u32).to_le_bytes());
-            for word in words {
-                data.extend_from_slice(&u16::to_le_bytes(word));
-            }
-            assert_eq!(
-                decode_simple_expression(&data).unwrap(),
-                SimpleFunction::parse(text).unwrap()
-            );
-            data.truncate(data.len() - 2);
-            let payload_len = data.len();
-            data[36..40].copy_from_slice(&((payload_len - 32) as u32).to_le_bytes());
-            data[44..48].copy_from_slice(&(((payload_len - 92) / 2) as u32).to_le_bytes());
-            assert!(decode_simple_expression(&data).is_err());
-        }
-    }
-
-    #[test]
-    fn native_grouped_unary_can_continue_after_its_inner_parentheses() {
-        let source = include_bytes!("../../../tests/fixtures/function_plot_identity.gsp");
-        let record = records(source)
-            .unwrap()
-            .into_iter()
-            .find(|record| record.kind == 0x0907)
-            .unwrap();
-        let words: [u16; 9] = [0x200c, 0x000b, 4, 0x1001, 1, 0x000c, 0x1003, 0x000f, 0x000c];
-        let mut data = payload(source, record)[..92].to_vec();
-        data[36..40].copy_from_slice(&((60 + words.len() * 2) as u32).to_le_bytes());
-        data[44..48].copy_from_slice(&(words.len() as u32).to_le_bytes());
-        for word in words {
-            data.extend_from_slice(&word.to_le_bytes());
-        }
-        let decoded = decode_simple_expression(&data).unwrap();
-        for (x, expected) in [(1., 3.), (2., 1.), (4., 0.)] {
-            assert_eq!(decoded.evaluate(x), expected);
-        }
-        data.truncate(data.len() - 2);
-        let payload_len = data.len();
-        data[36..40].copy_from_slice(&((payload_len - 32) as u32).to_le_bytes());
-        data[44..48].copy_from_slice(&(((payload_len - 92) / 2) as u32).to_le_bytes());
-        assert!(decode_simple_expression(&data).is_err());
-    }
-
-    #[test]
-    fn original_identity_and_square_decode() {
-        for (expression, source) in [
-            (
-                SimpleFunction::Identity,
-                include_bytes!("../../../tests/fixtures/function_plot_identity.gsp").as_slice(),
-            ),
-            (
-                SimpleFunction::Square,
-                include_bytes!("../../../tests/fixtures/function_plot_square.gsp").as_slice(),
-            ),
-        ] {
-            let plot = decode_minimal_plot(source).unwrap();
-            assert_eq!(plot.expression, expression);
-            assert_eq!(
-                (plot.definition_id, plot.coordinate_system_id, plot.samples),
-                (7, 6, 750)
-            );
-            assert!((plot.x_min + plot.x_max).abs() < 1e-12);
-        }
-    }
-
-    #[test]
-    fn symbolic_derivatives_match_native_examples_and_numeric_slope() {
-        for (source, expected) in [
-            ("x", "1"),
-            ("x^2", "2*x"),
-            ("x^3", "3*x^2"),
-            ("sin(x)", "cos(x)"),
-        ] {
-            assert_eq!(
-                SimpleFunction::parse(source)
-                    .unwrap()
-                    .symbolic_derivative()
-                    .unwrap(),
-                SimpleFunction::parse(expected).unwrap(),
-            );
-        }
-        for source in ["2*(x+1)", "1/x", "sin(x)+cos(x)", "tan(x)"] {
-            let function = SimpleFunction::parse(source).unwrap();
-            let derivative = function.symbolic_derivative().unwrap();
-            let x = 0.3;
-            let slope = (function.evaluate(x + 1e-6) - function.evaluate(x - 1e-6)) / 2e-6;
-            assert!((derivative.evaluate(x) - slope).abs() < 1e-5, "{source}");
-        }
-    }
-
-    #[test]
-    fn expression_rejects_unknown_token_without_guessing() {
-        let source = include_bytes!("../../../tests/fixtures/function_plot_identity.gsp");
-        let records = records(source).unwrap();
-        let expression = records.iter().find(|record| record.kind == 0x0907).unwrap();
-        let mut data = payload(source, *expression).to_vec();
-        assert_eq!(
-            decode_simple_expression(&data),
-            Ok(SimpleFunction::Identity)
-        );
-        data[92] = 16;
-        assert!(decode_simple_expression(&data).is_err());
-    }
-
-    #[test]
-    fn native_arithmetic_expressions_decode_and_evaluate() {
-        for (text, source, expected) in [
-            (
-                "x+1",
-                include_bytes!("../../../tests/fixtures/function_plot_x_plus_1.gsp").as_slice(),
-                3.0,
-            ),
-            (
-                "x^3",
-                include_bytes!("../../../tests/fixtures/function_plot_x_cubed.gsp").as_slice(),
-                8.0,
-            ),
-            (
-                "2*(x+1)",
-                include_bytes!("../../../tests/fixtures/function_plot_two_times_x_plus_1.gsp")
-                    .as_slice(),
-                6.0,
-            ),
-            (
-                "x+0.5",
-                include_bytes!("../../../tests/fixtures/function_plot_x_plus_half.gsp").as_slice(),
-                2.5,
-            ),
-            (
-                "-x",
-                include_bytes!("../../../tests/fixtures/function_plot_negative_x.gsp").as_slice(),
-                -2.0,
-            ),
-            (
-                "1/x",
-                include_bytes!("../../../tests/fixtures/function_plot_reciprocal_original.gsp")
-                    .as_slice(),
-                0.5,
-            ),
-        ] {
-            let expression = SimpleFunction::parse(text).unwrap();
-            let native = decode_minimal_plot(source).unwrap();
-            assert_eq!(native.expression, expression);
-            assert_eq!(native.expression.evaluate(2.0), expected);
-            let generated = encode_minimal_plot_document(expression).unwrap();
-            assert_eq!(
-                decode_minimal_plot(&generated).unwrap().expression,
-                expression
-            );
-        }
-        assert_eq!(SimpleFunction::parse("x²").unwrap(), SimpleFunction::Square);
-        assert_eq!(SimpleFunction::parse("2^3^2").unwrap().evaluate(0.0), 512.0);
-        assert!(SimpleFunction::parse("x+").is_err());
-        assert!(SimpleFunction::parse("(x+1").is_err());
-        assert!(SimpleFunction::parse("x.1").is_err());
-    }
-
-    #[test]
-    fn native_trigonometric_expressions_decode_and_evaluate() {
-        for (text, source, at, expected) in [
-            (
-                "sin(x)",
-                include_bytes!("../../../tests/fixtures/function_plot_sin_original.gsp").as_slice(),
-                std::f64::consts::FRAC_PI_2,
-                1.0,
-            ),
-            (
-                "cos(x)",
-                include_bytes!("../../../tests/fixtures/function_plot_cos_original.gsp").as_slice(),
-                std::f64::consts::FRAC_PI_2,
-                0.0,
-            ),
-            (
-                "tan(x)",
-                include_bytes!("../../../tests/fixtures/function_plot_tan_original.gsp").as_slice(),
-                std::f64::consts::FRAC_PI_4,
-                1.0,
-            ),
-        ] {
-            let expression = SimpleFunction::parse(text).unwrap();
-            let native = decode_minimal_plot(source).unwrap();
-            assert_eq!(native.expression, expression);
-            assert!(expression.uses_trigonometry());
-            assert!((native.expression.evaluate(at) - expected).abs() < 1e-12);
-            assert_eq!(expression.display(), format!("f(x) = {text}"));
-        }
-        let sine = SimpleFunction::parse("sin(x)").unwrap();
-        assert!((sine.evaluate_with_angle_unit(90.0, false) - 1.0).abs() < 1e-12);
-        assert_eq!(
-            SimpleFunction::parse("sin(x)+cos(x)")
-                .unwrap()
-                .evaluate(0.0),
-            1.0
-        );
-    }
-
-    #[test]
-    fn number_new_function_uses_the_same_identity_expression() {
-        let source = include_bytes!("../../../tests/fixtures/function_definition_identity.gsp");
-        let records = records(source).unwrap();
-        let expression = records.iter().find(|record| record.kind == 0x0907).unwrap();
-        assert_eq!(
-            decode_simple_expression(payload(source, *expression)),
-            Ok(SimpleFunction::Identity)
-        );
-    }
-
-    #[test]
-    fn template_groups_and_minimal_document_reparse() {
-        for expression in [SimpleFunction::Identity, SimpleFunction::Square] {
-            let bytes = encode_minimal_plot_document(expression).unwrap();
-            let plot = decode_minimal_plot(&bytes).unwrap();
-            assert_eq!(plot.expression, expression);
-            assert_eq!(
-                expression.evaluate(2.0),
-                match expression {
-                    SimpleFunction::Identity => 2.0,
-                    SimpleFunction::Square => 4.0,
-                    SimpleFunction::Arithmetic { .. } => unreachable!(),
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn moved_original_plot_keeps_expression_and_dependencies() {
-        let moved = include_bytes!("../../../tests/fixtures/function_port_square_moved_wine.gsp");
-        let plot = decode_minimal_plot(moved).unwrap();
-        assert_eq!(plot.expression, SimpleFunction::Square);
-        assert_eq!((plot.definition_id, plot.coordinate_system_id), (7, 6));
-    }
-
-    #[test]
-    fn copied_function_moves_expression_and_text_bounds() {
-        let mut definition = encode_definition_group(SimpleFunction::Square).unwrap();
-        assert_eq!(group_expression_anchor(&definition).unwrap(), (10, 5));
-        set_group_expression_anchor(&mut definition, (30, 25)).unwrap();
-        assert_eq!(group_expression_anchor(&definition).unwrap(), (30, 25));
-        assert_eq!(group_definition_name(&definition).unwrap(), "f");
-        set_group_definition_name(&mut definition, "g").unwrap();
-        assert_eq!(group_definition_name(&definition).unwrap(), "g");
-        let mut file = b"GSP4".to_vec();
-        file.extend_from_slice(&definition);
-        let bounds = records(&file)
-            .unwrap()
-            .into_iter()
-            .find(|r| r.kind == 0x08a3)
-            .unwrap();
-        assert_eq!(payload(&file, bounds), &[30, 0, 25, 0, 110, 0, 52, 0]);
-
-        let mut derivative = encode_derivative_group(1, SimpleFunction::Square).unwrap();
-        let (x, y) = group_expression_anchor(&derivative).unwrap();
-        set_group_expression_anchor(&mut derivative, (x + 20, y + 20)).unwrap();
-        assert_eq!(
-            group_expression_anchor(&derivative).unwrap(),
-            (x + 20, y + 20)
-        );
-    }
-    fn reference_fixture_payload(bytes: &[u8], id: usize) -> Vec<u8> {
-        let d = crate::document::Document::from_bytes(bytes, None).unwrap();
-        let offset = d.objects[id - 1].header_offset.unwrap();
-        let rs = crate::document::records(bytes).unwrap();
-        let start = rs
-            .iter()
-            .position(|r| r.kind == 0x07d0 && r.data.start == offset)
-            .unwrap();
-        let end = (start..rs.len()).find(|&i| rs[i].kind == 0x07d7).unwrap();
-        let expression = rs[start..end].iter().find(|r| r.kind == 0x0907).unwrap();
-        bytes[expression.data.clone()].to_vec()
-    }
-
-    #[test]
-    fn native_referenced_function_high_word_survives_expression_edits() {
-        for (native, id, high_word) in [
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/referenced_function75_high1_original_input.gsp"
-                )
-                .as_slice(),
-                87,
-                1,
-            ),
-            (
-                include_bytes!(
-                    "../../../tests/fixtures/referenced_function75_high2_original_input.gsp"
-                )
-                .as_slice(),
-                14,
-                2,
-            ),
-        ] {
-            let original = reference_fixture_payload(native, id);
-            let token_count = (original.len() - 92) / 2;
-            assert_eq!(
-                u32_at(&original, 44),
-                (high_word << 16) | token_count as u32
-            );
-            let expression = decode_expression_with_sources(&original, 1).unwrap();
-            assert!(decode_simple_expression(&original).is_err());
-            let edited = SimpleFunction::parse_with_sources("v1*x+1", 1).unwrap();
-            let record = encode_expression_record_with_sources(&original, edited, 1).unwrap();
-            let mut file = b"GSP4".to_vec();
-            file.extend_from_slice(&record);
-            let encoded = payload(&file, records(&file).unwrap()[0]);
-            assert_eq!(u32_at(encoded, 44) >> 16, high_word);
-            assert_eq!(u32_at(encoded, 44) & 0xffff, edited.words().len() as u32);
-            assert_eq!(decode_expression_with_sources(encoded, 1).unwrap(), edited);
-            assert_ne!(expression, edited);
-
-            let mut malformed = original.clone();
-            malformed[44..46].copy_from_slice(&((token_count + 1) as u16).to_le_bytes());
-            assert!(decode_expression_with_sources(&malformed, 1).is_err());
-            malformed[44..46].copy_from_slice(&(token_count as u16).to_le_bytes());
-            malformed[46..48].copy_from_slice(&3u16.to_le_bytes());
-            assert!(decode_expression_with_sources(&malformed, 1).is_err());
-            malformed[46..48].copy_from_slice(&(high_word as u16).to_le_bytes());
-            malformed[32] = 0;
-            assert!(decode_expression_with_sources(&malformed, 1).is_err());
-        }
-    }
-
-    #[test]
-    fn native_reference_function_tokens_evaluate_through_live_callbacks() {
-        use crate::table_records::CalculationSourceKind::{Function, Numeric};
-        let bytes = include_bytes!(
-            "../../../tests/fixtures/function_reference_controls_native_created.gsp"
-        );
-        let parameter = reference_fixture_payload(bytes, 15);
-        let call = reference_fixture_payload(bytes, 17);
-        let f = decode_expression_with_sources(&parameter, 1).unwrap();
-        let g = decode_expression_with_sources(&call, 1).unwrap();
-        assert_eq!(f, SimpleFunction::parse_with_sources("v1*x+1", 1).unwrap());
-        assert_eq!(g, SimpleFunction::parse_with_sources("f1(x+1)", 1).unwrap());
-        assert_eq!(f.source_kinds(1).unwrap(), [Some(Numeric)]);
-        assert_eq!(g.source_kinds(1).unwrap(), [Some(Function)]);
-        for coefficient in [2., -3.] {
-            let value = g.evaluate_with_sources(4., true, &|_| None, &|slot, argument| {
-                assert_eq!(slot, 0);
-                Some(f.evaluate_with_sources(argument, true, &|_| Some(coefficient), &|_, _| None))
-            });
-            assert_eq!(value, coefficient * 5. + 1.);
-        }
-        assert_eq!(g.display(), "f(x) = f1(x + 1)");
-        assert!(g.evaluate(4.).is_nan());
-        assert!(decode_simple_expression(&parameter).is_err());
-        assert!(decode_simple_expression(&call).is_err());
-    }
-
-    #[test]
-    fn native_pi_suffix_is_scoped_to_pi_operands() {
-        let expression = SimpleFunction::from_words(&[
-            0x2000, 0x000b, 13, 0x0100, 0x1002, 0x000f, 0x000c, 0x000c,
-        ])
-        .unwrap();
-        assert!(expression.evaluate(1.).abs() < 1e-12);
-        assert_eq!(expression.display(), "f(x) = sin(π × x)");
-        assert_eq!(
-            expression.symbolic_derivative().unwrap().evaluate(0.),
-            crate::table_records::CALCULATOR_PI
-        );
-        for words in [
-            vec![13, 0x0100, 0x0100],
-            vec![14, 0x0100],
-            vec![0x000f, 0x0100],
-            vec![0x0100, 13],
-        ] {
-            assert!(SimpleFunction::from_words(&words).is_err(), "{words:?}");
-        }
-        let original =
-            include_bytes!("../../../tests/fixtures/referenced_function93_original_input.gsp");
-        let payload = reference_fixture_payload(original, 97);
-        assert_eq!(payload.len(), 200);
-        let decoded = decode_expression_with_sources(&payload, 4).unwrap();
-        assert!(decoded.display().contains('π'));
-        assert_eq!(
-            decoded.source_kinds(4).unwrap(),
-            [
-                Some(crate::table_records::CalculationSourceKind::Function),
-                Some(crate::table_records::CalculationSourceKind::Numeric),
-                Some(crate::table_records::CalculationSourceKind::Numeric),
-                Some(crate::table_records::CalculationSourceKind::Numeric),
-            ]
-        );
-        let suffix = 92 + 19 * 2;
-        assert_eq!(&payload[suffix..suffix + 2], &0x0100u16.to_le_bytes());
-        for replacement in [0x0101u16, 0x0201, 0x0000] {
-            let mut malformed = payload.clone();
-            malformed[suffix..suffix + 2].copy_from_slice(&replacement.to_le_bytes());
-            assert!(decode_expression_with_sources(&malformed, 4).is_err());
-        }
-    }
-
-    #[test]
-    fn corpus_reference_functions_keep_numeric_and_function_source_roles() {
-        use crate::table_records::CalculationSourceKind::{Function, Numeric};
-        let quadratic = reference_fixture_payload(
-            include_bytes!("../../../tests/fixtures/function_reference_quadratic_corpus.gsp"),
-            10,
-        );
-        let f = decode_expression_with_sources(&quadratic, 3).unwrap();
-        assert_eq!(
-            f,
-            SimpleFunction::parse_with_sources("v1*x^2+v2*x+v3", 3).unwrap()
-        );
-        assert_eq!(f.source_kinds(3).unwrap(), [Some(Numeric); 3]);
-        assert_eq!(
-            f.evaluate_with_sources(4., true, &|slot| Some([2., -3., 5.][slot]), &|_, _| None),
-            25.
-        );
-        let mixed = reference_fixture_payload(
-            include_bytes!("../../../tests/fixtures/function_reference_mixed_corpus.gsp"),
-            19,
-        );
-        let f = decode_expression_with_sources(&mixed, 4).unwrap();
-        assert_eq!(
-            f.source_kinds(4).unwrap(),
-            [Some(Numeric), Some(Function), Some(Numeric), Some(Numeric)]
-        );
-        let value = f.evaluate_with_sources(
-            2.,
-            true,
-            &|slot| Some([4., 0., 3., 2.][slot]),
-            &|slot, x| {
-                assert_eq!(slot, 1);
-                Some(x * x)
-            },
-        );
-        let tangent = 2_f64.tan();
-        assert!((value - (4. * (1. + tangent * tangent).sqrt() + tangent + 2.)).abs() < 1e-12);
-        assert!(decode_expression_with_sources(&mixed, 3).is_err());
-        for source in ["v0*x", "v2*x", "f2(x)", "f1 x", "v1+f1(x)"] {
-            assert!(
-                SimpleFunction::parse_with_sources(source, 1).is_err(),
-                "{source}"
-            );
-        }
-        assert!(SimpleFunction::parse("v1*x").is_err());
-    }
-
-    #[test]
-    fn contextual_function_record_writer_matches_native_saved_edits() {
-        let original = include_bytes!(
-            "../../../tests/fixtures/function_reference_controls_native_created.gsp"
-        );
-        let edited = include_bytes!(
-            "../../../tests/fixtures/function_reference_records_writer_native_verified.gsp"
-        );
-        for (id, text) in [(15, "v1*x^2-1"), (17, "f1(x-2)+3")] {
-            let source = reference_fixture_payload(original, id);
-            let expected = reference_fixture_payload(edited, id);
-            let expression = SimpleFunction::parse_with_sources(text, 1).unwrap();
-            let record = encode_expression_record_with_sources(&source, expression, 1).unwrap();
-            let mut bytes = b"GSP4".to_vec();
-            bytes.extend_from_slice(&record);
-            let records = crate::document::records(&bytes).unwrap();
-            assert_eq!(records.len(), 1);
-            assert_eq!(records[0].kind, 0x0907);
-            assert_eq!(&bytes[records[0].data.clone()], expected);
-            assert_eq!(
-                decode_expression_with_sources(&expected, 1).unwrap(),
-                expression
-            );
-            assert!(encode_expression_record(&source, expression).is_err());
-            assert!(encode_expression_record_with_sources(&source, expression, 0).is_err());
-        }
-    }
-
-    #[test]
-    fn referenced_definition_group_reproduces_native_parameter_function() {
-        let native = include_bytes!(
-            "../../../tests/fixtures/function_reference_controls_native_created.gsp"
-        );
-        let rs = records(native).unwrap();
-        let groups = group_ranges(native, &rs).unwrap();
-        let (first, last, code) = groups[14];
-        assert_eq!(code, 71);
-        let expression =
-            decode_expression_with_sources(&reference_fixture_payload(native, 15), 1).unwrap();
-        let mut encoded = encode_referenced_definition_group(&[6], expression).unwrap();
-        assert_eq!(encoded, native[rs[first].start..rs[last].end]);
-        assert_eq!(group_expression_anchor(&encoded).unwrap(), (10, 82));
-        assert_eq!(group_definition_name(&encoded).unwrap(), "f");
-        set_group_expression_anchor(&mut encoded, (-15, 120)).unwrap();
-        set_group_definition_name(&mut encoded, "q").unwrap();
-        assert_eq!(group_expression_anchor(&encoded).unwrap(), (-15, 120));
-        assert_eq!(group_definition_name(&encoded).unwrap(), "q");
-        let mut file = b"GSP4".to_vec();
-        file.extend_from_slice(&encoded);
-        let record = records(&file)
-            .unwrap()
-            .into_iter()
-            .find(|r| r.kind == 0x0907)
-            .unwrap();
-        assert_eq!(
-            decode_expression_with_sources(payload(&file, record), 1).unwrap(),
-            expression
-        );
-    }
-
-    #[test]
-    fn referenced_group_authoring_keeps_native_mixed_source_order() {
-        let native = include_bytes!("../../../tests/fixtures/function_reference_mixed_corpus.gsp");
-        let rs = records(native).unwrap();
-        let groups = group_ranges(native, &rs).unwrap();
-        let (first, last, code) = groups[18];
-        assert_eq!(code, 71);
-        let refs = rs[first..last].iter().find(|r| r.kind == 0x07d2).unwrap();
-        let data = payload(native, *refs);
-        let sources = data[4..]
-            .chunks_exact(4)
-            .map(|word| u32::from_le_bytes(word.try_into().unwrap()) as usize)
-            .collect::<Vec<_>>();
-        let expression =
-            decode_expression_with_sources(&reference_fixture_payload(native, 19), sources.len())
-                .unwrap();
-        let group = encode_referenced_definition_group(&sources, expression).unwrap();
-        let mut file = b"GSP4".to_vec();
-        file.extend_from_slice(&group);
-        let encoded_records = records(&file).unwrap();
-        let encoded_refs = encoded_records.iter().find(|r| r.kind == 0x07d2).unwrap();
-        assert_eq!(payload(&file, *encoded_refs), data);
-        let encoded_expression = encoded_records.iter().find(|r| r.kind == 0x0907).unwrap();
-        assert_eq!(
-            decode_expression_with_sources(payload(&file, *encoded_expression), sources.len())
-                .unwrap(),
-            expression
-        );
-        assert_eq!(group_expression_anchor(&group).unwrap(), (10, 82));
-        for invalid in [vec![], vec![0], vec![1; 257]] {
-            assert!(encode_referenced_definition_group(&invalid, expression).is_err());
-        }
-        assert!(encode_referenced_definition_group(&sources[..3], expression).is_err());
-    }
-
-    #[test]
-    fn bound_plot_group_uses_definition_reference_without_embedded_expression() {
-        let expression = SimpleFunction::parse_with_sources("v1*f2(x)", 2).unwrap();
-        let native = include_bytes!("../../../tests/fixtures/function_plot_identity.gsp");
-        let native_records = records(native).unwrap();
-        let native_groups = group_ranges(native, &native_records).unwrap();
-        let (first, last, code) = native_groups[7];
-        assert_eq!(code, 72);
-        assert_eq!(
-            encode_plot_group(expression, 7, 6).unwrap(),
-            native[native_records[first].start..native_records[last].end]
-        );
-        let group = encode_plot_group(expression, 15, 14).unwrap();
-        assert_eq!(
-            group,
-            encode_plot_group(SimpleFunction::Identity, 15, 14).unwrap()
-        );
-        let ranged = encode_plot_group_with_range(expression, 15, 14, -3., 7., 257).unwrap();
-        let mut file = b"GSP4".to_vec();
-        file.extend_from_slice(&ranged);
-        let rs = records(&file).unwrap();
-        let refs = rs.iter().find(|r| r.kind == 0x07d2).unwrap();
-        assert_eq!(
-            payload(&file, *refs),
-            &[2, 0, 0, 0, 15, 0, 0, 0, 14, 0, 0, 0]
-        );
-        let range = rs.iter().find(|r| r.kind == 0x0902).unwrap();
-        assert_eq!(
-            decode_plot_range(payload(&file, *range)).unwrap(),
-            (-3., 7., 257)
-        );
-        assert!(rs.iter().all(|r| r.kind != 0x0907));
-        // The legacy paired writer still requires a standalone definition.
-        assert!(encode_plot_groups(expression, 15, 14).is_err());
-    }
-
-    #[test]
-    fn reference_display_substitutes_token_names_without_alias_collisions() {
-        let expression = SimpleFunction::parse_with_sources("v1+v10+f2(x+v1)", 10).unwrap();
-        let names = ["v10", "g", "c", "d", "e", "h", "i", "j", "k", "a"];
-        assert_eq!(
-            expression.display_for_sources(&names),
-            "f(x) = v10 + a + g(x + v10)"
-        );
-        assert_eq!(
-            expression.display_for_sources(&["a"]),
-            "f(x) = a + v10 + f2(x + a)"
-        );
-        assert_eq!(expression.display(), "f(x) = v1 + v10 + f2(x + v1)");
-    }
 }

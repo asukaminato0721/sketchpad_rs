@@ -1,19 +1,59 @@
 use super::embedded_tools::document_records;
-use super::kind::is_point_kind;
+use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
 use super::records::records;
+use super::transform_model::ElementType;
 use super::{Document, Kind, Point, TextStyleCommand};
 use crate::text_object::TextRect;
 use crate::text_records::LabelAux;
 use crate::text_style_records::FontState;
 use crate::{text_object, text_style_records};
 
+fn can_create_geometry_label(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Segment(..)
+            | Kind::Line(..)
+            | Kind::Ray(..)
+            | Kind::Parallel(..)
+            | Kind::Perpendicular(..)
+            | Kind::Bisector(..)
+            | Kind::Circle(..)
+            | Kind::CircleBySegment(..)
+    ) || kind.transform_definition().is_some_and(|definition| {
+        matches!(
+            definition.element(),
+            ElementType::Segment
+                | ElementType::Ray
+                | ElementType::Line
+                | ElementType::Circle
+                | ElementType::Arc
+        )
+    }) || matches!(kind, Kind::Colorized(definition) if matches!(
+        definition.element(),
+        ElementType::Segment
+            | ElementType::Ray
+            | ElementType::Line
+            | ElementType::Circle
+            | ElementType::Arc
+    )) || matches!(
+        kind,
+        Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..)
+    )
+}
+
 impl Document {
     /// Current displayed caption content and its saved placement.
     pub fn text_content(&self, id: usize) -> Option<(String, TextRect)> {
-        if let Some(content) = self.referenced_caption_content(id) { return Some(content); }
+        if let Some(content) = self.referenced_caption_content(id) {
+            return Some(content);
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
-        if object.deleted { return None; }
-        let Kind::PlainText { text, rect } = &object.kind else { return None; };
+        if object.deleted {
+            return None;
+        }
+        let Kind::PlainText { text, rect } = &object.kind else {
+            return None;
+        };
         Some((text.clone(), *rect))
     }
     fn can_edit_literal_text(&self) -> bool {
@@ -116,7 +156,9 @@ impl Document {
         (template.decode().ok()?.0 == *text).then_some(template)
     }
     pub fn text_rich_runs(&self, id: usize) -> Option<Vec<Vec<text_object::RichTextRun>>> {
-        if let Some(rows) = self.referenced_caption_rich_runs(id) { return Some(rows); }
+        if let Some(rows) = self.referenced_caption_rich_runs(id) {
+            return Some(rows);
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::PlainText { ref text, .. } = object.kind else {
             return None;
@@ -167,16 +209,22 @@ impl Document {
             let group = rs[start + 1..]
                 .iter()
                 .take_while(|record| record.kind != 0x07d7);
-            let record = group.clone()
+            let record = group
+                .clone()
                 .find(|record| record.kind == 0x07d8 && record.data.len() == 2);
-            if record.is_none() && object.label.is_none() && !group.clone().any(|record|
-                matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907 | 0x090d)) {
+            if record.is_none()
+                && object.label.is_none()
+                && !group
+                    .clone()
+                    .any(|record| matches!(record.kind, 0x08fc | 0x07d5 | 0x0903 | 0x0907 | 0x090d))
+            {
                 return None;
             }
             record.map_or(0, |record| {
                 u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
             })
-        } else if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &object.kind {
+        } else if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &object.kind
+        {
             usize::from(group.font_reference())
         } else {
             0
@@ -221,9 +269,13 @@ impl Document {
                 self.objects.get(id - 1).is_some_and(|object| {
                     !object.deleted
                         && object.page == self.active_page
-                        && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }
-                            | Kind::PointReferencedText { .. } | Kind::PointNumericLabel(..))
-                            || object.label.is_some()
+                        && (matches!(
+                            object.kind,
+                            Kind::PlainText { .. }
+                                | Kind::ReferencedText { .. }
+                                | Kind::PointReferencedText { .. }
+                                | Kind::PointNumericLabel(..)
+                        ) || object.label.is_some()
                             || object.measurement_anchor.is_some())
                 })
             })
@@ -260,7 +312,7 @@ impl Document {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if updates.is_empty() {
-            return Err("Select text, a labeled point, or a measurement caption to format".into());
+            return Err("Select text, an object label, or a measurement caption to format".into());
         }
         let count = updates.len();
         self.checkpoint();
@@ -282,9 +334,13 @@ impl Document {
                 self.objects.get(id - 1).is_some_and(|object| {
                     !object.deleted
                         && object.page == self.active_page
-                        && (matches!(object.kind, Kind::PlainText { .. } | Kind::ReferencedText { .. }
-                            | Kind::PointReferencedText { .. } | Kind::PointNumericLabel(..))
-                            || object.label.is_some()
+                        && (matches!(
+                            object.kind,
+                            Kind::PlainText { .. }
+                                | Kind::ReferencedText { .. }
+                                | Kind::PointReferencedText { .. }
+                                | Kind::PointNumericLabel(..)
+                        ) || object.label.is_some()
                             || object.measurement_anchor.is_some())
                 })
             })
@@ -295,7 +351,7 @@ impl Document {
             })
             .collect::<Result<Vec<_>, String>>()?;
         if updates.is_empty() {
-            return Err("Select text, a labeled point, or a measurement caption to format".into());
+            return Err("Select text, an object label, or a measurement caption to format".into());
         }
         let count = updates.len();
         self.checkpoint();
@@ -457,11 +513,15 @@ impl Document {
             .get(id.checked_sub(1).ok_or("Invalid text ID")?)
             .ok_or("Invalid text ID")?;
         if let Kind::ReferencedText { parents, text } = &object.kind {
-            if object.deleted || object.page != self.active_page { return Err("Caption is not on the active page".into()); }
+            if object.deleted || object.page != self.active_page {
+                return Err("Caption is not on the active page".into());
+            }
             let parents = parents.clone();
             let text = text.with_origin((x, y));
-            if checkpoint { self.checkpoint(); }
-            self.objects[id-1].kind = Kind::ReferencedText { parents, text };
+            if checkpoint {
+                self.checkpoint();
+            }
+            self.objects[id - 1].kind = Kind::ReferencedText { parents, text };
             self.dirty = true;
             return Ok(());
         }
@@ -490,26 +550,173 @@ impl Document {
         self.dirty = true;
         Ok(())
     }
-    pub fn set_point_label(&mut self, id: usize, name: &str, visible: bool) -> Result<(), String> {
+    pub fn can_edit_geometry_label(&self, id: usize) -> bool {
+        self.objects
+            .get(id.saturating_sub(1))
+            .is_some_and(|object| {
+                !object.deleted
+                    && object.page == self.active_page
+                    && (is_point_kind(&object.kind)
+                        || can_create_geometry_label(&object.kind)
+                        || (object.label.is_some()
+                            && (is_straight_kind(&object.kind)
+                                || object.kind.is_circle()
+                                || is_arc_kind(&object.kind))))
+            })
+    }
+
+    pub fn object_label_anchor(&self, id: usize) -> Option<Point> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let label = object.label.as_ref()?;
+        if is_point_kind(&object.kind) {
+            return self.position(id);
+        }
+        if is_straight_kind(&object.kind) {
+            let parameter = label.geometric_parameter()?;
+            let (start, end, _) = self.line_points(id)?;
+            return Some(Point {
+                x: start.x + parameter * (end.x - start.x),
+                y: start.y + parameter * (end.y - start.y),
+            });
+        }
+        if object.kind.is_circle() {
+            let parameter = label.geometric_parameter()?;
+            let (center, radius) = self.circle_points(id)?;
+            return Some(Point {
+                x: center.x + radius * parameter.cos(),
+                y: center.y - radius * parameter.sin(),
+            });
+        }
+        if is_arc_kind(&object.kind) {
+            return self.point_on_arc(id, label.geometric_parameter()?);
+        }
+        self.angle_marker_label_anchor(id)
+    }
+
+    pub fn set_object_label(
+        &mut self,
+        id: usize,
+        name: &str,
+        visible: bool,
+    ) -> Result<bool, String> {
         if self.partial_view {
             return Err("Cannot edit labels in a sketch with unsupported records safely".into());
         }
         let object = self
             .objects
-            .get(id.checked_sub(1).ok_or("Invalid point ID")?)
-            .ok_or("Invalid point ID")?;
-        if !is_point_kind(&object.kind) || object.deleted {
-            return Err("Object is not a point".into());
+            .get(id.checked_sub(1).ok_or("Invalid object ID")?)
+            .ok_or("Invalid object ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Object is not on the active page".into());
         }
+        if !is_point_kind(&object.kind)
+            && !is_straight_kind(&object.kind)
+            && !object.kind.is_circle()
+            && !is_arc_kind(&object.kind)
+        {
+            return Err("Object does not support editable geometric labels".into());
+        }
+        let transformed_element = object
+            .kind
+            .transform_definition()
+            .map(|definition| definition.element());
+        let colorized_element = match &object.kind {
+            Kind::Colorized(definition) => Some(definition.element()),
+            _ => None,
+        };
         let mut label = if let Some(existing) = &object.label {
             existing.clone()
-        } else {
+        } else if is_point_kind(&object.kind) {
             LabelAux::new_point(name, visible, (8, 5))?
+        } else if !can_create_geometry_label(&object.kind) {
+            return Err("Creating a label for this derived object is not yet supported".into());
+        } else if matches!(
+            transformed_element,
+            Some(ElementType::Segment | ElementType::Ray | ElementType::Line)
+        ) {
+            LabelAux::new_geometric(name, visible, (-10, 5), 0.25)?
+        } else if transformed_element == Some(ElementType::Circle) {
+            LabelAux::new_geometric(name, visible, (1, -1), 7.0 * std::f64::consts::FRAC_PI_4)?
+        } else if transformed_element == Some(ElementType::Arc) {
+            LabelAux::new_geometric(name, visible, (-8, -33), 0.25)?
+        } else if matches!(
+            colorized_element,
+            Some(ElementType::Segment | ElementType::Ray | ElementType::Line)
+        ) {
+            LabelAux::new_geometric(name, visible, (-10, 5), 0.25)?
+        } else if colorized_element == Some(ElementType::Circle) {
+            LabelAux::new_geometric(name, visible, (1, -1), 7.0 * std::f64::consts::FRAC_PI_4)?
+        } else if colorized_element == Some(ElementType::Arc) {
+            LabelAux::new_geometric(name, visible, (6, -23), 0.25)?
+        } else if is_straight_kind(&object.kind) {
+            LabelAux::new_geometric(name, visible, (-6, 5), 0.25)?
+        } else if object.kind.is_circle() {
+            LabelAux::new_geometric(name, visible, (2, -1), 7.0 * std::f64::consts::FRAC_PI_4)?
+        } else if matches!(object.kind, Kind::ThreePointArc(..)) {
+            LabelAux::new_geometric(name, visible, (-26, -30), 0.25)?
+        } else if is_arc_kind(&object.kind) {
+            LabelAux::new_geometric(name, visible, (6, -23), 0.25)?
+        } else {
+            return Err("Object does not support editable labels".into());
         };
         label.set_name(name)?;
         label.set_visible(visible);
-        self.checkpoint();
-        self.objects[id - 1].label = Some(label);
+        if object.label.as_ref() == Some(&label) {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.objects[id - 1].label = Some(label);
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
+    pub fn set_selected_geometry_label_visibility(
+        &mut self,
+        visible: bool,
+    ) -> Result<usize, String> {
+        if self.partial_view {
+            return Err("Cannot edit labels in a sketch with unsupported records safely".into());
+        }
+        let ids = self
+            .selected
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.can_edit_geometry_label(id)
+                    && self.objects[id - 1]
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.visible() != visible)
+            })
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        for id in &ids {
+            candidate.objects[*id - 1]
+                .label
+                .as_mut()
+                .unwrap()
+                .set_visible(visible);
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(ids.len())
+    }
+
+    pub fn set_point_label(&mut self, id: usize, name: &str, visible: bool) -> Result<(), String> {
+        if !self
+            .objects
+            .get(id.saturating_sub(1))
+            .is_some_and(|object| is_point_kind(&object.kind))
+        {
+            return Err("Object is not a point".into());
+        }
+        self.set_object_label(id, name, visible)?;
         Ok(())
     }
 }

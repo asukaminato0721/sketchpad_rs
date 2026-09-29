@@ -311,4 +311,74 @@ fn authored_curve_defaults_match_native_templates_and_sweeps_keep_their_layout()
             assert_eq!(doc.encode().unwrap(), bytes);
         }
     }
+
+    let custom_defaults = crate::document::ObjectColorDefaults {
+        point_locus: RgbColor {
+            red: 12,
+            green: 34,
+            blue: 56,
+        },
+        plot: RgbColor {
+            red: 65,
+            green: 43,
+            blue: 21,
+        },
+        ..crate::document::ObjectColorDefaults::default()
+    };
+    let mut custom_styles = crate::document::ObjectStyleDefaults::default();
+    assert!(custom_styles.set_line_width(crate::document::ObjectClass::Plot, LineWidth::Thick));
+    assert!(custom_styles.set_line_pattern(
+        crate::document::ObjectClass::PointLocus,
+        LinePattern::Dashed
+    ));
+    let mut custom_plot = Document::new();
+    custom_plot.set_object_color_defaults(custom_defaults);
+    custom_plot.set_object_style_defaults(custom_styles);
+    custom_plot
+        .plot_new_function(SimpleFunction::Square, Point { x: 199., y: 125. })
+        .unwrap();
+    let plot = custom_plot
+        .objects
+        .iter()
+        .find(|object| matches!(object.kind, Kind::FunctionPlot(..)))
+        .unwrap();
+    assert_eq!(
+        custom_plot.object_class(plot.id),
+        Some(crate::document::ObjectClass::Plot)
+    );
+    assert!(matches!(
+        plot.visual_style,
+        Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                width: LineWidth::Thick,
+                ..
+            },
+            color,
+        }) if color == custom_defaults.plot
+    ));
+    custom_plot.verify_roundtrip().unwrap();
+
+    let mut custom_locus = Document::from_bytes(
+        include_bytes!("../../../../../tests/fixtures/locus_midpoint_base.gsp"),
+        None,
+    )
+    .unwrap();
+    custom_locus.set_object_color_defaults(custom_defaults);
+    custom_locus.set_object_style_defaults(custom_styles);
+    let locus = custom_locus.construct_locus(4, 7).unwrap();
+    assert_eq!(
+        custom_locus.object_class(locus),
+        Some(crate::document::ObjectClass::PointLocus)
+    );
+    assert!(matches!(
+        custom_locus.objects[locus - 1].visual_style,
+        Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                pattern: LinePattern::Dashed,
+                ..
+            },
+            color,
+        }) if color == custom_defaults.point_locus
+    ));
+    custom_locus.verify_roundtrip().unwrap();
 }

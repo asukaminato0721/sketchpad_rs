@@ -26,20 +26,24 @@ fn animation_button_variants_import_and_preserve_settings() {
             false,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/action_animation_slow_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/action_animation_slow_original.gsp")
+                .as_slice(),
             AnimationDirection::Bidirectional,
             4.,
             false,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/action_animation_fast_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/action_animation_fast_original.gsp")
+                .as_slice(),
             AnimationDirection::Bidirectional,
             80.,
             false,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/action_animation_forward_once_original.gsp")
-                .as_slice(),
+            include_bytes!(
+                "../../../../../tests/fixtures/action_animation_forward_once_original.gsp"
+            )
+            .as_slice(),
             AnimationDirection::Forward,
             24.,
             true,
@@ -81,7 +85,8 @@ fn animation_button_variants_import_and_preserve_settings() {
             5,
         ),
         (
-            include_bytes!("../../../../../tests/fixtures/action_animation_free_original.gsp").as_slice(),
+            include_bytes!("../../../../../tests/fixtures/action_animation_free_original.gsp")
+                .as_slice(),
             1,
             2,
         ),
@@ -115,6 +120,30 @@ fn animation_button_variants_import_and_preserve_settings() {
         Kind::AnimationButton { ref settings, .. }
             if settings.len() == 1 && settings[0].direction == AnimationDirection::Forward
     ));
+
+    let mut tagged_point =
+        include_bytes!("../../../../../assets/action_animation_group.bin").to_vec();
+    tagged_point[0x43] = 0x21;
+    let mut group = crate::action_records::AnimationButtonGroup::parse(&tagged_point).unwrap();
+    assert_eq!(
+        group.settings().unwrap().direction,
+        AnimationDirection::Bidirectional
+    );
+    group
+        .set_settings(AnimationSettings {
+            direction: AnimationDirection::Backward,
+            ..AnimationSettings::default()
+        })
+        .unwrap();
+    assert_eq!(group.encode()[0x43], 0x11);
+
+    tagged_point[0x43] = 0x22;
+    assert!(crate::action_records::AnimationButtonGroup::parse(&tagged_point).is_err());
+    let mut tagged_parameter =
+        include_bytes!("../../../../../assets/action_animation_parameter_group.bin").to_vec();
+    tagged_parameter[0x43] = 0x24;
+    let group = crate::action_records::AnimationButtonGroup::parse(&tagged_parameter).unwrap();
+    assert!(group.settings().unwrap().parameter.is_some());
 }
 
 #[test]
@@ -134,8 +163,10 @@ fn two_point_animation_button_imports_creates_and_copies() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/action_animation_two_points_original.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/action_animation_two_points_second_backward.gsp")
-            .as_slice(),
+        include_bytes!(
+            "../../../../../tests/fixtures/action_animation_two_points_second_backward.gsp"
+        )
+        .as_slice(),
         include_bytes!("../../../../../tests/fixtures/action_animation_two_points_clicked.gsp")
             .as_slice(),
         include_bytes!(
@@ -198,7 +229,8 @@ fn three_point_animation_button_imports_edits_and_copies() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/action_animation_three_points_native.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/action_animation_three_points_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/action_animation_three_points_port.gsp")
+            .as_slice(),
         include_bytes!(
             "../../../../../tests/fixtures/action_animation_three_points_port_clicked_by_wine.gsp"
         )
@@ -250,7 +282,9 @@ fn three_point_animation_button_imports_edits_and_copies() {
     let generated = document.encode().unwrap();
     assert_eq!(
         generated,
-        include_bytes!("../../../../../tests/fixtures/action_animation_three_points_settings_port.gsp")
+        include_bytes!(
+            "../../../../../tests/fixtures/action_animation_three_points_settings_port.gsp"
+        )
     );
     let reopened = Document::from_bytes(&generated, None).unwrap();
     assert!(!reopened.partial_view);
@@ -278,7 +312,8 @@ fn mixed_point_animation_button_keeps_per_target_defaults() {
     for bytes in [
         include_bytes!("../../../../../tests/fixtures/action_animation_mixed_points_native.gsp")
             .as_slice(),
-        include_bytes!("../../../../../tests/fixtures/action_animation_mixed_points_port.gsp").as_slice(),
+        include_bytes!("../../../../../tests/fixtures/action_animation_mixed_points_port.gsp")
+            .as_slice(),
         include_bytes!(
             "../../../../../tests/fixtures/action_animation_mixed_points_port_clicked_by_wine.gsp"
         )

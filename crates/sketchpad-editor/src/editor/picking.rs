@@ -1,10 +1,33 @@
-use super::Editor;
+use super::{Editor, Tool};
+use crate::render::Viewport;
 use sketchpad_engine::document::{Kind, LineMode, Point};
 use sketchpad_engine::graph::{GraphPoint, GridForm};
-use crate::render::Viewport;
 
 impl Editor {
+    fn point_hit_radius(&self) -> f32 {
+        if self.tool != Tool::Select {
+            return 11.;
+        }
+        match self.preferences.selection_magnetism {
+            super::SelectionMagnetism::Low => 7.,
+            super::SelectionMagnetism::Medium => 11.,
+            super::SelectionMagnetism::High => 16.,
+        }
+    }
+
+    fn geometry_hit_radius(&self) -> f32 {
+        if self.tool != Tool::Select {
+            return 7.;
+        }
+        match self.preferences.selection_magnetism {
+            super::SelectionMagnetism::Low => 4.,
+            super::SelectionMagnetism::Medium => 7.,
+            super::SelectionMagnetism::High => 11.,
+        }
+    }
+
     pub(super) fn hit_point(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
+        let radius = self.point_hit_radius();
         self.doc
             .objects
             .iter()
@@ -15,12 +38,13 @@ impl Editor {
                     .position(o.id)
                     .map(|at| (o.id, v.screen(at).distance(p)))
             })
-            .filter(|(_, d)| *d < 11.)
+            .filter(|(_, d)| *d < radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|x| x.0)
     }
     pub(super) fn hit_grid(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         let world = v.world(p);
+        let radius = self.geometry_hit_radius();
         self.doc
             .objects
             .iter()
@@ -53,7 +77,7 @@ impl Editor {
                 };
                 let at = frame.world(x, y)?;
                 let distance = v.screen(Point { x: at.x, y: at.y }).distance(p);
-                (distance < 7.).then_some((object.id, distance))
+                (distance < radius).then_some((object.id, distance))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
@@ -122,86 +146,124 @@ impl Editor {
         crate::render::action_button_rect(v, anchor, label).translate(self.button_offset(v))
     }
     pub(super) fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
+        let radius = self.geometry_hit_radius();
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && self.doc.image_instances(object.id).is_some_and(|(_, png, transforms)|
-                    transforms.into_iter().any(|transform|
-                        crate::render::picture_hit(v, png, transform, p)))
+                && self
+                    .doc
+                    .cropped_image(object.id)
+                    .is_some_and(|(_, png, transform, polygon)| {
+                        crate::render::picture_hit(v, png, transform, p)
+                            && crate::render::point_in_polygon(
+                                &polygon
+                                    .into_iter()
+                                    .map(|point| v.screen(point))
+                                    .collect::<Vec<_>>(),
+                                p,
+                            )
+                    })
         }) {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
             self.doc.is_displayed(object.id)
-                && self.doc.text_content(object.id).is_some_and(|(text, rect)| {
-                    let top_left = v.screen(Point {
-                        x: rect.left.into(),
-                        y: rect.top.into(),
-                    });
-                    let saved_bottom_right = v.screen(Point {
-                        x: rect.right.into(),
-                        y: rect.bottom.into(),
-                    });
-                    let size = self
-                        .doc
-                        .text_font_state(object.id)
-                        .map_or(16., |style| style.size_code as f32);
-                    let (width, height) = if let Some(layout) = self.math_text_layout(object.id) {
-                        (layout.width, layout.height())
-                    } else if let Some(rows) = self.doc.text_rich_runs(object.id) {
-                        let width = rows
-                            .iter()
-                            .map(|row| {
-                                row.iter()
-                                    .map(|run| {
-                                        run.text.chars().count() as f32
-                                            * run.style.size_code.map_or(size, f32::from)
-                                            * 0.65
-                                    })
-                                    .sum::<f32>()
-                            })
-                            .fold(0., f32::max);
-                        let height = rows
-                            .iter()
-                            .map(|row| {
-                                row.iter()
-                                    .map(|run| run.style.size_code.map_or(size, f32::from))
-                                    .fold(size, f32::max)
-                            })
-                            .map(|line_size| (line_size * 1.1).max(19.))
-                            .sum();
-                        (width, height)
-                    } else {
-                        let width = text
-                            .split('\n')
-                            .map(|line| line.chars().count())
-                            .max()
-                            .unwrap_or(0) as f32
-                            * size
-                            * 0.65;
-                        let height = (text.lines().count().saturating_sub(1) as f32 * 19.)
-                            + size * 1.1;
-                        (width, height)
-                    };
-                    egui::Rect::from_min_max(
-                        top_left,
-                        egui::pos2(
-                            saved_bottom_right.x.max(top_left.x + width),
-                            saved_bottom_right.y.max(top_left.y + height),
-                        ),
-                    )
-                    .contains(p)
-                })
+                && self
+                    .doc
+                    .image_instances(object.id)
+                    .is_some_and(|(_, png, transforms)| {
+                        transforms
+                            .into_iter()
+                            .any(|transform| crate::render::picture_hit(v, png, transform, p))
+                    })
         }) {
             return Some(object.id);
         }
         if let Some(object) = self.doc.objects.iter().rev().find(|object| {
-            self.doc.is_displayed(object.id) && self.doc.point_math_labels(object.id).is_some_and(|labels| {
-                let ctx = self.font_context.clone().unwrap_or_else(|| crate::render::math_text::font_context(&self.doc));
-                labels.into_iter().any(|(point, nodes)| {
-                    let layout = crate::render::math_text::measured_nodes(&self.doc, object.id, &nodes, &ctx);
-                    egui::Rect::from_center_size(v.screen(point), egui::vec2(layout.width, layout.height())).contains(p)
+            self.doc.is_displayed(object.id)
+                && self
+                    .doc
+                    .text_content(object.id)
+                    .is_some_and(|(text, rect)| {
+                        let top_left = v.screen(Point {
+                            x: rect.left.into(),
+                            y: rect.top.into(),
+                        });
+                        let saved_bottom_right = v.screen(Point {
+                            x: rect.right.into(),
+                            y: rect.bottom.into(),
+                        });
+                        let size = self
+                            .doc
+                            .text_font_state(object.id)
+                            .map_or(16., |style| style.size_code as f32);
+                        let (width, height) = if let Some(layout) = self.math_text_layout(object.id)
+                        {
+                            (layout.width, layout.height())
+                        } else if let Some(rows) = self.doc.text_rich_runs(object.id) {
+                            let width = rows
+                                .iter()
+                                .map(|row| {
+                                    row.iter()
+                                        .map(|run| {
+                                            run.text.chars().count() as f32
+                                                * run.style.size_code.map_or(size, f32::from)
+                                                * 0.65
+                                        })
+                                        .sum::<f32>()
+                                })
+                                .fold(0., f32::max);
+                            let height = rows
+                                .iter()
+                                .map(|row| {
+                                    row.iter()
+                                        .map(|run| run.style.size_code.map_or(size, f32::from))
+                                        .fold(size, f32::max)
+                                })
+                                .map(|line_size| (line_size * 1.1).max(19.))
+                                .sum();
+                            (width, height)
+                        } else {
+                            let width = text
+                                .split('\n')
+                                .map(|line| line.chars().count())
+                                .max()
+                                .unwrap_or(0) as f32
+                                * size
+                                * 0.65;
+                            let height =
+                                (text.lines().count().saturating_sub(1) as f32 * 19.) + size * 1.1;
+                            (width, height)
+                        };
+                        egui::Rect::from_min_max(
+                            top_left,
+                            egui::pos2(
+                                saved_bottom_right.x.max(top_left.x + width),
+                                saved_bottom_right.y.max(top_left.y + height),
+                            ),
+                        )
+                        .contains(p)
+                    })
+        }) {
+            return Some(object.id);
+        }
+        if let Some(object) = self.doc.objects.iter().rev().find(|object| {
+            self.doc.is_displayed(object.id)
+                && self.doc.point_math_labels(object.id).is_some_and(|labels| {
+                    let ctx = self
+                        .font_context
+                        .clone()
+                        .unwrap_or_else(|| crate::render::math_text::font_context(&self.doc));
+                    labels.into_iter().any(|(point, nodes)| {
+                        let layout = crate::render::math_text::measured_nodes(
+                            &self.doc, object.id, &nodes, &ctx,
+                        );
+                        egui::Rect::from_center_size(
+                            v.screen(point),
+                            egui::vec2(layout.width, layout.height()),
+                        )
+                        .contains(p)
+                    })
                 })
-            })
         }) {
             return Some(object.id);
         }
@@ -287,24 +349,41 @@ impl Editor {
                                 })
                                 .min_by(f32::total_cmp)?
                         }
-                        Kind::AngleMarker(..) | Kind::PolarAngleValue(..) | Kind::VertexAngleValue(..) => {
+                        Kind::AngleMarker(..)
+                        | Kind::PolarAngleValue(..)
+                        | Kind::VertexAngleValue(..) => {
                             let marker = self.doc.angle_marker_geometry(o.id)?;
-                            let inside = o.angle_marker_style?.opacity != 0 && marker.sector.iter()
-                                .zip(marker.sector.iter().cycle().skip(1)).take(marker.sector.len())
-                                .fold(false, |inside, (a, b)| {
-                                    let (a, b) = (v.screen(*a), v.screen(*b));
-                                    inside ^ ((a.y > p.y) != (b.y > p.y)
-                                        && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
-                                });
-                            if inside { 0. } else {
-                                marker.strokes.into_iter()
-                                    .flat_map(|path| path.windows(2).map(|pair| {
-                                        let a = v.screen(pair[0]);
-                                        let b = v.screen(pair[1]);
-                                        let ab = b - a;
-                                        let t = ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.);
-                                        (p - (a + ab * t)).length()
-                                    }).collect::<Vec<_>>())
+                            let inside = o.angle_marker_style?.opacity != 0
+                                && marker
+                                    .sector
+                                    .iter()
+                                    .zip(marker.sector.iter().cycle().skip(1))
+                                    .take(marker.sector.len())
+                                    .fold(false, |inside, (a, b)| {
+                                        let (a, b) = (v.screen(*a), v.screen(*b));
+                                        inside
+                                            ^ ((a.y > p.y) != (b.y > p.y)
+                                                && p.x
+                                                    < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+                                    });
+                            if inside {
+                                0.
+                            } else {
+                                marker
+                                    .strokes
+                                    .into_iter()
+                                    .flat_map(|path| {
+                                        path.windows(2)
+                                            .map(|pair| {
+                                                let a = v.screen(pair[0]);
+                                                let b = v.screen(pair[1]);
+                                                let ab = b - a;
+                                                let t = ((p - a).dot(ab) / ab.length_sq())
+                                                    .clamp(0., 1.);
+                                                (p - (a + ab * t)).length()
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
                                     .min_by(f32::total_cmp)?
                             }
                         }
@@ -374,7 +453,7 @@ impl Editor {
                                         .collect::<Vec<_>>()
                                 })
                                 .or_else(|| self.doc.locus_strokes(o.id, 256))
-                .or_else(|| self.doc.sampled_mapped_strokes(o.id, 256))?;
+                                .or_else(|| self.doc.sampled_mapped_strokes(o.id, 256))?;
                             segments
                                 .iter()
                                 .map(|(start, end, mode)| {
@@ -398,7 +477,7 @@ impl Editor {
                         _ => return None,
                     }
                 };
-                (distance < 7.).then_some((o.id, distance))
+                (distance < radius).then_some((o.id, distance))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|x| x.0)

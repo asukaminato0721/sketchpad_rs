@@ -1,7 +1,9 @@
 //! Shared native transform schemas with independently validated output typing.
 //! Appearance, caches and unknown auxiliary records remain in the preserving serializer.
 use super::decode::{polar_distance_scale, transform_angle_degrees};
-use super::kind::{is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count};
+use super::kind::{
+    is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count,
+};
 use super::records::{f64_at, polygon_subtype, u32_at};
 use super::transform_model::{
     DisplacementExpr, ElementType, NativeTransformFlavor, NumericExpr, Transform,
@@ -10,6 +12,11 @@ use super::transform_model::{
 use super::{LineMode, Object};
 use crate::table_records::NumericUnit;
 
+pub(super) struct DecodeContext {
+    pub standalone_custom_point: bool,
+    pub source_is_generic_polygon: bool,
+}
+
 pub(super) fn decode_native_transform(
     objects: &[Object],
     page: usize,
@@ -17,7 +24,7 @@ pub(super) fn decode_native_transform(
     header: &[u8],
     references: &[usize],
     constraint: Option<&[u8]>,
-    standalone_custom_point: bool,
+    context: DecodeContext,
 ) -> Option<TransformDefinition> {
     if header.len() != 28 {
         return None;
@@ -31,6 +38,7 @@ pub(super) fn decode_native_transform(
         [4, 0, _, _] => ElementType::Polygon,
         [12, 0, 67, 0] => ElementType::Arc,
         [13, 0, 68, 0] => ElementType::Sector,
+        [16, 0, 78, 0] => ElementType::Image,
         [2, 0, 13, 0] => ElementType::Ray,
         [2, 0, 12, 0] => ElementType::Line,
         _ => return None,
@@ -51,10 +59,14 @@ pub(super) fn decode_native_transform(
         ElementType::Segment => is_segment_kind(source_kind),
         ElementType::Circle => source_kind.is_circle(),
         ElementType::Disk => source_kind.is_circle_interior(),
-        ElementType::Polygon => source_kind.is_polygon()
-            && polygon_vertex_count(objects, source).and_then(polygon_subtype)
-                == Some(u16::from_le_bytes([header[8], header[9]])),
+        ElementType::Polygon => {
+            source_kind.is_polygon()
+                && (polygon_vertex_count(objects, source).and_then(polygon_subtype)
+                    == Some(u16::from_le_bytes([header[8], header[9]]))
+                    || (header[8..10] == [15, 0] && context.source_is_generic_polygon))
+        }
         ElementType::Sector => source_kind.is_sector(),
+        ElementType::Image => matches!(source_kind, super::Kind::Image { .. }),
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
         ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),
     };
@@ -83,7 +95,7 @@ pub(super) fn decode_native_transform(
     use NativeTransformFlavor as F;
     let (transform, flavor) = match (code, references) {
         (26, [_, angle, distance])
-            if standalone_custom_point
+            if context.standalone_custom_point
                 && constraint.is_none()
                 && numeric(*angle, NumericUnit::Degrees)
                 && numeric(*distance, NumericUnit::Length) =>
@@ -198,17 +210,13 @@ pub(super) fn decode_native_transform(
                 F::PointAngleRotation,
             )
         }
-        (29, [_, center, angle])
-            if constraint.is_none() && point(*center) && quantity(*angle) =>
-        {
-            (
-                Transform::Rotate {
-                    center: *center,
-                    angle: value(*angle, NumericUnit::Degrees),
-                },
-                F::NumericRotation,
-            )
-        }
+        (29, [_, center, angle]) if constraint.is_none() && point(*center) && quantity(*angle) => (
+            Transform::Rotate {
+                center: *center,
+                angle: value(*angle, NumericUnit::Degrees),
+            },
+            F::NumericRotation,
+        ),
         (30, [_, center]) if point(*center) => {
             let p = payload(12)?;
             let ratio = f64_at(p, 4);
@@ -239,20 +247,15 @@ pub(super) fn decode_native_transform(
                 F::PointRatioDilation,
             )
         }
-        (33, [_, center, ratio])
-            if constraint.is_none() && point(*center) && quantity(*ratio) =>
-        {
-            (
-                Transform::Dilate {
-                    center: *center,
-                    ratio: value(*ratio, NumericUnit::Scalar),
-                },
-                F::NumericDilation,
-            )
-        }
+        (33, [_, center, ratio]) if constraint.is_none() && point(*center) && quantity(*ratio) => (
+            Transform::Dilate {
+                center: *center,
+                ratio: value(*ratio, NumericUnit::Scalar),
+            },
+            F::NumericDilation,
+        ),
         (34, [_, mirror])
-            if constraint.is_none()
-                && get(*mirror).is_some_and(|o| is_straight_kind(&o.kind)) =>
+            if constraint.is_none() && get(*mirror).is_some_and(|o| is_straight_kind(&o.kind)) =>
         {
             (Transform::Reflect { mirror: *mirror }, F::Reflection)
         }

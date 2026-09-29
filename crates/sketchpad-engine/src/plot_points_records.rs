@@ -1,13 +1,11 @@
 //! Graph plotting records observed with Plot Points and Plot Table Data.
 //! Cartesian and polar points from frame-only and parameter sketches are cross-opened.
 
+use crate::table_records::{ParameterGroup, TableGroup};
 use std::ops::Range;
 
-#[allow(dead_code)]
-#[path = "table_records.rs"]
-mod table_records;
-
-const CARTESIAN: &[u8] = include_bytes!("../../../tests/fixtures/plot_points_table_single_original.gsp");
+const CARTESIAN: &[u8] =
+    include_bytes!("../../../tests/fixtures/plot_points_table_single_original.gsp");
 const POLAR: &[u8] = include_bytes!("../../../tests/fixtures/plot_points_table_polar_original.gsp");
 
 /// One degree in radians as stored by Sketchpad 5's polar point dialog.
@@ -140,8 +138,7 @@ fn object_group(rs: &[Record], ordinal: usize) -> Result<Range<usize>, String> {
         .start;
     let end = rs
         .iter()
-        .filter(|r| r.kind == 0x07d7 && r.start > start)
-        .next()
+        .find(|r| r.kind == 0x07d7 && r.start > start)
         .ok_or("Unterminated object group")?
         .end;
     Ok(start..end)
@@ -295,8 +292,8 @@ pub fn append_t1_plot(
     {
         return Err("Unsupported Plot Points source or frame".into());
     }
-    let parameter = table_records::ParameterGroup::parse(&base[object_group(&rs, 1)?])?;
-    let table = table_records::TableGroup::parse(&base[object_group(&rs, 2)?])?;
+    let parameter = ParameterGroup::parse(&base[object_group(&rs, 1)?])?;
+    let table = TableGroup::parse(&base[object_group(&rs, 2)?])?;
     if parameter.name() != "t[1]"
         || parameter.value() != 1.0
         || table.source_id() != 1
@@ -384,7 +381,8 @@ mod tests {
 
     #[test]
     fn original_two_row_table_still_adds_one_point() {
-        let file = include_bytes!("../../../tests/fixtures/plot_points_table_two_rows_original.gsp");
+        let file =
+            include_bytes!("../../../tests/fixtures/plot_points_table_two_rows_original.gsp");
         let rs = records(file, 4).unwrap();
         assert_eq!(rs.iter().filter(|r| r.kind == 0x07d0).count(), 9);
         let point = decode_group(&file[last_group(file).unwrap()]).unwrap();
@@ -425,7 +423,7 @@ mod tests {
         let b = decode_group(&polar).unwrap();
         assert_eq!(b.coordinate_system, 7);
         assert_eq!(b.mode, PlotPointsMode::Polar);
-        assert_eq!(b.stored, [0.5, 3.1415926535898]);
+        assert_eq!(b.stored, [0.5, crate::table_records::CALCULATOR_PI]);
         let at_pi = b.position(basis()).unwrap();
         assert!((at_pi.x - (259.0 - 0.5 * (basis().x_unit.x - 259.0))).abs() < 1e-12);
         assert!((at_pi.y - 195.0).abs() < 1e-12);
@@ -515,7 +513,8 @@ mod tests {
         let made = append_t1_plot(base, PlotPointsMode::Cartesian, [1, 8]).unwrap();
         let last = decode_group(&made[last_group(&made).unwrap()]).unwrap();
         assert_eq!(last.stored, [1., 1.]);
-        let two_rows = include_bytes!("../../../tests/fixtures/plot_points_table_two_rows_base.gsp");
+        let two_rows =
+            include_bytes!("../../../tests/fixtures/plot_points_table_two_rows_base.gsp");
         assert!(append_t1_plot(two_rows, PlotPointsMode::Cartesian, [1, 8]).is_ok());
         assert!(append_t1_plot(base, PlotPointsMode::Cartesian, [2, 8]).is_err());
         assert!(append_t1_plot(&made, PlotPointsMode::Cartesian, [1, 8]).is_err());

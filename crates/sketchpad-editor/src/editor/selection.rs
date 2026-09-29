@@ -1,6 +1,6 @@
 use super::{Editor, Tool};
-use sketchpad_engine::document::Kind;
 use crate::render::Viewport;
+use sketchpad_engine::document::Kind;
 
 impl Editor {
     fn point_at(&mut self, v: &Viewport, p: egui::Pos2) -> usize {
@@ -125,10 +125,12 @@ impl Editor {
             return;
         }
         match self.tool {
-            Tool::Custom(index) => self.custom_tool_click(index, v, p),
+            Tool::Custom(source) => self.custom_tool_click(source, v, p),
             Tool::Select => {
                 if !multi && let Some(id) = self.referenced_action_hit(v, p) {
-                    if let Err(error) = self.activate_referenced_action(id, v) { self.status = error; }
+                    if let Err(error) = self.activate_referenced_action(id, v) {
+                        self.status = error;
+                    }
                     self.selection_order.clear();
                     return;
                 }
@@ -215,7 +217,7 @@ impl Editor {
                     }
                     return;
                 }
-                if !multi {
+                if !multi && (hit.is_some() || !self.preferences.double_click_deselection) {
                     self.doc.selected.clear();
                     self.selection_order.clear();
                 }
@@ -234,7 +236,12 @@ impl Editor {
                 self.select_only(id);
             }
             Tool::Text => match self.doc.add_text(&self.text_draft, v.world(p)) {
-                Ok(id) => self.select_only(id),
+                Ok(id) => {
+                    self.select_only(id);
+                    if self.preferences.show_text_palette_for_new_captions {
+                        self.show_text_palette = true;
+                    }
+                }
                 Err(error) => self.status = error,
             },
             Tool::Segment | Tool::Circle => {
