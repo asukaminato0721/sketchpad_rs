@@ -4,7 +4,6 @@ use super::records::{f64_at, u32_at};
 use super::transform_model::ElementType;
 use super::{Document, Kind, LineMode, Object};
 use crate::style_records::{RgbColor, VisualStyle};
-use crate::table_records::NumericUnit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColorRangeBehavior {
@@ -164,19 +163,13 @@ impl ColorizedDefinition {
                 .filter(|o| parent < id && o.id == parent && o.page == page && !o.deleted)
         };
         get(self.source).is_some_and(|o| geometry_element(&o.kind) == Some(self.element))
-            && self.binding.native_operands().iter().all(|parent| {
-                get(*parent).is_some_and(|o| {
-                    matches!(
-                        o.kind.numeric_unit(),
-                        Some(
-                            NumericUnit::Scalar
-                                | NumericUnit::Length
-                                | NumericUnit::Degrees
-                                | NumericUnit::Area
-                        )
-                    )
-                })
-            })
+            // Native normalizes any live numeric quantity against the stored
+            // range, including compound units such as inverse area.
+            && self
+                .binding
+                .native_operands()
+                .iter()
+                .all(|parent| get(*parent).is_some_and(|o| o.kind.numeric_unit().is_some()))
     }
 }
 
@@ -266,11 +259,8 @@ pub(super) fn decode_colorized(
                 && (super::records::polygon_subtype(polygon_vertex_count(objects, source)?)?
                     == subtype
                     || (subtype == 15
-                        && matches!(objects.get(source.checked_sub(1)?)?.kind, Kind::Polygon(_))
-                        && matches!(operation, 0x12 | 0x22 | 0x32 | 0x42)
-                        && p[8..16] == 0f64.to_le_bytes()
-                        && (p[16..24] == 1f64.to_le_bytes()
-                            || (operation == 0x12 && p[16..24] == 2f64.to_le_bytes()))))
+                        && polygon_vertex_count(objects, source).is_some()
+                        && matches!(operation, 0x12 | 0x22 | 0x32 | 0x42)))
         }
         ElementType::CircularSegment | ElementType::Image => false,
     };
@@ -414,7 +404,13 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let style = object.visual_style?;
+        // A transformed image without a local style retains its source style.
+        let style = object.visual_style.or_else(|| {
+            object
+                .kind
+                .transform_definition()
+                .and_then(|definition| self.effective_visual_style(definition.source()))
+        })?;
         if !matches!(object.kind, Kind::Colorized(_)) {
             return Some(style);
         }
