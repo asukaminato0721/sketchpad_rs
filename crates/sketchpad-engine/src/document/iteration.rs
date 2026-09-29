@@ -301,7 +301,19 @@ pub(super) fn supported_mapped_point_iteration(
                             is_point_kind(&image.kind)
                         }
                         (Some(image), Some(seed)) => {
-                            image.kind.numeric_unit() == seed.kind.numeric_unit()
+                            match (seed.kind.numeric_unit(), image.kind.numeric_unit()) {
+                                (Some(seed), Some(image)) => {
+                                    // Native treats scalar and angular mapping
+                                    // states as the same stored magnitude.
+                                    seed == image
+                                        || matches!(
+                                            (seed, image),
+                                            (NumericUnit::Scalar, NumericUnit::Degrees)
+                                                | (NumericUnit::Degrees, NumericUnit::Scalar)
+                                        )
+                                }
+                                _ => false,
+                            }
                         }
                         _ => false,
                     })
