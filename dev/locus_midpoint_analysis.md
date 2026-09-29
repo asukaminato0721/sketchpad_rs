@@ -180,3 +180,45 @@ join only adjacent defined polygons. Regressions cover point curves, segment,
 circle, arc, and polygon families, empty loci, and save/reopen. The cross-open
 proves acceptance of the generated construction; exact native gap rendering
 and discontinuities between finite samples still need separate verification.
+
+## Native sparse captures and explicit free drivers
+
+The 2026-09-29 corpus audit found two broader code-35 conventions. First, the
+stored capture tail is not necessarily the complete live dependency slice.
+Native files omit parallel branches, while others retain an independent style
+or geometry branch from the target. Import now requires target, path, driver,
+proof that the target depends on the driver, a unique subset of the proved
+driver ancestry or validated full target closure, and the final target.
+Unrelated or duplicate captures remain invalid.
+
+Second, some loci store a `Free` base point as the driver and a separately
+constructed path in reference slot 2. The path is often later than the point,
+which explains why the point's own record has no constraint. During locus
+evaluation only, the engine substitutes the corresponding point-on-segment,
+ray, line, circle, arc, polygon, sector, or point-curve kind. The original
+point remains free. Admission requires same-page live objects, the exact native
+range/closure profile, a supported path family, and proof that the path does
+not depend on the driver; ordinary authored loci still require a constrained
+point.
+
+Native geometric sweeps also use both observed word-32 presentation values,
+and code-43 filled targets include the already supported disk, sector, and
+circular-segment region families. Their outlines and surfaces now use the
+shared filled-region sampler.
+
+Point-output `Locus`, `ParameterLocus`, and `SampledMapped` objects are curves
+in their own right. Native code-43 records can sweep one of these curves along
+an outer driver. The evaluator replays the earlier validated curve independently
+at each outer sample, preserving undefined gaps and bounding both presentation
+budgets. Geometric-output loci are deliberately not reclassified as curves, so
+this does not create unbounded recursive target inference. An authored nested
+point-locus control covers evaluation, serialization, and reopen inside the
+existing locus-family test.
+
+The compiled scan restores 107 drawing code-35 loci plus 47 downstream objects.
+Unsupported slots fall 4,021→3,867; all-kind-complete documents rise
+1,125→1,149 and drawing-complete documents rise 1,153→1,178. Partial views
+fall to 895. All 1,599 source files still parse and round-trip byte-exactly;
+embedded prototype coverage remains 4,744/5,356. The existing locus tests cover
+the transient free-driver path, cyclic-path rejection, sparse capture
+validation, sampling, save, and reopen without adding another test case.

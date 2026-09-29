@@ -16,7 +16,10 @@ fn unedited_original_with_undefined_geometry_round_trips_byte_exactly() {
 fn an_undo_checkpoint_without_an_edit_keeps_the_original_payload() {
     let mut document = Document::from_bytes(SOURCE_WITH_UNEVALUATED_CONSTRAINT, None).unwrap();
     document.checkpoint();
-    assert_eq!(document.encode().unwrap(), SOURCE_WITH_UNEVALUATED_CONSTRAINT);
+    assert_eq!(
+        document.encode().unwrap(),
+        SOURCE_WITH_UNEVALUATED_CONSTRAINT
+    );
 }
 
 #[test]
@@ -29,5 +32,10 @@ fn a_non_finite_point_edit_is_refused() {
         panic!("expected a free point in the source fixture");
     };
     point.x = f64::NAN;
-    assert!(document.encode().unwrap_err().contains("Non-finite coordinates"));
+    assert!(
+        document
+            .encode()
+            .unwrap_err()
+            .contains("Non-finite coordinates")
+    );
 }

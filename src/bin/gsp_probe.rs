@@ -5,6 +5,7 @@ use sketchpad_rs::action_records::{
     ScrollPlacement,
 };
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
+use sketchpad_rs::document::colorized::{ColorBinding, ColorRangeBehavior};
 use sketchpad_rs::document::{
     Clipboard, Document, IterationDepth, Kind, Point, Record, TextStyleCommand, records,
 };
@@ -49,8 +50,14 @@ fn inspect(path: &str) -> Result<(), String> {
         document.partial_view
     );
     for object in &document.objects {
+        let label = object.label.as_ref().and_then(|label| {
+            label
+                .name_utf8()
+                .ok()
+                .map(|name| (name, label.visible(), label.offset()))
+        });
         println!(
-            "object {:4} page {:2} visible={} {:?}",
+            "object {:4} page {:2} visible={} label={label:?} {:?}",
             object.id,
             object.page + 1,
             object.visible,
@@ -624,6 +631,28 @@ fn replay(path: &str) -> Result<(), String> {
                 }
                 "open" if !rest.is_empty() => document = Document::open(Path::new(rest))?,
                 "save" if !rest.is_empty() => document.save_to(Path::new(rest))?,
+                "split_point" => {
+                    let id: usize = rest.parse().map_err(|_| "invalid point ID")?;
+                    document.split_point(id)?;
+                    println!("line {}: split_point {id}", index + 1);
+                }
+                "merge_points" => {
+                    let (source, target) = two_ids(rest)?;
+                    document.merge_points(source, target)?;
+                    println!("line {}: merge_points {source} {target}", index + 1);
+                }
+                "custom_map" => {
+                    let ids = rest
+                        .split_whitespace()
+                        .map(|part| part.parse::<usize>().map_err(|_| "invalid point ID"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let [seed, output, replacement] = ids.as_slice() else {
+                        return Err("expected custom_map SEED OUTPUT REPLACEMENT".into());
+                    };
+                    let carried = document.custom_transform_carried(*seed, *output)?;
+                    let id = document.add_mapped_element(*output, *seed, *replacement, &carried)?;
+                    println!("line {}: custom_map -> object {id}", index + 1);
+                }
                 "import_png" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     let [path, x, y] = parts.as_slice() else {
@@ -636,6 +665,11 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     let id = document.import_png(&png, at)?;
                     println!("line {}: import_png -> object {id}", index + 1);
+                }
+                "picture_function" => {
+                    let source: usize = rest.parse().map_err(|_| "invalid picture ID")?;
+                    let id = document.add_picture_function(source, Point { x: 199.0, y: 125.0 })?;
+                    println!("line {}: picture_function -> object {id}", index + 1);
                 }
                 "move_image" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
@@ -1110,6 +1144,16 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(Kind::Polygon(vertices));
                     println!("line {}: polygon -> object {id}", index + 1);
                 }
+                "opacity" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, opacity] = parts.as_slice() else {
+                        return Err("expected opacity OBJECT_ID 0..65535".into());
+                    };
+                    document.set_object_polygon_opacity(
+                        id.parse().map_err(|_| "invalid object ID")?,
+                        opacity.parse().map_err(|_| "invalid opacity")?,
+                    )?;
+                }
                 "perimeter" => {
                     let polygon: usize = rest.parse().map_err(|_| "invalid polygon ID")?;
                     let id = document.add(Kind::PolygonPerimeter(polygon));
@@ -1548,15 +1592,15 @@ fn replay(path: &str) -> Result<(), String> {
                 "label" => {
                     let (id, name) = rest
                         .split_once(char::is_whitespace)
-                        .ok_or("expected point ID and label")?;
-                    let id: usize = id.parse().map_err(|_| "invalid point ID")?;
-                    document.set_point_label(id, name, true)?;
+                        .ok_or("expected object ID and label")?;
+                    let id: usize = id.parse().map_err(|_| "invalid object ID")?;
+                    document.set_object_label(id, name, true)?;
                 }
                 "label_show" => {
                     let (id, state) = rest
                         .split_once(char::is_whitespace)
-                        .ok_or("expected point ID and on/off")?;
-                    let id: usize = id.parse().map_err(|_| "invalid point ID")?;
+                        .ok_or("expected object ID and on/off")?;
+                    let id: usize = id.parse().map_err(|_| "invalid object ID")?;
                     let visible = match state {
                         "on" => true,
                         "off" => false,
@@ -1569,7 +1613,18 @@ fn replay(path: &str) -> Result<(), String> {
                         .and_then(|label| label.name_utf8().ok())
                         .map(str::to_owned)
                         .unwrap_or_else(|| format!("P{id}"));
-                    document.set_point_label(id, &name, visible)?;
+                    document.set_object_label(id, &name, visible)?;
+                }
+                "colorize_spectrum" => {
+                    let (source, value) = two_ids(rest)?;
+                    let id = document.add_colorized(
+                        source,
+                        ColorBinding::Spectrum { value },
+                        0.,
+                        1.,
+                        ColorRangeBehavior::Clamp,
+                    )?;
+                    println!("line {}: colorize_spectrum -> object {id}", index + 1);
                 }
                 "point_on" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
@@ -2275,8 +2330,17 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add(kind);
                     println!("line {}: rotate_marked_angle -> object {id}", index + 1);
                 }
-                "segment" | "circle" | "circle_segment" | "midpoint" | "line" | "ray"
-                | "reflect" | "parallel" | "intersection" | "perpendicular" => {
+                "segment"
+                | "circle"
+                | "circle_segment"
+                | "midpoint"
+                | "line"
+                | "ray"
+                | "reflect"
+                | "parallel"
+                | "intersection"
+                | "boundary_intersection"
+                | "perpendicular" => {
                     let (a, b) = two_ids(rest)?;
                     let kind = match command {
                         "segment" => Kind::Segment(a, b),
@@ -2287,6 +2351,7 @@ fn replay(path: &str) -> Result<(), String> {
                         "ray" => Kind::Ray(a, b),
                         "parallel" => Kind::Parallel(a, b),
                         "intersection" => Kind::Intersection(a, b),
+                        "boundary_intersection" => Kind::BoundaryIntersection(a, b),
                         "perpendicular" => Kind::Perpendicular(a, b),
                         "reflect" => {
                             if matches!(
@@ -2315,7 +2380,7 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.construct_locus(driver, target)?;
                     println!("line {}: locus -> object {id}", index + 1);
                 }
-                "bisector" | "arc3" | "arc_on_circle" => {
+                "bisector" | "arc3" | "arc_on_circle" | "arc_center" => {
                     let parts: Vec<_> = rest.split_whitespace().collect();
                     if parts.len() != 3 {
                         return Err("expected start, vertex, and end point IDs".into());
@@ -2326,7 +2391,8 @@ fn replay(path: &str) -> Result<(), String> {
                     let kind = match command {
                         "bisector" => Kind::Bisector(start, vertex, end),
                         "arc3" => Kind::ThreePointArc(start, vertex, end),
-                        _ => Kind::ArcOnCircle(start, vertex, end),
+                        "arc_on_circle" => Kind::ArcOnCircle(start, vertex, end),
+                        _ => Kind::CenterArc(start, vertex, end),
                     };
                     let id = document.add(kind);
                     println!("line {}: {command} -> object {id}", index + 1);

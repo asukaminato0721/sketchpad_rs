@@ -116,10 +116,11 @@ impl ReferencedNode {
             | Self::Subscript { .. }
             | Self::Superscript { .. }
             | Self::Radical(_)
-            | Self::Delimited { .. } => true,
-            Self::Horizontal(children)
-            | Self::Vertical(children)
-            | Self::VerticalCentered(children) => children.iter().any(Self::has_math_layout),
+            | Self::Delimited { .. }
+            | Self::VerticalCentered(_) => true,
+            Self::Horizontal(children) | Self::Vertical(children) => {
+                children.iter().any(Self::has_math_layout)
+            }
             Self::Styled { style, children } => {
                 style.geometry_decoration.is_some() || children.iter().any(Self::has_math_layout)
             }
@@ -986,6 +987,7 @@ mod tests {
         let ReferencedNode::VerticalCentered(children) = &centered.nodes()[0] else {
             panic!("expected centered vertical layout")
         };
+        assert!(centered.nodes()[0].has_math_layout());
         assert_eq!(
             children.last(),
             Some(&ReferencedNode::FrameMetrics([

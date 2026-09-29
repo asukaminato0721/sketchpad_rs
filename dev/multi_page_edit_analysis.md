@@ -48,6 +48,10 @@ The multi-page writer can now insert free points on either page and points const
 
 `tests/replay_multi_page_derived_intersections.txt` creates parallel and perpendicular lines through a point, a straight-path intersection, both line-circle intersections, and both circle-circle intersections on page 2. All four generated files passed `gsp_probe verify` and opened and saved byte-identically in native Sketchpad. The generated parallel, perpendicular, and straight-intersection object groups also match groups created through native Construct commands byte for byte. The writer checks parent types and page-local references, and rejects intersection roots without finite coordinates.
 
+The same page-local writer now accepts arc parents for codes `11`/`12` as well as `13`/`14`. A 20-object two-page document containing both branches of straight-arc, circle-arc, and arc-arc intersections reopened with all six typed, finite results. Sketchpad 5 displayed the construction on page 2 and saved all 4,368 bytes unchanged; its SHA-256 is `2f3db01c15eccfc1a34012139dac48704eaf615db74d942526b008d82e9a922f`.
+
+Code `93` polygon-boundary intersections use the same page-local insertion path. A separate ten-object document placed the polygon, line, and directed boundary point on page 2; it reopened at `(250, 200)` and Sketchpad 5 saved all 3,716 bytes unchanged (`6dfc78bf30c0840a8aab00a1612c225518f520c31eaf1a0401a2c70c447e4777`).
+
 `tests/replay_multi_page_arcs_bisector.txt` creates an angle bisector, a three-point arc, and an arc on a circle with constrained endpoints on page 2. Both generated files passed `gsp_probe verify` and opened and saved byte-identically in native Sketchpad. The writer checks the three parents and finite geometry before saving.
 
 `tests/replay_multi_page_polygon.txt` creates a polygon interior on page 2, then creates one interior on each page in a second document. Both generated files passed `gsp_probe verify` and opened and saved byte-identically in native Sketchpad. The writer stores the polygon vertex count in the object subtype and converts each vertex to its page-local reference.

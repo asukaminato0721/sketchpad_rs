@@ -1,6 +1,74 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-28: **993/1,599** documents have all object kinds decoded; **1,013** have all drawing kinds decoded. All **1,599** round trips are byte-exact, with zero failures. There are **4,937** unsupported slots (4,319 drawing slots and 618 prototype slots), and 606 documents still contain unsupported objects. Embedded tools contain 5,356 slots across 103 definitions: 4,738 decoded, 618 undecoded. See [angle marker presentation and verification](angle_marker_presentation.md). The older detailed snapshot below is retained for comparison.
+Latest snapshot, 2026-09-29: **1,170/1,599** documents have all object kinds decoded; **1,199** have all drawing kinds decoded. All **1,599** round trips are byte-exact, with zero failures. There are **3,730** unsupported slots (3,118 drawing slots and 612 prototype slots), and 429 documents still contain unsupported objects. Embedded tools contain 5,356 slots across 103 definitions: 4,744 decoded, 612 undecoded. The current point-attached-picture recovery is summarized below; the older detailed snapshots remain for comparison.
+
+The point-attached-picture pass extends strict code-99 import from zero rotation
+to any finite native rotation with positive finite horizontal and vertical
+scales. Its affine keeps the PNG center on the live anchor. The only additional
+record admitted is the exact hidden internal `[1]` metadata payload observed in
+two files; it is preserved but is not presented as an editable object label.
+The compiled scan restores four picture roots and one downstream object:
+unsupported falls 3,735→3,730, all-kind complete rises 1,167→1,170, and
+drawing-complete rises 1,196→1,199. No unsupported class-16/code-99 picture
+profile remains on a drawing page; twelve code-99 prototype slots remain among
+the unchanged tool coverage. All 1,599 originals remain byte-exact. See
+`image_analysis.md`.
+
+The preceding transformed-picture pass represents image operations in the shared typed
+transform model rather than as vector-only special cases. A class-16/subtype-78
+output must reference an earlier decoded picture, pass the ordinary live
+operand typing for its native flavor, use only the expected transform records,
+and repeat the source PNG dimensions in its `090c` cache. The source affine
+placement is composed with vector, marked rectangular/polar, point-angle or
+numeric rotation, fixed dilation, numeric dilation, or reflection matrices for
+canvas, SVG, picking, and iteration. The compiled scan restores 37 picture
+transform roots and 22 downstream objects: unsupported falls 3,794→3,735,
+all-kind complete rises 1,157→1,167, and drawing-complete rises 1,186→1,196.
+The remaining ready-looking code-29 image headers target cropped images, whose
+clip geometry and non-duplicated cache are a separate format. Prototype
+coverage is unchanged. See `image_analysis.md`.
+
+The preceding vector-translation pass extends the existing live transform path to two
+strictly observed code-16 families. Generic class-4/subtype-15 polygons are
+accepted only when the source has the same native header. Class-16/subtype-78
+pictures require a code-99 or code-100 source picture, two live point
+endpoints, the exact four-record layout, and a duplicated PNG width/height
+cache. Translated pictures reuse the source PNG and compose its live placement
+with the vector displacement for canvas, SVG, picking, and iteration. The
+compiled scan restores 47 drawing code-16 slots and 26 downstream slots:
+unsupported falls 3,867→3,794, all-kind complete rises 1,149→1,157, and
+drawing-complete rises 1,178→1,186. The remaining drawing code-16 count is 87;
+prototype coverage is unchanged. See `vector_polygon_translation_analysis.md`
+and `image_analysis.md`.
+
+The locus pass admits three independently observed native variations without
+weakening dependency typing: capture lists may omit parallel ancestry branches
+or retain an independent branch from the target's validated closure,
+geometric sweeps retain either observed presentation word, and the filled-region
+target family includes disks, sectors, and circular segments. A native locus may
+also impose its explicit stored path on a base `Free` point only during sampling;
+the path must be independent of that driver, preventing a cyclic construction.
+Point-output `Locus`, `ParameterLocus`, and `SampledMapped` objects are admitted
+as bounded curve-collection targets and render by replaying each inner curve in
+the outer driver scope. These changes restore 107 drawing code-35 loci and 47
+downstream objects: unsupported slots fall 4,021→3,867, all-kind-complete
+documents rise 1,125→1,149, and drawing-complete documents rise
+1,153→1,178. The 612
+unsupported prototype slots are unchanged. See `locus_midpoint_analysis.md`.
+
+The attached-picture pass strictly decodes every drawing code-85 two-point
+rectangle and code-100 three-point parallelogram in the corpus: 136 picture
+objects. All 39 remaining code-108 crop groups then resolve against their live
+picture and polygon parents. Those objects and 115 downstream recoveries lower
+unsupported slots 4,311→4,021. All-kind-complete documents rise
+1,108→1,125 and drawing-complete documents rise 1,134→1,153. Placement is
+resolved from live point parents for canvas, picking, SVG, and iteration;
+resource-table mutation and fresh attachment authoring remain guarded. See
+`image_analysis.md`.
+
+The Presentation-action pass decodes the native Before Starting flags, simultaneous stop condition, and tenths-of-a-second elapsed/pause word. The separate native progress/state word is preserved without invented runtime semantics. The editor authors and runs the proved options. Against the immediate 4,479-slot baseline, the compiled scan restores 135 drawing code-62 buttons, 29 dependent drawing objects, and four prototype buttons. Drawing code 62 falls 199→64; all-kind-complete documents rise 1,089→1,108 and drawing-complete documents rise 1,114→1,134. The remaining drawing code-62 objects are other action families, not rejected Presentation records.
+
+The animation-action audit admits corpus-observed low mode tags without assigning them invented semantics: point blocks use tags 0/1 and parameter blocks use 0/2/4. Editing direction, speed, Once Only, or parameter fields preserves the original tag. Runtime animation now follows `PointOnCurve` and the closed `PointOnSector` perimeter as well as the previously supported point paths. Strict target/settings matching retains prototype-only path points and rejects unsupported targets. Against the immediate 4,581-slot baseline, the compiled scan restores 94 drawing code-62 buttons, six code-73 descendants, and two prototype code-62 buttons. Drawing code 62 falls 293→199; all-kind-complete documents rise 1,043→1,089. These are measured recoveries, not claims about the ten remaining unrecognized settings layouts or other action families.
 
 Checkpoint 95 snapshot on 2026-09-28, generated with `gsp_probe coverage ../gsp-rs/tests`.
 
@@ -1049,8 +1117,7 @@ undo/deletion, scoped evaluation and retained multi-page groups.
 
 Evidence: [fresh dependency frontier](numeric_shared_roots55_analysis.md),
 [terminal point controls](iteration_endpoint55_native_analysis.md),
-[analytic intersections](arc_intersections55_analysis.md),
-and [Native branch observers](arc_intersection55_native_analysis.md).
+and [analytic intersections with Native branch observers](ANALYSIS.md#round-arc-intersections).
 
 
 All34 actual Native55 controls complete byte-exact saves:20 arc controls,
@@ -1087,8 +1154,7 @@ matching at0px,60 observer samples within0.708px, and four independently painted
 undefined controls. Twenty-four independently authored public API documents
 match those complete Native files byte-for-byte, including repeated/retraced
 refs and zero geometry; no packet grafting is used in the API generator.
-See [payload and API evidence](polygon_boundary56_analysis.md) and
-[Native observations](polygon_boundary56_native_analysis.md).
+See [retained runtime and multi-page evidence](ANALYSIS.md#polygon-boundary-intersections).
 
 The inherited Scalar dilation adapter reuses the existing generic transform
 definition; no transform-product Kind or writer is added. Actual source
@@ -1235,3 +1301,19 @@ Workspace gates pass1,155 executions (32 duplicated renderer assertions), headle
 Actual compiled recovery is1,378 drawing slots:379 code73 and999 code90. All1,599 originals remain whole-file exact; all-kind complete531→562, drawing complete542→573, zero failures, unsupported16,683→15,305 (14,475 drawing+830 prototypes). Final scan `/tmp/referenced_shared64_corpus_final.log` exits0. Initial2,654 overlapping reach is not a restoration count.
 
 The shared role-aware AST/evaluator supports selected live text/function/numeric A/B/E meanings, fraction content and generic point-anchored text. Native names use active demands in object/operand order and0967; runtime/history assignments survive hiding and dirty saves materialize07d5. All three final-library public text writer controls match Native saves entirely. Workspace1,172 executions and the headless build pass. Eight additional public Name controls pass strict physical-label/writer checks and independent Native whole-file exact saves with actual painted name/value witnesses. Copy/custom tools remain skipped and full release command parity stays open. See [implementation and gate evidence](referenced_shared64_implementation.md).
+
+## Native rich-caption symbol and layout expansion
+
+The current full scan reports 1,200/1,599 documents with every object decoded,
+1,230 drawing-complete documents, 888 partial views, and 3,574 unsupported slots
+(2,962 drawing plus 612 embedded-tool prototype slots). All 1,599 files still
+round-trip byte-for-byte with no failures.
+
+This is a measured reduction of 156 unsupported slots from the preceding 3,730
+baseline. Direct code-73 captions fall 180→115; the other restored slots are
+their already-supported descendants. The parser now covers the observed symbol
+font, numeric signed-term role `D`, `O1`–`O5` geometry decorations, centered
+vertical layout, and trailing five-field frame metadata. A separate exhaustive
+parse audit leaves only one invalid-UTF-8 legacy clock caption. The remaining
+code-73 objects parse but do not satisfy the existing source-role and source-kind
+contracts, so cached display text is not promoted to live semantics.

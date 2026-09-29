@@ -6,6 +6,13 @@ available. The current tool stays active; this is an application setting, so it
 does not mark the sketch dirty. Floating toolbox layout and preference persistence
 remain pending.
 
+Display > Show Text Palette opens an independent floating palette for selected
+literal text, point labels, and supported numeric captions. Bold, Italic,
+Underline, Larger, Smaller, and font-family changes call the same undoable
+document operations as Display > Text. Closing the window or choosing Display >
+Hide Text Palette hides it without modifying the sketch. Native window placement
+and preference persistence remain outside this checkpoint.
+
 Selecting a supported mapped iteration or one of its carried point/segment
 bindings exposes “Show only final iteration” in the sidebar. The control uses
 `set_mapped_iteration_final_only`, including its atomic save validation and undo

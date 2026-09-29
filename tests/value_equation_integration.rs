@@ -55,7 +55,8 @@ fn original_circle_point_value_uses_normalized_turn() {
 
 #[test]
 fn port_writes_live_point_line_and_circle_results() {
-    let cases: &[(&[u8], ValueEquationKind, usize, usize, usize, Point)] = &[
+    type EquationCase = (&'static [u8], ValueEquationKind, usize, usize, usize, Point);
+    let cases: &[EquationCase] = &[
         (
             include_bytes!("fixtures/value_equation_generated_point_base.gsp"),
             ValueEquationKind::PointValue,

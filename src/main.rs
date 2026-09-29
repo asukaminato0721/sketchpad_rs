@@ -1,1 +1,3 @@
-fn main() { sketchpad_editor::run(); }
+fn main() {
+    sketchpad_editor::run();
+}

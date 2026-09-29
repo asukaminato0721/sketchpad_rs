@@ -5,6 +5,77 @@ need to match the original application pixel-for-pixel. Copying and custom tools
 remain deferred. File integrity, dependency semantics and live calculation stay
 required.
 
+The current point-attached-picture pass restores five measured drawing slots:
+four code-99 picture roots and one downstream object. Point attachments now
+retain finite native rotations as well as positive scales, with the PNG center
+fixed to the live anchor. The importer also preserves the exact hidden internal
+`[1]` metadata payload observed in two files without treating it as an editable
+object label. Unsupported slots fall 3,735→3,730, complete documents rise
+1,167→1,170, drawing-complete documents rise 1,196→1,199, and all 1,599
+originals remain byte exact. No unsupported class-16/code-99 picture profile
+remains on a drawing page; twelve prototype slots remain outside this pass. See
+`image_analysis.md`.
+
+The preceding transformed-picture pass restores 59 measured drawing slots: 37
+class-16 transform roots and 22 downstream objects. Picture transforms now use
+the shared typed affine model for vector and marked translations, point-angle
+and numeric rotations, fixed and numeric dilations, and reflections. Admission
+requires an earlier decoded picture source, valid live operand roles, bounded
+native records, and a duplicated PNG dimension cache. Unsupported slots fall
+3,794→3,735, complete documents rise 1,157→1,167, drawing-complete documents
+rise 1,186→1,196, and all 1,599 originals remain byte exact. Transformed crops
+remain separate because they carry clip geometry and a different size cache.
+See `image_analysis.md`.
+
+The preceding vector-translation pass restores 73 measured drawing slots: 47
+code-16 objects and 26 downstream objects. It admits native generic
+class-4/subtype-15 polygons only when their source has the same header, plus
+class-16/subtype-78 pictures with a proved code-99/code-100 source, two live
+point endpoints, exact record layout, and matching duplicated PNG dimensions.
+Picture placement composes the source's live affine matrix with the vector.
+Unsupported slots fall 3,867→3,794, complete documents rise 1,149→1,157,
+drawing-complete documents rise 1,178→1,186, and all 1,599 originals remain
+byte exact. See `vector_polygon_translation_analysis.md` and
+`image_analysis.md`.
+
+The preceding locus pass restores 154 measured drawing slots: 107 code-35 loci
+and 47 downstream objects. Native capture lists may omit branches or include a
+validated independent target branch, both observed presentation words are
+retained, and filled regions share the existing locus surface sampler.
+Point-output sampled objects can be swept as bounded curve collections. Native records
+that keep their base driver `Free` use the explicit locus path transiently;
+admission proves that the later path does not depend on the driver. Unsupported
+slots fall 4,021→3,867, complete documents rise 1,125→1,149,
+drawing-complete documents rise 1,153→1,178, and all 1,599 originals remain
+byte exact. See `locus_midpoint_analysis.md`.
+
+The current attached-picture pass restores 290 measured drawing slots: all 30
+code-85 two-point rectangles, all 106 code-100 three-point parallelograms, all
+39 code-108 crops, and 115 downstream objects. Unsupported slots fall
+4,311→4,021, complete documents rise 1,108→1,125, drawing-complete documents
+rise 1,134→1,153, and
+all 1,599 originals remain byte exact. Placement follows live point parents in
+the shared canvas, SVG, picking, and iteration paths. Resource-table mutation
+and fresh attached-picture authoring remain guarded. See `image_analysis.md`.
+
+The preceding Presentation-action pass restores 168 measured slots: 135 drawing
+code-62 buttons, 29 downstream objects, and four embedded-prototype buttons.
+Unsupported slots fall 4,479→4,311, complete documents rise 1,089→1,108,
+drawing-complete documents rise 1,114→1,134, and all 1,599 originals remain
+byte exact. Native property probes establish the Before Starting flags,
+simultaneous stop policies, and tenths-of-a-second elapsed/pause word. The
+separate native progress/state word is preserved without invented semantics.
+The remaining 64 drawing code-62 objects belong to Animation, Movement, Scroll,
+or action code 8; no corpus-observed Presentation record remains rejected. See
+`presentation_button_analysis.md`.
+
+The preceding animation-action pass restored 102 measured slots: 94 drawing
+code-62 buttons, six downstream code-73 objects, and two embedded-prototype
+buttons. Corpus-observed opaque mode tags are preserved through edits; strict
+target validation admits only implemented animation targets, including point
+curves, closed sector boundaries, and prototype path points. See
+`animation_button_analysis.md`.
+
 Checkpoint95 admits nested code26 polar point transforms whose source is an
 already decoded `DualMarkedPolar` point. Ten Native controls independently
 establish live source, distance, and angle behavior with byte-exact saves.
@@ -833,8 +904,7 @@ independent branch/hint proof; typed13/14 arc-parent geometry is a separate
 evaluation gap. Copying and custom tools remain skipped.
 
 Evidence: [root audit](numeric_shared_roots56_analysis.md),
-[boundary/API24](polygon_boundary56_analysis.md),
-[Native boundary events](polygon_boundary56_native_analysis.md),
+[boundary and Native event evidence](ANALYSIS.md#polygon-boundary-intersections),
 [Scalar inheritance](inherited_numeric_transform56_native_analysis.md).
 
 Checkpoint57 implements the shared point-curve intersection prerequisite and
@@ -973,3 +1043,12 @@ Checkpoint69 closes the FunctionPlot prerequisite through shared scoped input re
 Checkpoint70 implements the point-output Locus collection prerequisite. Final measured restoration is261 object slots, including50 code89 mapped roots and98 code77 bindings; all1,599 originals remain exact, and1,216 workspace executions pass. Native visibility controls distinguish three bound traces from one directly visible source trace after a parameter edit. Remaining collection profiles include nested Locus paths and circle/arc outputs. Refresh the ready-root audit before choosing the next broad shared dependency rather than treating the raw code48/77 counts as independent opportunities. See [implementation](scoped_point_locus70_implementation.md).
 
 Checkpoint71 admits a Native π suffix and live numeric subscript as two typed referenced-text AST operators. The measured gain is171 object slots, with all1,599 originals exact and1,224 workspace executions passing. The two wire signatures had342 overlapping descendant reach before implementation; the actual recovery is smaller because other source/structure guards remain. Code77 still has no independently ready roots. See [implementation](referenced_token71_implementation.md), [Native evidence](referenced_token71_native_analysis.md) and the [post70 frontier](frontier71_analysis.md).
+
+The latest referenced-caption pass closes the bounded markup frontier rather
+than weakening source validation. Observed symbol-font codes, signed numeric
+terms, five geometry decorations, centered vertical groups, and outer frame
+metrics restore 156 slots and reduce direct unsupported code-73 captions
+180→115. Complete documents rise 1,170→1,200 and complete drawings
+1,199→1,230, with all 1,599 originals exact. The sole parser failure is legacy
+invalid UTF-8; the remaining caption frontier is source semantics and should be
+ranked by validated source kind/role rather than admitted from cached strings.
