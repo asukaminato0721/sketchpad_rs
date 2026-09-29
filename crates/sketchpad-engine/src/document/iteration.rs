@@ -124,11 +124,19 @@ fn mapped_reference_value(kind: &Kind) -> bool {
         Kind::PointReferencedText { text, .. } | Kind::ReferencedText { text, .. } => text,
         _ => return false,
     };
-    // Name allocation and definition/expression capture have separate scope
-    // contracts. Ordinary Value references share the live/frozen resolver.
-    text.referenced_roles()
+    // Names are stable presentation metadata while values share the mapped
+    // live/frozen resolver. Definition and expression capture have separate
+    // scope contracts and remain unsupported.
+    let roles = text.referenced_roles();
+    roles.iter().all(|(_, role)| {
+        matches!(
+            role,
+            super::referenced_text::ReferenceRole::Name
+                | super::referenced_text::ReferenceRole::Value
+        )
+    }) && roles
         .iter()
-        .all(|(_, role)| *role == super::referenced_text::ReferenceRole::Value)
+        .any(|(_, role)| *role == super::referenced_text::ReferenceRole::Value)
 }
 
 fn mapped_value_construction(kind: &Kind) -> bool {
