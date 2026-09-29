@@ -176,7 +176,7 @@ impl Default for PageSetup {
 }
 
 #[derive(Clone, Copy)]
-enum CircleMeasure {
+enum ShapeMeasure {
     Circumference,
     Radius,
     Area,

@@ -1188,7 +1188,10 @@ impl Document {
                             }
                             Kind::PolygonPerimeter(_)
                                 if host_kind.is_polygon()
-                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                                    || matches!(
+                                        host_kind,
+                                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
+                                    ) =>
                             {
                                 include_bytes!("../../../../assets/perimeter_measurement_group.bin")
                             }
@@ -1197,7 +1200,11 @@ impl Document {
                                     "../../../../assets/circumference_measurement_group.bin"
                                 )
                             }
-                            Kind::CircleRadius(_) if host_kind.is_circle() => {
+                            Kind::CircleRadius(_)
+                                if host_kind.is_circle()
+                                    || host_kind.is_arc()
+                                    || host_kind.is_sector() =>
+                            {
                                 include_bytes!("../../../../assets/radius_measurement_group.bin")
                             }
                             Kind::CircleArea(_) if host_kind.is_circle() => {
@@ -1205,7 +1212,10 @@ impl Document {
                             }
                             Kind::PolygonArea(_)
                                 if host_kind.is_polygon()
-                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                                    || matches!(
+                                        host_kind,
+                                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
+                                    ) =>
                             {
                                 include_bytes!("../../../../assets/area_measurement_group.bin")
                             }
@@ -1231,38 +1241,67 @@ impl Document {
                         }
                         groups.extend_from_slice(&group);
                     }
+                    Kind::CircleArcLength(circle, start, end) => {
+                        let parents = [*circle, *start, *end];
+                        if !self
+                            .objects
+                            .get(circle.saturating_sub(1))
+                            .is_some_and(|parent| parent.kind.is_circle())
+                            || [start, end].iter().any(|id| {
+                                !self
+                                    .objects
+                                    .get(id.saturating_sub(1))
+                                    .is_some_and(|parent| is_point_kind(&parent.kind))
+                            })
+                        {
+                            return Err("Arc length needs a circle and two points".into());
+                        }
+                        let local_parents = parents
+                            .iter()
+                            .map(|parent| self.multi_page_local_reference(page, object.id, *parent))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let (mut group, format_offset) =
+                            Self::arc_length_measurement_group(&local_parents)?;
+                        Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
+                        if !object.visible {
+                            group[10] = 1;
+                        }
+                        groups.extend_from_slice(&group);
+                    }
                     Kind::PointDistance(a, b)
                     | Kind::PointLineDistance(a, b)
+                    | Kind::SegmentRatio(a, b)
                     | Kind::AngleMeasurement(a, b, _)
                     | Kind::PointRatio(a, b, _) => {
-                        let (parents, template, format_offset): (Vec<usize>, &[u8], usize) =
+                        let (parents, template, format_offset): (Vec<usize>, Option<&[u8]>, usize) =
                             match &object.kind {
                                 Kind::PointDistance(_, _) => (
                                     vec![*a, *b],
-                                    include_bytes!(
+                                    Some(include_bytes!(
                                         "../../../../assets/distance_measurement_group.bin"
-                                    ),
+                                    )),
                                     64,
                                 ),
                                 Kind::PointLineDistance(_, _) => (
                                     vec![*a, *b],
-                                    include_bytes!(
+                                    Some(include_bytes!(
                                         "../../../../assets/point_line_distance_measurement_group.bin"
-                                    ),
+                                    )),
                                     64,
                                 ),
+                                Kind::SegmentRatio(_, _) => (vec![*a, *b], None, 64),
                                 Kind::AngleMeasurement(_, _, c) => (
                                     vec![*a, *b, *c],
-                                    include_bytes!(
+                                    Some(include_bytes!(
                                         "../../../../assets/angle_measurement_group.bin"
-                                    ),
+                                    )),
                                     68,
                                 ),
                                 Kind::PointRatio(_, _, c) => (
                                     vec![*a, *b, *c],
-                                    include_bytes!(
+                                    Some(include_bytes!(
                                         "../../../../assets/ratio_measurement_group.bin"
-                                    ),
+                                    )),
                                     68,
                                 ),
                                 _ => unreachable!(),
@@ -1272,7 +1311,9 @@ impl Document {
                                 .objects
                                 .get(id.saturating_sub(1))
                                 .is_some_and(|parent| {
-                                    if index == 1
+                                    if matches!(object.kind, Kind::SegmentRatio(_, _)) {
+                                        is_segment_kind(&parent.kind)
+                                    } else if index == 1
                                         && matches!(object.kind, Kind::PointLineDistance(_, _))
                                     {
                                         is_straight_kind(&parent.kind)
@@ -1283,13 +1324,23 @@ impl Document {
                         }) {
                             return Err("Measurement needs point parents".into());
                         }
-                        let mut group = template.to_vec();
-                        for (index, parent) in parents.iter().enumerate() {
+                        let mut local_parents = Vec::with_capacity(parents.len());
+                        for parent in &parents {
                             let local =
                                 self.multi_page_local_reference(page, object.id, *parent)?;
-                            group[48 + index * 4..52 + index * 4]
-                                .copy_from_slice(&local.to_le_bytes());
+                            local_parents.push(local);
                         }
+                        let (mut group, format_offset) =
+                            if matches!(object.kind, Kind::SegmentRatio(_, _)) {
+                                Self::ratio_measurement_group(&local_parents)?
+                            } else {
+                                let mut group = template.unwrap().to_vec();
+                                for (index, local) in local_parents.iter().enumerate() {
+                                    group[48 + index * 4..52 + index * 4]
+                                        .copy_from_slice(&local.to_le_bytes());
+                                }
+                                (group, format_offset)
+                            };
                         Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
                         if !object.visible {
                             group[10] = 1;

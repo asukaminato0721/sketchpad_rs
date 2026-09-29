@@ -1,4 +1,4 @@
-use super::{CircleMeasure, Editor};
+use super::{Editor, ShapeMeasure};
 use sketchpad_engine::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_engine::document::{Kind, LineMode};
 use sketchpad_engine::value_equation_records::ValueEquationKind;
@@ -353,8 +353,29 @@ impl Editor {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
+        if let [first, second] = self.selection_order.as_slice() {
+            let (first, second) = (*first, *second);
+            if [first, second].iter().any(|id| {
+                self.doc
+                    .objects
+                    .get(id.saturating_sub(1))
+                    .is_none_or(|object| {
+                        object.page != self.doc.active_page || !object.kind.is_segment()
+                    })
+            }) || self.doc.ratio_for_segments(first, second).is_none()
+            {
+                self.status = "Select two nondegenerate segments on the current page".into();
+                return;
+            }
+            let id = self.doc.add(Kind::SegmentRatio(first, second));
+            self.select_only(id);
+            self.status = format!("Measured ratio of segments {first} and {second}");
+            return;
+        }
         let [a, b, c] = self.selection_order.as_slice() else {
-            self.status = "Select three collinear points in origin, base, target order".into();
+            self.status =
+                "Select two segments, or three collinear points in origin, base, target order"
+                    .into();
             return;
         };
         let (a, b, c) = (*a, *b, *c);
@@ -392,12 +413,14 @@ impl Editor {
             return;
         }
         let [polygon] = self.selection_order.as_slice() else {
-            self.status = "Select one polygon or sector interior to measure".into();
+            self.status =
+                "Select one polygon, sector, or circular-segment interior to measure".into();
             return;
         };
         let polygon = *polygon;
         if self.doc.polygon_perimeter_cm(polygon).is_none() {
-            self.status = "Select one polygon or sector interior to measure".into();
+            self.status =
+                "Select one polygon, sector, or circular-segment interior to measure".into();
             return;
         }
         if self.doc.objects[polygon - 1].page != self.doc.active_page {
@@ -433,13 +456,13 @@ impl Editor {
         self.select_only(id);
         self.status = format!("Measured angle {a}-{b}-{c}");
     }
-    pub(super) fn measure_circle(&mut self, measurement: CircleMeasure) {
+    pub(super) fn measure_shape(&mut self, measurement: ShapeMeasure) {
         if self.doc.partial_view && self.doc.page_count == 1 {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
         let [host] = self.selection_order.as_slice() else {
-            self.status = "Select one circle, polygon, or sector interior to measure".into();
+            self.status = "Select one circle, arc, polygon, or sector interior to measure".into();
             return;
         };
         let host = *host;
@@ -459,18 +482,27 @@ impl Editor {
             .map(|o| &o.kind);
         let is_circle = self.doc.circle_points(host).is_some();
         let (kind, name) = match (measurement, source) {
-            (CircleMeasure::Circumference, Some(_)) if is_circle => {
+            (ShapeMeasure::Circumference, Some(_)) if is_circle => {
                 (Kind::CircleCircumference(host), "circumference")
             }
-            (CircleMeasure::Radius, Some(_)) if is_circle => (Kind::CircleRadius(host), "radius"),
-            (CircleMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
-            (CircleMeasure::Area, Some(kind))
-                if kind.is_polygon() || matches!(kind, Kind::SectorBoundary(_)) =>
+            (ShapeMeasure::Radius, Some(kind))
+                if is_circle || kind.is_arc() || kind.is_sector() =>
+            {
+                (Kind::CircleRadius(host), "radius")
+            }
+            (ShapeMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
+            (ShapeMeasure::Area, Some(kind))
+                if kind.is_polygon()
+                    || matches!(
+                        kind,
+                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
+                    ) =>
             {
                 (Kind::PolygonArea(host), "area")
             }
             _ => {
-                self.status = "Select one circle, polygon, or sector interior to measure".into();
+                self.status =
+                    "Select one circle, arc, polygon, or sector interior to measure".into();
                 return;
             }
         };
@@ -510,26 +542,48 @@ impl Editor {
             self.status = "This document cannot accept a measurement safely".into();
             return;
         }
-        let [arc] = self.selection_order.as_slice() else {
-            self.status = "Select one arc to measure".into();
-            return;
+        let kind = match self.selection_order.as_slice() {
+            [arc]
+                if self
+                    .doc
+                    .objects
+                    .get(arc.saturating_sub(1))
+                    .is_some_and(|o| {
+                        o.kind.is_arc() || matches!(o.kind, Kind::SectorBoundary(_))
+                    }) =>
+            {
+                Kind::ArcLength(*arc)
+            }
+            [circle, start, end]
+                if self
+                    .doc
+                    .objects
+                    .get(circle.saturating_sub(1))
+                    .is_some_and(|o| o.kind.is_circle())
+                    && [start, end].iter().all(|id| {
+                        self.doc
+                            .objects
+                            .get(id.saturating_sub(1))
+                            .is_some_and(|o| o.kind.is_point())
+                    }) =>
+            {
+                Kind::CircleArcLength(*circle, *start, *end)
+            }
+            _ => {
+                self.status = "Select one arc, or a circle followed by two points".into();
+                return;
+            }
         };
-        let arc = *arc;
-        if !self
-            .doc
-            .objects
-            .get(arc.saturating_sub(1))
-            .is_some_and(|o| o.kind.is_arc() || matches!(o.kind, Kind::SectorBoundary(_)))
+        if kind
+            .dependencies()
+            .iter()
+            .any(|id| self.doc.objects[*id - 1].page != self.doc.active_page)
         {
-            self.status = "Select one arc to measure".into();
+            self.status = "Select objects on the current page".into();
             return;
         }
-        if self.doc.objects[arc - 1].page != self.doc.active_page {
-            self.status = "Select an arc on the current page".into();
-            return;
-        }
-        let id = self.doc.add(Kind::ArcLength(arc));
+        let id = self.doc.add(kind);
         self.select_only(id);
-        self.status = format!("Measured length of arc {arc}");
+        self.status = "Measured arc length".into();
     }
 }

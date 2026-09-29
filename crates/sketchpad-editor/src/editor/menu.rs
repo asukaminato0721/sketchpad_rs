@@ -1,6 +1,6 @@
 use super::{
-    CircleMeasure, Editor, LinkButtonDraft, MovementButtonDraft, OutputAction, PendingAction,
-    PresentationButtonDraft, ScrollButtonDraft,
+    Editor, LinkButtonDraft, MovementButtonDraft, OutputAction, PendingAction,
+    PresentationButtonDraft, ScrollButtonDraft, ShapeMeasure,
 };
 use sketchpad_engine::action_records::{MovementSpeed, PresentationMode, ScrollPlacement};
 use sketchpad_engine::coordinate_measure_records::CoordinateMeasureKind;
@@ -527,7 +527,7 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Circumference").clicked() {
-                        self.measure_circle(CircleMeasure::Circumference);
+                        self.measure_shape(ShapeMeasure::Circumference);
                         ui.close();
                     }
                     if ui.button("Angle").clicked() {
@@ -535,11 +535,11 @@ impl Editor {
                         ui.close();
                     }
                     if ui.button("Radius").clicked() {
-                        self.measure_circle(CircleMeasure::Radius);
+                        self.measure_shape(ShapeMeasure::Radius);
                         ui.close();
                     }
                     if ui.button("Area").clicked() {
-                        self.measure_circle(CircleMeasure::Area);
+                        self.measure_shape(ShapeMeasure::Area);
                         ui.close();
                     }
                     if ui.button("Arc Angle").clicked() {

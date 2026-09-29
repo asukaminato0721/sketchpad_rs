@@ -257,6 +257,56 @@ fn authored_curve_defaults_match_native_templates_and_sweeps_keep_their_layout()
         reopened.objects[family - 1].kind,
         Kind::ParameterLocus(_, 0., 1., 8)
     ));
+    let mut calculated = Document::new();
+    let source = calculated.add(Kind::Free(Point { x: 10., y: 0. }));
+    let center = calculated.add(Kind::Free(Point { x: 0., y: 0. }));
+    let parameter = calculated.add_named_parameter("n", 1., (10, 20)).unwrap();
+    let calculation = calculated
+        .add_parameter_calculation(parameter, "n+1", (10, 50))
+        .unwrap();
+    let image = calculated.add(Kind::CalculatedRatioScaledPoint(
+        source,
+        center,
+        calculation,
+    ));
+    let trace = calculated
+        .construct_parameter_locus(calculation, image, 0., 2., 8)
+        .unwrap();
+    let strokes = calculated.locus_strokes(trace, 4).unwrap();
+    assert_eq!(strokes.len(), 3);
+    assert!((strokes[0].0.x - 0.).abs() < 1e-9);
+    assert!((strokes[2].1.x - 20.).abs() < 1e-9);
+    let endpoint = calculated.add(Kind::Free(Point { x: 0., y: 10. }));
+    let segment = calculated.add(Kind::Segment(image, endpoint));
+    let family = calculated
+        .construct_parameter_locus(calculation, segment, 0., 2., 8)
+        .unwrap();
+    assert_eq!(calculated.locus_strokes(family, 4).unwrap().len(), 4);
+    let vertical = calculated.add(Kind::Free(Point { x: 0., y: 10. }));
+    let angle = calculated.add(Kind::AngleMeasurement(source, center, vertical));
+    let angle_calculation = calculated
+        .add_parameter_calculation(angle, "v/2", (10, 80))
+        .unwrap();
+    let rotated = calculated.add(Kind::CalculatedAngleRotatedPoint(
+        source,
+        center,
+        angle_calculation,
+    ));
+    let angle_trace = calculated
+        .construct_parameter_locus(angle_calculation, rotated, 0., 180., 8)
+        .unwrap();
+    let strokes = calculated.locus_strokes(angle_trace, 4).unwrap();
+    assert!((strokes[0].0.x - 10.).abs() < 1e-9);
+    assert!((strokes[2].1.x + 10.).abs() < 1e-9);
+    let mut reopened = Document::from_bytes(&calculated.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.plot_range(trace), Some((0., 2., 8)));
+    assert_eq!(reopened.plot_range(angle_trace), Some((0., 180., 8)));
+    assert_eq!(reopened.locus_strokes(trace, 4).unwrap().len(), 3);
+    assert_eq!(reopened.locus_strokes(family, 4).unwrap().len(), 4);
+    assert_eq!(reopened.locus_strokes(angle_trace, 4).unwrap().len(), 3);
+    reopened.set_plot_range(angle_trace, -90., 90., 16).unwrap();
+    let edited = Document::from_bytes(&reopened.encode().unwrap(), None).unwrap();
+    assert_eq!(edited.plot_range(angle_trace), Some((-90., 90., 16)));
     for (bytes, expected) in [
         (
             include_bytes!("../../../../../tests/fixtures/locus_segment_target_original.gsp")

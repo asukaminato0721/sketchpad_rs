@@ -756,6 +756,7 @@ impl Document {
                             | Kind::PointOnArc(..)
                             | Kind::CircleCircleIntersection(..)
                             | Kind::ParameterCalculation(..)
+                            | Kind::SegmentRatio(..)
                             | Kind::PointRatio(..)
                             | Kind::SegmentLength(..)
                     ) {

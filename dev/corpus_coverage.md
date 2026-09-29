@@ -1,6 +1,13 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,170/1,599** documents have all object kinds decoded; **1,199** have all drawing kinds decoded. All **1,599** round trips are byte-exact, with zero failures. There are **3,730** unsupported slots (3,118 drawing slots and 612 prototype slots), and 429 documents still contain unsupported objects. Embedded tools contain 5,356 slots across 103 definitions: 4,744 decoded, 612 undecoded. The current point-attached-picture recovery is summarized below; the older detailed snapshots remain for comparison.
+Latest snapshot, 2026-09-29: **1,260/1,599** documents have all object kinds
+decoded; **1,290** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **3,027** unsupported slots (2,429
+drawing slots and 598 prototype slots), and 339 documents still contain
+unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
+4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
+recoveries are summarized at the end; the older detailed snapshots remain for
+comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -1322,9 +1329,9 @@ unsupported; cached display text is not promoted to live semantics.
 
 ## Parameter-driven geometric loci
 
-The current full scan reports 1,239/1,599 documents with every object decoded,
-1,269 drawing-complete documents, 877 partial views, and 3,404 unsupported slots
-(2,792 drawing plus 612 embedded-tool prototype slots). All 1,599 files remain
+The current full scan reports 1,243/1,599 documents with every object decoded,
+1,273 drawing-complete documents, 877 partial views, and 3,363 unsupported slots
+(2,753 drawing plus 610 embedded-tool prototype slots). All 1,599 files remain
 byte-exact with no failures.
 
 The shared parameter sampler now evaluates subtype-43 code-97 families whose
@@ -1333,5 +1340,87 @@ All 67 recovered records use decoded parents, an actual Parameter driver, exact
 captured dependencies, and the already-supported native range/unit payload.
 Runtime auditing exercises every recovered family: 7 straight sweeps, 13 filled
 region sweeps, and 47 nested curve collections. Direct unsupported code-97
-objects fall 122→55; calculation-driven and unsupported-parent variants remain
-closed.
+objects initially fall 122→55.
+
+The calculated-driver pass admits the exact native descriptor profiles for
+scalar and degree ParameterCalculation objects. It recovers 22 direct loci (20
+drawing and two prototype records) plus 19 drawing descendants. All 22 enter
+their runtime sampler: the eight-step probe produces strokes for 18 and retains
+undefined target gaps for four whose current target geometry is also undefined.
+Fresh scalar and degree controls cover subtype-42 points, subtype-43 segments,
+save/reopen, and degree range editing. Unsupported drawing code 97 falls 55→35
+and prototype code 97 falls 9→7; length drivers and unsupported-parent variants
+remain closed.
+
+## Arc and sector Radius measurements
+
+The current full scan reports 1,248/1,599 documents with every object decoded,
+1,278 drawing-complete documents, 875 partial views, and 3,266 unsupported slots
+(2,656 drawing plus 610 embedded-tool prototype slots). All 1,599 files remain
+byte-exact with no failures.
+
+Code 46 now reuses the live round-geometry radius for supported arcs and sectors.
+The corpus contains five CenterArc measurements and one SectorBoundary
+measurement; all six have the established numeric format/style layout and return
+finite positive values in the runtime audit. They restore 91 supported
+descendants for 97 drawing slots total. The editor and multi-page writer can
+author the same Radius measurement for supported circular arcs and sectors;
+undefined circular constructions retain their measurement DAG just as existing
+Arc Length and Arc Angle values do.
+
+## Segment Ratio measurements
+
+The current full scan reports 1,253/1,599 documents with every object decoded,
+1,283 drawing-complete documents, 871 partial views, and 3,190 unsupported slots
+(2,580 drawing plus 610 embedded-tool prototype slots). All 1,599 files remain
+byte-exact with no failures.
+
+Code 47 now accepts the corpus-observed two-reference form when both parents are
+supported finite segments. It evaluates the first segment's live length divided
+by the second's and retains the existing three-point signed-projection form.
+All eight recovered roots return finite positive values in the runtime audit;
+they restore 68 descendants for 76 drawing slots total. Existing tests cover
+endpoint edits, single- and multi-page save/reopen, and editor authoring without
+adding a new test function.
+
+## Sector interior name metadata
+
+The current full scan reports 1,256/1,599 documents with every object decoded,
+1,286 drawing-complete documents, 871 partial views, and 3,111 unsupported slots
+(2,513 drawing plus 598 embedded-tool prototype slots). All 1,599 files remain
+byte-exact with no failures.
+
+Code 82 now admits the observed optional `07d5`/`07d8` name and text-style pair
+after validating both records. As with existing CircleInterior metadata, it is
+preserved but not promoted to an editable geometric label. The pass restores 16
+direct drawing sectors and 51 drawing descendants, plus 12 direct sectors in
+tool-local prototypes: 79 slots total. The strict source, header, reference,
+marker, page, and dependency guards are otherwise unchanged. An existing sector
+test now also decodes, evaluates, and exactly saves a recovered corpus example;
+no new test function was added.
+
+## Circular-segment interiors and measurements
+
+Code 83 now accepts both observed circular-segment presentation profiles: the
+existing plain group and the validated optional name/style or empty-marker
+records. The live region uses its source arc plus endpoint chord. Shape Area and
+Perimeter evaluate analytically, and the editor and both writers can author the
+same measurements. Six direct interiors, two Area measurements, and three
+existing descendants restore 11 drawing slots. Unsupported falls 3,111→3,100;
+all-kind-complete documents rise 1,256→1,259 and drawing-complete documents rise
+1,286→1,289. All 1,599 originals remain byte-exact.
+
+## Circle-and-endpoints Arc Length
+
+Native code 44 with three references is represented separately from a constructed
+arc: the first parent is a circle and the next two are point directions. Its live
+value is the circle radius times the smaller unsigned angle between those
+directions. The shared writer expands the existing code-44 template to three
+references, and the editor accepts circle/start/end selection order on single-
+and multi-page sketches. The corpus contains 12 roots in two documents; seven
+currently evaluate to finite positive values and five retain structurally valid
+but undefined upstream geometry. They unlock 61 descendants for 73 restored
+drawing slots. Unsupported falls 3,100→3,027, all-kind-complete documents rise
+1,259→1,260, drawing-complete documents rise 1,289→1,290, and partial views fall
+871→870. Prototype coverage stays at 598 unsupported slots and all 1,599
+originals remain byte-exact.

@@ -288,7 +288,40 @@ captions are guarded by parents whose object kinds are not yet supported.
 
 Imported parameter-driven loci can now sweep a live segment, filled region, or
 nested point-curve collection instead of being limited to a single point trace.
-The same scoped parameter evaluator drives canvas/SVG geometry, picking, range
-edits, and newly authored subtype-43 records. This restores 67 native objects,
-reduces unsupported corpus slots from 3,471 to 3,404, and raises both complete
-document counts by 11 while retaining all 1,599 byte-exact round trips.
+The same scoped numeric evaluator drives canvas/SVG geometry, picking, range
+edits, and newly authored subtype-42/43 records. In addition to 67 geometric
+families driven directly by parameters, it now accepts the 22 observed scalar
+or degree calculation drivers and restores 19 descendants. Unsupported corpus
+slots fall from 3,471 to 3,363; all-kind-complete documents rise from 1,228 to
+1,243 and drawing-complete documents from 1,258 to 1,273. All 1,599 originals
+remain byte-exact.
+
+Radius measurements now use one round-geometry path for circles, circular arcs,
+and sectors. The six native arc/sector measurements restore 91 already-supported
+descendants, reducing unsupported slots from 3,363 to 3,266. Fully decoded and
+drawing-complete document counts rise to 1,248 and 1,278 respectively; all 1,599
+source files remain byte-exact. The editor can author Radius for supported arcs
+and sectors on single- or multi-page sketches.
+
+Ratio measurements now also decode and author the native two-segment form. Its
+live scalar value is the first segment's length divided by the second's, and it
+updates through ordinary or transformed segment geometry. Eight corpus roots
+and 68 descendants restore 76 drawing slots: unsupported slots fall from 3,266
+to 3,190, while all-kind-complete and drawing-complete documents rise to 1,253
+and 1,283. All 1,599 originals remain byte-exact.
+
+Sector interiors now accept the native name/style metadata already treated as
+inert presentation data for circle interiors. This restores 16 drawing sectors,
+12 embedded-tool sectors, and 51 drawing descendants without exposing the
+metadata as an editable geometry label. Unsupported slots fall to 3,111;
+all-kind-complete and drawing-complete documents rise to 1,256 and 1,286, and
+all source files remain byte-exact.
+
+Circular-segment interiors now preserve both observed presentation profiles and
+share analytic Area and Perimeter evaluation through their source arc and closing
+chord. Six interiors, two Area values, and three descendants restore 11 drawing
+slots. Native Arc Length values that reference a circle followed by two endpoint
+directions are also live and authorable; 12 roots restore 61 descendants. Together
+these passes lower unsupported slots from 3,111 to 3,027, raise complete documents
+to 1,260 and complete drawings to 1,290, and retain byte-exact round trips for all
+1,599 originals.

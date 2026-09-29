@@ -1,5 +1,5 @@
 use super::geometry::ratio_of_points;
-use super::kind::{is_point_kind, is_straight_kind};
+use super::kind::{is_point_kind, is_segment_kind, is_straight_kind};
 use super::{Document, Kind, LineMode, Point};
 use crate::coordinate_measure_records::{
     CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
@@ -44,7 +44,7 @@ impl Document {
             Kind::Parameter(group) => Some(group.value()),
             Kind::ParameterCalculation(_, _) => self.parameter_calculation_value(id),
             Kind::Calculation(group) => group.evaluated_value(),
-            Kind::PointRatio(_, _, _) => self.ratio_value(id),
+            Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) => self.ratio_value(id),
             Kind::SlopeMeasurement(_, _) => self.slope_value(id),
             Kind::AngleMeasurement(_, _, _) => self.angle_degrees(id),
             Kind::AngleMarker(a, vertex, c, _) => self.signed_angle_degrees(*a, *vertex, *c),
@@ -59,7 +59,7 @@ impl Document {
             Kind::PolygonPerimeter(_) => self.perimeter_cm(id),
             Kind::CircleCircumference(_) => self.circle_circumference_cm(id),
             Kind::CircleRadius(_) => self.circle_radius_cm(id),
-            Kind::ArcLength(_) => self.arc_length_cm(id),
+            Kind::ArcLength(_) | Kind::CircleArcLength(_, _, _) => self.arc_length_cm(id),
             Kind::CircleArea(_) => self.circle_area_cm2(id),
             Kind::PolygonArea(_) => self.polygon_area_cm2(id),
             Kind::MeasuredCalculation(_, _) => self.measured_calculation_cm(id),
@@ -143,13 +143,13 @@ impl Document {
             }
             Kind::SegmentLength(_) => "Length",
             Kind::PointDistance(_, _) | Kind::PointLineDistance(_, _) => "Distance",
-            Kind::PointRatio(_, _, _) => "Ratio",
+            Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) => "Ratio",
             Kind::PolygonPerimeter(_) => "Perimeter",
             Kind::CircleCircumference(_) => "Circumference",
             Kind::CircleRadius(_) => "Radius",
             Kind::CircleArea(_) | Kind::PolygonArea(_) => "Area",
             Kind::ArcAngle(_) => "Arc Angle",
-            Kind::ArcLength(_) => "Arc Length",
+            Kind::ArcLength(_) | Kind::CircleArcLength(_, _, _) => "Arc Length",
             Kind::AngleMeasurement(_, _, _) => "Angle",
             _ => return None,
         };
@@ -718,17 +718,42 @@ impl Document {
     pub fn ratio_for_points(&self, a: usize, b: usize, c: usize) -> Option<f64> {
         ratio_of_points(self.position(a)?, self.position(b)?, self.position(c)?)
     }
+    pub fn ratio_for_segments(&self, first: usize, second: usize) -> Option<f64> {
+        if ![first, second].iter().all(|id| {
+            self.objects
+                .get(id.saturating_sub(1))
+                .is_some_and(|object| !object.deleted && is_segment_kind(&object.kind))
+        }) {
+            return None;
+        }
+        let (first_a, first_b, _) = self.line_points(first)?;
+        let (second_a, second_b, _) = self.line_points(second)?;
+        let numerator = first_a.distance(first_b);
+        let denominator = second_a.distance(second_b);
+        let value = numerator / denominator;
+        (denominator > 0. && value.is_finite()).then_some(value)
+    }
     pub fn ratio_value(&self, id: usize) -> Option<f64> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
             return None;
         }
-        let Kind::PointRatio(a, b, c) = object.kind else {
-            return None;
-        };
-        self.ratio_for_points(a, b, c)
+        match object.kind {
+            Kind::SegmentRatio(first, second) => self.ratio_for_segments(first, second),
+            Kind::PointRatio(a, b, c) => self.ratio_for_points(a, b, c),
+            _ => None,
+        }
     }
     pub fn polygon_perimeter_cm(&self, id: usize) -> Option<f64> {
+        if self
+            .objects
+            .get(id.checked_sub(1)?)
+            .is_some_and(|o| matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+        {
+            return self
+                .circular_segment_perimeter_pixels(id)
+                .map(|value| value / 37.79527559055118);
+        }
         if self
             .objects
             .get(id.checked_sub(1)?)
@@ -778,10 +803,19 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let Kind::CircleRadius(circle) = object.kind else {
+        let Kind::CircleRadius(host) = object.kind else {
             return None;
         };
-        let (_, radius) = self.circle_points(circle)?;
+        let host_kind = &self.objects.get(host.checked_sub(1)?)?.kind;
+        let radius = if host_kind.is_circle() {
+            self.circle_points(host)?.1
+        } else if host_kind.is_sector() {
+            self.sector_arc_geometry(host)?.1
+        } else if host_kind.is_arc() {
+            self.arc_geometry(host)?.1
+        } else {
+            return None;
+        };
         Some(radius / 37.79527559055118)
     }
     pub fn circle_area_cm2(&self, id: usize) -> Option<f64> {
@@ -811,6 +845,15 @@ impl Document {
         {
             return self
                 .sector_area_pixels2(polygon)
+                .map(|value| value / 37.79527559055118_f64.powi(2));
+        }
+        if self
+            .objects
+            .get(polygon.checked_sub(1)?)
+            .is_some_and(|o| matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+        {
+            return self
+                .circular_segment_area_pixels2(polygon)
                 .map(|value| value / 37.79527559055118_f64.powi(2));
         }
         let points = self.polygon_points(polygon)?;
@@ -845,8 +888,23 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let Kind::ArcLength(arc) = object.kind else {
-            return None;
+        let arc = match object.kind {
+            Kind::CircleArcLength(circle, start, end) => {
+                let (center, radius) = self.circle_points(circle)?;
+                let start = self.position(start)?;
+                let end = self.position(end)?;
+                let start = (start.x - center.x, start.y - center.y);
+                let end = (end.x - center.x, end.y - center.y);
+                if start == (0., 0.) || end == (0., 0.) {
+                    return None;
+                }
+                let angle = (start.0 * end.1 - start.1 * end.0)
+                    .atan2(start.0 * end.0 + start.1 * end.1)
+                    .abs();
+                return Some(radius * angle / 37.79527559055118);
+            }
+            Kind::ArcLength(arc) => arc,
+            _ => return None,
         };
         if self
             .objects

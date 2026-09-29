@@ -621,8 +621,10 @@ impl Document {
                     o.id
                 ));
             }
-            if matches!(o.kind, Kind::PointRatio(_, _, _)) && self.ratio_value(o.id).is_none() {
-                return Err(format!("Invalid points in ratio measurement {}", o.id));
+            if matches!(o.kind, Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _))
+                && self.ratio_value(o.id).is_none()
+            {
+                return Err(format!("Invalid parents in ratio measurement {}", o.id));
             }
             if matches!(o.kind, Kind::GraphHorizontalUnit(_, step) | Kind::GraphVerticalUnit(_, step) if !step.is_finite() || step <= 0.0)
                 || matches!(o.kind, Kind::DistanceVerticalUnit(_, step, _) if !step.is_finite() || step <= 0.0)
@@ -949,6 +951,7 @@ impl Document {
                     .perimeter_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
                 && !matches!(o.kind, Kind::PolygonPerimeter(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
+                && !matches!(o.kind, Kind::PolygonPerimeter(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_circular_segment(host))
             {
                 return Err(format!("Invalid polygon in perimeter measurement {}", o.id));
             }
@@ -966,8 +969,13 @@ impl Document {
                 && self
                     .circle_radius_cm(o.id)
                     .is_none_or(|value| !value.is_finite())
+                && !matches!(o.kind, Kind::CircleRadius(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
+                && !matches!(o.kind, Kind::CircleRadius(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_arc_on_circle(host) || self.undefined_transformed_arc(host)))
             {
-                return Err(format!("Invalid circle in radius measurement {}", o.id));
+                return Err(format!(
+                    "Invalid round object in radius measurement {}",
+                    o.id
+                ));
             }
             if matches!(o.kind, Kind::CircleArea(_))
                 && self
@@ -981,6 +989,7 @@ impl Document {
                     .polygon_area_cm2(o.id)
                     .is_none_or(|value| !value.is_finite())
                 && !matches!(o.kind, Kind::PolygonArea(host) if super::sector_boundary::supported_host(&self.objects, host, o.page, o.id) && self.undefined_sector(host))
+                && !matches!(o.kind, Kind::PolygonArea(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && self.undefined_circular_segment(host))
             {
                 return Err(format!("Invalid polygon in area measurement {}", o.id));
             }
@@ -1000,6 +1009,29 @@ impl Document {
                 && !matches!(o.kind, Kind::ArcLength(host) if self.objects.get(host.saturating_sub(1)).is_some_and(|parent| parent.page == o.page) && (self.undefined_three_point_arc(host) || self.undefined_center_arc(host) || self.undefined_arc_on_circle(host) || self.undefined_transformed_arc(host)))
             {
                 return Err(format!("Invalid arc in length measurement {}", o.id));
+            }
+            if let Kind::CircleArcLength(circle, start, end) = o.kind
+                && (!self
+                    .objects
+                    .get(circle.saturating_sub(1))
+                    .is_some_and(|parent| {
+                        !parent.deleted && parent.page == o.page && parent.kind.is_circle()
+                    })
+                    || [start, end].iter().any(|id| {
+                        !self
+                            .objects
+                            .get(id.saturating_sub(1))
+                            .is_some_and(|parent| {
+                                !parent.deleted
+                                    && parent.page == o.page
+                                    && is_point_kind(&parent.kind)
+                            })
+                    })
+                    || self
+                        .arc_length_cm(o.id)
+                        .is_some_and(|value| !value.is_finite()))
+            {
+                return Err(format!("Invalid circle arc length measurement {}", o.id));
             }
             if matches!(o.kind, Kind::AngleMeasurement(_, _, _))
                 && self

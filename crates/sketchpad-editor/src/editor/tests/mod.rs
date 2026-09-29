@@ -1,4 +1,4 @@
-use super::{CircleMeasure, Editor, MarkedAngle, Tool, TranslationMode};
+use super::{Editor, MarkedAngle, ShapeMeasure, Tool, TranslationMode};
 use crate::render::Viewport;
 use sketchpad_engine::action_records::{
     AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions,

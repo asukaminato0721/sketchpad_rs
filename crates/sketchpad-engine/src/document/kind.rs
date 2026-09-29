@@ -30,7 +30,9 @@ impl Kind {
         match self {
             Kind::Calculation(group) => Some(group.unit()),
             Kind::Parameter(group) => Some(group.unit()),
-            Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => Some(NumericUnit::Scalar),
+            Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) | Kind::SlopeMeasurement(_, _) => {
+                Some(NumericUnit::Scalar)
+            }
             Kind::LengthPairCalculation(_, _, group) => match group.length_power() {
                 0 => Some(NumericUnit::Scalar),
                 1 => Some(NumericUnit::Length),
@@ -44,6 +46,7 @@ impl Kind {
             | Kind::CircleCircumference(_)
             | Kind::CircleRadius(_)
             | Kind::ArcLength(_)
+            | Kind::CircleArcLength(_, _, _)
             | Kind::MeasuredCalculation(_, _) => Some(NumericUnit::Length),
             Kind::CircleArea(_) | Kind::PolygonArea(_) => Some(NumericUnit::Area),
             Kind::ValueEquation {
@@ -154,6 +157,7 @@ impl Kind {
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
                 | Kind::PointLineDistance(_, _)
+                | Kind::SegmentRatio(_, _)
                 | Kind::PointRatio(_, _, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
@@ -167,6 +171,7 @@ impl Kind {
                 | Kind::ValueEquation { .. }
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
+                | Kind::CircleArcLength(_, _, _)
         )
     }
     pub fn has_measurement_precision(&self) -> bool {
@@ -175,6 +180,7 @@ impl Kind {
             Kind::SegmentLength(_)
                 | Kind::PointDistance(_, _)
                 | Kind::PointLineDistance(_, _)
+                | Kind::SegmentRatio(_, _)
                 | Kind::PointRatio(_, _, _)
                 | Kind::PolygonPerimeter(_)
                 | Kind::CircleCircumference(_)
@@ -185,6 +191,7 @@ impl Kind {
                 | Kind::NumericAlias { .. }
                 | Kind::ArcAngle(_)
                 | Kind::ArcLength(_)
+                | Kind::CircleArcLength(_, _, _)
                 | Kind::SlopeMeasurement(_, _)
                 | Kind::CoordinateMeasurement {
                     kind: CoordinateMeasureKind::Abscissa
@@ -413,6 +420,7 @@ impl Kind {
             | Kind::ArcLength(host)
             | Kind::NumericAlias { source: host, .. }
             | Kind::CircleAxis(host, _) => vec![host],
+            Kind::CircleArcLength(circle, start, end) => vec![circle, start, end],
             Kind::DistanceVerticalUnit(host, _, _) => vec![host],
             Kind::GraphHorizontalUnit(origin, _) | Kind::GraphVerticalUnit(origin, _) => {
                 vec![origin]
@@ -434,7 +442,8 @@ impl Kind {
             | Kind::LineCircleIntersection(a, b, _)
             | Kind::CircleCircleIntersection(a, b, _)
             | Kind::PointDistance(a, b)
-            | Kind::PointLineDistance(a, b) => vec![a, b],
+            | Kind::PointLineDistance(a, b)
+            | Kind::SegmentRatio(a, b) => vec![a, b],
             Kind::GraphAxis(a, b, _)
             | Kind::DistanceAxis(a, b, _)
             | Kind::CoordinateSystem(a, b)
@@ -867,6 +876,9 @@ impl Kind {
             Kind::PolygonArea(a) => Kind::PolygonArea(m(a)),
             Kind::ArcAngle(a) => Kind::ArcAngle(m(a)),
             Kind::ArcLength(a) => Kind::ArcLength(m(a)),
+            Kind::CircleArcLength(circle, start, end) => {
+                Kind::CircleArcLength(m(circle), m(start), m(end))
+            }
             Kind::AngleMeasurement(a, b, c) => Kind::AngleMeasurement(m(a), m(b), m(c)),
             Kind::PolarAngleValue(a, b, c) => Kind::PolarAngleValue(m(a), m(b), m(c)),
             Kind::VertexAngleValue(a, b, c) => Kind::VertexAngleValue(m(a), m(b), m(c)),
@@ -877,6 +889,7 @@ impl Kind {
             },
             Kind::PointDistance(a, b) => Kind::PointDistance(m(a), m(b)),
             Kind::PointLineDistance(a, b) => Kind::PointLineDistance(m(a), m(b)),
+            Kind::SegmentRatio(a, b) => Kind::SegmentRatio(m(a), m(b)),
             Kind::PointRatio(a, b, c) => Kind::PointRatio(m(a), m(b), m(c)),
             Kind::IterationPointAlias(binding) => Kind::IterationPointAlias(m(binding)),
             Kind::Midpoint(a, b) => Kind::Midpoint(m(a), m(b)),
@@ -1000,8 +1013,10 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PolygonArea(_)
             | Kind::ArcAngle(_)
             | Kind::ArcLength(_)
+            | Kind::CircleArcLength(_, _, _)
             | Kind::PointDistance(_, _)
             | Kind::PointLineDistance(_, _)
+            | Kind::SegmentRatio(_, _)
             | Kind::AngleMeasurement(_, _, _)
             | Kind::PolarAngleValue(_, _, _)
             | Kind::VertexAngleValue(_, _, _)

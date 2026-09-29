@@ -268,7 +268,7 @@ impl Document {
             return 33;
         };
         match &object.kind {
-            Kind::PointRatio(..) => 64,
+            Kind::SegmentRatio(..) | Kind::PointRatio(..) => 64,
             Kind::ParameterCalculation(source, g) if *source < id => {
                 calculation_source_ids(*source, g)
                     .into_iter()
@@ -962,7 +962,7 @@ impl Document {
                     .unwrap_or_else(|| g.expression())
             }
             Kind::Calculation(g) => g.expression(),
-            Kind::PointRatio(_, _, _) => format!("Ratio {source}"),
+            Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) => format!("Ratio {source}"),
             Kind::SlopeMeasurement(_, _) => format!("Slope {source}"),
             Kind::LengthPairCalculation(_, _, _)
             | Kind::MeasuredCalculation(_, _)
@@ -972,7 +972,8 @@ impl Document {
             | Kind::PolygonPerimeter(_)
             | Kind::CircleCircumference(_)
             | Kind::CircleRadius(_)
-            | Kind::ArcLength(_) => self.length_measurement_name(*source)?,
+            | Kind::ArcLength(_)
+            | Kind::CircleArcLength(_, _, _) => self.length_measurement_name(*source)?,
             Kind::CircleArea(_) | Kind::PolygonArea(_) => format!("Area {source}"),
             Kind::CoordinateMeasurement { kind, first, .. } => {
                 format!("{kind:?} {}", self.coordinate_point_name(*first)?)
@@ -1031,7 +1032,9 @@ impl Document {
             Kind::PolygonPerimeter(_) => return Some("Perimeter".into()),
             Kind::CircleCircumference(_) => return Some("Circumference".into()),
             Kind::CircleRadius(_) => return Some("Radius".into()),
-            Kind::ArcLength(_) => return Some("Arc Length".into()),
+            Kind::ArcLength(_) | Kind::CircleArcLength(_, _, _) => {
+                return Some("Arc Length".into());
+            }
             _ => return None,
         };
         Some(format!(

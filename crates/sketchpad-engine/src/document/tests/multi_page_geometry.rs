@@ -773,6 +773,22 @@ fn multi_page_point_measurements_append_after_existing_labels() {
     assert_eq!(reopened.objects[19].kind, Kind::PointRatio(2, 4, target));
     std::fs::remove_file(path).unwrap();
 
+    let mut extended = reopened;
+    extended.active_page = 1;
+    let a = extended.add(Kind::Free(Point { x: 100., y: 80. }));
+    let b = extended.add(Kind::Free(Point { x: 200., y: 80. }));
+    let c = extended.add(Kind::Free(Point { x: 100., y: 120. }));
+    let d = extended.add(Kind::Free(Point { x: 300., y: 120. }));
+    let first = extended.add(Kind::Segment(a, b));
+    let second = extended.add(Kind::Segment(c, d));
+    let ratio = extended.add(Kind::SegmentRatio(first, second));
+    let extended = Document::from_bytes(&extended.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        extended.objects[ratio - 1].kind,
+        Kind::SegmentRatio(first, second)
+    );
+    assert_eq!(extended.ratio_value(ratio), Some(0.5));
+
     let mut document = Document::from_bytes(base, None).unwrap();
     document.active_page = 1;
     document.add(Kind::PointDistance(1, 2));

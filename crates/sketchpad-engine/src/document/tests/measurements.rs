@@ -164,6 +164,24 @@ fn point_distance_matches_original_and_updates_after_edit() {
         caption_doc.referenced_text_runs(caption).unwrap()[0][0].text,
         "AB"
     );
+
+    let mut ratio_doc = Document::new();
+    let a = ratio_doc.add(Kind::Free(Point { x: 0., y: 0. }));
+    let b = ratio_doc.add(Kind::Free(Point { x: 100., y: 0. }));
+    let c = ratio_doc.add(Kind::Free(Point { x: 0., y: 50. }));
+    let d = ratio_doc.add(Kind::Free(Point { x: 200., y: 50. }));
+    let first = ratio_doc.add(Kind::Segment(a, b));
+    let second = ratio_doc.add(Kind::Segment(c, d));
+    let ratio = ratio_doc.add(Kind::SegmentRatio(first, second));
+    assert_eq!(ratio_doc.ratio_value(ratio), Some(0.5));
+    assert!(ratio_doc.move_point(b, Point { x: 300., y: 0. }));
+    assert_eq!(ratio_doc.ratio_value(ratio), Some(1.5));
+    let reopened = Document::from_bytes(&ratio_doc.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.objects[ratio - 1].kind,
+        Kind::SegmentRatio(first, second)
+    );
+    assert_eq!(reopened.ratio_value(ratio), Some(1.5));
 }
 #[test]
 fn circumference_matches_original_and_updates_after_resize() {
@@ -216,6 +234,38 @@ fn radius_matches_original_and_updates_after_resize() {
     assert_eq!(moved.objects[3].kind, Kind::CircleRadius(3));
     assert!((moved.circle_radius_cm(4).unwrap() - 3.96875).abs() < 1e-10);
 
+    let mut rounds = Document::new();
+    let center = rounds.add(Kind::Free(Point { x: 100., y: 100. }));
+    let start = rounds.add(Kind::Free(Point { x: 200., y: 100. }));
+    let end = rounds.add(Kind::Free(Point { x: 100., y: 0. }));
+    let arc = rounds.add(Kind::CenterArc(center, start, end));
+    let arc_radius = rounds.add(Kind::CircleRadius(arc));
+    let sector = rounds.add(Kind::SectorBoundary(arc));
+    let sector_radius = rounds.add(Kind::CircleRadius(sector));
+    let mut reopened = Document::from_bytes(&rounds.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.objects[arc_radius - 1].kind,
+        Kind::CircleRadius(arc)
+    );
+    assert_eq!(
+        reopened.objects[sector_radius - 1].kind,
+        Kind::CircleRadius(sector)
+    );
+    assert_eq!(
+        reopened.circle_radius_cm(arc_radius),
+        reopened.circle_radius_cm(sector_radius)
+    );
+    reopened.checkpoint();
+    assert!(reopened.move_point(start, Point { x: 250., y: 100. }));
+    assert!(
+        (reopened.circle_radius_cm(arc_radius).unwrap() - 150. / 37.79527559055118).abs() < 1e-10
+    );
+    assert_eq!(
+        reopened.circle_radius_cm(arc_radius),
+        reopened.circle_radius_cm(sector_radius)
+    );
+    reopened.verify_roundtrip().unwrap();
+
     let mut doc = Document::new();
     let a = doc.add(Kind::Free(Point { x: 150., y: 120. }));
     let b = doc.add(Kind::Free(Point { x: 250., y: 120. }));
@@ -234,6 +284,19 @@ fn radius_matches_original_and_updates_after_resize() {
     );
     reopened.selected.insert(circle);
     assert_eq!(reopened.clear_selected().unwrap(), vec![circle, radius]);
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/孙禄京作品/转盘.gsp"
+    );
+    let bytes = std::fs::read(path).unwrap();
+    let labeled_sector = Document::from_bytes(&bytes, None).unwrap();
+    assert!(matches!(
+        labeled_sector.objects[34].kind,
+        Kind::SectorBoundary(_)
+    ));
+    assert!(labeled_sector.sector_arc_geometry(35).is_some());
+    assert_eq!(labeled_sector.encode().unwrap(), bytes);
 }
 #[test]
 fn angle_matches_original_and_updates_after_drag() {
@@ -318,6 +381,56 @@ fn circle_area_matches_original_and_updates_after_resize() {
     );
     reopened.selected.insert(circle);
     assert_eq!(reopened.clear_selected().unwrap(), vec![circle, area]);
+
+    let mut segment_doc = Document::new();
+    let center = segment_doc.add(Kind::Free(Point { x: 0., y: 0. }));
+    let start = segment_doc.add(Kind::Free(Point { x: 100., y: 0. }));
+    let end = segment_doc.add(Kind::Free(Point { x: 0., y: -100. }));
+    let arc = segment_doc.add(Kind::CenterArc(center, start, end));
+    let segment = segment_doc.add(Kind::CircularSegmentBoundary(arc));
+    let segment_area = segment_doc.add(Kind::PolygonArea(segment));
+    let segment_perimeter = segment_doc.add(Kind::PolygonPerimeter(segment));
+    let pixels_per_cm: f64 = 37.79527559055118;
+    let expected_area = 5000. * (std::f64::consts::FRAC_PI_2 - 1.) / pixels_per_cm.powi(2);
+    let expected_perimeter =
+        (100. * std::f64::consts::FRAC_PI_2 + 100. * 2_f64.sqrt()) / pixels_per_cm;
+    assert!((segment_doc.polygon_area_cm2(segment_area).unwrap() - expected_area).abs() < 1e-10);
+    assert!(
+        (segment_doc.perimeter_cm(segment_perimeter).unwrap() - expected_perimeter).abs() < 1e-10
+    );
+    let reopened = Document::from_bytes(&segment_doc.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.objects[segment - 1].kind,
+        Kind::CircularSegmentBoundary(arc)
+    );
+    assert!((reopened.polygon_area_cm2(segment_area).unwrap() - expected_area).abs() < 1e-10);
+    assert!((reopened.perimeter_cm(segment_perimeter).unwrap() - expected_perimeter).abs() < 1e-10);
+
+    for (path, id) in [
+        (
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/侯仰顺作品/滑块(蚂蚁).gsp"
+            ),
+            54,
+        ),
+        (
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/向忠作品/正弦波·音乐【电子琴】.gsp"
+            ),
+            73,
+        ),
+    ] {
+        let bytes = std::fs::read(path).unwrap();
+        let imported = Document::from_bytes(&bytes, None).unwrap();
+        assert!(matches!(
+            imported.objects[id - 1].kind,
+            Kind::CircularSegmentBoundary(_)
+        ));
+        assert!(imported.filled_region_points(id).is_some());
+        assert_eq!(imported.encode().unwrap(), bytes);
+    }
 }
 #[test]
 fn transformed_circle_measurements_follow_their_sources() {
@@ -446,6 +559,39 @@ fn arc_length_matches_original_and_updates_after_drag() {
             .arc_length_cm(measurement),
         reopened.arc_length_cm(measurement)
     );
+
+    let mut circle_doc = Document::new();
+    let center = circle_doc.add(Kind::Free(Point { x: 200., y: 180. }));
+    let start = circle_doc.add(Kind::Free(Point { x: 260., y: 180. }));
+    let end = circle_doc.add(Kind::Free(Point { x: 200., y: 120. }));
+    let circle = circle_doc.add(Kind::Circle(center, start));
+    let circle_length = circle_doc.add(Kind::CircleArcLength(circle, start, end));
+    let mut circle_reopened = Document::from_bytes(&circle_doc.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        circle_reopened.objects[circle_length - 1].kind,
+        Kind::CircleArcLength(circle, start, end)
+    );
+    let pixels_per_cm = 37.79527559055118;
+    assert!(
+        (circle_reopened.arc_length_cm(circle_length).unwrap()
+            - 60. * std::f64::consts::FRAC_PI_2 / pixels_per_cm)
+            .abs()
+            < 1e-10
+    );
+    circle_reopened.checkpoint();
+    assert!(circle_reopened.move_point(end, Point { x: 140., y: 180. }));
+    assert!(
+        (circle_reopened.arc_length_cm(circle_length).unwrap()
+            - 60. * std::f64::consts::PI / pixels_per_cm)
+            .abs()
+            < 1e-10
+    );
+    let circle_round_trip = Document::from_bytes(&circle_reopened.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        circle_round_trip.arc_length_cm(circle_length),
+        circle_reopened.arc_length_cm(circle_length)
+    );
+
     reopened.selected.insert(arc);
     assert_eq!(reopened.clear_selected().unwrap(), vec![arc, measurement]);
 }

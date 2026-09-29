@@ -71,6 +71,7 @@ impl Document {
                     || !matches!(
                         source.kind,
                         Kind::ParameterCalculation(..)
+                            | Kind::SegmentRatio(..)
                             | Kind::PointRatio(..)
                             | Kind::SegmentLength(..)
                     )

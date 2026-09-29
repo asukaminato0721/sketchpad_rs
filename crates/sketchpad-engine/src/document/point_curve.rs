@@ -242,7 +242,6 @@ impl<'a> PointCurve<'a> {
                 scale,
             } => {
                 let value = (*min + (*max - *min) * fraction) / *scale;
-                sample.invalidate_evaluation_dependents(*driver);
                 sample.set_evaluation_number(*driver, value)?;
                 sample.position(*target)?
             }

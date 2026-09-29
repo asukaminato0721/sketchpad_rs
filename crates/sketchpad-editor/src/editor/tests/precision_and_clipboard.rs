@@ -115,13 +115,13 @@ fn one_host_measurements_work_on_multi_page_sketch() {
     editor.selection_order = vec![polygon];
     editor.measure_perimeter();
     editor.selection_order = vec![circle];
-    editor.measure_circle(CircleMeasure::Circumference);
+    editor.measure_shape(ShapeMeasure::Circumference);
     editor.selection_order = vec![circle];
-    editor.measure_circle(CircleMeasure::Radius);
+    editor.measure_shape(ShapeMeasure::Radius);
     editor.selection_order = vec![circle];
-    editor.measure_circle(CircleMeasure::Area);
+    editor.measure_shape(ShapeMeasure::Area);
     editor.selection_order = vec![polygon];
-    editor.measure_circle(CircleMeasure::Area);
+    editor.measure_shape(ShapeMeasure::Area);
     editor.selection_order = vec![arc];
     editor.measure_arc_angle();
     editor.selection_order = vec![arc];
@@ -130,6 +130,34 @@ fn one_host_measurements_work_on_multi_page_sketch() {
         editor.doc.encode().unwrap(),
         include_bytes!("../../../../../tests/fixtures/two_page_one_host_measurements_port.gsp")
     );
+    editor.selection_order = vec![arc];
+    editor.measure_shape(ShapeMeasure::Radius);
+    let radius = *editor.doc.selected.iter().next().unwrap();
+    assert_eq!(editor.doc.objects[radius - 1].kind, Kind::CircleRadius(arc));
+    assert!(editor.doc.circle_radius_cm(radius).unwrap() > 0.);
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert!(reopened.circle_radius_cm(radius).unwrap() > 0.);
+
+    let circular_segment = editor.doc.add(Kind::CircularSegmentBoundary(arc));
+    editor.selection_order = vec![circular_segment];
+    editor.measure_perimeter();
+    let perimeter = *editor.doc.selected.iter().next().unwrap();
+    editor.selection_order = vec![circular_segment];
+    editor.measure_shape(ShapeMeasure::Area);
+    let area = *editor.doc.selected.iter().next().unwrap();
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert!(reopened.perimeter_cm(perimeter).unwrap() > 0.);
+    assert!(reopened.polygon_area_cm2(area).unwrap() > 0.);
+
+    editor.selection_order = vec![circle, b, c];
+    editor.measure_arc_length();
+    let circle_arc_length = *editor.doc.selected.iter().next().unwrap();
+    assert_eq!(
+        editor.doc.objects[circle_arc_length - 1].kind,
+        Kind::CircleArcLength(circle, b, c)
+    );
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert!(reopened.arc_length_cm(circle_arc_length).unwrap() > 0.);
 }
 
 #[test]
@@ -151,6 +179,20 @@ fn point_measurements_work_on_multi_page_sketch() {
     assert_eq!(
         editor.doc.encode().unwrap(),
         include_bytes!("../../../../../tests/fixtures/two_page_point_measurements_port.gsp")
+    );
+    let first = editor.doc.add(Kind::Segment(2, 4));
+    let second = editor.doc.add(Kind::Segment(2, target));
+    editor.selection_order = vec![first, second];
+    editor.measure_ratio();
+    let ratio = *editor.doc.selected.iter().next().unwrap();
+    assert_eq!(
+        editor.doc.objects[ratio - 1].kind,
+        Kind::SegmentRatio(first, second)
+    );
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert_eq!(
+        reopened.objects[ratio - 1].kind,
+        Kind::SegmentRatio(first, second)
     );
 }
 

@@ -26,7 +26,10 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                         && source.page == object.page
                         && matches!(source.kind, Kind::Segment(..))
                 }),
-            Kind::ParameterCalculation(..) | Kind::PointRatio(..) | Kind::SegmentLength(..) => true,
+            Kind::ParameterCalculation(..)
+            | Kind::SegmentRatio(..)
+            | Kind::PointRatio(..)
+            | Kind::SegmentLength(..) => true,
             Kind::AngleMarker(..)
             | Kind::AngleMeasurement(..)
             | Kind::ArcAngle(..)
@@ -285,6 +288,11 @@ impl Document {
                     "{}/{}",
                     self.reference_segment_name(*a, *c)?,
                     self.reference_segment_name(*a, *b)?
+                )),
+                Kind::SegmentRatio(first, second) => Some(format!(
+                    "{}/{}",
+                    self.reference_geometry_name(*first)?,
+                    self.reference_geometry_name(*second)?
                 )),
                 Kind::SegmentLength(segment) => {
                     let Kind::Segment(a, b) = self.objects.get(segment.checked_sub(1)?)?.kind

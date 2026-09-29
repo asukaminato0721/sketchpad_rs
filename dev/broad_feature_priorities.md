@@ -1057,8 +1057,48 @@ on implementing its unsupported parent object rather than cached caption text.
 The following parameter-locus pass reuses the same scoped evaluator for native
 code-97 subtype-43 outputs. Seven segment families, 13 filled-region families,
 and 47 nested point-curve collections all execute through their runtime samplers;
-calculation-driven and unsupported-parent profiles remain guarded. The measured
-67-slot recovery lowers unsupported slots 3,471→3,404, raises complete documents
-1,228→1,239 and complete drawings 1,258→1,269, and preserves all 1,599 originals
-byte-for-byte. The next broad target should again be selected from decoded-parent
-roots rather than raw downstream code-77 or code-48 totals.
+unsupported-parent profiles remain guarded. The subsequent calculated-driver
+pass admits the 22 observed scalar/degree ParameterCalculation descriptors and
+restores 19 descendants. Combined measured recovery is 108 slots: unsupported
+3,471→3,363, complete documents 1,228→1,243, and complete drawings
+1,258→1,273. All 1,599 originals remain byte-for-byte exact. The next broad
+target should again be selected from decoded-parent roots rather than raw
+downstream code-77 or code-48 totals.
+
+The rebuilt decoded-parent frontier then identified six code-46 Radius roots on
+already-supported circular geometry. Extending the shared radius evaluator to
+CenterArc and SectorBoundary restores those six measurements plus 91 descendants.
+Unsupported slots fall 3,363→3,266, complete documents 1,243→1,248, complete
+drawings 1,273→1,278, and partial views 877→875. Runtime auditing confirms five
+positive finite CenterArc radii and one Sector radius; all 1,599 originals remain
+byte-exact. The next frontier must be rebuilt from this baseline.
+
+The next decoded-parent frontier identified eight code-47 Ratio roots with two
+Segment parents. Supporting the native `length(first) / length(second)` form
+restores those roots plus 68 descendants: unsupported slots fall 3,266→3,190,
+complete documents 1,248→1,253, complete drawings 1,278→1,283, and partial
+views 875→871. All eight roots evaluate to finite positive live values, prototype
+coverage remains unchanged, and all 1,599 originals stay byte-exact. The next
+frontier should be rebuilt from this baseline.
+
+The following code-82 pass accepts validated native name/style metadata as inert
+Sector presentation data, matching the existing CircleInterior policy. It
+restores 16 drawing roots, 51 drawing descendants, and 12 tool-local roots.
+Unsupported slots fall 3,190→3,111 (2,513 drawing plus 598 prototype), complete
+documents rise 1,253→1,256, and complete drawings rise 1,283→1,286; partial
+views remain 871. A recovered corpus sector executes through the analytic
+boundary evaluator, and all 1,599 originals stay byte-exact. The next frontier
+should be rebuilt from this baseline.
+
+The circular-segment measurement pass restores six code-83 roots, two dependent
+Area measurements, and three descendants. The shared region geometry now provides
+analytic Area and Perimeter plus editor/writer authoring. Unsupported falls
+3,111→3,100, with complete documents/drawings at 1,259/1,289 and every original
+still byte-exact.
+
+The next decoded-parent slice implements the distinct code-44 circle/start/end Arc
+Length form. Twelve roots restore 61 descendants; seven values are finite and five
+retain valid undefined upstream geometry. Unsupported falls 3,100→3,027, complete
+documents/drawings rise to 1,260/1,290, and partial views fall to 870. Prototype
+coverage stays unchanged at 598 unsupported slots. Rebuild the next frontier from
+this measured baseline.

@@ -81,7 +81,7 @@ The release gate is every sketch and document command verified after editing, sa
 | Arc on Circle | Partial: general typed point endpoints use the circle center, start-point radius and end-point direction. Degenerate centers/angles retain undefined dependents. Fourteen public API controls match independently saved Native files entirely; page-local edits and undo pass. See [arc evidence](dev/arc_sources59_native_analysis.md) |
 | Arc by Center | Partial: construction, measurements, constrained/value/literal points and multi-page serialization; defined and degenerate API outputs opened and saved byte-identically in native Sketchpad |
 | Arc through 3 Points | Partial: works on supported multi-page pages; generated page 2 file opened and saved byte-identically in native Sketchpad |
-| Interior | Partial: modern Circle interiors retain an independent live Circle source, style, visibility and fill order; public API8 files match independent Native saves, with shared rendering/picking, undo and page-local writing. Legacy Circle-interior opacity and disk transforms remain pending. See [Circle evidence](dev/circle_interior60_native_analysis.md). analytic sector interiors now support closed-perimeter points, area, perimeter and arc-only curve length, shared fills/picking, drag/undo and page-local writing; see [sector evidence](dev/sector_boundary59_native_analysis.md). Generic sector transformations and aliases remain pending. Polygon from selected vertices, fill and outline, native hit testing, SVG, and signed native drawing order with stable ties; imported/copy/pasted ranks persist. Works on supported multi-page pages, including an interior on each page in one file. Generated multi-page files and coincident rank-swapped interiors opened and saved byte-identically in Sketchpad 5; legacy GSP4 interiors retain their short headers through point edits |
+| Interior | Partial: modern Circle interiors retain an independent live Circle source, style, visibility and fill order; public API8 files match independent Native saves, with shared rendering/picking, undo and page-local writing. Legacy Circle-interior opacity and disk transforms remain pending. See [Circle evidence](dev/circle_interior60_native_analysis.md). Analytic sector interiors support closed-perimeter points, area, perimeter and arc-only curve length, shared fills/picking, drag/undo and page-local writing; native name/style metadata is preserved as inert presentation data for 28 additional drawing/tool-local sectors. See [sector evidence](dev/sector_boundary59_native_analysis.md). Generic sector transformations and aliases remain pending. Polygon from selected vertices, fill and outline, native hit testing, SVG, and signed native drawing order with stable ties; imported/copy/pasted ranks persist. Works on supported multi-page pages, including an interior on each page in one file. Generated multi-page files and coincident rank-swapped interiors opened and saved byte-identically in Sketchpad 5; legacy GSP4 interiors retain their short headers through point edits |
 | Locus | Partial: segment-, circle-, or arc-constrained points can drive a dependent point, segment, ray, line, circle, arc, or polygon interior through supported constructions. Native code 35 point curves and segment, ray, line, circle, arc, and polygon families import as editable objects, render in the desktop and SVG views, and can be constructed from the selected pair. Native midpoint, translated-point, circle-driver, arc-driver, two-step, two-branch, segment-family, direct-ray-family, bisector-ray-family, direct-line-family, parallel-line-family, perpendicular-line-family, circle-family, three-point-arc-family, circle-arc-family, base-polygon-family, vector-translated-polygon-family, polar-translated-polygon-family, and rectangular-translated-polygon-family examples were reproduced; generated files opened and saved byte-identically in Sketchpad 5. A scalar parameter can drive a dependent Cartesian numeric point as a native code-97 trace; source edits, origin movement, creation, clipboard copying, and range edits cross-opened byte-identically. Existing PointOnCurve, Polygon and Sector constrained drivers also replay their analytic/perimeter path through the shared evaluator;12 Native controls and12 public API files are whole-file exact, including edited/closed/coarse/dense cases. Intrinsic sampled102 point traces preserve explicit carried/frozen boundaries and accept proved Segment, Circle and Arc profiles. Literal15/90 and Scalar95/literal123 children retain separately verified parameter bounds. See [sampled evidence](dev/sampled_mapped61_analysis.md) and [driver evidence](dev/locus_drivers61_analysis.md). Other traced object kinds and locus options pending |
 
 ## Transform
@@ -110,14 +110,14 @@ Length, distance, perimeter, circumference, angle, circle and polygon area, arc 
 | --- | --- |
 | Length | Partial: original and transformed segment hosts, including numeric-angle rotations; segment length, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
 | Distance | Partial: two-point and point-to-segment/ray/line supporting-line distance, including transformed straight hosts; live values, precision 0–5, calculations, marked-distance iteration, dependency remapping, and supported multi-page saving. Seven generated originals/edits open and save byte-identically in native Sketchpad 5. See `dev/point_line_distance_analysis.md` for native evidence |
-| Perimeter | Partial: base and transformed polygon interior perimeter, dynamic value, SVG, generated files edited in Sketchpad 5 |
+| Perimeter | Partial: base and transformed polygon interiors plus sectors and circular segments, with analytic live values, SVG, and single- or multi-page authoring; generated polygon files edited in Sketchpad 5 |
 | Circumference | Partial: base and transformed circle circumference, dynamic value, SVG; generated transformed-circle files opened and saved byte-identically in Sketchpad 5 |
 | Angle | Partial: three-point angle, dynamic value, SVG, generated file opened and edited in Sketchpad 5 |
-| Area | Partial: base and transformed circle plus base and transformed polygon interior area, dynamic value, SVG; generated transformed-circle files opened and saved byte-identically in Sketchpad 5; other area sources pending |
+| Area | Partial: base and transformed circles and polygon interiors plus sectors and circular segments, with analytic live values, SVG, and single- or multi-page authoring; generated transformed-circle files opened and saved byte-identically in Sketchpad 5; other area sources pending |
 | Arc Angle | Partial: three-point and center arcs edited; circle-based arc opened; dynamic value and SVG |
-| Arc Length | Partial: three-point and center arcs edited; circle-based arc opened; dynamic value and SVG |
-| Radius | Partial: base and transformed circle radius, dynamic value, SVG; generated transformed-circle files opened and saved byte-identically in Sketchpad 5 |
-| Ratio | Partial: signed point ratio, dynamic projection after drag, SVG, generated positive and negative files opened in Sketchpad 5 |
+| Arc Length | Partial: three-point and center arcs edited; circle-based arcs opened; sectors and native circle-plus-two-endpoint measurements evaluate live. The editor and writers support the three-reference form on single- and multi-page sketches; 12 imported roots restore 61 descendants. Dynamic value and SVG are supported. |
+| Radius | Partial: base and transformed circles plus supported circular arcs and sectors, with live values, calculations, SVG, save/reopen, and single- or multi-page authoring. Native CenterArc/SectorBoundary groups and generated transformed-circle files retain the shared code-46 layout; five CenterArc and one Sector corpus roots evaluate live. |
+| Ratio | Partial: signed three-point projection plus first-segment/second-segment length ratio, live dependency updates, SVG, and single- or multi-page authoring. Generated positive and negative point-ratio files opened in Sketchpad 5; eight imported segment-ratio roots evaluate live and remain byte exact. |
 | Value of Point | Partial: original and transformed segment/circle hosts, constructed straight paths, rays, lines, three-point arcs, and circle-arcs with live constrained values, precision 0–5, calculations, iteration depth, and save/reopen. Six transformed/constructed path originals/edits display the expected native values and iteration counts and save byte-identically. See `dev/transformed_point_values_analysis.md`. Native ray/line and both arc measurement groups match generated groups byte for byte before label placement; generated and moved files displayed the expected values and saved byte-identically in Sketchpad 5 Direct constrained points on point-target loci retain their normalized geometric value or canonical parameter value (radians for degree drivers); Direct FunctionPlot constrained points report canonical function x, including asymmetric ranges and undefined-function recovery; arbitrary-point inverse values on curves remain pending. See [function value evidence](dev/function_points60_native_analysis.md). See [Native curve parameter evidence](dev/path_curve_points58_native_analysis.md). |
 | Coordinates | Partial: Cartesian point pair updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; complex names/formats pending |
 | Abscissa (x) | Partial: Cartesian x value updates after drag, saves/reopens, generated file opened and saved in Sketchpad 5; optional native captions and observed display/cache formats, including nonzero presentation tails, import and feed calculations |
@@ -638,13 +638,85 @@ code-73 captions parse successfully but depend on unsupported parent objects.
 
 Code-97 parameter loci now share the geometric sampler used by ordinary loci
 when their live target is a supported straight, filled region, or nested
-point-curve collection. Admission still requires an actual Parameter driver,
-the exact dependency capture, matching unit/range metadata, and subtype 43;
-calculation-driven and unsupported-parent profiles remain guarded. The writer
-emits subtype 42 for point traces and subtype 43 for geometric families, and
-save/reopen preserves editable range and stroke styles.
+point-curve collection. Admission requires an observed scalar/degree Parameter
+or ParameterCalculation driver, the exact dependency capture, matching
+unit/range metadata, and the target's native subtype. Unsupported-parent and
+length-driver profiles remain guarded. The writer emits subtype 42 for point
+traces and subtype 43 for geometric families; save/reopen preserves editable
+ranges and stroke styles.
 
-The complete corpus restores 67 direct code-97 objects. Unsupported slots fall
-3,471→3,404; all-kind-complete documents rise 1,228→1,239,
-drawing-complete documents rise 1,258→1,269, and partial views fall 880→877.
+The complete corpus restores 89 direct code-97 objects and 19 existing
+descendants. Unsupported slots fall 3,471→3,363; all-kind-complete documents
+rise 1,228→1,243, drawing-complete documents rise 1,258→1,273, and partial views
+fall 880→877. All 1,599 originals remain byte-exact.
+
+## Arc and sector Radius measurements
+
+Code-46 Radius now accepts the same supported circular geometry families as the
+shared arc/sector evaluator instead of requiring a Circle object. Five native
+CenterArc measurements and one SectorBoundary measurement have the established
+code-46 numeric layout and evaluate to finite positive live radii. The editor
+authors the same measurement for supported arcs and sectors, including on
+multi-page documents; calculations and captions reuse the existing Length path.
+
+The compiled corpus restores 97 drawing slots: six Radius roots and 91 existing
+descendants. Unsupported slots fall 3,363→3,266, all-kind-complete documents
+rise 1,243→1,248, drawing-complete documents rise 1,273→1,278, and partial views
+fall 877→875. Embedded-tool counts are unchanged, and all 1,599 originals remain
+byte-exact.
+
+## Segment Ratio measurements
+
+Code 47 now distinguishes both observed dependency forms. Three point
+references retain the signed projection `(C−A)·(B−A)/|B−A|²`; two finite
+Segment references evaluate as `length(first) / length(second)`. The second
+segment must remain nondegenerate. The shared numeric path supplies scalar
+formatting, captions, calculations, SVG, deletion propagation, and live edits.
+The editor accepts two selected segments in numerator/denominator order, and
+both single- and multi-page writers emit the native counted two-reference
+layout without adding another binary template.
+
+The corpus contains eight newly decoded segment-ratio roots. A runtime audit
+evaluates all eight to finite positive values, including the π construction's
+`3.1415926535898`. They unlock 68 existing descendants for 76 drawing slots
+total. Unsupported slots fall 3,266→3,190, all-kind-complete documents rise
+1,248→1,253, drawing-complete documents rise 1,278→1,283, and partial views
+fall 875→871. Prototype coverage is unchanged at 610 unsupported slots; all
+1,599 originals remain byte-exact.
+
+## Sector interior name metadata
+
+Native code-82 Sector groups may contain a bounded `07d5` name record and
+indexed `07d8` text style even though the interior does not present an editable
+geometric label. The decoder now validates and preserves those records using
+the same inert-metadata policy as CircleInterior, while continuing to require an
+earlier supported Arc, the exact class/subtype header, one counted reference,
+and only the optional empty `232e` marker. A representative recovered sector
+executes through the existing analytic boundary evaluator and round-trips
+exactly.
+
+The pass restores 16 drawing sectors and 51 drawing descendants, plus 12 sector
+objects inside embedded-tool prototypes. Unsupported slots fall 3,190→3,111
+(2,513 drawing and 598 prototype), all-kind-complete documents rise
+1,253→1,256, and drawing-complete documents rise 1,283→1,286. Partial views
+remain 871 because that count also includes structural editing restrictions.
 All 1,599 originals remain byte-exact.
+
+## Circular-segment interiors and measurements
+
+Circular-segment interiors now accept both observed native presentation profiles,
+and their endpoint chord closes the source arc for analytic Area and Perimeter.
+Six code-83 roots, two Area measurements, and three descendants restore 11
+drawing slots. Unsupported falls 3,111→3,100, complete documents rise
+1,256→1,259, and complete drawings rise 1,286→1,289. All 1,599 originals remain
+byte-exact.
+
+## Circle-and-endpoints Arc Length
+
+Code-44 Arc Length now distinguishes the native three-reference circle/start/end
+form from a one-reference arc host. Twelve roots and 61 descendants restore 73
+drawing slots. Seven roots currently evaluate to finite positive values; five
+preserve valid undefined geometry. Unsupported falls 3,100→3,027 (2,429 drawing
+plus 598 prototype), complete documents rise 1,259→1,260, complete drawings rise
+1,289→1,290, and partial views fall 871→870. All 1,599 originals remain
+byte-exact.

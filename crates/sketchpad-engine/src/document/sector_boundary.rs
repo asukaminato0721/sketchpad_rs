@@ -150,6 +150,20 @@ impl Document {
             .is_some_and(|o| !o.deleted && o.kind.is_sector())
             && self.sector_arc_geometry(id).is_none()
     }
+    pub(super) fn undefined_circular_segment(&self, id: usize) -> bool {
+        self.objects
+            .get(id.wrapping_sub(1))
+            .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+            && self.circular_segment_geometry(id).is_none()
+    }
+    fn circular_segment_geometry(&self, id: usize) -> Option<SectorArc> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::CircularSegmentBoundary(arc) = object.kind else {
+            return None;
+        };
+        (!object.deleted).then_some(())?;
+        self.arc_geometry(arc)
+    }
     /// Native Point68 traverses center→start→arc→center by physical perimeter.
     pub fn point_on_sector(&self, id: usize, t: f64) -> Option<Point> {
         if !t.is_finite() || !(0.0..=1.).contains(&t) {
@@ -257,6 +271,19 @@ impl Document {
     pub fn sector_area_pixels2(&self, id: usize) -> Option<f64> {
         let (_, r, _, s, _) = self.sector_arc_geometry(id)?;
         Some(0.5 * r * r * s.abs())
+    }
+    pub fn circular_segment_perimeter_pixels(&self, id: usize) -> Option<f64> {
+        let geometry = self.circular_segment_geometry(id)?;
+        let (_, radius, _, sweep, _) = geometry;
+        let chord = arc_at(geometry, 0.).distance(arc_at(geometry, 1.));
+        let perimeter = radius * sweep.abs() + chord;
+        perimeter.is_finite().then_some(perimeter)
+    }
+    pub fn circular_segment_area_pixels2(&self, id: usize) -> Option<f64> {
+        let (_, radius, _, sweep, _) = self.circular_segment_geometry(id)?;
+        let sweep = sweep.abs();
+        let area = 0.5 * radius * radius * (sweep - sweep.sin());
+        (area.is_finite() && area >= 0.).then_some(area)
     }
     pub fn sector_contains(&self, id: usize, p: Point) -> bool {
         if !p.x.is_finite() || !p.y.is_finite() {

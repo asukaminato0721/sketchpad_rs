@@ -566,6 +566,8 @@ pub enum Kind {
     PolygonArea(usize),
     ArcAngle(usize),
     ArcLength(usize),
+    /// Native code 44: minor-arc length on a circle between two point directions.
+    CircleArcLength(usize, usize, usize),
     AngleMeasurement(usize, usize, usize),
     /// Positive Cartesian turn from vertex→first to vertex→last, in [0,360).
     PolarAngleValue(usize, usize, usize),
@@ -609,6 +611,8 @@ pub enum Kind {
     /// A Native code88 point in the terminal scope of a single mapped binding.
     IterationPointAlias(usize),
     IterationValues(usize, usize),
+    /// Native code 47: the length of the first segment divided by the second.
+    SegmentRatio(usize, usize),
     PointRatio(usize, usize, usize),
     Midpoint(usize, usize),
     /// Native code 35. The reference list records the target, the driver's

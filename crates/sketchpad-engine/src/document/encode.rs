@@ -1638,12 +1638,14 @@ impl Document {
                 added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
-            if let Kind::PointRatio(a, b, c) = o.kind {
-                let mut group = *include_bytes!("../../../../assets/ratio_measurement_group.bin");
-                group[48..52].copy_from_slice(&(a as u32).to_le_bytes());
-                group[52..56].copy_from_slice(&(b as u32).to_le_bytes());
-                group[56..60].copy_from_slice(&(c as u32).to_le_bytes());
-                Self::place_measurement(&mut group, 68, &mut measurement_row)?;
+            if let Kind::SegmentRatio(a, b) | Kind::PointRatio(a, b, _) = o.kind {
+                let references = match o.kind {
+                    Kind::SegmentRatio(_, _) => vec![a as u32, b as u32],
+                    Kind::PointRatio(_, _, c) => vec![a as u32, b as u32, c as u32],
+                    _ => unreachable!(),
+                };
+                let (mut group, format_offset) = Self::ratio_measurement_group(&references)?;
+                Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }
@@ -1713,11 +1715,16 @@ impl Document {
                 added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
-            if let Kind::ArcLength(arc) = o.kind {
-                let mut group =
-                    *include_bytes!("../../../../assets/arc_length_measurement_group.bin");
-                group[48..52].copy_from_slice(&(arc as u32).to_le_bytes());
-                Self::place_measurement(&mut group, 60, &mut measurement_row)?;
+            if let Kind::ArcLength(arc) | Kind::CircleArcLength(arc, _, _) = o.kind {
+                let references = match o.kind {
+                    Kind::ArcLength(_) => vec![arc as u32],
+                    Kind::CircleArcLength(_, start, end) => {
+                        vec![arc as u32, start as u32, end as u32]
+                    }
+                    _ => unreachable!(),
+                };
+                let (mut group, format_offset) = Self::arc_length_measurement_group(&references)?;
+                Self::place_measurement(&mut group, format_offset, &mut measurement_row)?;
                 if !o.visible {
                     group[10] = 1;
                 }

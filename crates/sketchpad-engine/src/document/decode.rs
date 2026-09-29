@@ -466,6 +466,7 @@ impl Document {
             let angle_marker_label =
                 h.len() == 28 && matches!(code, 113 | 115 | 116) && h[6..10] == [18, 0, 95, 0];
             let labeled_shape = (code == 10 && matches!(h[6..10], [5, 0, 16, 0]))
+                || (matches!(code, 82 | 83) && matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0]))
                 || matches!(h[6..8], [1, 0] | [2, 0] | [3, 0] | [4, 0])
                     && matches!(
                         code,
@@ -1859,9 +1860,15 @@ impl Document {
                     {
                         Kind::PointRatio(*a, *b, *c)
                     }
+                    (47, _, [first, second])
+                        if measurement_format && measurement_style
+                            && [first, second].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| is_segment_kind(&o.kind))) =>
+                    {
+                        Kind::SegmentRatio(*first, *second)
+                    }
                     (39, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_))) =>
                     {
                         Kind::PolygonPerimeter(*host)
                     }
@@ -1921,7 +1928,7 @@ impl Document {
                     }
                     (42, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_))) =>
                     {
                         Kind::PolygonArea(*host)
                     }
@@ -1937,9 +1944,18 @@ impl Document {
                     {
                         Kind::ArcLength(*host)
                     }
+                    (44, _, [circle, start, end])
+                        if measurement_format && measurement_style
+                            && objects.get(circle.saturating_sub(1)).is_some_and(|o| o.kind.is_circle())
+                            && [start, end].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))) =>
+                    {
+                        Kind::CircleArcLength(*circle, *start, *end)
+                    }
                     (46, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| o.kind.is_circle()) =>
+                            && objects.get(host - 1).is_some_and(|o| {
+                                o.kind.is_circle() || o.kind.is_arc() || o.kind.is_sector()
+                            }) =>
                     {
                         Kind::CircleRadius(*host)
                     }
@@ -2435,7 +2451,7 @@ impl Document {
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x232e).count() <= 1
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
-                                0x07d0 | 0x07d7 => true,
+                                0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
                                 0x07d2 => r.data.len() == 8,
                                 0x232e => r.data.is_empty(),
                                 _ => false,
@@ -2444,9 +2460,14 @@ impl Document {
                         if h.len() == 28 && h[6..10] == [13, 0, 69, 0]
                             && constraint_payload.is_none()
                             && super::sector_boundary::supported_circular_segment_source(&objects, *arc, page, objects.len() + 1)
-                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start)
-                                .map(|r| (r.kind, r.data.len()))
-                                .eq([(0x07d0, 28), (0x07d2, 8), (0x07d7, 0)]) => Kind::CircularSegmentBoundary(*arc),
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x232e).count() <= 1
+                            && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
+                                0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
+                                0x07d2 => r.data.len() == 8,
+                                0x232e => r.data.is_empty(),
+                                _ => false,
+                            }) => Kind::CircularSegmentBoundary(*arc),
                     (79, None, [circle, start, end])
                         if h.len() == 28 && h[6..10] == [12, 0, 67, 0]
                             && constraint_payload.is_none()

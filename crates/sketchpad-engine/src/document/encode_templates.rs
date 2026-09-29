@@ -2,6 +2,41 @@ use super::{Document, Kind, Object};
 use crate::graph;
 
 impl Document {
+    pub(super) fn arc_length_measurement_group(
+        references: &[u32],
+    ) -> Result<(Vec<u8>, usize), String> {
+        if !matches!(references.len(), 1 | 3) {
+            return Err("Arc length measurement needs one arc or a circle and two points".into());
+        }
+        let mut group =
+            include_bytes!("../../../../assets/arc_length_measurement_group.bin").to_vec();
+        if references.len() == 3 {
+            group[36..40].copy_from_slice(&16u32.to_le_bytes());
+            group[44..48].copy_from_slice(&3u32.to_le_bytes());
+            group.splice(52..52, [0; 8]);
+        }
+        for (index, reference) in references.iter().enumerate() {
+            group[48 + index * 4..52 + index * 4].copy_from_slice(&reference.to_le_bytes());
+        }
+        Ok((group, 56 + references.len() * 4))
+    }
+
+    pub(super) fn ratio_measurement_group(references: &[u32]) -> Result<(Vec<u8>, usize), String> {
+        if !matches!(references.len(), 2 | 3) {
+            return Err("Ratio measurement needs two segments or three points".into());
+        }
+        let mut group = include_bytes!("../../../../assets/ratio_measurement_group.bin").to_vec();
+        if references.len() == 2 {
+            group[36..40].copy_from_slice(&12u32.to_le_bytes());
+            group[44..48].copy_from_slice(&2u32.to_le_bytes());
+            group.drain(56..60);
+        }
+        for (index, reference) in references.iter().enumerate() {
+            group[48 + index * 4..52 + index * 4].copy_from_slice(&reference.to_le_bytes());
+        }
+        Ok((group, 56 + references.len() * 4))
+    }
+
     pub(super) fn place_measurement(
         group: &mut [u8],
         format_offset: usize,

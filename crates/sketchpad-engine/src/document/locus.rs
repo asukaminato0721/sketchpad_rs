@@ -235,7 +235,7 @@ impl Document {
             return Err("Invalid parameter locus range or sketch".into());
         }
         let refs = expected_parameter_locus_refs(&self.objects, driver, target)
-            .ok_or("Select a parameter and a dependent object")?;
+            .ok_or("Select a supported numeric driver and a dependent object")?;
         let scale = parameter_locus_driver_profile(&self.objects, driver)
             .ok_or("Select a supported numeric driver")?
             .scale();
@@ -264,11 +264,11 @@ impl Document {
         let count = subdivisions.clamp(2, 4096).min(samples as usize);
         let mut sample = self.clone();
         sample.ensure_evaluation_context(self)?;
+        sample.invalidate_evaluation_dependents(driver);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
             let value = (min + (max - min) * fraction) / profile.scale();
-            sample.invalidate_evaluation_dependents(driver);
             if sample.set_evaluation_number(driver, value).is_none() {
                 values.push(None);
                 continue;
