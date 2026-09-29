@@ -336,6 +336,9 @@ impl Kind {
         if let Kind::ValueTablePair(first, second, _) = self {
             return vec![*first, *second];
         }
+        if let Kind::DataTable(sources, _) = self {
+            return sources.clone();
+        }
         if let Kind::Locus(refs, _) | Kind::ParameterLocus(refs, _, _, _) = self {
             return refs.clone();
         }
@@ -450,9 +453,13 @@ impl Kind {
             Kind::GraphHorizontalUnit(origin, _) | Kind::GraphVerticalUnit(origin, _) => {
                 vec![origin]
             }
+            Kind::IterationValues(iteration, ref values) => {
+                let mut parents = vec![iteration];
+                parents.extend(values.iter().copied());
+                parents
+            }
             Kind::Midpoint(a, b)
             | Kind::PointNumericLabel(a, b)
-            | Kind::IterationValues(a, b)
             | Kind::IterationBinding(a, b)
             | Kind::Segment(a, b)
             | Kind::Line(a, b)
@@ -509,7 +516,7 @@ impl Kind {
             Kind::LinkPageButton { .. } => vec![],
             Kind::CoordinateMeasurement { .. } => unreachable!(),
             Kind::ValueEquation { .. } => unreachable!(),
-            Kind::ValueTablePair(_, _, _) => unreachable!(),
+            Kind::ValueTablePair(_, _, _) | Kind::DataTable(_, _) => unreachable!(),
             Kind::Locus(_, _)
             | Kind::ParameterLocus(_, _, _, _)
             | Kind::MeasuredCalculation(_, _)
@@ -771,6 +778,9 @@ impl Kind {
             Kind::ValueTablePair(first, second, ref group) => {
                 Kind::ValueTablePair(m(first), m(second), group.clone())
             }
+            Kind::DataTable(ref sources, ref group) => {
+                Kind::DataTable(sources.iter().map(|id| m(*id)).collect(), group.clone())
+            }
             Kind::ToolPointOnPath(host) => Kind::ToolPointOnPath(m(host)),
             Kind::SegmentMidpoint(host) => Kind::SegmentMidpoint(m(host)),
             Kind::PointOnSegment(a, t) => Kind::PointOnSegment(m(a), t),
@@ -828,8 +838,8 @@ impl Kind {
                     },
                 )
             }
-            Kind::IterationValues(iteration, calculation) => {
-                Kind::IterationValues(m(iteration), m(calculation))
+            Kind::IterationValues(iteration, ref values) => {
+                Kind::IterationValues(m(iteration), values.iter().map(|id| m(*id)).collect())
             }
             Kind::SegmentIteration(seed, image, segment, depth) => Kind::SegmentIteration(
                 m(seed),
@@ -984,6 +994,9 @@ impl Kind {
             (Kind::ValueTable(_, group), Kind::ValueTable(_, original))
             | (Kind::ValueTablePair(_, _, group), Kind::ValueTablePair(_, _, original)) => {
                 *group = original.remap_sources(ids)?;
+            }
+            (Kind::DataTable(_, group), Kind::DataTable(_, original)) => {
+                *group = original.remap_general_sources(ids)?;
             }
             (Kind::MeasuredCalculation(source, group), Kind::MeasuredCalculation(_, original)) => {
                 *group = original

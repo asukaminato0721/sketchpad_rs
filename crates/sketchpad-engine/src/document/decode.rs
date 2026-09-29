@@ -21,8 +21,9 @@ pub(super) fn polygon_constraint_subtype(
 use super::calculations::parse_numeric_calculation;
 use super::embedded_tools::{document_record_indices, document_records};
 use super::iteration::{
-    mapped_binding_kind, supported_branch_polygon_mapping, supported_mapped_point_iteration,
-    supported_point_iteration_mapping, supported_point_parameter_iteration,
+    mapped_binding_kind, supported_branch_polygon_mapping, supported_iteration_values,
+    supported_mapped_point_iteration, supported_point_iteration_mapping,
+    supported_point_parameter_iteration,
 };
 use super::kind::{
     is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind, is_locus_polygon_kind,
@@ -604,7 +605,7 @@ impl Document {
                         }
                     }
                     0x07d5
-                        if matches!(code, 0 | 15)
+                        if matches!(code, 0 | 15 | 92)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
                             || arc_label
@@ -613,7 +614,7 @@ impl Document {
                     {
                         match LabelAux::parse(d) {
                             Ok(value)
-                                if matches!(code, 0 | 15)
+                                if matches!(code, 0 | 15 | 92)
                                     || (code == 71 && h[6..10] == [11, 0, 57, 0])
                                     || numeric_label
                                     || angle_marker_label
@@ -628,7 +629,7 @@ impl Document {
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
                     0x07d8
-                        if matches!(code, 0 | 15)
+                        if matches!(code, 0 | 15 | 92)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
                             || arc_label
@@ -711,6 +712,12 @@ impl Document {
                             measurement_precision =
                                 Some(u16::from_le_bytes(d[28..30].try_into().unwrap()));
                         }
+                    }
+                    0x090d if code == 92 && d.len() == 28 => {
+                        measurement_anchor = Some((
+                            i16::from_le_bytes(d[12..14].try_into().unwrap()),
+                            i16::from_le_bytes(d[14..16].try_into().unwrap()),
+                        ));
                     }
                     0x0903
                         if matches!(code, 65 | 66 | 86 | 87 | 94 | 124 | 125) && d.len() == 32 =>
@@ -806,7 +813,7 @@ impl Document {
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
-                    && !((code == 15 || (code == 71 && h[6..10] == [11, 0, 57, 0]))
+                    && !((matches!(code, 15 | 92) || (code == 71 && h[6..10] == [11, 0, 57, 0]))
                         && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !((labeled_shape || arc_label || numeric_label || angle_marker_label)
                         && matches!(r.kind, 0x07d5 | 0x07d8))
@@ -826,7 +833,21 @@ impl Document {
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
                     && !(matches!(
                         code,
-                        10 | 48 | 65 | 66 | 67 | 68 | 73 | 75 | 79 | 82 | 90 | 94 | 95 | 98 | 123
+                        10 | 48
+                            | 65
+                            | 66
+                            | 67
+                            | 68
+                            | 73
+                            | 75
+                            | 79
+                            | 82
+                            | 90
+                            | 94
+                            | 95
+                            | 98
+                            | 123
+                            | 92
                     ) && r.kind == 0x232e
                         && d.is_empty())
                     && !(code == 0
@@ -996,6 +1017,48 @@ impl Document {
                     final_only: data[4..6] == [1, 0],
                 })
             })();
+            let iteration_values_group = code == 92
+                && h.len() == 28
+                && h[2] & !3 == 0
+                && {
+                    let template = include_bytes!(
+                        "../../../../assets/point_parameter_iteration_values_group.bin"
+                    );
+                    h.iter()
+                        .zip(&template[8..36])
+                        .enumerate()
+                        .all(|(at, (actual, expected))| {
+                            matches!(at, 2 | 12..=15) || actual == expected
+                        })
+                }
+                && {
+                    let group = rs
+                        .iter()
+                        .filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                        .collect::<Vec<_>>();
+                    let kinds = group.iter().map(|record| record.kind).collect::<Vec<_>>();
+                    let layout = matches!(
+                        kinds.as_slice(),
+                        [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
+                            | [0x07d0, 0x07d2, 0x090d, 0x07d5, 0x07d8, 0x07d7]
+                            | [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x232e, 0x07d7]
+                            | [0x07d0, 0x07d2, 0x090d, 0x07d5, 0x07d8, 0x232e, 0x07d7]
+                    );
+                    let references = group.iter().find(|record| record.kind == 0x07d2);
+                    let placement = group.iter().find(|record| record.kind == 0x090d);
+                    layout
+                        && text_style
+                        && references.is_some_and(|record| record.data.len() == 4 + refs.len() * 4)
+                        && placement.is_some_and(|record| {
+                            let data = &b[record.data.clone()];
+                            data.len() == 28
+                                && data[..12] == [13, 9, 0, 0, 28, 0, 0, 0, 16, 0, 0, 0]
+                                && data[16..] == [0; 12]
+                        })
+                        && group
+                            .iter()
+                            .all(|record| record.kind != 0x232e || record.data.is_empty())
+                };
             let segment_marker = (|| {
                 if code != 121
                     || h.len() != 28
@@ -1439,12 +1502,14 @@ impl Document {
                             Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Value(*depth_parameter))
                         }
                     (76 | 89, None, _) if mapped_iteration.as_ref().is_some_and(|kind| matches!(kind, Kind::MappedPointIteration { seeds,.. } if seeds.len() > 1)) => mapped_iteration.unwrap(),
-                    (92,None,[iteration,calculation]) if *iteration>0 && objects.get(iteration-1).is_some_and(|o|matches!(o.kind,Kind::PointParameterIteration(_,_,_,value,_,_) if value==*calculation))
-                        && {
-                            let group=&b[group_start..rs[i].data.end];
-                            let template=include_bytes!("../../../../assets/point_parameter_iteration_values_group.bin");
-                            group.len()==template.len() && group.iter().zip(template).enumerate().all(|(at,(a,b))|at==10 || (48..56).contains(&at) || (100..102).contains(&at) || a==b)
-                        } => Kind::IterationValues(*iteration,*calculation),
+                    (92,None,[iteration,values @ ..]) if iteration_values_group
+                        && supported_iteration_values(
+                            &objects,
+                            page,
+                            objects.len() + 1,
+                            *iteration,
+                            values,
+                        ) => Kind::IterationValues(*iteration,values.to_vec()),
                     (90,None,_) if super::point_numeric_labels::decode_numeric_label(
                         &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).is_some() =>
                         super::point_numeric_labels::decode_numeric_label(
@@ -1796,6 +1861,21 @@ impl Document {
                                 (*first - page_base) as u32,
                                 (*second - page_base) as u32,
                             ]) => Kind::ValueTablePair(*first, *second, table),
+                            _ => Kind::Unsupported(code),
+                        }
+                    }
+                    (91, None, sources) if sources.len() >= 2
+                        && sources.iter().all(|source| objects.get(source - 1).is_some_and(|object| {
+                            object.page == page
+                                && !object.deleted
+                                && (object.kind.numeric_unit().is_some()
+                                    || matches!(object.kind, Kind::ReferencedText { .. }))
+                        })) => {
+                        match TableGroup::parse_general(&b[group_start..rs[i].data.end]) {
+                            Ok(table) if table.general_source_ids().as_deref()
+                                == Some(&sources.iter().map(|source| (*source - page_base) as u32).collect::<Vec<_>>()) => {
+                                Kind::DataTable(sources.to_vec(), table)
+                            }
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -2645,6 +2725,7 @@ impl Document {
                     kind,
                     Kind::ValueEquation { .. }
                         | Kind::CoordinateMeasurement { .. }
+                        | Kind::IterationValues(..)
                         | Kind::PlainText { .. }
                 )
                 && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_)))

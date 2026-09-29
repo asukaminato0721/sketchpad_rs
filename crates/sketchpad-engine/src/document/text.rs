@@ -186,6 +186,8 @@ impl Document {
                 object.kind,
                 Kind::ValueTable(_, _)
                     | Kind::ValueTablePair(_, _, _)
+                    | Kind::DataTable(_, _)
+                    | Kind::IterationValues(..)
                     | Kind::ValueEquation { .. }
                     | Kind::CoordinateMeasurement { .. }
                     | Kind::PointNumericLabel(_, _)
@@ -223,7 +225,9 @@ impl Document {
             record.map_or(0, |record| {
                 u16::from_le_bytes(self.original[record.data.clone()].try_into().unwrap()) as usize
             })
-        } else if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &object.kind
+        } else if let Kind::ValueTable(_, group)
+        | Kind::ValueTablePair(_, _, group)
+        | Kind::DataTable(_, group) = &object.kind
         {
             usize::from(group.font_reference())
         } else {

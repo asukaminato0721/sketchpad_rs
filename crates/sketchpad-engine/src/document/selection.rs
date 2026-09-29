@@ -527,7 +527,9 @@ impl Document {
                 Kind::ParameterCalculation(_, group) => {
                     group.set_anchor(shifted_anchor(group.anchor())?)?
                 }
-                Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) => {
+                Kind::ValueTable(_, group)
+                | Kind::ValueTablePair(_, _, group)
+                | Kind::DataTable(_, group) => {
                     group.set_anchor(shifted_anchor(group.anchor())?);
                 }
                 _ => {}

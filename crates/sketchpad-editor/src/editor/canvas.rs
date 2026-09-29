@@ -44,6 +44,7 @@ impl Editor {
                                 | Kind::ParameterCalculation(_, _)
                                 | Kind::ValueTable(_, _)
                                 | Kind::ValueTablePair(_, _, _)
+                                | Kind::DataTable(_, _)
                                 | Kind::PointOnSegment(_, _)
                                 | Kind::PointOnRay(_, _)
                                 | Kind::PointOnLine(_, _)
@@ -78,7 +79,8 @@ impl Editor {
                             | Kind::LengthPairCalculation(_, _, _)
                             | Kind::ParameterCalculation(_, _)
                             | Kind::ValueTable(_, _)
-                            | Kind::ValueTablePair(_, _, _) => {
+                            | Kind::ValueTablePair(_, _, _)
+                            | Kind::DataTable(_, _) => {
                                 let anchor = crate::render::number_lines_for_object(&self.doc, id)
                                     .unwrap()
                                     .0;
@@ -135,6 +137,7 @@ impl Editor {
                             | Kind::ParameterCalculation(_, _)
                             | Kind::ValueTable(_, _)
                             | Kind::ValueTablePair(_, _, _)
+                            | Kind::DataTable(_, _)
                     ) {
                         let at = p - self.drag_offset - vp.rect.min;
                         let anchor = (at.x.round() as i16, at.y.round() as i16);

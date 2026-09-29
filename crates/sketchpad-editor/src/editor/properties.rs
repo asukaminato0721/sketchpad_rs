@@ -34,7 +34,10 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
         | Kind::ReferencedFunction(..)
         | Kind::DerivativeFunction(..) => "Function",
         Kind::FunctionPlot(..) | Kind::ParametricPlot(..) => "Plot",
-        Kind::ValueTable(..) | Kind::ValueTablePair(..) => "Table",
+        Kind::ValueTable(..)
+        | Kind::ValueTablePair(..)
+        | Kind::DataTable(..)
+        | Kind::IterationValues(..) => "Table",
         Kind::AnimationButton { .. }
         | Kind::HideShowButton { .. }
         | Kind::MovementButton { .. }

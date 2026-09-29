@@ -825,19 +825,28 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::IterationValues(iteration, calculation) = o.kind {
-                let mut group = *include_bytes!(
-                    "../../../../assets/point_parameter_iteration_values_group.bin"
-                );
-                group[48..52].copy_from_slice(&(iteration as u32).to_le_bytes());
-                group[52..56].copy_from_slice(&(calculation as u32).to_le_bytes());
-                group[100..102].copy_from_slice(&0u16.to_le_bytes());
-                if o.visible {
-                    group[10] &= !1;
-                } else {
-                    group[10] |= 1;
+            if let Kind::IterationValues(iteration, ref values) = o.kind {
+                let template =
+                    include_bytes!("../../../../assets/point_parameter_iteration_values_group.bin");
+                let mut group = Vec::new();
+                let mut h: [u8; 28] = template[8..36].try_into().unwrap();
+                h[2] = u8::from(!o.visible) | (u8::from(o.presentation_suppressed) << 1);
+                put_record(&mut group, 0x07d0, &h);
+                let mut references = Vec::with_capacity(8 + values.len() * 4);
+                references.extend_from_slice(&((values.len() + 1) as u32).to_le_bytes());
+                references.extend_from_slice(&(iteration as u32).to_le_bytes());
+                for value in values {
+                    references.extend_from_slice(&(*value as u32).to_le_bytes());
                 }
-                added.extend_from_slice(&group);
+                put_record(&mut group, 0x07d2, &references);
+                let mut placement: [u8; 28] = template[64..92].try_into().unwrap();
+                let anchor = o.measurement_anchor.unwrap_or((23, 193));
+                placement[12..14].copy_from_slice(&anchor.0.to_le_bytes());
+                placement[14..16].copy_from_slice(&anchor.1.to_le_bytes());
+                put_record(&mut group, 0x090d, &placement);
+                put_record(&mut group, 0x07d8, &0u16.to_le_bytes());
+                put_record(&mut group, 0x07d7, &[]);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PointNumericLabel(point, value) = o.kind {
@@ -1041,7 +1050,10 @@ impl Document {
                 added.extend_from_slice(&bytes);
                 continue;
             }
-            if let Kind::ValueTable(_, group) | Kind::ValueTablePair(_, _, group) = &o.kind {
+            if let Kind::ValueTable(_, group)
+            | Kind::ValueTablePair(_, _, group)
+            | Kind::DataTable(_, group) = &o.kind
+            {
                 let mut bytes = group.as_bytes().to_vec();
                 bytes[10] = (bytes[10] & !1) | u8::from(!o.visible);
                 added.extend_from_slice(&bytes);

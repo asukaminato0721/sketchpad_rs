@@ -1,16 +1,16 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,326/1,599** documents have all object kinds
-decoded; **1,358** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **2,223** unsupported slots (1,625
-drawing slots and 598 prototype slots), and 273 documents still contain
+Latest snapshot, 2026-09-29: **1,346/1,599** documents have all object kinds
+decoded; **1,381** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **2,181** unsupported slots (1,583
+drawing slots and 598 prototype slots), and 253 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
 legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
-collection, and mapped action-capture recoveries
+collection, mapped action-capture, and mapped iteration-value-table recoveries
 are summarized at the end; the older detailed
 snapshots remain for comparison.
 
@@ -1770,3 +1770,26 @@ source object is hidden, leaving only its five iteration bindings visible.
 Sketchpad 5 and the port both display the recovered red point sequence and green
 arc sequence. Native Ctrl+S preserves all 5,780 bytes with SHA-256
 `730248f8ed12e9c959e2811d7631174773438d360b83e3beb1bb86bf9a7276d2`.
+
+## Mapped iteration value tables
+
+Native code-92 tables now retain an ordered list of carried numeric/function
+values instead of the former single-calculation special case. Import validates
+that every displayed value belongs to its mapped iteration, preserves the
+table anchor, optional caption, font, visibility, and presentation marker, and
+renders the initial row plus generation-numbered live rows. Branching and
+final-image-only mappings retain their actual generation indices. Copy/remap,
+deletion, dirty save, anchor movement, and newly authored point/parameter
+iteration companions use the same generalized representation.
+
+All 42 decoded-parent code-92 drawing slots are restored. Unsupported falls
+2,223→2,181 (1,583 drawing plus 598 prototype), complete documents/drawings rise
+1,326/1,358→1,346/1,381, unsupported documents fall 273→253, and partial views
+fall 856→843. All 1,599 originals remain byte-exact with zero failures. Full
+scan: `/tmp/sketchpad_iteration_values_coverage.log`.
+
+The supplied Sketchpad 5 displayed the `N!.gsp` table with columns `n`,
+`t₁ + 1`, and `s·(t₁ + 1)`, ending at `5 | 7.00 | 5040.00`; its Ctrl+S save
+remained 4,802 bytes. Port SVG evaluation produced the same six value rows.
+An out-of-tree edit probe moved the table anchor, saved, reopened, and retained
+both the anchor and all rows. No standalone regression test was added.

@@ -3108,10 +3108,161 @@ fn canonical_named_table(
     Ok(group)
 }
 
+fn general_table_node_end(bytes: &[u8]) -> Option<usize> {
+    if bytes.first() != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at..].starts_with(b"<T''>") {
+            at += 5;
+            if depth == 0 {
+                return Some(at);
+            }
+            continue;
+        }
+        match bytes[at] {
+            b'<' if bytes.get(at + 1) == Some(&b'T') => {
+                let separator = bytes[at + 2..]
+                    .iter()
+                    .position(|byte| *byte == b'x')?
+                    + at
+                    + 2;
+                let length = usize::from_str_radix(
+                    std::str::from_utf8(&bytes[at + 2..separator]).ok()?,
+                    16,
+                )
+                .ok()?;
+                at = separator.checked_add(1 + length)?;
+                if bytes.get(at) != Some(&b'>') {
+                    return None;
+                }
+                at += 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            b'<' => {
+                depth += 1;
+                at += 1;
+            }
+            b'>' => {
+                depth = depth.checked_sub(1)?;
+                at += 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => at += 1,
+        }
+    }
+    None
+}
+
+fn superscript_text(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            '+' => '⁺',
+            '-' | '−' => '⁻',
+            '=' => '⁼',
+            '(' => '⁽',
+            ')' => '⁾',
+            other => other,
+        })
+        .collect()
+}
+
+fn general_table_cell(bytes: &[u8], source_count: usize) -> Option<(String, usize)> {
+    let used = general_table_node_end(bytes)?;
+    let markup = &bytes[..used];
+    let markup_length = u16::try_from(markup.len()).ok()?;
+    let inner = (18 + markup.len() + 2) & !1;
+    let mut rich = vec![0; (inner + 3) & !3];
+    rich[..4].copy_from_slice(&[0xfc, 8, 0, 0]);
+    rich[4..8].copy_from_slice(&(inner as u32).to_le_bytes());
+    rich[8..12].copy_from_slice(&[4, 0, 0, 0]);
+    rich[16..18].copy_from_slice(&markup_length.to_le_bytes());
+    rich[18..18 + markup.len()].copy_from_slice(markup);
+    let text = crate::document::referenced_text::ReferencedText::from_rich(&rich, source_count)
+        .ok()
+        .map(|text| {
+            text.evaluate(|_, cache| cache.map(str::to_owned))
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|run| {
+                            if run.style.font.superscript_depth > 0 {
+                                superscript_text(&run.text)
+                            } else {
+                                run.text
+                            }
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        // Native caches use a few internal presentation-only nodes for an
+        // undefined result. Their exact glyph tree is not a numeric value.
+        .unwrap_or_else(|| "undefined".into());
+    Some((text, used))
+}
+
+fn general_table_cells(layout: &[u8], source_count: usize) -> Option<Vec<Vec<String>>> {
+    if !(2..=256).contains(&source_count)
+        || layout.len() < 28 + source_count + 2
+        || !layout.len().is_multiple_of(4)
+        || layout[..4] != [0x0d, 0x09, 0, 0]
+        || u32::from_le_bytes(layout[4..8].try_into().ok()?) as usize != layout.len()
+        || layout[8..12] != [0x10, 0, 0, 0]
+        || usize::from(u16::from_le_bytes(layout[18..20].try_into().ok()?))
+            != source_count + 1
+        || layout[20..28] != [1, 0, 0, 0, 0, 0, 0, 0]
+    {
+        return None;
+    }
+    let matrix_rows = usize::from(u16::from_le_bytes(layout[16..18].try_into().ok()?))
+        .checked_sub(1)?;
+    if !(2..=257).contains(&matrix_rows) {
+        return None;
+    }
+    let prefix = source_count + 2;
+    if layout[28..28 + prefix].iter().any(|byte| *byte != b'0') {
+        return None;
+    }
+    let mut rest = &layout[28 + prefix..];
+    let mut rows = Vec::with_capacity(matrix_rows);
+    for row in 0..matrix_rows {
+        if row != 0 {
+            rest = rest.strip_prefix(b"0")?;
+        }
+        let mut cells = Vec::with_capacity(source_count);
+        for _ in 0..source_count {
+            let (cell, used) = general_table_cell(rest, source_count)?;
+            cells.push(cell);
+            rest = &rest[used..];
+        }
+        rows.push(cells);
+    }
+    (rest.len() <= 3).then_some(rows)
+}
+
 impl TableGroup {
     pub(crate) fn font_reference(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
-        u16::from_le_bytes(self.bytes[rs[3].payload..rs[3].end].try_into().unwrap())
+        let font = rs.iter().find(|record| record.kind == 0x07d8).unwrap();
+        u16::from_le_bytes(self.bytes[font.payload..font.end].try_into().unwrap())
     }
 
     pub(crate) fn with_font_reference(mut self, font: u16) -> Result<Self, String> {
@@ -3251,6 +3402,112 @@ impl TableGroup {
         Ok(Self {
             bytes: bytes.to_vec(),
         })
+    }
+
+    /// Parse a native multi-source snapshot table while retaining its rich
+    /// headers, cached rows, caption metadata, and alignment bytes verbatim.
+    pub fn parse_general(bytes: &[u8]) -> Result<Self, String> {
+        let rs = records(bytes, 0)?;
+        let kinds = rs.iter().map(|record| record.kind).collect::<Vec<_>>();
+        if !matches!(
+            kinds.as_slice(),
+            [0x07d0, 0x07d2, 0x090d, 0x07d8, 0x07d7]
+                | [0x07d0, 0x07d2, 0x090d, 0x07d5, 0x07d8, 0x07d7]
+        ) {
+            return Err("Unsupported general table record sequence".into());
+        }
+        let header = &bytes[rs[0].payload..rs[0].end];
+        if header.len() != 28
+            || header[..2] != [91, 0]
+            || header[2] & !3 != 0
+            || header[3..10] != [0, 0, 0, 17, 0, 83, 0]
+        {
+            return Err("Unsupported general table header".into());
+        }
+        let references = &bytes[rs[1].payload..rs[1].end];
+        let count = references
+            .get(..4)
+            .map(|field| u32::from_le_bytes(field.try_into().unwrap()) as usize)
+            .ok_or("Missing general table source count")?;
+        if count < 2
+            || count > 256
+            || references.len() != 4 + count * 4
+            || references[4..]
+                .chunks_exact(4)
+                .any(|field| field == [0, 0, 0, 0])
+        {
+            return Err("Invalid general table sources".into());
+        }
+        let layout_record = rs
+            .iter()
+            .find(|record| record.kind == 0x090d)
+            .unwrap();
+        let layout = &bytes[layout_record.payload..layout_record.end];
+        if general_table_cells(layout, count).is_none() {
+            return Err("Invalid general table layout".into());
+        }
+        if let Some(label) = rs.iter().find(|record| record.kind == 0x07d5) {
+            crate::text_records::LabelAux::parse(&bytes[label.payload..label.end])?;
+        }
+        let font = rs.iter().find(|record| record.kind == 0x07d8).unwrap();
+        if font.end - font.payload != 2 || rs.last().unwrap().end != rs.last().unwrap().payload {
+            return Err("Invalid general table presentation".into());
+        }
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    pub fn general_source_ids(&self) -> Option<Vec<u32>> {
+        let rs = records(&self.bytes, 0).ok()?;
+        let references = rs.iter().find(|record| record.kind == 0x07d2)?;
+        let payload = &self.bytes[references.payload..references.end];
+        let count = u32::from_le_bytes(payload.get(..4)?.try_into().ok()?) as usize;
+        (count >= 2 && payload.len() == 4 + count * 4).then(|| {
+            payload[4..]
+                .chunks_exact(4)
+                .map(|field| u32::from_le_bytes(field.try_into().unwrap()))
+                .collect()
+        })
+    }
+
+    pub fn general_cells(&self) -> Option<Vec<Vec<String>>> {
+        let sources = self.general_source_ids()?;
+        let rs = records(&self.bytes, 0).ok()?;
+        let layout = rs.iter().find(|record| record.kind == 0x090d)?;
+        general_table_cells(&self.bytes[layout.payload..layout.end], sources.len())
+    }
+
+    pub fn remap_general_sources(&self, ids: &[usize]) -> Result<Self, String> {
+        let mut group = self.clone();
+        let rs = records(&group.bytes, 0)?;
+        let references = rs
+            .iter()
+            .find(|record| record.kind == 0x07d2)
+            .ok_or("Missing general table sources")?;
+        let count = u32::from_le_bytes(
+            group.bytes[references.payload..references.payload + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        if count < 2 || references.end - references.payload != 4 + count * 4 {
+            return Err("Invalid general table sources".into());
+        }
+        for index in 0..count {
+            let at = references.payload + 4 + index * 4;
+            let old = u32::from_le_bytes(group.bytes[at..at + 4].try_into().unwrap()) as usize;
+            let new = ids
+                .get(old)
+                .copied()
+                .filter(|id| *id != 0)
+                .ok_or("General table source was deleted")?;
+            group.bytes[at..at + 4].copy_from_slice(
+                &u32::try_from(new)
+                    .map_err(|_| "Too many general table sources")?
+                    .to_le_bytes(),
+            );
+        }
+        Self::parse_general(&group.bytes)
     }
 
     pub fn pair_source_ids(&self) -> Option<[u32; 2]> {
@@ -3606,7 +3863,7 @@ impl TableGroup {
 
     pub fn anchor(&self) -> (i16, i16) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs[2].payload + 12;
+        let at = rs.iter().find(|record| record.kind == 0x090d).unwrap().payload + 12;
         (
             i16::from_le_bytes(self.bytes[at..at + 2].try_into().unwrap()),
             i16::from_le_bytes(self.bytes[at + 2..at + 4].try_into().unwrap()),
@@ -3615,7 +3872,7 @@ impl TableGroup {
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) {
         let rs = records(&self.bytes, 0).unwrap();
-        let at = rs[2].payload + 12;
+        let at = rs.iter().find(|record| record.kind == 0x090d).unwrap().payload + 12;
         self.bytes[at..at + 2].copy_from_slice(&anchor.0.to_le_bytes());
         self.bytes[at + 2..at + 4].copy_from_slice(&anchor.1.to_le_bytes());
     }

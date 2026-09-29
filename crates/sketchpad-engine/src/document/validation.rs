@@ -1,7 +1,8 @@
 use super::calculations::{calculation_source_ids, calculation_source_units};
 use super::iteration::{
-    mapped_binding_kind, supported_branch_polygon_mapping, supported_mapped_point_iteration,
-    supported_point_iteration_mapping, supported_point_parameter_iteration,
+    mapped_binding_kind, supported_branch_polygon_mapping, supported_iteration_values,
+    supported_mapped_point_iteration, supported_point_iteration_mapping,
+    supported_point_parameter_iteration,
 };
 use super::kind::{
     is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, literal_plot_path_accepts,
@@ -143,20 +144,56 @@ impl Document {
             }
             match &o.kind {
                 Kind::ReferencedText { parents, text } => {
-                    if !super::referenced_captions::supported(parents, text, &self.objects, o.page, o.id) {
+                    if !super::referenced_captions::supported(
+                        parents,
+                        text,
+                        &self.objects,
+                        o.page,
+                        o.id,
+                    ) {
                         return Err("Invalid referenced caption parents".into());
                     }
                 }
-                Kind::RayIteration(seed,image,ray,value)=>{
-                    if o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(value.saturating_sub(1)).is_some_and(|o|!o.deleted&&o.kind.is_iteration_depth_value())
-                        || !self.objects.get(seed.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
-                        || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o|!o.deleted&&matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried ray iteration mapping or depth".into());}
+                Kind::RayIteration(seed, image, ray, value) => {
+                    if o.kind
+                        .dependencies()
+                        .iter()
+                        .any(|id| *id == 0 || *id >= o.id)
+                        || !self
+                            .objects
+                            .get(value.saturating_sub(1))
+                            .is_some_and(|o| !o.deleted && o.kind.is_iteration_depth_value())
+                        || !self
+                            .objects
+                            .get(seed.saturating_sub(1))
+                            .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::Free(_)))
+                        || !supported_point_iteration_mapping(&self.objects, *seed, *image)
+                        || !self.objects.get(ray.saturating_sub(1)).is_some_and(|o| {
+                            !o.deleted && matches!(o.kind,Kind::Ray(a,b) if a==*seed&&b==*image)
+                        })
+                    {
+                        return Err("Invalid carried ray iteration mapping or depth".into());
+                    }
                 }
                 Kind::CurveIntersection(carrier, curve, _) => {
-                    if !super::curve_intersection::supported(&self.objects, *carrier, *curve, o.page, o.id) { return Err(format!("Invalid curve intersection {}", o.id)); }
+                    if !super::curve_intersection::supported(
+                        &self.objects,
+                        *carrier,
+                        *curve,
+                        o.page,
+                        o.id,
+                    ) {
+                        return Err(format!("Invalid curve intersection {}", o.id));
+                    }
                 }
                 Kind::BoundaryIntersection(straight, polygon) => {
-                    if !super::boundary_intersection::supported(&self.objects, *straight, *polygon, o.page, o.id) {
+                    if !super::boundary_intersection::supported(
+                        &self.objects,
+                        *straight,
+                        *polygon,
+                        o.page,
+                        o.id,
+                    ) {
                         return Err(format!("Invalid polygon boundary intersection {}", o.id));
                     }
                 }
@@ -196,7 +233,14 @@ impl Document {
                     }
                 }
                 Kind::IterationPointAlias(binding) => {
-                    if super::iteration_endpoint::binding_source(&self.objects, *binding, o.page, o.id).is_none() {
+                    if super::iteration_endpoint::binding_source(
+                        &self.objects,
+                        *binding,
+                        o.page,
+                        o.id,
+                    )
+                    .is_none()
+                    {
                         return Err(format!("Invalid iteration point alias {}", o.id));
                     }
                 }
@@ -206,67 +250,228 @@ impl Document {
                     }
                 }
                 Kind::CoordinatePoint(definition) => {
-                    if !definition.supported(&self.objects, o.page, o.id) { return Err(format!("Invalid coordinate point {}", o.id)); }
+                    if !definition.supported(&self.objects, o.page, o.id) {
+                        return Err(format!("Invalid coordinate point {}", o.id));
+                    }
                 }
                 Kind::MappedElement(definition) => {
                     if !definition.supported(&self.objects, o.page, o.id) {
                         return Err(format!("Invalid mapped element {}", o.id));
                     }
                 }
-                Kind::MappedPointIteration { seeds, branches, carried, depth, .. } => {
+                Kind::MappedPointIteration {
+                    seeds,
+                    branches,
+                    carried,
+                    depth,
+                    ..
+                } => {
                     let valid_depth = match depth {
                         IterationDepth::Fixed(n) => (1..=128).contains(n),
-                        IterationDepth::Value(id) => *id > 0 && *id < o.id && self.objects.get(id - 1).is_some_and(|p| !p.deleted && p.kind.is_iteration_depth_value()),
+                        IterationDepth::Value(id) => {
+                            *id > 0
+                                && *id < o.id
+                                && self.objects.get(id - 1).is_some_and(|p| {
+                                    !p.deleted && p.kind.is_iteration_depth_value()
+                                })
+                        }
                     };
-                    if !valid_depth || !supported_mapped_point_iteration(&self.objects, seeds, branches, carried) {
+                    if !valid_depth
+                        || !supported_mapped_point_iteration(
+                            &self.objects,
+                            seeds,
+                            branches,
+                            carried,
+                        )
+                    {
                         return Err(format!("Invalid mapped point iteration {}", o.id));
                     }
                 }
                 Kind::IterationBinding(image, iteration)
-                    if self.objects.get(iteration.saturating_sub(1)).is_some_and(|parent| matches!(parent.kind, Kind::MappedPointIteration { .. })) => {
-                    let Some(parent) = self.objects.get(iteration.saturating_sub(1)) else { unreachable!() };
-                    let Kind::MappedPointIteration { carried, .. } = &parent.kind else { unreachable!() };
-                    if *image == 0 || *image >= *iteration || *iteration >= o.id || parent.deleted || parent.page != o.page
+                    if self
+                        .objects
+                        .get(iteration.saturating_sub(1))
+                        .is_some_and(|parent| {
+                            matches!(parent.kind, Kind::MappedPointIteration { .. })
+                        }) =>
+                {
+                    let Some(parent) = self.objects.get(iteration.saturating_sub(1)) else {
+                        unreachable!()
+                    };
+                    let Kind::MappedPointIteration { carried, .. } = &parent.kind else {
+                        unreachable!()
+                    };
+                    if *image == 0
+                        || *image >= *iteration
+                        || *iteration >= o.id
+                        || parent.deleted
+                        || parent.page != o.page
                         || !carried.contains(image)
-                        || !self.objects.get(image.saturating_sub(1)).is_some_and(|source| !source.deleted && source.page == o.page
-                            && (mapped_binding_kind(&source.kind))) {
+                        || !self
+                            .objects
+                            .get(image.saturating_sub(1))
+                            .is_some_and(|source| {
+                                !source.deleted
+                                    && source.page == o.page
+                                    && (mapped_binding_kind(&source.kind))
+                            })
+                    {
                         return Err("Invalid mapped iteration binding".into());
                     }
                 }
-                Kind::PointIteration(seed,image,depth)=>{
-                    let valid_depth=match depth {IterationDepth::Fixed(n)=>(1..=128).contains(n),IterationDepth::Value(id)=>*id>0 && *id<o.id && self.objects.get(id-1).is_some_and(|p|!p.deleted&&p.kind.is_iteration_depth_value())};
-                    if !valid_depth || *seed==0 || *image==0 || *seed>=*image || *image>=o.id || !self.objects.get(seed-1).is_some_and(|p|!p.deleted&&matches!(p.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image) {return Err("Invalid point iteration mapping or depth".into());}
-                }
-                Kind::CircleIteration(seed,image,circle,depth)=>{
-                    let valid_depth=match depth {IterationDepth::Fixed(n)=>(1..=128).contains(n),IterationDepth::Value(id)=>*id>0&&*id<o.id&&self.objects.get(id-1).is_some_and(|p|!p.deleted&&p.kind.is_iteration_depth_value())};
-                    if !valid_depth || o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !self.objects.get(seed.saturating_sub(1)).is_some_and(|p|!p.deleted&&matches!(p.kind,Kind::Free(_))) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
-                        || !self.objects.get(circle.saturating_sub(1)).is_some_and(|p|!p.deleted&&matches!(p.kind,Kind::Circle(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried circle iteration".into());}
-                }
-                Kind::SegmentIteration(seed,image,segment,depth)=>{
-                    let valid_depth=match depth {IterationDepth::Fixed(value)=>(1..=128).contains(value),IterationDepth::Value(id)=>*id>0&&*id<o.id&&self.objects.get(id-1).is_some_and(|p|!p.deleted&&p.kind.is_iteration_depth_value())};
-                    if !valid_depth || o.kind.dependencies().iter().any(|id|*id==0||*id>=o.id) || !supported_point_iteration_mapping(&self.objects,*seed,*image)
-                        || !self.objects.get(segment.saturating_sub(1)).is_some_and(|p|!p.deleted&&matches!(p.kind,Kind::Segment(a,b) if a==*seed&&b==*image)) {return Err("Invalid carried segment iteration".into());}
-                }
-                Kind::BranchingPolygonIteration { seed,first,second,polygon,segments,depth } => {
-                    let valid_depth = match depth { IterationDepth::Fixed(value) => (1..=128).contains(value), IterationDepth::Value(id) => *id>0 && *id<o.id && self.objects.get(id-1).is_some_and(|p| !p.deleted && p.kind.is_iteration_depth_value()) };
-                    if !valid_depth || o.kind.dependencies().iter().any(|id| *id==0 || *id>=o.id)
-                        || !supported_branch_polygon_mapping(&self.objects,*seed,*first,*second,*polygon,segments) {return Err("Invalid branching polygon iteration".into());}
-                }
-                Kind::PointParameterIteration(seed, parameter, image, calculation, label, depth) => {
-                    let valid_depth = match *depth {
-                        IterationDepth::Fixed(value) => (1..=128).contains(&value),
-                        IterationDepth::Value(id) => id > 0 && id < o.id && id != *parameter && self.objects.get(id - 1).is_some_and(|parent| !parent.deleted && parent.kind.is_iteration_depth_value()),
+                Kind::PointIteration(seed, image, depth) => {
+                    let valid_depth = match depth {
+                        IterationDepth::Fixed(n) => (1..=128).contains(n),
+                        IterationDepth::Value(id) => {
+                            *id > 0
+                                && *id < o.id
+                                && self.objects.get(id - 1).is_some_and(|p| {
+                                    !p.deleted && p.kind.is_iteration_depth_value()
+                                })
+                        }
                     };
                     if !valid_depth
-                        || [*seed, *parameter, *image, *calculation, *label].iter().any(|id| *id == 0 || *id >= o.id)
-                        || !supported_point_parameter_iteration(&self.objects, *seed, *parameter, *image, *calculation, *label)
+                        || *seed == 0
+                        || *image == 0
+                        || *seed >= *image
+                        || *image >= o.id
+                        || !self
+                            .objects
+                            .get(seed - 1)
+                            .is_some_and(|p| !p.deleted && matches!(p.kind, Kind::Free(_)))
+                        || !supported_point_iteration_mapping(&self.objects, *seed, *image)
+                    {
+                        return Err("Invalid point iteration mapping or depth".into());
+                    }
+                }
+                Kind::CircleIteration(seed, image, circle, depth) => {
+                    let valid_depth = match depth {
+                        IterationDepth::Fixed(n) => (1..=128).contains(n),
+                        IterationDepth::Value(id) => {
+                            *id > 0
+                                && *id < o.id
+                                && self.objects.get(id - 1).is_some_and(|p| {
+                                    !p.deleted && p.kind.is_iteration_depth_value()
+                                })
+                        }
+                    };
+                    if !valid_depth
+                        || o.kind
+                            .dependencies()
+                            .iter()
+                            .any(|id| *id == 0 || *id >= o.id)
+                        || !self
+                            .objects
+                            .get(seed.saturating_sub(1))
+                            .is_some_and(|p| !p.deleted && matches!(p.kind, Kind::Free(_)))
+                        || !supported_point_iteration_mapping(&self.objects, *seed, *image)
+                        || !self.objects.get(circle.saturating_sub(1)).is_some_and(|p| {
+                            !p.deleted && matches!(p.kind,Kind::Circle(a,b) if a==*seed&&b==*image)
+                        })
+                    {
+                        return Err("Invalid carried circle iteration".into());
+                    }
+                }
+                Kind::SegmentIteration(seed, image, segment, depth) => {
+                    let valid_depth = match depth {
+                        IterationDepth::Fixed(value) => (1..=128).contains(value),
+                        IterationDepth::Value(id) => {
+                            *id > 0
+                                && *id < o.id
+                                && self.objects.get(id - 1).is_some_and(|p| {
+                                    !p.deleted && p.kind.is_iteration_depth_value()
+                                })
+                        }
+                    };
+                    if !valid_depth
+                        || o.kind
+                            .dependencies()
+                            .iter()
+                            .any(|id| *id == 0 || *id >= o.id)
+                        || !supported_point_iteration_mapping(&self.objects, *seed, *image)
+                        || !self
+                            .objects
+                            .get(segment.saturating_sub(1))
+                            .is_some_and(|p| {
+                                !p.deleted
+                                    && matches!(p.kind,Kind::Segment(a,b) if a==*seed&&b==*image)
+                            })
+                    {
+                        return Err("Invalid carried segment iteration".into());
+                    }
+                }
+                Kind::BranchingPolygonIteration {
+                    seed,
+                    first,
+                    second,
+                    polygon,
+                    segments,
+                    depth,
+                } => {
+                    let valid_depth = match depth {
+                        IterationDepth::Fixed(value) => (1..=128).contains(value),
+                        IterationDepth::Value(id) => {
+                            *id > 0
+                                && *id < o.id
+                                && self.objects.get(id - 1).is_some_and(|p| {
+                                    !p.deleted && p.kind.is_iteration_depth_value()
+                                })
+                        }
+                    };
+                    if !valid_depth
+                        || o.kind
+                            .dependencies()
+                            .iter()
+                            .any(|id| *id == 0 || *id >= o.id)
+                        || !supported_branch_polygon_mapping(
+                            &self.objects,
+                            *seed,
+                            *first,
+                            *second,
+                            *polygon,
+                            segments,
+                        )
+                    {
+                        return Err("Invalid branching polygon iteration".into());
+                    }
+                }
+                Kind::PointParameterIteration(
+                    seed,
+                    parameter,
+                    image,
+                    calculation,
+                    label,
+                    depth,
+                ) => {
+                    let valid_depth = match *depth {
+                        IterationDepth::Fixed(value) => (1..=128).contains(&value),
+                        IterationDepth::Value(id) => {
+                            id > 0
+                                && id < o.id
+                                && id != *parameter
+                                && self.objects.get(id - 1).is_some_and(|parent| {
+                                    !parent.deleted && parent.kind.is_iteration_depth_value()
+                                })
+                        }
+                    };
+                    if !valid_depth
+                        || [*seed, *parameter, *image, *calculation, *label]
+                            .iter()
+                            .any(|id| *id == 0 || *id >= o.id)
+                        || !supported_point_parameter_iteration(
+                            &self.objects,
+                            *seed,
+                            *parameter,
+                            *image,
+                            *calculation,
+                            *label,
+                        )
                     {
                         return Err("Invalid point and parameter iteration mapping".into());
                     }
                 }
-                Kind::IterationValues(iteration, calculation) => {
-                    if *iteration == 0 || *iteration >= o.id || *calculation == 0 || *calculation >= o.id
-                        || !self.objects.get(iteration - 1).is_some_and(|parent| !parent.deleted && matches!(parent.kind, Kind::PointParameterIteration(_, _, _, value, _, _) if value == *calculation))
+                Kind::IterationValues(iteration, values) => {
+                    if !supported_iteration_values(&self.objects, o.page, o.id, *iteration, values)
                     {
                         return Err("Invalid iteration value series parents".into());
                     }
@@ -285,10 +490,21 @@ impl Document {
                         return Err("Invalid attached numeric label parents".into());
                     }
                 }
-                Kind::PointReferencedText { point, source, text } => {
+                Kind::PointReferencedText {
+                    point,
+                    source,
+                    text,
+                } => {
                     if !super::point_numeric_labels::supported_referenced_label(
-                        &self.objects, o.page, o.id, *point, *source, text,
-                    ) { return Err("Invalid attached referenced text parents or roles".into()); }
+                        &self.objects,
+                        o.page,
+                        o.id,
+                        *point,
+                        *source,
+                        text,
+                    ) {
+                        return Err("Invalid attached referenced text parents or roles".into());
+                    }
                 }
                 Kind::Parameter(group) => {
                     ParameterGroup::parse(group.as_bytes())?;
@@ -326,22 +542,38 @@ impl Document {
                         return Err("Invalid two-length calculation sources".into());
                     }
                 }
-                Kind::ParameterCalculation(source,group)=>{
+                Kind::ParameterCalculation(source, group) => {
                     ParameterCalculationGroup::parse(group.as_bytes())?;
-                    let sources=calculation_source_ids(*source,group);
-                    if sources.iter().any(|id| *id == 0 || *id >= o.id || self.objects.get(id-1).is_none_or(|parent| parent.page != o.page)) { return Err("Invalid calculation sources".into()); }
-                    let units=calculation_source_units(group,&sources,&self.objects).ok_or("Invalid calculation sources")?;
-                    if group.units_for_sources(&units)?!=group.unit() { return Err("Invalid calculation units".into()); }
+                    let sources = calculation_source_ids(*source, group);
+                    if sources.iter().any(|id| {
+                        *id == 0
+                            || *id >= o.id
+                            || self
+                                .objects
+                                .get(id - 1)
+                                .is_none_or(|parent| parent.page != o.page)
+                    }) {
+                        return Err("Invalid calculation sources".into());
+                    }
+                    let units = calculation_source_units(group, &sources, &self.objects)
+                        .ok_or("Invalid calculation sources")?;
+                    if group.units_for_sources(&units)? != group.unit() {
+                        return Err("Invalid calculation units".into());
+                    }
                 }
                 Kind::ValueTable(source, group) => {
                     TableGroup::parse(group.as_bytes())?;
                     if group.source_id() as usize != *source
                         || !self.objects.get(source.saturating_sub(1)).is_some_and(|o| {
                             match &o.kind {
-                                Kind::Parameter(parameter) if parameter.unit() == NumericUnit::Scalar => match group.named_label_value() {
-                                    Some((name, _)) => name == parameter.name(),
-                                    None => parameter.name() == "t[1]",
-                                },
+                                Kind::Parameter(parameter)
+                                    if parameter.unit() == NumericUnit::Scalar =>
+                                {
+                                    match group.named_label_value() {
+                                        Some((name, _)) => name == parameter.name(),
+                                        None => parameter.name() == "t[1]",
+                                    }
+                                }
                                 _ => false,
                             }
                         })
@@ -356,6 +588,38 @@ impl Document {
                         || !matches!(self.objects.get(first - 1).map(|o| &o.kind), Some(Kind::Parameter(parameter)) if parameter.name() == "t[2]" && parameter.unit() == NumericUnit::Scalar)
                     {
                         return Err("Unsupported two-column table source".into());
+                    }
+                }
+                Kind::DataTable(sources, group) => {
+                    TableGroup::parse_general(group.as_bytes())?;
+                    let page_base = self
+                        .objects
+                        .iter()
+                        .find(|object| object.page == o.page)
+                        .map(|object| object.id - 1)
+                        .ok_or("General table page is missing")?;
+                    let local_sources = sources
+                        .iter()
+                        .map(|id| id.checked_sub(page_base).map(|id| id as u32))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or("Invalid general table source")?;
+                    if sources.len() < 2
+                        || group.general_source_ids().as_deref() != Some(&local_sources)
+                        || sources.iter().any(|id| {
+                            *id == 0
+                                || *id >= o.id
+                                || self.objects.get(*id - 1).is_none_or(|parent| {
+                                    parent.deleted
+                                        || parent.page != o.page
+                                        || parent.kind.numeric_unit().is_none()
+                                            && !matches!(
+                                                parent.kind,
+                                                Kind::ReferencedText { .. }
+                                            )
+                                })
+                        })
+                    {
+                        return Err("Unsupported general table sources".into());
                     }
                 }
                 _ => {}
@@ -1318,6 +1582,10 @@ impl Document {
                         ids[*second],
                         group.remap_sources(local_ids)?,
                     ),
+                    Kind::DataTable(sources, group) => Kind::DataTable(
+                        sources.iter().map(|id| ids[*id]).collect(),
+                        group.remap_general_sources(local_ids)?,
+                    ),
                     _ => object.kind.remap_checked(&ids)?,
                 };
                 let presentation = |bytes: &[u8]| -> Result<Vec<u8>, String> {
@@ -1379,6 +1647,10 @@ impl Document {
                         first,
                         second,
                         TableGroup::parse_pair(&presentation(group.as_bytes())?)?,
+                    ),
+                    Kind::DataTable(sources, group) => Kind::DataTable(
+                        sources,
+                        TableGroup::parse_general(&presentation(group.as_bytes())?)?,
                     ),
                     other => other,
                 })

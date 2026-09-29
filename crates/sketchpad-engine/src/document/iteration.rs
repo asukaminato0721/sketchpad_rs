@@ -338,6 +338,51 @@ pub(super) fn supported_mapped_point_iteration(
     true
 }
 
+/// Code-92 value tables may accompany either the specialized point/parameter
+/// iteration or a general mapped iteration.  Native stores only carried
+/// numeric values and functions in these tables.
+pub(super) fn supported_iteration_values(
+    objects: &[Object],
+    page: usize,
+    id: usize,
+    iteration: usize,
+    values: &[usize],
+) -> bool {
+    if iteration == 0
+        || iteration >= id
+        || values.is_empty()
+        || values.iter().copied().collect::<BTreeSet<_>>().len() != values.len()
+    {
+        return false;
+    }
+    let Some(parent) = objects.get(iteration - 1) else {
+        return false;
+    };
+    if parent.deleted || parent.page != page {
+        return false;
+    }
+    if values.iter().any(|value| {
+        *value == 0
+            || *value >= id
+            || objects.get(value - 1).is_none_or(|object| {
+                object.deleted
+                    || object.page != page
+                    || (object.kind.numeric_unit().is_none() && !object.kind.is_function())
+            })
+    }) {
+        return false;
+    }
+    match &parent.kind {
+        Kind::PointParameterIteration(_, _, _, value, _, _) => {
+            values.len() == 1 && values[0] == *value
+        }
+        Kind::MappedPointIteration { carried, .. } => {
+            values.iter().all(|value| carried.contains(value))
+        }
+        _ => false,
+    }
+}
+
 // State values are runtime substitutions, never additional native object kinds.
 #[derive(Clone, Copy)]
 pub(super) enum MappedValue {
@@ -879,6 +924,87 @@ impl Document {
                 .point_numeric_label(source)
         })
     }
+
+    fn iteration_value_cell(&self, id: usize) -> Option<String> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.kind.is_function() {
+            self.function_display_text(id)
+        } else {
+            self.numeric_value_text(id)
+        }
+    }
+
+    /// Resolve a visible code-92 iteration table, including the initial row.
+    /// The generation index is retained for branching and final-image-only
+    /// mappings, where row count alone cannot recover the native first column.
+    pub fn iteration_value_table(&self, id: usize) -> Option<Vec<Vec<String>>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationValues(iteration, values) = &object.kind else {
+            return None;
+        };
+        if object.deleted
+            || !matches!(
+                self.objects.get(iteration.checked_sub(1)?)?.kind,
+                Kind::MappedPointIteration { .. }
+            )
+        {
+            return None;
+        }
+        let mut headers = vec!["n".to_owned()];
+        headers.extend(
+            values
+                .iter()
+                .map(|value| self.calculation_source_name(*value))
+                .collect::<Option<Vec<_>>>()?,
+        );
+        let mut columns = Vec::with_capacity(values.len());
+        for value in values {
+            let mut column = vec![(
+                0,
+                self.iteration_value_cell(*value)
+                    .unwrap_or_else(|| "undefined".into()),
+            )];
+            if let Some(outputs) = self.mapped_iteration_outputs_with_steps(
+                *value,
+                *iteration,
+                false,
+                false,
+                |sample, source| sample.iteration_value_cell(source),
+            ) {
+                column.extend(
+                    outputs
+                        .into_iter()
+                        .map(|(step, value)| (step, value.unwrap_or_else(|| "undefined".into()))),
+                );
+            }
+            columns.push(column);
+        }
+        let steps = columns
+            .iter()
+            .max_by_key(|column| column.len())?
+            .iter()
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+        for column in &mut columns {
+            if column.len() == 1 && steps.len() > 1 {
+                column.extend(
+                    steps[1..]
+                        .iter()
+                        .copied()
+                        .map(|step| (step, "undefined".into())),
+                );
+            } else if column.iter().map(|row| row.0).ne(steps.iter().copied()) {
+                return None;
+            }
+        }
+        let mut rows = vec![headers];
+        for (row, step) in steps.into_iter().enumerate() {
+            let mut cells = vec![step.to_string()];
+            cells.extend(columns.iter().map(|column| column[row].1.clone()));
+            rows.push(cells);
+        }
+        Some(rows)
+    }
     /// Preserve mathematical structure while reevaluating each anchored caption
     /// in its own iteration environment.
     pub fn point_math_labels(
@@ -951,6 +1077,27 @@ impl Document {
         retain_parent: bool,
         mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
     ) -> Option<Vec<Option<T>>> {
+        Some(
+            self.mapped_iteration_outputs_with_steps(
+                source,
+                iteration,
+                terminal_only,
+                retain_parent,
+                |sample, id| evaluate(sample, id),
+            )?
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect(),
+        )
+    }
+    fn mapped_iteration_outputs_with_steps<T>(
+        &self,
+        source: usize,
+        iteration: usize,
+        terminal_only: bool,
+        retain_parent: bool,
+        mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
+    ) -> Option<Vec<(u32, Option<T>)>> {
         let object = self.objects.get(iteration.checked_sub(1)?)?;
         let Kind::MappedPointIteration {
             seeds,
@@ -1000,7 +1147,7 @@ impl Document {
             sample.freeze_evaluation_inputs(self, &external)?;
         }
         if depth == 0 {
-            return Some(vec![evaluate(&sample, source)]);
+            return Some(vec![(0, evaluate(&sample, source))]);
         }
         let mut result = Vec::new();
         let mut generated = 0;
@@ -1044,7 +1191,7 @@ impl Document {
                     }
                     // Keep terminal undefinedness. The ordinary image reader
                     // filters each undefined image while preserving valid levels.
-                    result.push(evaluate(&sample, source));
+                    result.push((step + 1, evaluate(&sample, source)));
                 }
             }
             level = next;
@@ -1363,7 +1510,7 @@ impl Document {
         ));
         self.append_object(Kind::IterationBinding(image, iteration));
         self.append_object(Kind::IterationBinding(label, iteration));
-        let values = self.append_object(Kind::IterationValues(iteration, calculation));
+        let values = self.append_object(Kind::IterationValues(iteration, vec![calculation]));
         self.objects[values - 1].visible = false;
         Ok(iteration)
     }

@@ -350,7 +350,7 @@ fn point_parameter_iteration_import_edits_copy_and_deletion() {
         native.objects[6].kind,
         Kind::PointParameterIteration(4, 2, 5, 3, 6, IterationDepth::Fixed(3))
     );
-    assert_eq!(native.objects[9].kind, Kind::IterationValues(7, 3));
+    assert_eq!(native.objects[9].kind, Kind::IterationValues(7, vec![3]));
     assert!(!native.objects[9].visible);
     let values = |doc: &Document, id| {
         doc.point_parameter_iteration_labels(id)

@@ -107,6 +107,8 @@ Mapped iteration note: hide/show, animation, and movement actions can participat
 as capture-only dependency nodes, but remain unavailable as repeated bindings.
 This restores 21 mapped roots and 147 ordinary geometry bindings; a bindings-only
 Native control displays the same red point and green arc families as the port.
+Code-92 iteration tables retain every carried numeric/function column and render
+the initial value plus each actual mapped generation at their native anchor.
 
 ## Measure
 
@@ -711,6 +713,17 @@ objects inside embedded-tool prototypes. Unsupported slots fall 3,190→3,111
 1,253→1,256, and drawing-complete documents rise 1,283→1,286. Partial views
 remain 871 because that count also includes structural editing restrictions.
 All 1,599 originals remain byte-exact.
+
+Native code-92 iteration value tables now support one or more ordered carried
+numeric/function columns. Import and save preserve their anchor, visibility,
+optional caption, font reference and observed empty marker; the editor and SVG
+show the initial row followed by generation-numbered mapped values. A Native
+`N!.gsp` run and the port both produce six rows ending with `7.00` and
+`5040.00`, and an edit probe confirms anchor save/reopen. The compiled corpus
+restores all 42 remaining code-92 drawing slots, lowering unsupported objects
+2,223→2,181 and raising complete documents/drawings
+1,326/1,358→1,346/1,381. All 1,599 originals remain byte-exact; no standalone
+test case was added.
 
 ## Circular-segment interiors and measurements
 

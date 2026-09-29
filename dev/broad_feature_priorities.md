@@ -1173,3 +1173,15 @@ documents/drawings rise 1,314/1,345→1,326/1,358, unsupported documents fall
 285→273, and partial views fall 860→856. All 1,599 originals remain byte-exact.
 A bindings-only Native control isolates five recovered outputs and saves
 unchanged. Rebuild the frontier from 2,223.
+
+The code-92 frontier is a presentation companion rather than another geometry
+mapping. Generalizing its former one-calculation representation to an ordered
+carried-value list restores all 42 decoded-parent tables, including live visible
+multi-column tables and hidden companions. The parser preserves anchors,
+captions, font references and the observed empty marker; table evaluation keeps
+initial and actual generation indices. Unsupported falls 2,223→2,181 (1,583
+drawing plus 598 prototype), complete documents/drawings rise
+1,326/1,358→1,346/1,381, unsupported documents fall 273→253, and partial views
+fall 856→843. All 1,599 originals remain byte-exact. Rebuild the next frontier
+from 2,181; do not treat the isolated code-91/92 presentation records as
+geometry recovery estimates.

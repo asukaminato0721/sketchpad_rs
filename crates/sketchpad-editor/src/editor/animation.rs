@@ -293,7 +293,9 @@ impl Editor {
             || object.kind.is_measurement()
             || matches!(
                 object.kind,
-                Kind::ValueTable(_, _) | Kind::ValueTablePair(_, _, _)
+                Kind::ValueTable(_, _)
+                    | Kind::ValueTablePair(_, _, _)
+                    | Kind::DataTable(_, _)
             )
         {
             return;

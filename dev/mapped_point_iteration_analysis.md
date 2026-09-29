@@ -118,3 +118,23 @@ ordinary source and leaves only five iteration bindings visible. Native
 Sketchpad 5 and the port both display the recovered red point sequence and green
 arc sequence; Native Ctrl+S preserves SHA-256
 `730248f8ed12e9c959e2811d7631174773438d360b83e3beb1bb86bf9a7276d2`.
+
+## Iteration value tables
+
+Native code 92 is the value-table companion to an iteration. Its first reference
+is the iteration and every later reference is an ordered carried numeric value
+or function. All 42 remaining corpus instances follow that rule; lists range
+from one to 22 values and every value occurs in the parent mapping's carried
+DAG. The older point/parameter form is the one-value subset of the same model.
+
+The 28-byte `090d` packet supplies the table's screen anchor. Standard groups
+also contain a font reference; one observed group has a valid caption and one
+has an empty `232e` marker. These variants are preserved and validated rather
+than discarded as inert structure. Visible tables evaluate the initial state
+and every emitted mapped state, retaining generation numbers for branches and
+final-only output. The Native `N!.gsp` table and port SVG both end with generation
+5 values `7.00` and `5040.00`.
+
+The measured corpus recovery is 42 drawing slots: unsupported 2,223→2,181 and
+complete documents/drawings 1,326/1,358→1,346/1,381. Every one of the 1,599
+source files remains byte-identical on an untouched round trip.

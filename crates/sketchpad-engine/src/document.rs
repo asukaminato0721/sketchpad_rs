@@ -505,6 +505,8 @@ pub enum Kind {
     ParameterCalculation(usize, ParameterCalculationGroup),
     ValueTable(usize, TableGroup),
     ValueTablePair(usize, usize, TableGroup),
+    /// A native snapshot table with arbitrary numeric or referenced-text columns.
+    DataTable(Vec<usize>, TableGroup),
     PointOnSegment(usize, f64),
     PointOnRay(usize, f64),
     PointOnLine(usize, f64),
@@ -624,7 +626,8 @@ pub enum Kind {
     },
     /// A Native code88 point in the terminal scope of a single mapped binding.
     IterationPointAlias(usize),
-    IterationValues(usize, usize),
+    /// A native code-92 table containing the values carried by an iteration.
+    IterationValues(usize, Vec<usize>),
     /// Native code 47: the length of the first segment divided by the second.
     SegmentRatio(usize, usize),
     PointRatio(usize, usize, usize),

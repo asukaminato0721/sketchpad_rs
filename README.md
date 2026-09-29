@@ -446,3 +446,11 @@ drawing slots; unsupported objects fall to 2,223 and complete
 documents/drawings rise to 1,326/1,358. With every ordinary source hidden, a
 five-binding control displays the recovered red point and green arc sequences in
 both Native Sketchpad 5 and the port, and Native saves all 5,780 bytes unchanged.
+
+Imported mapped-iteration value tables now keep all carried numeric/function
+columns, their screen anchor, caption and font, and evaluate the initial value
+plus each numbered generation. The `N!.gsp` Native control and port SVG both
+produce rows 0–5 ending in `7.00` and `5040.00`. This restores all 42 remaining
+code-92 drawing records: unsupported slots fall to 2,181 and complete
+documents/drawings rise to 1,346/1,381, while all 1,599 originals remain
+byte-exact.

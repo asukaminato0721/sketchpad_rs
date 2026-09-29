@@ -203,6 +203,19 @@ impl Document {
                             .copy_from_slice(&precision.to_le_bytes());
                     }
                 }
+            } else if record.kind == 0x090d {
+                if let Some(object) = current
+                    && matches!(object.kind, Kind::IterationValues(..))
+                    && let Some(anchor) = object.measurement_anchor
+                {
+                    if record.data.len() != 28 {
+                        return Err("Invalid iteration-value table placement record".into());
+                    }
+                    bytes[record.data.start + 12..record.data.start + 14]
+                        .copy_from_slice(&anchor.0.to_le_bytes());
+                    bytes[record.data.start + 14..record.data.start + 16]
+                        .copy_from_slice(&anchor.1.to_le_bytes());
+                }
             } else if record.kind == 0x07d7 {
                 current = None;
             }
@@ -291,6 +304,8 @@ impl Document {
                     object.kind,
                     Kind::ValueTable(_, _)
                         | Kind::ValueTablePair(_, _, _)
+                        | Kind::DataTable(_, _)
+                        | Kind::IterationValues(..)
                         | Kind::ValueEquation { .. }
                         | Kind::CoordinateMeasurement { .. }
                         | Kind::PointNumericLabel(_, _)
@@ -657,6 +672,9 @@ impl Document {
                 }
                 Kind::ValueTable(_, value) | Kind::ValueTablePair(_, _, value) => {
                     Some(value.remap_sources(&ids)?.as_bytes().to_vec())
+                }
+                Kind::DataTable(_, value) => {
+                    Some(value.remap_general_sources(&ids)?.as_bytes().to_vec())
                 }
                 _ => None,
             } {

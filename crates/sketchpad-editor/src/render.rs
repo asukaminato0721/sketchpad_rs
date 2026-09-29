@@ -187,12 +187,73 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
             );
             Some((group.anchor(), lines))
         }
+        Kind::DataTable(_, group) => {
+            let rows = group.general_cells()?;
+            let columns = rows.first()?.len();
+            let widths = (0..columns)
+                .map(|column| {
+                    rows.iter()
+                        .filter_map(|row| row.get(column))
+                        .map(|cell| cell.chars().count())
+                        .max()
+                        .unwrap_or(0)
+                })
+                .collect::<Vec<_>>();
+            let lines = rows
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .enumerate()
+                        .map(|(column, cell)| {
+                            if column + 1 == columns {
+                                cell
+                            } else {
+                                format!("{cell:>width$}", width = widths[column])
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                })
+                .collect();
+            Some((group.anchor(), lines))
+        }
         _ => None,
     }
 }
 
 pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16), Vec<String>)> {
     let object = doc.objects.get(id.checked_sub(1)?)?;
+    if matches!(object.kind, Kind::IterationValues(..)) {
+        let rows = doc.iteration_value_table(id)?;
+        let columns = rows.first()?.len();
+        let widths = (0..columns)
+            .map(|column| {
+                rows.iter()
+                    .filter_map(|row| row.get(column))
+                    .map(|cell| display_parameter_indices(cell).chars().count())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        let lines = rows
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .enumerate()
+                    .map(|(column, cell)| {
+                        let cell = display_parameter_indices(&cell);
+                        if column + 1 == columns {
+                            cell
+                        } else {
+                            format!("{cell:>width$}", width = widths[column])
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("  ")
+            })
+            .collect();
+        return Some((object.measurement_anchor?, lines));
+    }
     if let Kind::Parameter(group) = &object.kind {
         let name = doc.parameter_display_name(id)?;
         let name = display_parameter_indices(&name);
