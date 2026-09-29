@@ -185,6 +185,7 @@ enum ShapeMeasure {
 struct AnimationTrack {
     id: usize,
     allow_hidden: bool,
+    transient_point: bool,
     phase: f64,
     straight_range: Option<(f64, f64)>,
     parameter_domain: Option<(f64, f64)>,

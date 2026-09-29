@@ -353,7 +353,7 @@ impl Editor {
                         .add_enabled(!self.doc.undo.is_empty(), egui::Button::new("Undo"))
                         .clicked()
                     {
-                        self.animations.clear();
+                        self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.undo();
@@ -365,7 +365,7 @@ impl Editor {
                         .add_enabled(!self.doc.redo.is_empty(), egui::Button::new("Redo"))
                         .clicked()
                     {
-                        self.animations.clear();
+                        self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.redo();

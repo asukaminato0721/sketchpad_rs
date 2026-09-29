@@ -15,6 +15,7 @@ use crate::table_records::NumericUnit;
 pub(super) struct DecodeContext {
     pub standalone_custom_point: bool,
     pub source_is_generic_polygon: bool,
+    pub legacy_angle_rotation_layout: bool,
 }
 
 pub(super) fn decode_native_transform(
@@ -217,6 +218,20 @@ pub(super) fn decode_native_transform(
             },
             F::NumericRotation,
         ),
+        (119, [_, center, angle])
+            if context.legacy_angle_rotation_layout
+                && constraint.is_none()
+                && point(*center)
+                && numeric(*angle, NumericUnit::Degrees) =>
+        {
+            (
+                Transform::Rotate {
+                    center: *center,
+                    angle: value(*angle, NumericUnit::Degrees),
+                },
+                F::NumericRotation,
+            )
+        }
         (30, [_, center]) if point(*center) => {
             let p = payload(12)?;
             let ratio = f64_at(p, 4);

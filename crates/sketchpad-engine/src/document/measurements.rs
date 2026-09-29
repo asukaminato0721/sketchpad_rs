@@ -394,12 +394,13 @@ impl Document {
             .slope(GraphPoint { x: a.x, y: a.y }, GraphPoint { x: b.x, y: b.y })
     }
     pub fn coordinate_measure_value(&self, id: usize) -> Option<CoordinateMeasureValue> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::CoordinateMeasurement {
             kind,
             first,
             second,
             frame,
-        } = self.objects.get(id.checked_sub(1)?)?.kind
+        } = object.kind
         else {
             return None;
         };
@@ -422,17 +423,40 @@ impl Document {
                 y: graph_frame.y_unit.y,
             }),
         };
-        coordinate_measure_records::evaluate(
+        let value = coordinate_measure_records::evaluate(
             kind,
             basis,
             to_screen(self.position(first)?),
             second.and_then(|id| self.position(id)).map(to_screen),
-        )
+        )?;
+        if matches!(
+            kind,
+            CoordinateMeasureKind::GraphCoordinateX | CoordinateMeasureKind::GraphCoordinateY
+        ) {
+            let CoordinateMeasureValue::Scalar(component) = value else {
+                return None;
+            };
+            let CoordinateMeasureValue::Pair(point) = coordinate_measure_records::evaluate(
+                CoordinateMeasureKind::Coordinates,
+                basis,
+                to_screen(self.position(first)?),
+                None,
+            )?
+            else {
+                return None;
+            };
+            Some(CoordinateMeasureValue::Scalar(match kind {
+                CoordinateMeasureKind::GraphCoordinateX => point.x.hypot(point.y),
+                CoordinateMeasureKind::GraphCoordinateY => point.y.atan2(point.x).to_degrees(),
+                _ => component,
+            }))
+        } else {
+            Some(value)
+        }
     }
     pub fn coordinate_measure_text(&self, id: usize) -> Option<String> {
-        let Kind::CoordinateMeasurement { kind, first, .. } =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        else {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::CoordinateMeasurement { kind, first, .. } = object.kind else {
             return None;
         };
         let name = self.coordinate_point_name(first)?;
@@ -446,6 +470,24 @@ impl Document {
             }
             (CoordinateMeasureKind::Ordinate, CoordinateMeasureValue::Scalar(_)) => {
                 Some(format!("y_{name} = {}", self.measurement_value_text(id)?))
+            }
+            (CoordinateMeasureKind::GraphCoordinateX, CoordinateMeasureValue::Scalar(_)) => {
+                Some(format!("r_{name} = {}", self.measurement_value_text(id)?))
+            }
+            (CoordinateMeasureKind::GraphCoordinateY, CoordinateMeasureValue::Scalar(_)) => {
+                let value = self.numeric_value(id)?;
+                let (value, suffix) = if self.angle_unit_radians {
+                    (value.to_radians(), "")
+                } else {
+                    (value, "°")
+                };
+                Some(format!(
+                    "θ_{name} = {}{suffix}",
+                    crate::table_records::format_numeric_value(
+                        value,
+                        usize::from(object.measurement_precision?)
+                    )
+                ))
             }
             (CoordinateMeasureKind::CoordinateDistance, CoordinateMeasureValue::Scalar(_)) => Some(
                 format!("Coordinate Distance = {}", self.measurement_value_text(id)?),

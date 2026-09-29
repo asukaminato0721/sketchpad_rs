@@ -822,6 +822,52 @@ impl Document {
                         put_record(&mut groups, 0x07d2, &references);
                         put_record(&mut groups, 0x07d7, &[]);
                     }
+                    Kind::SegmentMarker { .. } | Kind::SegmentArrow { .. } => {
+                        let (host, parameter, marker_kind, marker_tail) = match object.kind {
+                            Kind::SegmentMarker {
+                                host,
+                                parameter,
+                                count,
+                            } => (host, parameter, u32::from(count), 1_u32),
+                            Kind::SegmentArrow {
+                                host,
+                                parameter,
+                                forward,
+                            } => (host, parameter, 0x0001_0001, u32::from(forward)),
+                            _ => unreachable!(),
+                        };
+                        if !parameter.is_finite()
+                            || !(0.0..=1.0).contains(&parameter)
+                            || !matches!(marker_kind, 1..=3 | 0x0001_0001)
+                            || !self
+                                .objects
+                                .get(host.saturating_sub(1))
+                                .is_some_and(|parent| {
+                                    !parent.deleted
+                                        && parent.page == page
+                                        && is_segment_kind(&parent.kind)
+                                })
+                        {
+                            return Err("Invalid segment marker".into());
+                        }
+                        let local_host = self.multi_page_local_reference(page, object.id, host)?;
+                        let mut object_header = header(121);
+                        if !object.visible {
+                            object_header[2] = 1;
+                        }
+                        if let Some(style) = object.visual_style {
+                            style_records::set_visual_style(&mut object_header, style)?;
+                        }
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = 1_u32.to_le_bytes().to_vec();
+                        references.extend_from_slice(&local_host.to_le_bytes());
+                        put_record(&mut groups, 0x07d2, &references);
+                        let mut marker = parameter.to_le_bytes().to_vec();
+                        marker.extend_from_slice(&marker_kind.to_le_bytes());
+                        marker.extend_from_slice(&marker_tail.to_le_bytes());
+                        put_record(&mut groups, 0x090f, &marker);
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
                     Kind::Midpoint(_, _) | Kind::SegmentMidpoint(_) => {
                         let host = match object.kind {
                             Kind::SegmentMidpoint(host) => host,
@@ -1188,10 +1234,8 @@ impl Document {
                             }
                             Kind::PolygonPerimeter(_)
                                 if host_kind.is_polygon()
-                                    || matches!(
-                                        host_kind,
-                                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
-                                    ) =>
+                                    || host_kind.is_sector()
+                                    || matches!(host_kind, Kind::CircularSegmentBoundary(_)) =>
                             {
                                 include_bytes!("../../../../assets/perimeter_measurement_group.bin")
                             }
@@ -1212,10 +1256,8 @@ impl Document {
                             }
                             Kind::PolygonArea(_)
                                 if host_kind.is_polygon()
-                                    || matches!(
-                                        host_kind,
-                                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
-                                    ) =>
+                                    || host_kind.is_sector()
+                                    || matches!(host_kind, Kind::CircularSegmentBoundary(_)) =>
                             {
                                 include_bytes!("../../../../assets/area_measurement_group.bin")
                             }
@@ -1223,8 +1265,7 @@ impl Document {
                                 include_bytes!("../../../../assets/arc_angle_measurement_group.bin")
                             }
                             Kind::ArcLength(_)
-                                if is_arc_kind(host_kind)
-                                    || matches!(host_kind, Kind::SectorBoundary(_)) =>
+                                if is_arc_kind(host_kind) || host_kind.is_sector() =>
                             {
                                 include_bytes!(
                                     "../../../../assets/arc_length_measurement_group.bin"

@@ -493,10 +493,8 @@ impl Editor {
             (ShapeMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
             (ShapeMeasure::Area, Some(kind))
                 if kind.is_polygon()
-                    || matches!(
-                        kind,
-                        Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
-                    ) =>
+                    || kind.is_sector()
+                    || matches!(kind, Kind::CircularSegmentBoundary(_)) =>
             {
                 (Kind::PolygonArea(host), "area")
             }
@@ -548,9 +546,7 @@ impl Editor {
                     .doc
                     .objects
                     .get(arc.saturating_sub(1))
-                    .is_some_and(|o| {
-                        o.kind.is_arc() || matches!(o.kind, Kind::SectorBoundary(_))
-                    }) =>
+                    .is_some_and(|o| o.kind.is_arc() || o.kind.is_sector()) =>
             {
                 Kind::ArcLength(*arc)
             }

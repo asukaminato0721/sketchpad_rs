@@ -118,7 +118,14 @@ impl Editor {
         {
             return None;
         }
-        if let Kind::Free(point) = object.kind {
+        let wandering_point = match object.kind {
+            Kind::Free(point) => Some((point, false)),
+            _ if object.kind.is_point() && object.kind.transform_definition().is_some() => {
+                Some((self.doc.position(id)?, true))
+            }
+            _ => None,
+        };
+        if let Some((point, transient_point)) = wandering_point {
             let mut random_state = ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
                 ^ point.x.to_bits().rotate_left(17)
                 ^ point.y.to_bits().rotate_left(41))
@@ -127,6 +134,7 @@ impl Editor {
             return Some(AnimationTrack {
                 id,
                 allow_hidden,
+                transient_point,
                 phase: 0.,
                 straight_range: None,
                 parameter_domain: None,
@@ -152,6 +160,7 @@ impl Editor {
             return Some(AnimationTrack {
                 id,
                 allow_hidden,
+                transient_point: false,
                 phase: phase.clamp(0., 1.),
                 straight_range: None,
                 parameter_domain: Some((min, max)),
@@ -197,6 +206,7 @@ impl Editor {
         phase.is_finite().then_some(AnimationTrack {
             id,
             allow_hidden,
+            transient_point: false,
             phase: phase.clamp(0., 1.),
             straight_range,
             parameter_domain: None,
@@ -221,7 +231,9 @@ impl Editor {
             self.status = "Select a parameter or a free or path-constrained point".into();
             return;
         }
-        if self.animations.is_empty() {
+        if added.iter().any(|track| !track.transient_point)
+            && !self.animations.iter().any(|track| !track.transient_point)
+        {
             self.doc.checkpoint();
         }
         self.status = format!("Animating {} object(s)", added.len());
@@ -229,6 +241,30 @@ impl Editor {
         self.animation_paused = false;
         self.animation_last_tick = Instant::now();
         self.show_motion_controller |= show_controller;
+    }
+    pub(super) fn clear_animation_tracks(&mut self) {
+        let transient = self
+            .animations
+            .iter()
+            .filter(|track| track.transient_point)
+            .map(|track| track.id)
+            .collect::<Vec<_>>();
+        self.doc.clear_transient_point_positions(&transient);
+        self.animations.clear();
+    }
+    pub(super) fn retain_animation_tracks(
+        &mut self,
+        mut keep: impl FnMut(&AnimationTrack) -> bool,
+    ) {
+        let mut transient = Vec::new();
+        self.animations.retain(|track| {
+            let retained = keep(track);
+            if !retained && track.transient_point {
+                transient.push(track.id);
+            }
+            retained
+        });
+        self.doc.clear_transient_point_positions(&transient);
     }
     fn collect_animation_sources(
         &self,
@@ -318,7 +354,7 @@ impl Editor {
             .iter()
             .any(|target| self.animations.iter().any(|track| track.id == *target))
         {
-            self.animations.retain(|track| !targets.contains(&track.id));
+            self.retain_animation_tracks(|track| !targets.contains(&track.id));
             self.status = "Stopped animation".into();
             return;
         }
@@ -401,7 +437,7 @@ impl Editor {
         self.movements = tracks;
     }
     pub(super) fn stop_animation(&mut self) {
-        self.animations.clear();
+        self.clear_animation_tracks();
         self.movements.clear();
         self.animation_paused = false;
         self.status = "Stopped animation".into();
@@ -416,6 +452,11 @@ impl Editor {
         }
         self.capture_traces();
         let mut tracks = std::mem::take(&mut self.animations);
+        let transient = tracks
+            .iter()
+            .filter(|track| track.transient_point)
+            .map(|track| track.id)
+            .collect::<Vec<_>>();
         tracks.retain_mut(|track| {
             let Some(object) = self.doc.objects.get(track.id - 1) else {
                 return false;
@@ -453,8 +494,16 @@ impl Editor {
                 base_step * speed_scale
             };
             if let Some(mut velocity) = track.free_velocity {
-                let Kind::Free(current) = *kind else {
-                    return false;
+                let current = if track.transient_point {
+                    let Some(current) = self.doc.position(track.id) else {
+                        return false;
+                    };
+                    current
+                } else {
+                    let Kind::Free(current) = *kind else {
+                        return false;
+                    };
+                    current
                 };
                 let elapsed = elapsed_seconds.clamp(0., 0.1);
                 track.free_turn_remaining -= elapsed * self.animation_speed * speed_scale;
@@ -498,7 +547,11 @@ impl Editor {
                     }
                 }
                 track.free_velocity = Some(velocity);
-                let moved = self.doc.move_point(track.id, destination);
+                let moved = if track.transient_point {
+                    self.doc.set_transient_point_position(track.id, destination)
+                } else {
+                    self.doc.move_point(track.id, destination)
+                };
                 return moved && !track.button_settings.is_some_and(|settings| settings.once);
             }
             if track.parameter_domain.is_some() && step == 0. {
@@ -597,6 +650,11 @@ impl Editor {
             let moved = destination.is_some_and(|point| self.doc.move_point(track.id, point));
             moved && !once_complete
         });
+        let stopped = transient
+            .into_iter()
+            .filter(|id| !tracks.iter().any(|track| track.id == *id))
+            .collect::<Vec<_>>();
+        self.doc.clear_transient_point_positions(&stopped);
         self.animations = tracks;
     }
     pub(super) fn tick_animation_clock(&mut self) {

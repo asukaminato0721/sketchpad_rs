@@ -144,6 +144,34 @@ fn animation_button_variants_import_and_preserve_settings() {
     tagged_parameter[0x43] = 0x24;
     let group = crate::action_records::AnimationButtonGroup::parse(&tagged_parameter).unwrap();
     assert!(group.settings().unwrap().parameter.is_some());
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/李章博作品/自由运动二（李章博）.gsp"
+    );
+    let bytes = std::fs::read(path).unwrap();
+    let transformed = Document::from_bytes(&bytes, None).unwrap();
+    assert!(matches!(
+        &transformed.objects[71].kind,
+        Kind::AnimationButton {
+            targets,
+            settings,
+            ..
+        } if targets == &[66]
+            && settings == &[AnimationSettings {
+                direction: AnimationDirection::Forward,
+                speed: 24.,
+                once: false,
+                parameter: None,
+            }]
+    ));
+    assert!(
+        transformed.objects[65]
+            .kind
+            .transform_definition()
+            .is_some()
+    );
+    assert_eq!(transformed.encode().unwrap(), bytes);
 }
 
 #[test]

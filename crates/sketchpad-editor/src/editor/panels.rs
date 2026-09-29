@@ -119,7 +119,7 @@ impl Editor {
                         .add_enabled(self.doc.active_page > 0, egui::Button::new("‹"))
                         .clicked()
                     {
-                        self.animations.clear();
+                        self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.active_page -= 1;
@@ -142,7 +142,7 @@ impl Editor {
                         )
                         .clicked()
                     {
-                        self.animations.clear();
+                        self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
                         self.doc.active_page += 1;

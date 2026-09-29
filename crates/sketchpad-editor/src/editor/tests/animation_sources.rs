@@ -126,6 +126,28 @@ fn selected_segment_and_circle_animate_their_source_points() {
         assert_ne!(native.position(1).unwrap(), before[0]);
         assert_ne!(native.position(2).unwrap(), before[1]);
     }
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/李章博作品/自由运动二（李章博）.gsp"
+    );
+    let bytes = std::fs::read(path).unwrap();
+    let mut editor = Editor::new(Document::from_bytes(&bytes, None).unwrap());
+    let before = editor.doc.position(66).unwrap();
+    let kind = editor.doc.objects[65].kind.clone();
+    let undo = editor.doc.undo.len();
+    editor.select_only(66);
+    editor.animate_selected();
+    assert_eq!(editor.animations.len(), 1);
+    assert!(editor.animations[0].transient_point);
+    assert_eq!(editor.doc.undo.len(), undo);
+    editor.tick_animation(0.1);
+    assert_ne!(editor.doc.position(66), Some(before));
+    assert_eq!(editor.doc.objects[65].kind, kind);
+    assert!(!editor.doc.dirty);
+    assert_eq!(editor.doc.encode().unwrap(), bytes);
+    editor.stop_animation();
+    assert_eq!(editor.doc.position(66), Some(before));
 }
 
 #[test]

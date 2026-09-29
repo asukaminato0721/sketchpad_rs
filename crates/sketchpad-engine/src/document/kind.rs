@@ -57,9 +57,14 @@ impl Kind {
                 kind:
                     CoordinateMeasureKind::Abscissa
                     | CoordinateMeasureKind::Ordinate
+                    | CoordinateMeasureKind::GraphCoordinateX
                     | CoordinateMeasureKind::CoordinateDistance,
                 ..
             } => Some(NumericUnit::Scalar),
+            Kind::CoordinateMeasurement {
+                kind: CoordinateMeasureKind::GraphCoordinateY,
+                ..
+            } => Some(NumericUnit::Degrees),
             Kind::ParameterCalculation(_, group) => Some(group.unit()),
             Kind::NumericAlias { unit, .. } => Some(*unit),
             Kind::AngleMeasurement(_, _, _)
@@ -196,6 +201,8 @@ impl Kind {
                 | Kind::CoordinateMeasurement {
                     kind: CoordinateMeasureKind::Abscissa
                         | CoordinateMeasureKind::Ordinate
+                        | CoordinateMeasureKind::GraphCoordinateX
+                        | CoordinateMeasureKind::GraphCoordinateY
                         | CoordinateMeasureKind::CoordinateDistance,
                     ..
                 }
@@ -418,6 +425,8 @@ impl Kind {
             | Kind::PolygonArea(host)
             | Kind::ArcAngle(host)
             | Kind::ArcLength(host)
+            | Kind::SegmentMarker { host, .. }
+            | Kind::SegmentArrow { host, .. }
             | Kind::NumericAlias { source: host, .. }
             | Kind::CircleAxis(host, _) => vec![host],
             Kind::CircleArcLength(circle, start, end) => vec![circle, start, end],
@@ -883,6 +892,24 @@ impl Kind {
             Kind::PolarAngleValue(a, b, c) => Kind::PolarAngleValue(m(a), m(b), m(c)),
             Kind::VertexAngleValue(a, b, c) => Kind::VertexAngleValue(m(a), m(b), m(c)),
             Kind::AngleMarker(a, b, c, class) => Kind::AngleMarker(m(a), m(b), m(c), class),
+            Kind::SegmentMarker {
+                host,
+                parameter,
+                count,
+            } => Kind::SegmentMarker {
+                host: m(host),
+                parameter,
+                count,
+            },
+            Kind::SegmentArrow {
+                host,
+                parameter,
+                forward,
+            } => Kind::SegmentArrow {
+                host: m(host),
+                parameter,
+                forward,
+            },
             Kind::NumericAlias { source, unit } => Kind::NumericAlias {
                 source: m(source),
                 unit,
@@ -1021,6 +1048,8 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PolarAngleValue(_, _, _)
             | Kind::VertexAngleValue(_, _, _)
             | Kind::PointRatio(_, _, _)
+            | Kind::SegmentMarker { .. }
+            | Kind::SegmentArrow { .. }
             | Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
             | Kind::MovementButton { .. }
@@ -1799,6 +1828,17 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 },
             })
         }
+        Kind::SegmentMarker { .. } | Kind::SegmentArrow { .. } => Some(VisualStyle::Stroke {
+            line: SegmentLineStyle {
+                width: LineWidth::Thin,
+                pattern: LinePattern::Solid,
+            },
+            color: RgbColor {
+                red: 0,
+                green: 0,
+                blue: 0,
+            },
+        }),
         Kind::ParameterLocus(_, _, _, _) => Some(point_locus_visual_style()),
         Kind::SampledMapped(_) => Some(VisualStyle::Stroke {
             line: SegmentLineStyle {

@@ -339,7 +339,7 @@ impl Editor {
                     self.marked_ratio = None;
                     self.marked_ratio_value = None;
                     self.trace_marks.clear();
-                    self.animations.clear();
+                    self.clear_animation_tracks();
                     self.movements.clear();
                     self.presentations.clear();
                     self.animation_button_dialog = None;

@@ -24,7 +24,60 @@ pub(super) struct EvaluationContext {
     original: Shared<Document>,
 }
 
+impl EvaluationContext {
+    fn new(original: Document) -> Self {
+        Self {
+            points: BTreeMap::new(),
+            numbers: BTreeMap::new(),
+            straights: BTreeMap::new(),
+            circles: BTreeMap::new(),
+            polygons: BTreeMap::new(),
+            arcs: BTreeMap::new(),
+            frames: BTreeMap::new(),
+            seed_points: BTreeMap::new(),
+            seed_numbers: BTreeMap::new(),
+            frozen: BTreeSet::new(),
+            original: Shared::new(original),
+        }
+    }
+}
+
 impl Document {
+    /// Temporarily place a constructed point without changing its native
+    /// construction. Serialization and document history ignore this value.
+    pub fn set_transient_point_position(&mut self, id: usize, point: Point) -> bool {
+        if self.evaluation_context.is_none() {
+            let mut original = self.clone();
+            original.evaluation_context = None;
+            self.evaluation_context = Some(EvaluationContext::new(original));
+        }
+        self.invalidate_evaluation_dependents(id);
+        self.set_evaluation_point(id, point).is_some()
+    }
+
+    /// Return temporarily placed points to their construction-defined positions.
+    pub fn clear_transient_point_positions(&mut self, ids: &[usize]) {
+        let Some(context) = &mut self.evaluation_context else {
+            return;
+        };
+        for id in ids {
+            context.seed_points.remove(id);
+        }
+        if context.seed_points.is_empty()
+            && context.seed_numbers.is_empty()
+            && context.frozen.is_empty()
+            && context.points.is_empty()
+            && context.numbers.is_empty()
+            && context.straights.is_empty()
+            && context.circles.is_empty()
+            && context.polygons.is_empty()
+            && context.arcs.is_empty()
+            && context.frames.is_empty()
+        {
+            self.evaluation_context = None;
+        }
+    }
+
     /// Establish a seedable evaluation context without replacing an existing
     /// scoped context supplied by a caller.
     pub(super) fn ensure_evaluation_context(&mut self, original: &Document) -> Option<()> {
@@ -64,19 +117,7 @@ impl Document {
         if !retain_parent {
             baseline.evaluation_context = None;
         }
-        let mut context = EvaluationContext {
-            points: BTreeMap::new(),
-            numbers: BTreeMap::new(),
-            straights: BTreeMap::new(),
-            circles: BTreeMap::new(),
-            polygons: BTreeMap::new(),
-            arcs: BTreeMap::new(),
-            frames: BTreeMap::new(),
-            seed_points: BTreeMap::new(),
-            seed_numbers: BTreeMap::new(),
-            frozen: BTreeSet::new(),
-            original: Shared::new(baseline),
-        };
+        let mut context = EvaluationContext::new(baseline);
         for &id in external_ids {
             let object = context.original.objects.get(id.checked_sub(1)?)?;
             if object.deleted {

@@ -600,6 +600,9 @@ impl Document {
             | Kind::PointOnLine(_, _)
             | Kind::PointOnArc(_, _)
             | Kind::PointOnCurve(_, _) => crate::action_records::AnimationDirection::Bidirectional,
+            _ if object.kind.is_point() && object.kind.transform_definition().is_some() => {
+                crate::action_records::AnimationDirection::Forward
+            }
             _ => return None,
         };
         Some(AnimationSettings {

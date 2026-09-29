@@ -49,6 +49,7 @@ mod plotting;
 mod point_numeric_labels;
 mod records;
 mod save;
+mod segment_marker;
 mod selection;
 mod style;
 mod tables;
@@ -575,6 +576,18 @@ pub enum Kind {
     VertexAngleValue(usize, usize, usize),
     /// A displayed three-point angle mark with a native arc count.
     AngleMarker(usize, usize, usize, u16),
+    /// Native code 121: one to three congruence ticks on a finite segment.
+    SegmentMarker {
+        host: usize,
+        parameter: f64,
+        count: u16,
+    },
+    /// Native code 121 with flag `0x0001`: an arrow parallel to a segment.
+    SegmentArrow {
+        host: usize,
+        parameter: f64,
+        forward: bool,
+    },
     /// A named numeric display whose value remains bound to its source.
     NumericAlias {
         source: usize,

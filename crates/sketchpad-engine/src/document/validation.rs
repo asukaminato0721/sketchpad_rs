@@ -160,6 +160,41 @@ impl Document {
                         return Err(format!("Invalid polygon boundary intersection {}", o.id));
                     }
                 }
+                Kind::SegmentMarker {
+                    host,
+                    parameter,
+                    count,
+                } => {
+                    if !parameter.is_finite()
+                        || !(0.0..=1.0).contains(parameter)
+                        || !(1..=3).contains(count)
+                        || *host == 0
+                        || *host >= o.id
+                        || !self.objects.get(*host - 1).is_some_and(|parent| {
+                            !parent.deleted
+                                && parent.page == o.page
+                                && super::kind::is_segment_kind(&parent.kind)
+                        })
+                    {
+                        return Err(format!("Invalid segment marker {}", o.id));
+                    }
+                }
+                Kind::SegmentArrow {
+                    host, parameter, ..
+                } => {
+                    if !parameter.is_finite()
+                        || !(0.0..=1.0).contains(parameter)
+                        || *host == 0
+                        || *host >= o.id
+                        || !self.objects.get(*host - 1).is_some_and(|parent| {
+                            !parent.deleted
+                                && parent.page == o.page
+                                && super::kind::is_segment_kind(&parent.kind)
+                        })
+                    {
+                        return Err(format!("Invalid segment arrow {}", o.id));
+                    }
+                }
                 Kind::IterationPointAlias(binding) => {
                     if super::iteration_endpoint::binding_source(&self.objects, *binding, o.page, o.id).is_none() {
                         return Err(format!("Invalid iteration point alias {}", o.id));

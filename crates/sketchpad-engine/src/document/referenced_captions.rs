@@ -37,6 +37,8 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                 kind:
                     crate::coordinate_measure_records::CoordinateMeasureKind::Abscissa
                     | crate::coordinate_measure_records::CoordinateMeasureKind::Ordinate
+                    | crate::coordinate_measure_records::CoordinateMeasureKind::GraphCoordinateX
+                    | crate::coordinate_measure_records::CoordinateMeasureKind::GraphCoordinateY
                     | crate::coordinate_measure_records::CoordinateMeasureKind::CoordinateDistance,
                 ..
             }
@@ -376,6 +378,16 @@ impl Document {
                 first,
                 ..
             } => Some(format!("y{}", self.coordinate_point_name(first)?)),
+            Kind::CoordinateMeasurement {
+                kind: crate::coordinate_measure_records::CoordinateMeasureKind::GraphCoordinateX,
+                first,
+                ..
+            } => Some(format!("r{}", self.coordinate_point_name(first)?)),
+            Kind::CoordinateMeasurement {
+                kind: crate::coordinate_measure_records::CoordinateMeasureKind::GraphCoordinateY,
+                first,
+                ..
+            } => Some(format!("θ{}", self.coordinate_point_name(first)?)),
             Kind::CoordinateMeasurement {
                 kind: crate::coordinate_measure_records::CoordinateMeasureKind::CoordinateDistance,
                 first,

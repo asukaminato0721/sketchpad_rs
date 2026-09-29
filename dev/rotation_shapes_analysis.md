@@ -31,3 +31,19 @@ The new typed shape variants evaluate live angle measurements, arc-angle measure
 `tests/replay_numeric_angle_shapes.txt` creates three bases, measured-angle rotations before and after a 90°→135° edit and color change, and a calculated-angle segment with its length before and after editing n=4→8 and the source endpoint. Native captures show 360°/n changing from 90° to 45° and the transformed length changing from 1.06 cm to 1.59 cm. All eight generated original/edited results open and save byte-identically in native Sketchpad 5. The port also reopens segment-length measurements whose hosts are supported transformed segments, enabling their later calculations.
 
 The native creation fixtures are `numeric_angle_segment_native.gsp`, `numeric_angle_circle_native.gsp`, and `numeric_angle_polygon_native.gsp`. To reproduce creation, use the corresponding `numeric_angle_*_base_port.gsp` with `dev/wine_roundtrip.sh` and `dev/numeric_angle_shapes_wine_setup.sh` as `SKETCHPAD_WINE_SETUP_SCRIPT`. Select the shape through `SKETCHPAD_ANGLE_SHAPE_X/Y`: segment 279/269, circle 319/249, polygon 299/279. The script marks the center and the angle measurement, then invokes Rotate. Native and generated full-file preservation and object-group equality are checked in regression tests.
+
+## Legacy angle-value rotation
+
+GSP4 code 119 stores `[source, center, angle value]` with no constraint payload.
+The two corpus files with supported roots use code-116 `VertexAngleValue`
+parents, whose reversed screen-coordinate turn is the value native Sketchpad
+applies. Exact plain groups and the single observed point-label group decode as
+modern `NumericRotation` semantics while retaining their original code and
+records on an unchanged save. Point, Segment, and analytic Arc headers account
+for seven direct roots; tests compare every resulting point or sampled endpoint
+against an independent rotation of its live source.
+
+Six code-119 objects deliberately remain opaque: two depend on legacy code 114,
+two rotate unsupported transformed interiors, and two use circular-segment
+boundaries, which are not a transform element. The original `课时7笔记.gsp`
+opened and resaved byte-identically in native Sketchpad 5 under Xvfb/Wine.

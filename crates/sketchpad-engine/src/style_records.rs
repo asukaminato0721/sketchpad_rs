@@ -34,7 +34,7 @@ fn is_point_header(payload: &[u8]) -> bool {
     matches!(
         (code, subtype),
         (
-            0 | 75 | 88 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
+            0 | 75 | 88 | 119 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
             4
         ) | (0, 41)
             | (1, 11)
@@ -219,17 +219,33 @@ pub struct SegmentLineStyle {
 pub type CircleLineStyle = SegmentLineStyle;
 
 fn is_segment_header(payload: &[u8]) -> bool {
-    (payload.len() == 16 || payload.len() == 28)
-        && matches!(
-            (
-                u16::from_le_bytes([payload[0], payload[1]]),
-                u16::from_le_bytes([payload[8], payload[9]])
-            ),
-            (
-                2 | 75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34,
-                14
+    payload.len() == 28 && payload[..2] == 121u16.to_le_bytes() && payload[6..10] == [19, 0, 96, 0]
+        || (payload.len() == 16 || payload.len() == 28)
+            && matches!(
+                (
+                    u16::from_le_bytes([payload[0], payload[1]]),
+                    u16::from_le_bytes([payload[8], payload[9]])
+                ),
+                (
+                    2 | 75
+                        | 119
+                        | 16
+                        | 17
+                        | 18
+                        | 19
+                        | 20
+                        | 21
+                        | 24
+                        | 27
+                        | 28
+                        | 29
+                        | 30
+                        | 32
+                        | 33
+                        | 34,
+                    14
+                )
             )
-        )
 }
 
 // Native GSP4 stroke headers use a small pen-style enum, rather than the
@@ -313,7 +329,7 @@ fn is_straight_or_arc_header(payload: &[u8]) -> bool {
         || matches!(code, 5 | 6 | 7 | 63 | 64 | 79 | 80 | 81)
         || (payload.len() == 28
             && payload[6..10] == [12, 0, 67, 0]
-            && matches!(code, 16..=21 | 24 | 27..=30 | 32..=34))
+            && matches!(code, 16..=21 | 24 | 27..=30 | 32..=34 | 119))
         || (payload.len() == 28
             && matches!(code, 16 | 21 | 27 | 29 | 30 | 33 | 34)
             && payload[6..8] == [2, 0]

@@ -406,6 +406,101 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
                 .partial_view
         );
     }
+
+    // GSP4 code 119 stores an angle-value object rather than the modern
+    // numeric-rotation code. Keep its original bytes, but expose the same live
+    // transform semantics for the point, segment, and arc families observed in
+    // the legacy corpus.
+    for (bytes, expected_elements) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/唐家军作品/课时7笔记.gsp"
+            ))
+            .as_slice(),
+            [
+                ElementType::Point,
+                ElementType::Segment,
+                ElementType::Segment,
+            ]
+            .as_slice(),
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/唐家军作品/课后反思10.gsp"
+            ))
+            .as_slice(),
+            [
+                ElementType::Point,
+                ElementType::Point,
+                ElementType::Arc,
+                ElementType::Arc,
+            ]
+            .as_slice(),
+        ),
+    ] {
+        let doc = Document::from_bytes(bytes, None).unwrap();
+        assert_eq!(doc.encode().unwrap(), bytes);
+        let mut elements = Vec::new();
+        for object in &doc.objects {
+            let Some(header) = object.header_offset else {
+                continue;
+            };
+            if bytes.get(header..header + 2) != Some(&119_u16.to_le_bytes()) {
+                continue;
+            }
+            let Some(definition) = object.kind.transform_definition() else {
+                continue;
+            };
+            assert_eq!(
+                definition.wire_flavor(),
+                NativeTransformFlavor::NumericRotation
+            );
+            let Transform::Rotate {
+                center,
+                angle: NumericExpr::ObjectValue { id: angle, unit },
+            } = definition.transform()
+            else {
+                panic!("Legacy angle rotation lost its live angle object");
+            };
+            assert_eq!(*unit, NumericUnit::Degrees);
+            let radians = doc.numeric_value(*angle).unwrap().to_radians();
+            let center = doc.position(*center).unwrap();
+            let rotate = |point| rotate_point_about(point, center, radians).unwrap();
+            match definition.element() {
+                ElementType::Point => assert!(
+                    doc.position(object.id)
+                        .unwrap()
+                        .distance(rotate(doc.position(definition.source()).unwrap()))
+                        < 1e-8
+                ),
+                ElementType::Segment => {
+                    let (source_a, source_b, _) = doc.line_points(definition.source()).unwrap();
+                    let (actual_a, actual_b, mode) = doc.line_points(object.id).unwrap();
+                    assert_eq!(mode, LineMode::Segment);
+                    assert!(actual_a.distance(rotate(source_a)) < 1e-8);
+                    assert!(actual_b.distance(rotate(source_b)) < 1e-8);
+                }
+                ElementType::Arc => {
+                    for (actual, source) in doc
+                        .arc_points(object.id, 8)
+                        .unwrap()
+                        .into_iter()
+                        .zip(doc.arc_points(definition.source(), 8).unwrap())
+                    {
+                        assert!(actual.distance(rotate(source)) < 1e-8);
+                    }
+                }
+                element => panic!("Unexpected legacy angle-rotation element: {element:?}"),
+            }
+            elements.push(definition.element());
+        }
+        elements.sort_by_key(|element| *element as u8);
+        let mut expected_elements = expected_elements.to_vec();
+        expected_elements.sort_by_key(|element| *element as u8);
+        assert_eq!(elements, expected_elements);
+    }
 }
 
 #[test]

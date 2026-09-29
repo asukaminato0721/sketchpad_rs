@@ -431,6 +431,16 @@ fn circle_area_matches_original_and_updates_after_resize() {
         assert!(imported.filled_region_points(id).is_some());
         assert_eq!(imported.encode().unwrap(), bytes);
     }
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/孙禄京作品/转盘.gsp"
+    );
+    let bytes = std::fs::read(path).unwrap();
+    let imported = Document::from_bytes(&bytes, None).unwrap();
+    assert_eq!(imported.objects[36].kind, Kind::PolygonArea(36));
+    assert!(imported.polygon_area_cm2(37).unwrap() > 0.);
+    assert_eq!(imported.encode().unwrap(), bytes);
 }
 #[test]
 fn transformed_circle_measurements_follow_their_sources() {

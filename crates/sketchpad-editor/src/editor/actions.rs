@@ -156,7 +156,7 @@ impl Editor {
                     .ok_or("Link destination button is unavailable")
             })
             .transpose()?;
-        self.animations.clear();
+        self.clear_animation_tracks();
         self.movements.clear();
         self.presentations.clear();
         self.doc.active_page = target_page;
@@ -208,7 +208,7 @@ impl Editor {
         {
             Some(Kind::AnimationButton { targets, .. }) => {
                 let targets = targets.clone();
-                self.animations.retain(|track| !targets.contains(&track.id));
+                self.retain_animation_tracks(|track| !targets.contains(&track.id));
             }
             Some(Kind::MovementButton { .. }) => {
                 self.movements.retain(|track| track.button != id);
@@ -362,7 +362,7 @@ impl Editor {
             self.selection_order.clear();
         }
         if options.stop_animations {
-            self.animations.clear();
+            self.clear_animation_tracks();
             self.movements.clear();
         }
         if options.erase_traces {

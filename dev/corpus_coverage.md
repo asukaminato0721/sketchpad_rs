@@ -1,13 +1,13 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,260/1,599** documents have all object kinds
-decoded; **1,290** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **3,027** unsupported slots (2,429
-drawing slots and 598 prototype slots), and 339 documents still contain
+Latest snapshot, 2026-09-29: **1,268/1,599** documents have all object kinds
+decoded; **1,298** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **2,952** unsupported slots (2,354
+drawing slots and 598 prototype slots), and 331 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
-recoveries are summarized at the end; the older detailed snapshots remain for
-comparison.
+measurement, transformed-point Animation, segment-marker, and legacy-angle-rotation recoveries are
+summarized at the end; the older detailed snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -1424,3 +1424,68 @@ drawing slots. Unsupported falls 3,100→3,027, all-kind-complete documents rise
 1,259→1,260, drawing-complete documents rise 1,289→1,290, and partial views fall
 871→870. Prototype coverage stays at 598 unsupported slots and all 1,599
 originals remain byte-exact.
+
+## Colorized sector measurements
+
+The shared sector predicate now admits transformed and Colorized sectors for
+native Area, Perimeter, and Arc Length records. The compiled scan restores six
+drawing slots: one direct code-42 Area and five supported descendants. The
+intermediate corpus checkpoint has 3,021 unsupported slots, 1,261 all-kind
+complete documents, and 1,291 drawing-complete documents. All 1,599 originals
+remain byte-exact.
+
+## Transformed-point Animation buttons
+
+Code-62 Animation buttons may target a supported transformed point with ordinary
+point settings. The editor uses the existing scoped evaluator to place the target
+temporarily, so dependent geometry follows during playback without rewriting the
+transformation, dirtying the document, adding an undo entry, or changing saved
+bytes. Stopping the track removes the override and restores its constructed
+position.
+
+Native GSP was exercised under Xvfb/Wine on `自由运动二（李章博）.gsp`: object 66
+and its dependents moved while object 1 retained its exact free coordinates in a
+save made during playback; Stop returned object 66 to its original constructed
+position. The compiled scan restores 32 drawing code-62 buttons. Unsupported
+falls 3,021→2,989 (2,391 drawing plus 598 prototype), complete documents rise
+1,261→1,262, complete drawings rise 1,291→1,292, and partial views fall 870→869.
+All 1,599 originals remain byte-exact with zero failures. Final scan:
+`/tmp/sketchpad_transformed_animation_coverage.log`.
+
+## Segment markers
+
+Native code-121 ordinary marker groups now resolve a single earlier supported
+Segment host, including transformed segments, and retain the stored finite
+parameter and one-, two-, or three-tick class. Desktop and SVG rendering use the
+native fixed fourteen-unit tick length and six-unit spacing verified visually in
+Sketchpad 5 under Xvfb/Wine. Its flagged `0x00010001` profile draws a native
+ten-unit arrow in the host direction or its reverse, selected by the final field;
+both orientations were verified in native multi-page documents. The same stroke
+style, visibility, picking, dependency remapping, and single-/multi-page writers
+cover imported and copied objects.
+
+The decoder deliberately excludes the one arrow attached to a sampled curve.
+The compiled scan restores 27 drawing slots. Unsupported falls 2,989→2,962
+(2,364 drawing plus 598 prototype), complete documents rise 1,262→1,268,
+complete drawings rise 1,292→1,298, and partial views fall 869→867. All 1,599
+originals remain byte-exact with zero failures. Final scan:
+`/tmp/sketchpad_segment_markers_final_coverage.log`.
+
+## Legacy angle-value rotations
+
+Native code 119 is the GSP4 form of a rotation driven by a separate angle-value
+object. Its references are `[source, center, angle value]`; the corpus uses the
+same degree-valued `VertexAngleValue` semantics as modern code 29. Exact plain
+groups, plus the one observed labeled-point profile, now enter the shared live
+`NumericRotation` model for supported Point, Segment, and analytic Arc sources.
+Untouched files preserve code 119 byte-for-byte; copied objects use the modern
+code-29 writer.
+
+Seven direct roots and three dependents recover. The six remaining code-119
+objects depend on an unsupported legacy angle source, transformed interior, or
+circular-segment boundary and remain unsupported. The compiled scan lowers the
+total 2,962→2,952 (2,354 drawing plus 598 prototype), with document-completion
+and partial-view counts unchanged. All 1,599 originals remain byte-exact. The
+16-page `课时7笔记.gsp` opened and resaved byte-identically (387,588 bytes) in
+Sketchpad 5 under Xvfb/Wine. Final scan:
+`/tmp/sketchpad_legacy_rotation_coverage.log`.

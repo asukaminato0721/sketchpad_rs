@@ -1400,6 +1400,22 @@ fn svg_page_with_layout(
                 .unwrap();
             }
         }
+        if let Some(strokes) = doc.segment_marker_strokes(o.id) {
+            for [start, end] in strokes {
+                let start = vp.screen(start);
+                let end = vp.screen(end);
+                writeln!(
+                    svg,
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{}/>",
+                    start.x,
+                    start.y,
+                    end.x,
+                    end.y,
+                    svg_stroke(doc.effective_visual_style(o.id))
+                )
+                .unwrap();
+            }
+        }
         let polygon_object = if o.kind.is_filled_region() {
             polygon_fills.next().unwrap()
         } else {
@@ -2629,6 +2645,18 @@ impl GeometryRenderer {
                                 vp.screen(arrow[0]),
                                 vp.screen(arrow[1]),
                                 vp.screen(arrow[2]),
+                                col,
+                            );
+                        }
+                    }
+                }
+                Kind::SegmentMarker { .. } | Kind::SegmentArrow { .. } => {
+                    if let Some(strokes) = doc.segment_marker_strokes(o.id) {
+                        for [start, end] in strokes {
+                            mesh.styled_path(
+                                &[vp.screen(start), vp.screen(end)],
+                                false,
+                                stroke,
                                 col,
                             );
                         }

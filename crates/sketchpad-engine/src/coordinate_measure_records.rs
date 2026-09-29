@@ -8,6 +8,10 @@ pub enum CoordinateMeasureKind {
     Coordinates,
     Abscissa,
     Ordinate,
+    /// Legacy code 125: x on Cartesian grids, radius on polar grids.
+    GraphCoordinateX,
+    /// Legacy code 124: y on Cartesian grids, angle in radians on polar grids.
+    GraphCoordinateY,
     CoordinateDistance,
 }
 
@@ -17,6 +21,8 @@ impl CoordinateMeasureKind {
             Self::Coordinates => 49,
             Self::Abscissa => 65,
             Self::Ordinate => 66,
+            Self::GraphCoordinateX => 125,
+            Self::GraphCoordinateY => 124,
             Self::CoordinateDistance => 86,
         }
     }
@@ -25,6 +31,8 @@ impl CoordinateMeasureKind {
             49 => Some(Self::Coordinates),
             65 => Some(Self::Abscissa),
             66 => Some(Self::Ordinate),
+            125 => Some(Self::GraphCoordinateX),
+            124 => Some(Self::GraphCoordinateY),
             86 => Some(Self::CoordinateDistance),
             _ => None,
         }
@@ -91,6 +99,8 @@ pub fn evaluate(
         CoordinateMeasureKind::Coordinates => Some(CoordinateMeasureValue::Pair(a)),
         CoordinateMeasureKind::Abscissa => Some(CoordinateMeasureValue::Scalar(a.x)),
         CoordinateMeasureKind::Ordinate => Some(CoordinateMeasureValue::Scalar(a.y)),
+        CoordinateMeasureKind::GraphCoordinateX => Some(CoordinateMeasureValue::Scalar(a.x)),
+        CoordinateMeasureKind::GraphCoordinateY => Some(CoordinateMeasureValue::Scalar(a.y)),
         CoordinateMeasureKind::CoordinateDistance => {
             let b = frame.coordinates(second?)?;
             let distance = (a.x - b.x).hypot(a.y - b.y);
@@ -169,7 +179,10 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
     let marker_index = rs.len().checked_sub(2).filter(|&index| {
         matches!(
             kind,
-            CoordinateMeasureKind::Abscissa | CoordinateMeasureKind::Ordinate
+            CoordinateMeasureKind::Abscissa
+                | CoordinateMeasureKind::Ordinate
+                | CoordinateMeasureKind::GraphCoordinateX
+                | CoordinateMeasureKind::GraphCoordinateY
         ) && labeled
             && header[6..10] == [7, 0, 51, 0]
             && rs[index].kind == 0x232e
@@ -251,6 +264,12 @@ fn source(kind: CoordinateMeasureKind) -> &'static [u8] {
         CoordinateMeasureKind::Ordinate => {
             include_bytes!("../../../tests/fixtures/coordinate_measure_menu291.gsp")
         }
+        CoordinateMeasureKind::GraphCoordinateX => {
+            include_bytes!("../../../tests/fixtures/coordinate_measure_menu274.gsp")
+        }
+        CoordinateMeasureKind::GraphCoordinateY => {
+            include_bytes!("../../../tests/fixtures/coordinate_measure_menu291.gsp")
+        }
         CoordinateMeasureKind::CoordinateDistance => {
             include_bytes!("../../../tests/fixtures/coordinate_measure_menu308.gsp")
         }
@@ -283,6 +302,8 @@ pub fn encode_group(kind: CoordinateMeasureKind, references: &[u32]) -> Result<V
     let group = last_group(template)?;
     let mut output = template[group].to_vec();
     let rs = records(&output, 0)?;
+    output[rs[0].payload.start..rs[0].payload.start + 2]
+        .copy_from_slice(&kind.code().to_le_bytes());
     let payload = rs[1].payload.clone();
     for (i, reference) in references.iter().enumerate() {
         output[payload.start + 4 + i * 4..payload.start + 8 + i * 4]

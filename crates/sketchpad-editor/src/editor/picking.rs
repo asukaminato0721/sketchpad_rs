@@ -387,6 +387,22 @@ impl Editor {
                                     .min_by(f32::total_cmp)?
                             }
                         }
+                        Kind::SegmentMarker { .. } | Kind::SegmentArrow { .. } => self
+                            .doc
+                            .segment_marker_strokes(o.id)?
+                            .into_iter()
+                            .map(|[start, end]| {
+                                let a = v.screen(start);
+                                let b = v.screen(end);
+                                let ab = b - a;
+                                let t = if ab.length_sq() < 1e-6 {
+                                    0.
+                                } else {
+                                    ((p - a).dot(ab) / ab.length_sq()).clamp(0., 1.)
+                                };
+                                (p - (a + ab * t)).length()
+                            })
+                            .min_by(f32::total_cmp)?,
                         ref kind if kind.is_filled_region() => {
                             let points = self.doc.filled_region_points(o.id)?;
                             let points: Vec<_> =

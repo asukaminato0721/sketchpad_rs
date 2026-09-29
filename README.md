@@ -64,7 +64,7 @@ Custom Tools > Choose Tool Folder loads embedded tools from top-level `.gsp`
 files in a folder for the current application session. Folder tools use the same
 selected-input and click-input workflows as document tools, while Forget Tool
 Folder removes only the catalog and leaves completed constructions intact.
-Display > Animate Objects runs a selected parameter over its stored domain or animates a supported point, including points on polygon and sector boundaries or supported point curves. Selecting a construction such as a segment or circle animates its source points, even when those points are hidden. Edit > Action Buttons > Animation creates a clickable motion button for selected parameters and points, or for a selected segment, line, ray, circle, or polygon with up to seven vertices through its source points. Animation buttons for supported points and segment sources can also be created on existing multi-page sketches. Parameter buttons can use continuous or discrete changes with an editable rate, step, and domain. The Motion Controller pauses, resumes, changes speed, and stops Display animation.
+Display > Animate Objects runs a selected parameter over its stored domain or animates a supported point, including transformed points, points on polygon and sector boundaries, and supported point curves. A transformed point uses temporary motion state, so its construction is unchanged and Stop returns it to its constructed position. Selecting a construction such as a segment or circle animates its source points, even when those points are hidden. Edit > Action Buttons > Animation creates a clickable motion button for selected parameters and points, or for a selected segment, line, ray, circle, or polygon with up to seven vertices through its source points. Animation buttons for supported points and segment sources can also be created on existing multi-page sketches. Parameter buttons can use continuous or discrete changes with an editable rate, step, and domain. The Motion Controller pauses, resumes, changes speed, and stops Display animation.
 Select a caption and highlight characters in the sidebar text field to apply Bold, Italic, Underline, Larger, Smaller, or a font family to that range. These mixed-format captions render in the editor and SVG, and survive word edits, move, and copy/paste. Text insertions inherit the neighboring style, and replaced text inherits the first replaced character's style.
 Display > Show Text Palette opens floating font-family, emphasis, and size controls
 for selected text, point labels, and numeric captions. Hiding or closing the
@@ -98,14 +98,16 @@ The line targets include lines constructed
 parallel or perpendicular to another line; angle bisectors produce ray
 families.
 
-Display > Animate Objects moves selected free points or points constrained to
+Display > Animate Objects moves selected free or transformed points, or points constrained to
 segments, rays, lines, circles, arcs, polygon/sector boundaries, or supported
 point curves and updates their dependent constructions. Free
 points wander within the visible canvas; segment and arc points reverse at
 their endpoints, ray and line points reverse at the visible path ends, circle,
 polygon, and sector points loop, and generic point curves reverse. The Display menu and Motion Controller
 can change speed, pause, resume, and stop the motion. Motion keeps the point's
-current position when stopped and can be undone as one edit.
+current position when stopped and can be undone as one edit. Transformed-point
+motion is temporary: Stop restores the construction-defined position, and Save
+does not serialize the runtime override.
 
 Edit > Action Buttons > Hide/Show creates one button for all selected supported
 objects, including on an existing supported multi-page page. Clicking it hides
@@ -325,3 +327,28 @@ directions are also live and authorable; 12 roots restore 61 descendants. Togeth
 these passes lower unsupported slots from 3,111 to 3,027, raise complete documents
 to 1,260 and complete drawings to 1,290, and retain byte-exact round trips for all
 1,599 originals.
+
+Area, Perimeter, and Arc Length imports now recognize transformed and Colorized
+sector hosts through the shared sector geometry, restoring six drawing slots.
+Animation buttons targeting transformed points use a temporary evaluator override:
+their dependents move during playback, but the underlying construction and saved
+bytes do not change, and Stop restores the constructed position. This admits 32
+native buttons. Together the two passes lower unsupported slots from 3,027 to
+2,989, raise complete documents to 1,262 and complete drawings to 1,292, and
+lower partial views to 869. All 1,599 originals remain byte-exact.
+
+Native code-121 segment congruence and direction markers now import, render,
+pick, copy, and save on supported original or transformed segments. One-, two-,
+and three-tick marks use native fixed dimensions; forward and reverse arrows use
+the stored host direction. Both forms were verified against Sketchpad 5 under
+Xvfb/Wine. The strict segment-host profiles restore 27 drawing slots, lowering
+unsupported slots to 2,962, raising complete documents to 1,268 and complete
+drawings to 1,298, and lowering partial views to 867. The observed sampled-curve
+arrow remains unsupported; all 1,599 originals remain byte-exact.
+
+Legacy code-119 angle rotations now share the live numeric-rotation model for
+strict point, segment, and analytic-arc groups. The seven admitted roots retain
+their original bytes and restore three dependents, lowering unsupported slots to
+2,952; six roots whose source family is not yet represented remain guarded.
+The original 16-page example also opened and resaved byte-identically in
+Sketchpad 5 under Xvfb/Wine.

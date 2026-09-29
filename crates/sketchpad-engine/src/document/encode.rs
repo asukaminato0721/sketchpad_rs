@@ -1768,6 +1768,52 @@ impl Document {
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
+            let segment_marker = match o.kind {
+                Kind::SegmentMarker {
+                    host,
+                    parameter,
+                    count,
+                } => Some((host, parameter, u32::from(count), 1_u32)),
+                Kind::SegmentArrow {
+                    host,
+                    parameter,
+                    forward,
+                } => Some((host, parameter, 0x0001_0001, u32::from(forward))),
+                _ => None,
+            };
+            if let Some((host, parameter, marker_kind, marker_tail)) = segment_marker {
+                if !parameter.is_finite()
+                    || !(0.0..=1.0).contains(&parameter)
+                    || !matches!(marker_kind, 1..=3 | 0x0001_0001)
+                    || !self
+                        .objects
+                        .get(host.saturating_sub(1))
+                        .is_some_and(|parent| {
+                            !parent.deleted
+                                && parent.page == o.page
+                                && super::kind::is_segment_kind(&parent.kind)
+                        })
+                {
+                    return Err("Invalid segment marker".into());
+                }
+                let mut h = header(121);
+                if !o.visible {
+                    h[2] |= 1;
+                }
+                if let Some(style) = o.visual_style {
+                    crate::style_records::set_visual_style(&mut h, style)?;
+                }
+                put_record(&mut added, 0x07d0, &h);
+                let mut refs = 1_u32.to_le_bytes().to_vec();
+                refs.extend_from_slice(&(host as u32).to_le_bytes());
+                put_record(&mut added, 0x07d2, &refs);
+                let mut marker = parameter.to_le_bytes().to_vec();
+                marker.extend_from_slice(&marker_kind.to_le_bytes());
+                marker.extend_from_slice(&marker_tail.to_le_bytes());
+                put_record(&mut added, 0x090f, &marker);
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::NumericAlias {
                 source,
                 unit: crate::table_records::NumericUnit::Degrees,

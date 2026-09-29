@@ -506,12 +506,13 @@ impl Document {
                             | 98
                             | 109
                             | 110
+                            | 119
                             | 75
                             | 95
                             | 123
                     );
             let arc_label = h[6..10] == [12, 0, 67, 0]
-                && (matches!(code, 75 | 79..=81)
+                && (matches!(code, 75 | 79..=81 | 119)
                     || matches!(code, 16..=21 | 24 | 27..=30 | 32..=34));
             // Polygon groups also carry 07d5 naming metadata, but that record
             // is not a displayed label. Keep it inert while admitting the
@@ -542,6 +543,8 @@ impl Document {
                     | 87
                     | 94
                     | 120
+                    | 124
+                    | 125
             );
             let mut rich_text: Option<Vec<u8>> = None;
             let mut text_box: Option<Vec<u8>> = None;
@@ -689,7 +692,9 @@ impl Document {
                                 Some(u16::from_le_bytes(d[28..30].try_into().unwrap()));
                         }
                     }
-                    0x0903 if matches!(code, 65 | 66 | 86 | 87 | 94) && d.len() == 32 => {
+                    0x0903
+                        if matches!(code, 65 | 66 | 86 | 87 | 94 | 124 | 125) && d.len() == 32 =>
+                    {
                         let precision = u16::from_le_bytes(d[28..30].try_into().unwrap());
                         if precision <= 5 {
                             measurement_precision = Some(precision);
@@ -699,7 +704,10 @@ impl Document {
                         measurement_style = d.len() == 2
                             && (usize::from(u16::from_le_bytes([d[0], d[1]])) < text_style_count
                                 || u16::from_le_bytes([d[0], d[1]])
-                                    == if matches!(code, 49 | 50 | 51 | 65 | 66 | 86 | 87) {
+                                    == if matches!(
+                                        code,
+                                        49 | 50 | 51 | 65 | 66 | 86 | 87 | 124 | 125
+                                    ) {
                                         2
                                     } else {
                                         1
@@ -789,7 +797,7 @@ impl Document {
                     ) && matches!(r.kind, 0x0903 | 0x07d8))
                     && !(matches!(code, 52 | 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 87)
                         && matches!(r.kind, 0x0905 | 0x0904 | 0x0903 | 0x07d5 | 0x07d8))
-                    && !(matches!(code, 49 | 65 | 66 | 86)
+                    && !(matches!(code, 49 | 65 | 66 | 86 | 124 | 125)
                         && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(matches!(code, 50 | 51 | 94) && matches!(r.kind, 0x08fc | 0x0903 | 0x07d8))
                     && !(code == 62 && matches!(r.kind, 0x0906 | 0x07d5 | 0x07d8))
@@ -827,6 +835,8 @@ impl Document {
                         && (code == 113 || d[0] == 1)
                         && matches!(u16::from_le_bytes([d[2], d[3]]), 0 | 1)
                         && d[4..] == [0, 0, 0, 0, 254, 254, 254, 0])
+                    && !(code == 121 && r.kind == 0x090f && d.len() == 16)
+                    && !(code == 121 && r.kind == 0x232e && d.is_empty())
                 {
                     safe = false;
                 }
@@ -871,7 +881,7 @@ impl Document {
             {
                 safe = false;
             }
-            let coordinate_group = matches!(code, 49 | 65 | 66 | 86)
+            let coordinate_group = matches!(code, 49 | 65 | 66 | 86 | 124 | 125)
                 .then(|| coordinate_measure_records::decode_group(&b[group_start..rs[i].data.end]))
                 .transpose();
             if coordinate_group.is_err() {
@@ -966,6 +976,66 @@ impl Document {
                     final_only: data[4..6] == [1, 0],
                 })
             })();
+            let segment_marker = (|| {
+                if code != 121
+                    || h.len() != 28
+                    || h[6..10] != [19, 0, 96, 0]
+                    || point.is_some()
+                    || constraint_payload.is_some()
+                {
+                    return None;
+                }
+                let [host] = refs.as_slice() else {
+                    return None;
+                };
+                if !objects.get(host.checked_sub(1)?).is_some_and(|object| {
+                    !object.deleted && object.page == page && is_segment_kind(&object.kind)
+                }) {
+                    return None;
+                }
+                let group = rs
+                    .iter()
+                    .filter(|record| record.start >= group_start && record.start <= rs[i].start)
+                    .collect::<Vec<_>>();
+                let layout = group
+                    .iter()
+                    .map(|record| (record.kind, record.data.len()))
+                    .collect::<Vec<_>>();
+                if layout != [(0x07d0, 28), (0x07d2, 8), (0x090f, 16), (0x07d7, 0)]
+                    && layout
+                        != [
+                            (0x07d0, 28),
+                            (0x07d2, 8),
+                            (0x090f, 16),
+                            (0x232e, 0),
+                            (0x07d7, 0),
+                        ]
+                {
+                    return None;
+                }
+                let payload = &b[group
+                    .iter()
+                    .find(|record| record.kind == 0x090f)?
+                    .data
+                    .clone()];
+                let parameter = f64_at(payload, 0);
+                if !parameter.is_finite() || !(0.0..=1.0).contains(&parameter) {
+                    return None;
+                }
+                match (u32_at(payload, 8), u32_at(payload, 12)) {
+                    (count @ 1..=3, 1) => Some(Kind::SegmentMarker {
+                        host: *host,
+                        parameter,
+                        count: count as u16,
+                    }),
+                    (0x0001_0001, direction @ 0..=1) => Some(Kind::SegmentArrow {
+                        host: *host,
+                        parameter,
+                        forward: direction == 1,
+                    }),
+                    _ => None,
+                }
+            })();
             let kind = if let Some(input) = tool_input {
                 if !refs.is_empty()
                     || constraint_payload.is_some()
@@ -1014,6 +1084,8 @@ impl Document {
                 .any(|&reference| reference == 0 || reference > objects.len())
             {
                 Kind::Unsupported(code)
+            } else if let Some(marker) = segment_marker {
+                marker
             } else if !tool_inputs.is_empty() && code == 48 && h[6..10] == [11, 0, 33, 0] {
                 // An abstract tool calculation is typed only after binding. Its
                 // native expression and references remain exact in the template.
@@ -1235,6 +1307,24 @@ impl Document {
                         .and_then(|source| objects.get(source.saturating_sub(1)))
                         .and_then(|source| source.header_offset)
                         .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])),
+                    legacy_angle_rotation_layout: code == 119
+                        && matches!(
+                            rs.iter()
+                                .filter(|record| {
+                                    record.start >= group_start && record.start <= rs[i].start
+                                })
+                                .map(|record| (record.kind, record.data.len()))
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                            [(0x07d0, 28), (0x07d2, 16), (0x07d7, 0)]
+                                | [
+                                    (0x07d0, 28),
+                                    (0x07d2, 16),
+                                    (0x07d5, 28),
+                                    (0x07d8, 2),
+                                    (0x07d7, 0)
+                                ]
+                        ),
                 },
             ) {
                 if definition.element() == super::transform_model::ElementType::Image {
@@ -1526,7 +1616,7 @@ impl Document {
                         && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first: *first, second: *second }
                     }
-                    (49 | 65 | 66, _, [first, frame]) if coordinate_group.as_ref().is_some_and(|g| {
+                    (49 | 65 | 66 | 124 | 125, _, [first, frame]) if coordinate_group.as_ref().is_some_and(|g| {
                         g.references == vec![(*first - page_base) as u32, (*frame - page_base) as u32]
                     }) && objects.get(first - 1).is_some_and(|o| is_point_kind(&o.kind))
                         && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
@@ -1728,7 +1818,7 @@ impl Document {
                         group.target_ids() == targets.iter().map(|target| (*target - page_base) as u32).collect::<Vec<_>>()
                             && group.settings_list().is_ok_and(|settings| settings.iter().zip(targets).all(|(settings, target)| {
                                 objects.get(target.saturating_sub(1)).is_some_and(|object| {
-                                    matches!(object.kind,
+                                    (matches!(object.kind,
                                         Kind::ToolInput(_)
                                             | Kind::ToolPointOnPath(_)
                                             | Kind::Free(_)
@@ -1741,7 +1831,8 @@ impl Document {
                                             | Kind::PointOnPolygon(_, _, _)
                                             | Kind::PointOnCurve(_, _)
                                             | Kind::PointOnSector(_, _)
-                                    ) && (matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
+                                    ) || object.kind.is_point() && object.kind.transform_definition().is_some())
+                                    && (matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
                                         || matches!(object.kind, Kind::Parameter(_)) == settings.parameter.is_some())
                                 })
                             }))
@@ -1868,7 +1959,7 @@ impl Document {
                     }
                     (39, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || matches!(o.kind, Kind::CircularSegmentBoundary(_))) =>
                     {
                         Kind::PolygonPerimeter(*host)
                     }
@@ -1928,7 +2019,7 @@ impl Document {
                     }
                     (42, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || matches!(o.kind, Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || matches!(o.kind, Kind::CircularSegmentBoundary(_))) =>
                     {
                         Kind::PolygonArea(*host)
                     }
@@ -1940,7 +2031,7 @@ impl Document {
                     }
                     (44, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind) || matches!(o.kind, Kind::SectorBoundary(_))) =>
+                            && objects.get(host - 1).is_some_and(|o| is_arc_kind(&o.kind) || o.kind.is_sector()) =>
                     {
                         Kind::ArcLength(*host)
                     }

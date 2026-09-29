@@ -98,7 +98,7 @@ impl Editor {
                         }
                     };
                     self.doc.checkpoint();
-                    self.animations.retain(|track| track.id != id);
+                    self.retain_animation_tracks(|track| track.id != id);
                     self.movements.retain(|track| track.source != id);
                     self.dragging = Some(id);
                     self.capture_traces();

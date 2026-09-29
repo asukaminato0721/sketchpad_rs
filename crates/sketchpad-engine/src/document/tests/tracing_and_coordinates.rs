@@ -153,6 +153,59 @@ fn coordinate_measurements_decode_track_drag_and_reopen() {
             doc.coordinate_measure_value(10)
         );
     }
+
+    let source = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/向忠作品/圆环的迭代(5环旋转迭代).gsp"
+    ));
+    let mut polar = Document::from_bytes(source, None).unwrap();
+    assert_eq!(polar.encode().unwrap(), source);
+    assert!(matches!(
+        polar.objects[17].kind,
+        Kind::CoordinateMeasurement {
+            kind: CoordinateMeasureKind::GraphCoordinateX,
+            first: 17,
+            frame: 12,
+            ..
+        }
+    ));
+    assert!(matches!(
+        polar.objects[18].kind,
+        Kind::CoordinateMeasurement {
+            kind: CoordinateMeasureKind::GraphCoordinateY,
+            first: 17,
+            frame: 12,
+            ..
+        }
+    ));
+    assert!(matches!(
+        polar.coordinate_measure_value(18),
+        Some(CoordinateMeasureValue::Scalar(value)) if (value - 5.709914307375326).abs() < 1e-12
+    ));
+    assert!(matches!(
+        polar.coordinate_measure_value(19),
+        Some(CoordinateMeasureValue::Scalar(value)) if (value.to_radians() - 0.03604994882444502).abs() < 1e-12
+    ));
+    assert_eq!(
+        polar.coordinate_measure_text(18).as_deref(),
+        Some("r_z = 5.71")
+    );
+    assert_eq!(
+        polar.coordinate_measure_text(19).as_deref(),
+        Some("θ_z = 0.04")
+    );
+    let before = (
+        polar.coordinate_measure_value(18),
+        polar.coordinate_measure_value(19),
+    );
+    assert!(polar.move_point(2, Point { x: 540., y: 380. }));
+    assert_ne!(
+        (
+            polar.coordinate_measure_value(18),
+            polar.coordinate_measure_value(19)
+        ),
+        before
+    );
 }
 
 #[test]
@@ -167,6 +220,8 @@ fn new_coordinate_measurements_serialize_with_valid_marker_and_references() {
         (CoordinateMeasureKind::Coordinates, 1, None),
         (CoordinateMeasureKind::Abscissa, 2, None),
         (CoordinateMeasureKind::Ordinate, 2, None),
+        (CoordinateMeasureKind::GraphCoordinateX, 2, None),
+        (CoordinateMeasureKind::GraphCoordinateY, 2, None),
         (CoordinateMeasureKind::CoordinateDistance, 1, Some(4)),
     ] {
         doc.add(Kind::CoordinateMeasurement {
@@ -182,15 +237,29 @@ fn new_coordinate_measurements_serialize_with_valid_marker_and_references() {
         .into_iter()
         .find(|r| r.kind == 0x2328)
         .unwrap();
-    assert_eq!(u32_at(&bytes, marker.data.start), 13);
+    assert_eq!(u32_at(&bytes, marker.data.start), 15);
     let reopened = Document::from_bytes(&bytes, None).unwrap();
     assert!(!reopened.partial_view);
-    assert_eq!(reopened.objects.len(), 13);
+    assert_eq!(reopened.objects.len(), 15);
     assert_eq!(
         reopened.coordinate_measure_text(11).as_deref(),
         Some("x_B = 1.35")
     );
     assert!(
-        matches!(reopened.coordinate_measure_value(13), Some(CoordinateMeasureValue::Scalar(v)) if (v-1.30).abs()<0.01)
+        matches!(reopened.coordinate_measure_value(15), Some(CoordinateMeasureValue::Scalar(v)) if (v-1.30).abs()<0.01)
     );
+    assert!(matches!(
+        reopened.objects[12].kind,
+        Kind::CoordinateMeasurement {
+            kind: CoordinateMeasureKind::GraphCoordinateX,
+            ..
+        }
+    ));
+    assert!(matches!(
+        reopened.objects[13].kind,
+        Kind::CoordinateMeasurement {
+            kind: CoordinateMeasureKind::GraphCoordinateY,
+            ..
+        }
+    ));
 }
