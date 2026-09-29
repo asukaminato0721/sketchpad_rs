@@ -1689,6 +1689,24 @@ impl Document {
                             && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
                         Kind::NumericCoordinatePoint(*x, *y, *frame, if code == 70 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian })
                     }
+                    (112, None, [value, frame])
+                        if h[6..10] == [1, 0, 56, 0]
+                            && objects.get(value.saturating_sub(1)).is_some_and(|o| {
+                                o.page == page && o.kind.numeric_unit().is_some()
+                            })
+                            && objects.get(frame.saturating_sub(1)).is_some_and(|o| {
+                                o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))
+                            })
+                            && {
+                                let group = rs.iter().filter(|record| {
+                                    record.start >= group_start && record.start <= rs[i].start
+                                }).collect::<Vec<_>>();
+                                group.iter().map(|record| record.kind).collect::<Vec<_>>()
+                                    == [0x07d0, 0x07d2, 0x07d3, 0x07d7]
+                                    && group[2].data.len() == 12
+                                    && b[group[2].data.clone()]
+                                        == [112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                            } => Kind::GraphValuePoint(*value, *frame),
                     (67 | 68, _, [frame])
                         if plotted_point.as_ref().is_some_and(|plot| {
                             plot.coordinate_system == (*frame - page_base) as u32

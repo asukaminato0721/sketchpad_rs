@@ -560,6 +560,8 @@ pub enum Kind {
     PathValuePoint(usize, usize),
     PlottedPoint(usize, PlotPointsMode, [f64; 2]),
     NumericCoordinatePoint(usize, usize, usize, PlotPointsMode),
+    /// A live numeric magnitude plotted at `(value, 0)` in a coordinate frame.
+    GraphValuePoint(usize, usize),
     CoordinatePoint(coordinate_points::CoordinatePointDefinition),
     // Parameter ranges retain native units (radians for angles). Public range
     // access and editing use the driver's displayed numeric units.

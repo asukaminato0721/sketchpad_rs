@@ -35,6 +35,7 @@ impl Document {
                             | Kind::PathValuePoint(..)
                             | Kind::PlottedPoint(..)
                             | Kind::NumericCoordinatePoint(..)
+                            | Kind::GraphValuePoint(..)
                             | Kind::CoordinatePoint(..)
                     )
                     && self.position(id).is_some()
@@ -269,7 +270,10 @@ impl Document {
             }
             if matches!(
                 object.kind,
-                Kind::NumericCoordinatePoint(..) | Kind::Midpoint(..) | Kind::SegmentMidpoint(_)
+                Kind::NumericCoordinatePoint(..)
+                    | Kind::GraphValuePoint(..)
+                    | Kind::Midpoint(..)
+                    | Kind::SegmentMidpoint(_)
             ) && !self.copy_has_selected_ancestor(id)?
             {
                 frozen_points.insert(id, self.position(id).ok_or("Selected point is undefined")?);

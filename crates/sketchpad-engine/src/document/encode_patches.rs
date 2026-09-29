@@ -784,6 +784,7 @@ impl Document {
                     } else if matches!(
                         object.kind,
                         Kind::NumericCoordinatePoint(..)
+                            | Kind::GraphValuePoint(..)
                             | Kind::PathValuePoint(..)
                             | Kind::PathLiteralPoint(..)
                             | Kind::PointOnArc(..)

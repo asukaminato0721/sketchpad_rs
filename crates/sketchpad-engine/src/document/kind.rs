@@ -486,6 +486,7 @@ impl Kind {
             Kind::PlottedPoint(frame, _, _) => vec![frame],
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
             | Kind::NumericCoordinatePoint(x, y, frame, _) => vec![x, y, frame],
+            Kind::GraphValuePoint(value, frame) => vec![value, frame],
             Kind::ReferencedFunction(ref sources, _) => sources.clone(),
             Kind::DerivativeFunction(ref sources, _) => sources.clone(),
             Kind::Bisector(a, b, c)
@@ -905,6 +906,7 @@ impl Kind {
             Kind::NumericCoordinatePoint(x, y, frame, mode) => {
                 Kind::NumericCoordinatePoint(m(x), m(y), m(frame), mode)
             }
+            Kind::GraphValuePoint(value, frame) => Kind::GraphValuePoint(m(value), m(frame)),
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
             Kind::CircleCircumference(a) => Kind::CircleCircumference(m(a)),
@@ -1205,6 +1207,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PlottedPoint(_, _, _)
                 | Kind::CoordinatePoint(_)
                 | Kind::NumericCoordinatePoint(_, _, _, _)
+                | Kind::GraphValuePoint(_, _)
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
                 | Kind::CurveIntersection(_, _, _)
@@ -1824,6 +1827,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PathValuePoint(_, _)
         | Kind::CoordinatePoint(_)
         | Kind::NumericCoordinatePoint(_, _, _, _)
+        | Kind::GraphValuePoint(_, _)
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)
         | Kind::CurveIntersection(_, _, _)

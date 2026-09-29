@@ -753,6 +753,15 @@ impl Document {
                         y: point.y,
                     })
                 }
+                Kind::GraphValuePoint(value, frame) => {
+                    let point = d
+                        .graph_frame(*frame)?
+                        .world(d.numeric_value(*value)?, 0.0)?;
+                    Some(Point {
+                        x: point.x,
+                        y: point.y,
+                    })
+                }
                 Kind::PlottedPoint(frame, mode, stored) => {
                     let frame = d.graph_frame(*frame)?;
                     let [x, y] = match mode {

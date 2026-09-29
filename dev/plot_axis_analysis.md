@@ -19,3 +19,20 @@ Selecting segment AB and typing `0.4` produced `graph_plot_segment_literal_origi
 The same code 123 layout also appears when the original app plots values on a circle, line, or ray. Original fixtures `graph_plot_circle_literal_original.gsp`, `graph_plot_line_literal_original.gsp`, and `graph_plot_ray_literal_original.gsp` use values 0.25, -0.5, and 2 respectively. The circle point is at the top, so its value is measured in counterclockwise turns from the rightmost point. Line and ray values extrapolate from the first point through the second; rays require values of at least zero, while lines accept negative values. `tests/graph_plot_more_paths_replay.txt` generates these three literal forms and a parameter driven circle point. Each generated file opened and saved byte-identically in Sketchpad 5. Rust tests check the original bytes, path movement, domain validation, and exact generated files.
 
 The writer supports the parsed t₁ parameter, finite numeric literals, graph axes, and segments. Expressions, other numeric sources, and further paths remain to be probed.
+
+## Coordinate-system value points
+
+Code 112 is the coordinate-system form of Graph > Plot Value. Its strict group
+layout is `07d0,07d2,07d3,07d7`: the two references are a live numeric value and
+a coordinate system, while the 12-byte `07d3` payload is tag 112 followed by
+zeros. It places the point at `(value, 0)` in that frame, so it differs from the
+three-source code-69 Cartesian point and the code-95 value-on-path point.
+
+The corpus contains two drawing instances. Revealing all hidden objects in a
+disposable copy of `圆环的迭代(5环旋转迭代).gsp` shows the `R=7`
+source at x=7 on the native coordinate frame, matching the port's evaluated
+position. The original and revealed copy both open and save byte-identically in
+Sketchpad 5. Decoding the two roots restores 31 drawing slots and makes both
+source documents structurally complete; this direct point check does not claim
+parity for every downstream calculation or transform in those documents. No
+new test case was added.

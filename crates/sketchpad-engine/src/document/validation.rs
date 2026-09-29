@@ -86,6 +86,7 @@ impl Document {
                         | Kind::PathValuePoint(_, _)
                         | Kind::PlottedPoint(_, _, _)
                         | Kind::NumericCoordinatePoint(_, _, _, _)
+                        | Kind::GraphValuePoint(_, _)
                         | Kind::ParameterLocus(_, _, _, _)
                 )
         });
@@ -1126,6 +1127,30 @@ impl Document {
                         && !self.coordinate_geometry_undefined(frame)))
             {
                 return Err(format!("Invalid numeric coordinate point {}", o.id));
+            }
+            if let Kind::GraphValuePoint(value, frame) = o.kind
+                && (!self
+                    .objects
+                    .get(value.saturating_sub(1))
+                    .is_some_and(|source| {
+                        !source.deleted
+                            && source.page == o.page
+                            && value < o.id
+                            && source.kind.numeric_unit().is_some()
+                    })
+                    || self
+                        .objects
+                        .get(frame.saturating_sub(1))
+                        .is_none_or(|source| {
+                            source.deleted
+                                || source.page != o.page
+                                || frame >= o.id
+                                || !matches!(source.kind, Kind::CoordinateSystem(_, _))
+                        })
+                    || (self.position(o.id).is_none()
+                        && !self.coordinate_geometry_undefined(frame)))
+            {
+                return Err(format!("Invalid graph value point {}", o.id));
             }
             if let Kind::SlopeMeasurement(line, frame) = o.kind
                 && (!self
