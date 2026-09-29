@@ -138,6 +138,16 @@ pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> 
     }
 }
 
+fn locus_driver_straight_mode(objects: &[Object], path: usize) -> Option<LineMode> {
+    super::kind::locus_straight_source_mode(objects, path).or_else(|| {
+        matches!(
+            objects.get(path.checked_sub(1)?)?.kind,
+            Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+        )
+        .then_some(LineMode::Line)
+    })
+}
+
 /// Resolve a locus driver against its explicit native path. Some native loci
 /// retain a free base point here; the locus record itself supplies the path
 /// constraint used only while evaluating the sweep.
@@ -148,7 +158,7 @@ pub(super) fn locus_driver_range_info_for_path(
 ) -> Option<(f64, u32)> {
     let moving = objects.get(driver.checked_sub(1)?)?;
     let host = objects.get(path.checked_sub(1)?)?;
-    let straight = super::kind::locus_straight_source_mode(objects, path);
+    let straight = locus_driver_straight_mode(objects, path);
     let inferred = || {
         if let Some(mode) = straight {
             return Some(match mode {
@@ -235,7 +245,7 @@ pub(super) fn locus_driver_range_matches(
     let straight = match objects[driver - 1].kind {
         Kind::PointOnRay(host, _) if host == path => Some(LineMode::Ray),
         Kind::PointOnLine(host, _) if host == path => Some(LineMode::Line),
-        Kind::Free(_) => super::kind::locus_straight_source_mode(objects, path),
+        Kind::Free(_) => locus_driver_straight_mode(objects, path),
         _ => None,
     };
     match straight {
@@ -483,7 +493,7 @@ impl Document {
             }
             Kind::Free(_) => {
                 locus_driver_range_info_for_path(&self.objects, driver, path)?;
-                match super::kind::locus_straight_source_mode(&self.objects, path) {
+                match locus_driver_straight_mode(&self.objects, path) {
                     Some(LineMode::Segment) => Some(Kind::PointOnSegment(path, parameter)),
                     Some(LineMode::Ray) => Some(Kind::PointOnRay(path, parameter)),
                     Some(LineMode::Line) => Some(Kind::PointOnLine(path, parameter)),
