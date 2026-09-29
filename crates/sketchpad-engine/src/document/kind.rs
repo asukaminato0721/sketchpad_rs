@@ -293,6 +293,9 @@ impl Kind {
         if let Kind::SampledMapped(definition) = self {
             return definition.native_references();
         }
+        if let Kind::SampledImage(definition) = self {
+            return definition.native_references();
+        }
         if let Some(definition) = self.transform_definition() {
             return definition.dependencies();
         }
@@ -533,6 +536,7 @@ impl Kind {
             | Kind::Transformed(..)
             | Kind::MappedElement(..)
             | Kind::SampledMapped(..)
+            | Kind::SampledImage(..)
             | Kind::Colorized(..)
             | Kind::ReferencedText { .. } => unreachable!("mapped dependencies handled above"),
         }
@@ -550,6 +554,9 @@ impl Kind {
         }
         if let Kind::SampledMapped(definition) = self {
             return Kind::SampledMapped(definition.remap(ids));
+        }
+        if let Kind::SampledImage(definition) = self {
+            return Kind::SampledImage(definition.remap(ids));
         }
         if let Kind::TransformedCroppedImage(definition) = self {
             return Kind::TransformedCroppedImage(definition.remap_unchecked(ids));
@@ -999,6 +1006,7 @@ impl Kind {
             | Kind::TransformedCroppedImage(..)
             | Kind::MappedElement(..)
             | Kind::SampledMapped(..)
+            | Kind::SampledImage(..)
             | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),
         }
     }
@@ -1043,6 +1051,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::CoordinatePoint(_)
             | Kind::MappedElement(_)
             | Kind::SampledMapped(_)
+            | Kind::SampledImage(_)
             | Kind::Colorized(_)
             | Kind::Free(_)
             | Kind::PointOnSegment(_, _)

@@ -190,6 +190,42 @@ impl Editor {
                     }
                 }
                 for id in crate::render::ordered_picture_ids(&self.doc) {
+                    if let Some(sampled) = self.doc.sampled_image_mesh(id, 1600) {
+                        if !self.image_textures.contains_key(&sampled.source)
+                            && let Ok(decoded) = image::load_from_memory_with_format(
+                                sampled.png,
+                                image::ImageFormat::Png,
+                            )
+                        {
+                            let rgba = decoded.to_rgba8();
+                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                [rgba.width() as usize, rgba.height() as usize],
+                                rgba.as_raw(),
+                            );
+                            self.image_textures.insert(
+                                sampled.source,
+                                ui.ctx().load_texture(
+                                    format!("picture-{}", sampled.source),
+                                    color,
+                                    egui::TextureOptions::LINEAR,
+                                ),
+                            );
+                        }
+                        if let Some(texture) = self.image_textures.get(&sampled.source) {
+                            let mut mesh = egui::Mesh::with_texture(texture.id());
+                            for (point, uv) in sampled.vertices {
+                                mesh.vertices.push(egui::epaint::Vertex {
+                                    pos: vp.screen(point),
+                                    uv: egui::pos2(uv[0], uv[1]),
+                                    color: egui::Color32::WHITE,
+                                });
+                            }
+                            for triangle in sampled.triangles {
+                                mesh.indices.extend_from_slice(&triangle);
+                            }
+                            ui.painter().add(egui::Shape::mesh(mesh));
+                        }
+                    }
                     if let Some((source, png, transform, polygon)) = self.doc.cropped_image(id) {
                         if !self.image_textures.contains_key(&source)
                             && let Ok(decoded) =

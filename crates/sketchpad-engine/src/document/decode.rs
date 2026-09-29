@@ -567,7 +567,7 @@ impl Document {
                 if matches!(code, 72 | 126 | 127) && r.kind == 0x0902 {
                     function_range = Some(d.to_vec());
                 }
-                if matches!(code, 35 | 97 | 102) && r.kind == 0x0902 {
+                if matches!(code, 35 | 96 | 97 | 102) && r.kind == 0x0902 {
                     locus_range = Some(d.to_vec());
                 }
                 if matches!(code, 76 | 89) && r.kind == 0x090a {
@@ -731,6 +731,9 @@ impl Document {
                         curve_constraint_count += 1;
                         constraint_payload = Some((d.to_vec(), r.data.start));
                     }
+                    0x7d3 if code == 96 => {
+                        constraint_payload = Some((d.to_vec(), r.data.start));
+                    }
                     0x7d3 if matches!(code, 11 | 12 | 13 | 14 | 93) => {
                         // Bounded arc intersections have references only.
                         constraint_payload = Some((d.to_vec(), r.data.start));
@@ -851,7 +854,7 @@ impl Document {
                         && r.kind == 0x090c
                         && d.len() == 16)
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
-                    && !(matches!(code, 35 | 97 | 102) && r.kind == 0x0902)
+                    && !(matches!(code, 35 | 96 | 97 | 102) && r.kind == 0x0902)
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                     && !(angle_marker_label && r.kind == 0x232e && d.is_empty())
                     && !(angle_marker_label
@@ -1670,6 +1673,38 @@ impl Document {
                             .map(Kind::SampledMapped)
                             .unwrap_or(Kind::Unsupported(code))
                     }
+                    (96, None, _)
+                        if h.len() == 28
+                            && h[6..10] == [6, 0, 91, 0]
+                            && constraint_payload.is_some()
+                            && locus_range.is_some()
+                            && {
+                                let group = rs
+                                    .iter()
+                                    .filter(|record| {
+                                        record.start >= group_start && record.start <= rs[i].start
+                                    })
+                                    .map(|record| (record.kind, record.data.len()))
+                                    .collect::<Vec<_>>();
+                                group
+                                    == [
+                                        (0x07d0, 28),
+                                        (0x07d2, 4 + refs.len() * 4),
+                                        (0x07d3, 12),
+                                        (0x0902, 40),
+                                        (0x07d7, 0),
+                                    ]
+                            } => super::sampled_image::decode_sampled_image(
+                                &objects,
+                                page,
+                                objects.len() + 1,
+                                h,
+                                &refs,
+                                &constraint_payload.as_ref().unwrap().0,
+                                locus_range.as_ref().unwrap(),
+                            )
+                            .map(Kind::SampledImage)
+                            .unwrap_or(Kind::Unsupported(code)),
                     (97, None, _)
                         if refs.first().is_some_and(|target| {
                             super::kind::parameter_locus_subtype(&objects, *target)

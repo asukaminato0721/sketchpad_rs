@@ -2109,3 +2109,21 @@ SHA-256
 No standalone test case was added. See
 [analysis](signed_angle114_analysis.md). Full scan:
 `/tmp/signed_angle114_coverage.log`.
+
+## Sampled custom-transformed pictures
+
+Eighteen code-96 class-6/subtype-91 objects now retain a source picture and the
+supported custom point-mapping DAG that warps its pixels. A bounded textured
+mesh drives canvas rendering, picking, and triangulated SVG output in native
+picture order. The reader validates the exact five-record layout and native
+range flags while preserving its opaque cache bytes; the writer emits the same
+layout.
+
+Unsupported falls **769→751**, complete documents/drawings rise
+**1,510/1,551→1,513/1,554**, unsupported documents fall **89→86**, and partial
+views remain **800**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. An Xvfb desktop run of the native fan
+construction visibly renders its sampled character pictures. No standalone
+test case was added. See
+[analysis](sampled_transformed_pictures_analysis.md). Full scan:
+`/tmp/sampled_picture_coverage.log`.

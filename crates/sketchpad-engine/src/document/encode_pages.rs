@@ -1155,6 +1155,34 @@ impl Document {
                         put_record(&mut groups, 0x0902, definition.range_payload());
                         put_record(&mut groups, 0x07d7, &[]);
                     }
+                    Kind::SampledImage(definition) => {
+                        if !definition.supported(&self.objects, page, object.id) {
+                            return Err("Invalid sampled picture source roles".into());
+                        }
+                        let refs = definition
+                            .native_references()
+                            .into_iter()
+                            .map(|id| self.multi_page_local_reference(page, object.id, id))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut object_header = header(96);
+                        object_header[2] = u8::from(!object.visible)
+                            | (u8::from(object.presentation_suppressed) << 1);
+                        object_header[4] = u8::from(object.tracing);
+                        put_record(&mut groups, 0x07d0, &object_header);
+                        let mut references = u32::try_from(refs.len())
+                            .map_err(|_| "Too many sampled picture references")?
+                            .to_le_bytes()
+                            .to_vec();
+                        for id in refs {
+                            references.extend_from_slice(&id.to_le_bytes());
+                        }
+                        put_record(&mut groups, 0x07d2, &references);
+                        let mut constraint = 96u32.to_le_bytes().to_vec();
+                        constraint.extend_from_slice(&definition.resolution().to_le_bytes());
+                        put_record(&mut groups, 0x07d3, &constraint);
+                        put_record(&mut groups, 0x0902, definition.range_payload());
+                        put_record(&mut groups, 0x07d7, &[]);
+                    }
                     Kind::CircleInterior(circle) => {
                         if !super::circle_interior::supported_source(
                             &self.objects,

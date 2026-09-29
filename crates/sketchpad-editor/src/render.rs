@@ -457,7 +457,8 @@ pub fn ordered_picture_ids(doc: &Document) -> Vec<usize> {
         .iter()
         .filter(|object| {
             doc.is_displayed(object.id)
-                && (doc.cropped_image(object.id).is_some()
+                && (matches!(object.kind, Kind::SampledImage(_))
+                    || doc.cropped_image(object.id).is_some()
                     || doc.image_instances(object.id).is_some())
         })
         .map(|object| object.id)
@@ -1244,7 +1245,64 @@ fn write_svg_picture(
     vp: &Viewport,
     id: usize,
 ) -> Result<(), String> {
-    if let Some((_, png, transform, polygon)) = doc.cropped_image(id) {
+    if let Some(mesh) = doc.sampled_image_mesh(id, 900) {
+        let (width, height) = crate::image_records::ImageFile::png_size(mesh.png)?;
+        writeln!(
+            svg,
+            "<defs><image id=\"sampled-picture-{id}\" width=\"{width}\" height=\"{height}\" href=\"data:image/png;base64,{}\"/></defs>",
+            base64(mesh.png)
+        )
+        .unwrap();
+        for (index, triangle) in mesh.triangles.into_iter().enumerate() {
+            let [(first, first_uv), (second, second_uv), (third, third_uv)] =
+                triangle.map(|vertex| mesh.vertices[vertex as usize]);
+            let source = [
+                (
+                    f64::from(first_uv[0]) * f64::from(width),
+                    f64::from(first_uv[1]) * f64::from(height),
+                ),
+                (
+                    f64::from(second_uv[0]) * f64::from(width),
+                    f64::from(second_uv[1]) * f64::from(height),
+                ),
+                (
+                    f64::from(third_uv[0]) * f64::from(width),
+                    f64::from(third_uv[1]) * f64::from(height),
+                ),
+            ];
+            let destination = [vp.screen(first), vp.screen(second), vp.screen(third)];
+            let source_u = (source[1].0 - source[0].0, source[1].1 - source[0].1);
+            let source_v = (source[2].0 - source[0].0, source[2].1 - source[0].1);
+            let determinant = source_u.0 * source_v.1 - source_u.1 * source_v.0;
+            if determinant.abs() <= f64::EPSILON {
+                continue;
+            }
+            let destination_u = destination[1] - destination[0];
+            let destination_v = destination[2] - destination[0];
+            let a = (f64::from(destination_u.x) * source_v.1
+                - f64::from(destination_v.x) * source_u.1)
+                / determinant;
+            let c = (-f64::from(destination_u.x) * source_v.0
+                + f64::from(destination_v.x) * source_u.0)
+                / determinant;
+            let b = (f64::from(destination_u.y) * source_v.1
+                - f64::from(destination_v.y) * source_u.1)
+                / determinant;
+            let d = (-f64::from(destination_u.y) * source_v.0
+                + f64::from(destination_v.y) * source_u.0)
+                / determinant;
+            let e = f64::from(destination[0].x) - a * source[0].0 - c * source[0].1;
+            let f = f64::from(destination[0].y) - b * source[0].0 - d * source[0].1;
+            let points = destination
+                .map(|point| format!("{},{}", point.x, point.y))
+                .join(" ");
+            writeln!(
+                svg,
+                "<clipPath id=\"sampled-picture-{id}-{index}\" clipPathUnits=\"userSpaceOnUse\"><polygon points=\"{points}\"/></clipPath><g clip-path=\"url(#sampled-picture-{id}-{index})\"><use href=\"#sampled-picture-{id}\" transform=\"matrix({a} {b} {c} {d} {e} {f})\"/></g>"
+            )
+            .unwrap();
+        }
+    } else if let Some((_, png, transform, polygon)) = doc.cropped_image(id) {
         let (width, height) = crate::image_records::ImageFile::png_size(png)?;
         let origin = vp.screen(Point {
             x: transform[2],

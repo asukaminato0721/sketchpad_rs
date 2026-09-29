@@ -1399,6 +1399,34 @@ impl Document {
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
+            if let Kind::SampledImage(ref definition) = o.kind {
+                if !definition.supported(&self.objects, o.page, o.id) {
+                    return Err("Invalid sampled picture source roles".into());
+                }
+                let mut h = header(96);
+                h[2] = u8::from(!o.visible) | (u8::from(o.presentation_suppressed) << 1);
+                h[4] = u8::from(o.tracing);
+                put_record(&mut added, 0x07d0, &h);
+                let refs = definition.native_references();
+                let mut references = u32::try_from(refs.len())
+                    .map_err(|_| "Too many sampled picture references")?
+                    .to_le_bytes()
+                    .to_vec();
+                for id in refs {
+                    references.extend_from_slice(
+                        &u32::try_from(id)
+                            .map_err(|_| "Sampled picture reference is too large")?
+                            .to_le_bytes(),
+                    );
+                }
+                put_record(&mut added, 0x07d2, &references);
+                let mut constraint = 96u32.to_le_bytes().to_vec();
+                constraint.extend_from_slice(&definition.resolution().to_le_bytes());
+                put_record(&mut added, 0x07d3, &constraint);
+                put_record(&mut added, 0x0902, definition.range_payload());
+                put_record(&mut added, 0x07d7, &[]);
+                continue;
+            }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
                 let target = *refs.first().ok_or("Parameter locus has no target")?;
                 let subtype = super::kind::parameter_locus_subtype(&self.objects, target)

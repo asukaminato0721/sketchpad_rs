@@ -276,6 +276,12 @@ Disk and sector transforms use the shared affine evaluator and editor commands. 
 
 Geometric-driver loci reuse shared affine/Colorized Segment, Ray and Line targets and generic finite Segment hosts. Evaluated samples carry their own pen/color to SVG, canvas and picking. Current evidence and supported boundaries are recorded in [the implementation notes](dev/locus_generic_straights63_implementation.md); corpus decoding does not establish complete command parity.
 
+Native sampled custom transformations of pictures retain their source pixels
+and validated point-mapping construction. Bounded textured meshes drive canvas
+rendering, picking, and triangulated SVG export while preserving native picture
+order and sampling metadata. The wire evidence and admission boundary are in
+[the sampled-picture analysis](dev/sampled_transformed_pictures_analysis.md).
+
 Imported loci also retain native sparse or parallel-branch dependency captures and can apply an explicit stored path transiently to a free base driver when that path is independent of the driver. Filled-region locus targets share the disk, sector, circular-segment, and polygon sampler; point-output sampled objects can serve as bounded outer curve targets. The measured corpus effects and strict admission rules are recorded in [the locus analysis](dev/locus_midpoint_analysis.md).
 
 Imported live captions understand the remaining observed native symbol-font

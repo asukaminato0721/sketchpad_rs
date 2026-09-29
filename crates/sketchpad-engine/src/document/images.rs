@@ -10,7 +10,10 @@ impl Document {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if !matches!(
             object.kind,
-            Kind::Image { .. } | Kind::CroppedImage { .. } | Kind::TransformedCroppedImage(..)
+            Kind::Image { .. }
+                | Kind::CroppedImage { .. }
+                | Kind::TransformedCroppedImage(..)
+                | Kind::SampledImage(..)
         ) {
             return None;
         }

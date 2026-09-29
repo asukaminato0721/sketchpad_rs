@@ -151,6 +151,22 @@ impl Editor {
             self.doc.is_displayed(object.id)
                 && self
                     .doc
+                    .sampled_image_mesh(object.id, 1600)
+                    .is_some_and(|mesh| {
+                        mesh.triangles.into_iter().any(|triangle| {
+                            crate::render::point_in_polygon(
+                                &triangle.map(|index| v.screen(mesh.vertices[index as usize].0)),
+                                p,
+                            )
+                        })
+                    })
+        }) {
+            return Some(object.id);
+        }
+        if let Some(object) = self.doc.objects.iter().rev().find(|object| {
+            self.doc.is_displayed(object.id)
+                && self
+                    .doc
                     .cropped_image(object.id)
                     .is_some_and(|(_, png, transform, polygon)| {
                         crate::render::picture_hit(v, png, transform, p)

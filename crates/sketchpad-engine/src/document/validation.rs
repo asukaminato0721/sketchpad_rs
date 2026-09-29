@@ -880,6 +880,11 @@ impl Document {
             {
                 return Err(format!("Invalid sampled mapped construction {}", o.id));
             }
+            if let Kind::SampledImage(ref definition) = o.kind
+                && !definition.supported(&self.objects, o.page, o.id)
+            {
+                return Err(format!("Invalid sampled picture construction {}", o.id));
+            }
             if let Kind::Locus(ref refs, samples) = o.kind
                 && (samples < 2
                     || !locus_refs_match(&self.objects, refs)

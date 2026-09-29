@@ -39,6 +39,8 @@ pub use locus::LocusStroke;
 pub mod mapped_element;
 mod sampled_mapped;
 pub use sampled_mapped::SampledMappedDefinition;
+mod sampled_image;
+pub use sampled_image::{SampledImageDefinition, SampledImageMesh};
 mod angle_marker;
 mod measurements;
 pub use angle_marker::{AngleMarkerGeometry, AngleMarkerStyle};
@@ -438,6 +440,7 @@ pub enum Kind {
     Transformed(transform_model::TransformDefinition),
     MappedElement(mapped_element::MappedElementDefinition),
     SampledMapped(SampledMappedDefinition),
+    SampledImage(SampledImageDefinition),
     Colorized(colorized::ColorizedDefinition),
     PresentationButton {
         targets: Vec<usize>,

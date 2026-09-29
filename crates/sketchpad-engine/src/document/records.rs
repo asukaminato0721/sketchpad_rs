@@ -7,6 +7,10 @@ pub(super) fn polygon_subtype(vertex_count: usize) -> Option<u16> {
 pub(super) fn header(kind: u16) -> [u8; 28] {
     // These bytes come from the supplied original Sketchpad fixtures.
     match kind {
+        96 => [
+            96, 0, 0, 0, 0, 0, 6, 0, 91, 0, 33, 1, 128, 0, 128, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0,
+        ],
         121 => [
             121, 0, 0, 0, 0, 0, 19, 0, 96, 0, 0x22, 1, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0xc1, 0xbd,
             0xf0, 0xff, 0, 0, 0, 0,
