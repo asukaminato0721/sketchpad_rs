@@ -44,13 +44,17 @@ pub enum NumericExpr {
         base: usize,
         target: usize,
     },
+    SegmentRatio {
+        numerator: usize,
+        denominator: usize,
+    },
 }
 impl NumericExpr {
     pub fn unit(&self) -> NumericUnit {
         match self {
             Self::Literal { unit, .. } | Self::ObjectValue { unit, .. } => *unit,
             Self::DirectedAngle { .. } => NumericUnit::Degrees,
-            Self::DistanceRatio { .. } => NumericUnit::Scalar,
+            Self::DistanceRatio { .. } | Self::SegmentRatio { .. } => NumericUnit::Scalar,
         }
     }
     pub fn references(&self) -> Vec<usize> {
@@ -67,6 +71,10 @@ impl NumericExpr {
                 base,
                 target,
             } => vec![origin, base, target],
+            Self::SegmentRatio {
+                numerator,
+                denominator,
+            } => vec![numerator, denominator],
         }
     }
     fn references_mut(&mut self) -> Vec<&mut usize> {
@@ -83,6 +91,10 @@ impl NumericExpr {
                 base,
                 target,
             } => vec![origin, base, target],
+            Self::SegmentRatio {
+                numerator,
+                denominator,
+            } => vec![numerator, denominator],
         }
     }
     fn remap(&mut self, ids: &[usize]) -> Result<(), String> {
@@ -114,6 +126,13 @@ impl NumericExpr {
                 m(origin)?;
                 m(base)?;
                 m(target)?;
+            }
+            Self::SegmentRatio {
+                numerator,
+                denominator,
+            } => {
+                m(numerator)?;
+                m(denominator)?;
             }
         }
         Ok(())
@@ -246,6 +265,7 @@ pub enum NativeTransformFlavor {
     PointAngleRotation,
     NumericRotation,
     FixedDilation,
+    SegmentRatioDilation,
     PointRatioDilation,
     NumericDilation,
     Reflection,
@@ -267,6 +287,7 @@ impl NativeTransformFlavor {
             Self::PointAngleRotation => 28,
             Self::NumericRotation => 29,
             Self::FixedDilation => 30,
+            Self::SegmentRatioDilation => 31,
             Self::PointRatioDilation => 32,
             Self::NumericDilation => 33,
             Self::Reflection => 34,
@@ -416,6 +437,13 @@ impl TransformDefinition {
             (Transform::Dilate { ratio, .. }, F::FixedDilation) => {
                 literal(ratio, NumericUnit::Scalar)
             }
+            (
+                Transform::Dilate {
+                    ratio: N::SegmentRatio { .. },
+                    ..
+                },
+                F::SegmentRatioDilation,
+            ) => matches!(element, ElementType::Point | ElementType::Segment),
             (Transform::Dilate { ratio, .. }, F::NumericDilation) => {
                 object(ratio, NumericUnit::Scalar)
             }

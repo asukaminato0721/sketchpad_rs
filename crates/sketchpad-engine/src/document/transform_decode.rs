@@ -309,6 +309,24 @@ pub(super) fn decode_native_transform(
                 F::FixedDilation,
             )
         }
+        (31, [_, center, numerator, denominator])
+            if constraint.is_none()
+                && point(*center)
+                && [*numerator, *denominator]
+                    .into_iter()
+                    .all(|id| get(id).is_some_and(|o| is_segment_kind(&o.kind))) =>
+        {
+            (
+                Transform::Dilate {
+                    center: *center,
+                    ratio: NumericExpr::SegmentRatio {
+                        numerator: *numerator,
+                        denominator: *denominator,
+                    },
+                },
+                F::SegmentRatioDilation,
+            )
+        }
         (32, [_, center, origin, base, target])
             if constraint.is_none()
                 && [*center, *origin, *base, *target].into_iter().all(point) =>

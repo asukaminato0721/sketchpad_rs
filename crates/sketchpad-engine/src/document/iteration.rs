@@ -47,6 +47,7 @@ fn iteration_transform_inputs_supported(
         return false;
     }
     let point = |id: usize| get(id).is_some_and(|object| is_point_kind(&object.kind));
+    let segment = |id: usize| get(id).is_some_and(|object| object.kind.is_segment());
     let numeric = |expression: &NumericExpr| match *expression {
         NumericExpr::Literal { .. } => true,
         NumericExpr::ObjectValue { id, unit } => {
@@ -62,6 +63,10 @@ fn iteration_transform_inputs_supported(
             base,
             target,
         } => [origin, base, target].into_iter().all(point),
+        NumericExpr::SegmentRatio {
+            numerator,
+            denominator,
+        } => [numerator, denominator].into_iter().all(segment),
     };
 
     match definition.transform() {
@@ -1831,6 +1836,10 @@ impl Document {
                     base,
                     target,
                 } => ratio_of_points(point(origin)?, point(base)?, point(target)?),
+                NumericExpr::SegmentRatio {
+                    numerator,
+                    denominator,
+                } => self.ratio_for_segments(numerator, denominator),
                 NumericExpr::DirectedAngle { .. } => None,
             }?;
             value.is_finite().then_some(value)

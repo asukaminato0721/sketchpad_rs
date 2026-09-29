@@ -74,6 +74,14 @@ fn expression_parents_supported(document: &Document, expression: &NumericExpr) -
             base,
             target,
         } => [origin, base, target].into_iter().all(point),
+        NumericExpr::SegmentRatio {
+            numerator,
+            denominator,
+        } => [numerator, denominator].into_iter().all(|id| {
+            id.checked_sub(1)
+                .and_then(|index| document.objects.get(index))
+                .is_some_and(|parent| !parent.deleted && is_segment_kind(&parent.kind))
+        }),
     }
 }
 
@@ -154,7 +162,12 @@ pub(super) fn validate_transform(
     let flavor = definition.wire_flavor();
     // Imported profiles are proved. Authoring still needs independent Native
     // writer controls for these custom-transform opcodes.
-    if is_new && matches!(flavor, F::PointAngleMarkedPolar | F::DualMarkedPolar) {
+    if is_new
+        && matches!(
+            flavor,
+            F::PointAngleMarkedPolar | F::DualMarkedPolar | F::SegmentRatioDilation
+        )
+    {
         return Err(invalid());
     }
     if is_new

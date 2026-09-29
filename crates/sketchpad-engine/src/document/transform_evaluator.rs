@@ -307,6 +307,10 @@ impl Document {
                     base,
                     target,
                 } => ratio_of_points(point(origin)?, point(base)?, point(target)?),
+                NumericExpr::SegmentRatio {
+                    numerator,
+                    denominator,
+                } => self.ratio_for_segments(numerator, denominator),
             };
             value.filter(|v| v.is_finite()).ok_or(Error::Undefined)
         };
