@@ -2013,7 +2013,7 @@ fn svg_page_with_layout(
             row += 1;
         }
         if let Kind::FunctionDefinition(expression) | Kind::ReferencedFunction(_, expression) =
-            object.kind
+            &object.kind
         {
             let (x, y) = object
                 .function_anchor
@@ -2032,7 +2032,7 @@ fn svg_page_with_layout(
             .unwrap();
             row += 1;
         }
-        if let Kind::DerivativeFunction(_, expression) = object.kind {
+        if let Kind::DerivativeFunction(_, expression) = &object.kind {
             let (x, y) = object
                 .function_anchor
                 .map(|(x, y)| (r.min.x + x as f32 + 2., r.min.y + y as f32 + 23.))

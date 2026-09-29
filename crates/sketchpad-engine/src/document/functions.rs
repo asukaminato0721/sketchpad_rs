@@ -5,7 +5,7 @@ use crate::plot_points_records::PlotPointsMode;
 use std::collections::BTreeMap;
 
 pub(super) fn function_sources_valid(
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
     sources: &[usize],
     objects: &[Object],
     page: usize,
@@ -32,8 +32,8 @@ impl Document {
     pub fn add_function_definition(&mut self, expression: SimpleFunction) -> Result<usize, String> {
         self.add_function_definition_with_angle_unit(expression, true)
     }
-    pub(super) fn function_expression(&self, id: usize) -> Option<SimpleFunction> {
-        match self.objects.get(id.checked_sub(1)?)?.kind {
+    pub(super) fn function_expression(&self, id: usize) -> Option<&SimpleFunction> {
+        match &self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::FunctionDefinition(expression)
             | Kind::ReferencedFunction(_, expression)
             | Kind::DerivativeFunction(_, expression) => Some(expression),
@@ -175,8 +175,9 @@ impl Document {
             .function_expression(source)
             .ok_or("Select one function")?;
         let derivative = expression.symbolic_derivative()?;
+        let uses_trigonometry = expression.uses_trigonometry();
         self.checkpoint();
-        if expression.uses_trigonometry() {
+        if uses_trigonometry {
             self.angle_unit_radians = radians;
         }
         Ok(self.append_object(Kind::DerivativeFunction(source, derivative)))
@@ -231,19 +232,20 @@ impl Document {
             return Err("Select one function definition".into());
         }
         let sources = self.function_sources(definition).unwrap().to_vec();
-        if !function_sources_valid(expression, &sources, &self.objects, object.page) {
+        if !function_sources_valid(&expression, &sources, &self.objects, object.page) {
             return Err("Invalid function sources".into());
         }
-        if self.function_expression(definition) == Some(expression)
+        if self.function_expression(definition) == Some(&expression)
             && (!expression.uses_trigonometry() || self.angle_unit_radians == radians)
         {
             return Ok(());
         }
+        let uses_trigonometry = expression.uses_trigonometry();
         let mut updates = BTreeMap::new();
-        updates.insert(definition, expression);
+        updates.insert(definition, expression.clone());
         for object in &self.objects {
             if let Kind::DerivativeFunction(source, _) = object.kind
-                && let Some(source_expression) = updates.get(&source).copied()
+                && let Some(source_expression) = updates.get(&source)
             {
                 updates.insert(object.id, source_expression.symbolic_derivative()?);
             }
@@ -261,7 +263,7 @@ impl Document {
                 self.objects[id - 1].kind = Kind::DerivativeFunction(source, expression);
             }
         }
-        if expression.uses_trigonometry() {
+        if uses_trigonometry {
             self.angle_unit_radians = radians;
         }
         Ok(())
@@ -568,7 +570,7 @@ impl Document {
     fn validate_new_function_sources(
         &self,
         sources: &[usize],
-        expression: SimpleFunction,
+        expression: &SimpleFunction,
     ) -> Result<(), String> {
         if self.partial_view || self.page_count != 1 || !self.safe_structure {
             return Err("Cannot add a function in this sketch safely".into());
@@ -587,7 +589,7 @@ impl Document {
         expression: SimpleFunction,
         radians: bool,
     ) -> Result<usize, String> {
-        self.validate_new_function_sources(sources, expression)?;
+        self.validate_new_function_sources(sources, &expression)?;
         self.checkpoint();
         if expression.uses_trigonometry() {
             self.angle_unit_radians = radians;
@@ -609,7 +611,7 @@ impl Document {
         origin: Point,
         radians: bool,
     ) -> Result<usize, String> {
-        self.validate_new_function_sources(sources, expression)?;
+        self.validate_new_function_sources(sources, &expression)?;
         if !origin.x.is_finite() || !origin.y.is_finite() {
             return Err("Plot origin must be finite".into());
         }

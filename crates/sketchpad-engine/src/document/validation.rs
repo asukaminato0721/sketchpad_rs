@@ -959,7 +959,7 @@ impl Document {
             if let Kind::ReferencedFunction(sources, expression) = &o.kind
                 && (sources.is_empty()
                     || !super::functions::function_sources_valid(
-                        *expression,
+                        expression,
                         sources,
                         &self.objects,
                         o.page,

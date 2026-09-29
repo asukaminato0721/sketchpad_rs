@@ -395,7 +395,7 @@ impl Document {
                 .into_iter()
                 .map(|id| -> Result<_, String> {
                     let object = &self.objects[id - 1];
-                    let function_anchor = match object.kind {
+                    let function_anchor = match &object.kind {
                         Kind::FunctionDefinition(expression) => {
                             Some(if let Some(anchor) = object.function_anchor {
                                 anchor
@@ -410,7 +410,9 @@ impl Document {
                                 anchor
                             } else {
                                 function_records::group_expression_anchor(
-                                    &function_records::encode_derivative_group(source, expression)?,
+                                    &function_records::encode_derivative_group(
+                                        *source, expression,
+                                    )?,
                                 )?
                             })
                         }

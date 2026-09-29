@@ -1189,7 +1189,7 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::FunctionDefinition(expression) = o.kind {
+            if let Kind::FunctionDefinition(expression) = &o.kind {
                 let mut group = function_records::encode_definition_group(expression)?;
                 if let Some(anchor) = o.function_anchor {
                     function_records::set_group_expression_anchor(&mut group, anchor)?;
@@ -1205,7 +1205,7 @@ impl Document {
             }
             if let Kind::ReferencedFunction(sources, expression) = &o.kind {
                 let mut group =
-                    function_records::encode_referenced_definition_group(sources, *expression)?;
+                    function_records::encode_referenced_definition_group(sources, expression)?;
                 // Native's template uses a later style in its own drawing namespace.
                 // Newly authored formulas use this drawing's existing default style.
                 let mut font_probe = b"GSP4".to_vec();
@@ -1228,8 +1228,8 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::DerivativeFunction(source, expression) = o.kind {
-                let mut group = function_records::encode_derivative_group(source, expression)?;
+            if let Kind::DerivativeFunction(source, expression) = &o.kind {
+                let mut group = function_records::encode_derivative_group(*source, expression)?;
                 if let Some(anchor) = o.function_anchor {
                     function_records::set_group_expression_anchor(&mut group, anchor)?;
                 }

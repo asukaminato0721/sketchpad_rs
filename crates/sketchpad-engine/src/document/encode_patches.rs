@@ -628,7 +628,7 @@ impl Document {
             }
             if let Kind::FunctionDefinition(expression)
             | Kind::ReferencedFunction(_, expression)
-            | Kind::DerivativeFunction(_, expression) = object.kind
+            | Kind::DerivativeFunction(_, expression) = &object.kind
             {
                 let record = group
                     .iter()
@@ -639,7 +639,7 @@ impl Document {
                     .function_sources(object.id)
                     .ok_or("Invalid function sources")?
                     .len();
-                if function_records::decode_expression_with_sources(original, count)? != expression
+                if function_records::decode_expression_with_sources(original, count)? != *expression
                 {
                     edits.push((
                         record.start,

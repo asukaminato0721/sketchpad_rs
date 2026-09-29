@@ -1,6 +1,8 @@
 //! Native arithmetic and built-in function expressions from Sketchpad 5 files.
 
-const MAX_EXPRESSION_WORDS: usize = 64;
+// Native music and piecewise functions reach 115 tokens. Keep parsing bounded
+// above that verified range without storing the full allowance in every Kind.
+const MAX_EXPRESSION_WORDS: usize = 256;
 
 // Function definitions and calculations use the same native unary opcodes.
 const FUNCTIONS: &[(&str, u16)] = crate::table_records::CALCULATION_FUNCTIONS;
@@ -12,14 +14,11 @@ fn function_name(code: u16) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SimpleFunction {
     Identity,
     Square,
-    Arithmetic {
-        words: [u16; MAX_EXPRESSION_WORDS],
-        len: u8,
-    },
+    Arithmetic { words: Box<[u16]> },
 }
 
 impl SimpleFunction {
@@ -137,27 +136,24 @@ impl SimpleFunction {
         if words == [0x000f, 0x1004, 2] {
             return Ok(Self::Square);
         }
-        let mut stored = [0u16; MAX_EXPRESSION_WORDS];
-        stored[..words.len()].copy_from_slice(words);
         Ok(Self::Arithmetic {
-            words: stored,
-            len: words.len() as u8,
+            words: words.into(),
         })
     }
     fn words(&self) -> &[u16] {
         match self {
             Self::Identity => &[0x000f],
             Self::Square => &[0x000f, 0x1004, 2],
-            Self::Arithmetic { words, len } => &words[..*len as usize],
+            Self::Arithmetic { words } => words,
         }
     }
-    pub fn display(self) -> String {
+    pub fn display(&self) -> String {
         self.display_for_sources(&[])
     }
     /// Render dependency names at their token positions, preserving names that
     /// happen to contain another source's alias.
-    pub fn display_for_sources(self, names: &[&str]) -> String {
-        if self == Self::Square {
+    pub fn display_for_sources(&self, names: &[&str]) -> String {
+        if matches!(self, Self::Square) {
             return "f(x) = x²".into();
         }
         let mut text = String::from("f(x) = ");
@@ -244,14 +240,14 @@ impl SimpleFunction {
         }
         text
     }
-    pub fn evaluate(self, x: f64) -> f64 {
+    pub fn evaluate(&self, x: f64) -> f64 {
         self.evaluate_with_angle_unit(x, true)
     }
-    pub fn evaluate_with_angle_unit(self, x: f64, radians: bool) -> f64 {
+    pub fn evaluate_with_angle_unit(&self, x: f64, radians: bool) -> f64 {
         self.evaluate_with_sources(x, radians, &|_| None, &|_, _| None)
     }
     pub fn evaluate_with_sources(
-        self,
+        &self,
         x: f64,
         radians: bool,
         numeric: &dyn Fn(usize) -> Option<f64>,
@@ -264,7 +260,7 @@ impl SimpleFunction {
     }
     /// Validate reference bounds and roles without replacing live dependencies.
     pub fn source_kinds(
-        self,
+        &self,
         count: usize,
     ) -> Result<Vec<Option<crate::table_records::CalculationSourceKind>>, String> {
         use crate::table_records::CalculationSourceKind::{Function, Numeric};
@@ -288,19 +284,19 @@ impl SimpleFunction {
         }
         Ok(kinds)
     }
-    pub fn uses_trigonometry(self) -> bool {
+    pub fn uses_trigonometry(&self) -> bool {
         self.words()
             .iter()
             .any(|word| matches!(*word, 0x2000..=0x2005))
     }
-    pub fn may_have_poles(self) -> bool {
+    pub fn may_have_poles(&self) -> bool {
         self.words().iter().enumerate().any(|(index, word)| {
             *word == 0x1003
                 || *word == 0x2002
                 || (*word == 0x1004 && self.words().get(index + 1) == Some(&0x1001))
         })
     }
-    pub fn symbolic_derivative(self) -> Result<Self, String> {
+    pub fn symbolic_derivative(&self) -> Result<Self, String> {
         let mut parser = SymbolicParser {
             words: self.words(),
             index: 0,
@@ -836,7 +832,7 @@ impl<'a> SymbolicParser<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FunctionPlot {
     pub expression: SimpleFunction,
     pub definition_id: usize,
@@ -950,14 +946,14 @@ pub fn decode_expression_with_sources(
 
 pub fn encode_expression_record(
     data: &[u8],
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
 ) -> Result<Vec<u8>, String> {
     encode_expression_record_with_sources(data, expression, 0)
 }
 
 pub fn encode_expression_record_with_sources(
     data: &[u8],
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
     source_count: usize,
 ) -> Result<Vec<u8>, String> {
     decode_expression_with_sources(data, source_count)?;
@@ -1177,7 +1173,7 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
     found.ok_or_else(|| "No Cartesian function plot".into())
 }
 
-fn original_template(expression: SimpleFunction) -> &'static [u8] {
+fn original_template(expression: &SimpleFunction) -> &'static [u8] {
     match expression {
         SimpleFunction::Identity => {
             include_bytes!("../../../tests/fixtures/function_plot_identity.gsp")
@@ -1277,7 +1273,7 @@ pub fn encode_parametric_plot_group(
     Ok(group)
 }
 
-pub fn encode_definition_group(expression: SimpleFunction) -> Result<Vec<u8>, String> {
+pub fn encode_definition_group(expression: &SimpleFunction) -> Result<Vec<u8>, String> {
     let source = original_template(expression);
     let rs = records(source)?;
     let groups = group_ranges(source, &rs)?;
@@ -1302,7 +1298,7 @@ pub fn encode_definition_group(expression: SimpleFunction) -> Result<Vec<u8>, St
 /// referenced function definition (object code 71).
 pub fn encode_referenced_definition_group(
     sources: &[usize],
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
 ) -> Result<Vec<u8>, String> {
     if sources.is_empty() || sources.len() > 256 {
         return Err("Invalid referenced function source count".into());
@@ -1368,7 +1364,7 @@ pub fn encode_referenced_definition_group(
 
 pub fn encode_derivative_group(
     source_id: usize,
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
 ) -> Result<Vec<u8>, String> {
     let source_id = u32::try_from(source_id).map_err(|_| "Too many objects")?;
     if source_id == 0 {
@@ -1402,7 +1398,7 @@ pub fn encode_derivative_group(
 }
 
 pub fn encode_plot_group(
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
     definition_id: usize,
     frame_id: usize,
 ) -> Result<Vec<u8>, String> {
@@ -1438,7 +1434,7 @@ pub fn encode_plot_group(
 }
 
 pub fn encode_plot_group_with_range(
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
     definition_id: usize,
     frame_id: usize,
     min: f64,
@@ -1465,7 +1461,7 @@ pub fn encode_plot_group_with_range(
 
 /// Encode the two observed object groups, changing only the plot's references.
 pub fn encode_plot_groups(
-    expression: SimpleFunction,
+    expression: &SimpleFunction,
     definition_id: usize,
     coordinate_system_id: usize,
 ) -> Result<Vec<u8>, String> {
@@ -1517,7 +1513,7 @@ pub fn encode_minimal_plot_document(expression: SimpleFunction) -> Result<Vec<u8
         return Err("Function base has unexpected coordinate system".into());
     }
     bytes[page.payload_start + 24..page.payload_start + 28].copy_from_slice(&8u32.to_le_bytes());
-    let mut appended = encode_plot_groups(expression, 7, 6)?;
+    let mut appended = encode_plot_groups(&expression, 7, 6)?;
     appended.extend_from_slice(&4u32.to_le_bytes());
     appended.extend_from_slice(&0x2328u32.to_le_bytes());
     appended.extend_from_slice(&8u32.to_le_bytes());

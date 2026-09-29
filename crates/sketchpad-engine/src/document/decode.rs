@@ -1815,7 +1815,7 @@ impl Document {
                     }
                     (71, None, sources) if !sources.is_empty() && h[6..10] == [11, 0, 57, 0] && function_expression.is_some() => {
                         match function_records::decode_expression_with_sources(function_expression.as_ref().unwrap(), sources.len()) {
-                            Ok(expression) if super::functions::function_sources_valid(expression, sources, &objects, page)
+                            Ok(expression) if super::functions::function_sources_valid(&expression, sources, &objects, page)
                                 && sources.iter().all(|&id| id > 0 && id <= objects.len()) => Kind::ReferencedFunction(sources.to_vec(), expression),
                             _ => Kind::Unsupported(code),
                         }

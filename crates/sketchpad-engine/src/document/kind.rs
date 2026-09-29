@@ -877,11 +877,13 @@ impl Kind {
             }
             Kind::CoordinateSystem(a, b) => Kind::CoordinateSystem(m(a), m(b)),
             Kind::SlopeMeasurement(a, b) => Kind::SlopeMeasurement(m(a), m(b)),
-            Kind::ReferencedFunction(ref sources, expr) => {
-                Kind::ReferencedFunction(sources.iter().map(|&id| m(id)).collect(), expr)
+            Kind::ReferencedFunction(ref sources, ref expr) => {
+                Kind::ReferencedFunction(sources.iter().map(|&id| m(id)).collect(), expr.clone())
             }
-            Kind::FunctionDefinition(expr) => Kind::FunctionDefinition(expr),
-            Kind::DerivativeFunction(source, expr) => Kind::DerivativeFunction(m(source), expr),
+            Kind::FunctionDefinition(ref expr) => Kind::FunctionDefinition(expr.clone()),
+            Kind::DerivativeFunction(source, ref expr) => {
+                Kind::DerivativeFunction(m(source), expr.clone())
+            }
             Kind::DataFunction {
                 source,
                 frame,

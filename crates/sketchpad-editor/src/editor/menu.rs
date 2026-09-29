@@ -712,7 +712,7 @@ impl Editor {
                         .clicked()
                     {
                         let source = selected_function.unwrap();
-                        let uses_trigonometry = match self.doc.objects[source - 1].kind {
+                        let uses_trigonometry = match &self.doc.objects[source - 1].kind {
                             Kind::FunctionDefinition(expression)
                             | Kind::ReferencedFunction(_, expression)
                             | Kind::DerivativeFunction(_, expression) => {

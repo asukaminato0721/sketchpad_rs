@@ -175,7 +175,7 @@ impl Editor {
                 }
             }
         }
-        if let Some((expression, plot, edit_id)) = self.function_angle_dialog {
+        if let Some((expression, plot, edit_id)) = self.function_angle_dialog.clone() {
             let mut choice = None;
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("function_angle_unit")).show(root.ctx(), |ui| {
