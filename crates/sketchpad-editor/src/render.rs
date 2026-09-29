@@ -480,6 +480,21 @@ pub fn branch_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) 
             inside
         });
     }
+    if doc
+        .mapped_collection_surfaces(id, 125)
+        .is_some_and(|surfaces| {
+            surfaces.into_iter().any(|surface| {
+                let points = surface
+                    .points
+                    .into_iter()
+                    .map(|point| vp.screen(point))
+                    .collect::<Vec<_>>();
+                point_in_polygon(&points, at)
+            })
+        })
+    {
+        return true;
+    }
     let near = |a: Pos2, b: Pos2| {
         let delta = b - a;
         let t = if delta.length_sq() > 0. {
@@ -1337,6 +1352,32 @@ fn svg_page_with_layout(
                     )
                     .unwrap();
                 }
+            }
+        } else if let Some(surfaces) = doc.mapped_collection_surfaces(o.id, 384) {
+            for surface in surfaces {
+                let vertices = surface
+                    .points
+                    .into_iter()
+                    .map(|point| {
+                        let at = vp.screen(point);
+                        format!("{},{}", at.x, at.y)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    svg,
+                    "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                    vertices,
+                    match surface.style {
+                        VisualStyle::Polygon { color, .. } => css_color(color),
+                        _ => unreachable!(),
+                    },
+                    match surface.style {
+                        VisualStyle::Polygon { opacity, .. } => f64::from(opacity) / 65535.,
+                        _ => unreachable!(),
+                    }
+                )
+                .unwrap();
             }
         } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
             for points in polygons {
@@ -2613,6 +2654,25 @@ impl GeometryRenderer {
                 .or_else(|| doc.mapped_collection_strokes(o.id, 384))
             {
                 mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected));
+            } else if let Some(surfaces) = doc.mapped_collection_surfaces(o.id, 384) {
+                for surface in surfaces {
+                    let fill = if doc.selected.contains(&o.id) {
+                        [1., 0., 1., 0.18]
+                    } else {
+                        match surface.style {
+                            VisualStyle::Polygon { color, opacity } => {
+                                rgba(color, f32::from(opacity) / 65535.)
+                            }
+                            _ => unreachable!(),
+                        }
+                    };
+                    let screen = surface
+                        .points
+                        .into_iter()
+                        .map(|point| vp.screen(point))
+                        .collect::<Vec<_>>();
+                    mesh.polygon(&screen, fill);
+                }
             } else if let Some(polygons) = doc.locus_polygon_surfaces(o.id, 384) {
                 let fill = if doc.selected.contains(&o.id) {
                     [1., 0., 1., 0.18]

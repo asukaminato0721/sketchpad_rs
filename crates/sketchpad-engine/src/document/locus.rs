@@ -15,6 +15,12 @@ pub struct LocusStroke {
     pub style: VisualStyle,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocusSurface {
+    pub points: Vec<Point>,
+    pub style: VisualStyle,
+}
+
 fn circle_strokes(center: Point, radius: f64) -> Vec<(Point, Point, LineMode)> {
     let point = |step: usize| {
         let angle = step as f64 * std::f64::consts::TAU / 64.;
@@ -64,6 +70,17 @@ pub(super) fn is_mapped_stroke_locus(objects: &[Object], kind: &Kind) -> bool {
                     || object.kind.is_circle()
                     || is_arc_kind(&object.kind))
         })
+}
+
+pub(super) fn is_mapped_polygon_locus(objects: &[Object], kind: &Kind) -> bool {
+    let target = match kind {
+        Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first().unwrap_or(&0),
+        _ => return false,
+    };
+    target
+        .checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .is_some_and(|object| !object.deleted && is_locus_polygon_kind(&object.kind))
 }
 
 fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
@@ -711,6 +728,62 @@ impl Document {
             }
         }
         Some(surfaces)
+    }
+
+    fn locus_styled_surfaces(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
+        let samples = self.sample_any_locus(id, subdivisions, |sample, target| {
+            let points = sample.filled_region_points(target)?;
+            let style = sample.effective_visual_style(target)?;
+            matches!(style, VisualStyle::Polygon { .. }).then_some((points, style))
+        })?;
+        let mut surfaces = samples
+            .iter()
+            .flatten()
+            .map(|(points, style)| LocusSurface {
+                points: points.clone(),
+                style: *style,
+            })
+            .collect::<Vec<_>>();
+        for pair in samples.windows(2) {
+            let (Some((before, _)), Some((after, style))) = (&pair[0], &pair[1]) else {
+                continue;
+            };
+            if before.len() != after.len() {
+                return None;
+            }
+            for index in 0..before.len() {
+                let next = (index + 1) % before.len();
+                surfaces.push(LocusSurface {
+                    points: vec![before[index], before[next], after[next], after[index]],
+                    style: *style,
+                });
+            }
+        }
+        Some(surfaces)
+    }
+
+    pub fn mapped_collection_surfaces(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusSurface>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::IterationBinding(source, iteration) = object.kind else {
+            return None;
+        };
+        let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
+        if object.deleted || !is_mapped_polygon_locus(&self.objects, source_kind) {
+            return None;
+        }
+        Some(
+            self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
+                sample.locus_styled_surfaces(source, subdivisions)
+            })?
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect(),
+        )
     }
 
     pub fn locus_segments(&self, id: usize, subdivisions: usize) -> Option<Vec<(Point, Point)>> {

@@ -2761,6 +2761,7 @@ impl Document {
                         || is_arc_kind(&o.kind)
                         || super::locus::is_mapped_stroke_locus(&objects, &o.kind)
                         || super::locus::is_point_locus(&objects, &o.kind)
+                        || super::locus::is_mapped_polygon_locus(&objects, &o.kind)
                         || matches!(o.kind, Kind::SampledMapped(..))
                 })
             {

@@ -367,6 +367,7 @@ pub(super) fn supported_mapped_point_iteration(
         if matches!(object.kind, Kind::Locus(..) | Kind::ParameterLocus(..))
             && !super::locus::is_mapped_stroke_locus(objects, &object.kind)
             && !super::locus::is_point_locus(objects, &object.kind)
+            && !super::locus::is_mapped_polygon_locus(objects, &object.kind)
         {
             return false;
         }
