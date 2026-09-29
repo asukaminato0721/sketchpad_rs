@@ -21,7 +21,9 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
     }
     match object.kind {
         Kind::ThreePointArc(..) | Kind::ArcOnCircle(..) | Kind::CenterArc(..) => "Arc",
-        Kind::Image { .. } | Kind::CroppedImage { .. } => "Picture",
+        Kind::Image { .. } | Kind::CroppedImage { .. } | Kind::TransformedCroppedImage(..) => {
+            "Picture"
+        }
         Kind::PlainText { .. } | Kind::PointReferencedText { .. } | Kind::ReferencedText { .. } => {
             "Caption"
         }

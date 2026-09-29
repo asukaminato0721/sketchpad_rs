@@ -526,6 +526,7 @@ impl Kind {
             | Kind::ParameterCalculation(_, _) => unreachable!(),
             Kind::CoordinatePoint(..)
             | Kind::CroppedImage { .. }
+            | Kind::TransformedCroppedImage(..)
             | Kind::Transformed(..)
             | Kind::MappedElement(..)
             | Kind::SampledMapped(..)
@@ -546,6 +547,9 @@ impl Kind {
         }
         if let Kind::SampledMapped(definition) = self {
             return Kind::SampledMapped(definition.remap(ids));
+        }
+        if let Kind::TransformedCroppedImage(definition) = self {
+            return Kind::TransformedCroppedImage(definition.remap_unchecked(ids));
         }
         if let Kind::MappedPointIteration {
             seeds,
@@ -987,6 +991,7 @@ impl Kind {
             Kind::ValueEquation { .. } => unreachable!(),
             Kind::Transformed(ref definition) => Kind::Transformed(definition.remap_unchecked(ids)),
             Kind::CoordinatePoint(..)
+            | Kind::TransformedCroppedImage(..)
             | Kind::MappedElement(..)
             | Kind::SampledMapped(..)
             | Kind::Colorized(..) => unreachable!("mapped remapping handled above"),

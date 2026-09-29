@@ -35,7 +35,9 @@ macro_rules! native_transform_constructors {
 impl Kind {
     pub fn transform_definition(&self) -> Option<TransformDefinition> {
         match self {
-            Self::Transformed(definition) => Some(definition.clone()),
+            Self::Transformed(definition) | Self::TransformedCroppedImage(definition) => {
+                Some(definition.clone())
+            }
             _ => None,
         }
     }

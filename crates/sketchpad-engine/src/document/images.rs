@@ -5,6 +5,20 @@ pub type ImageInstances<'a> = (usize, &'a [u8], Vec<[f64; 6]>);
 pub type CroppedImage<'a> = (usize, &'a [u8], [f64; 6], Vec<Point>);
 
 impl Document {
+    /// Native picture headers retain their back-to-front paint rank.
+    pub fn picture_order(&self, id: usize) -> Option<i32> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if !matches!(
+            object.kind,
+            Kind::Image { .. } | Kind::CroppedImage { .. } | Kind::TransformedCroppedImage(..)
+        ) {
+            return None;
+        }
+        let header = object.header_offset?;
+        let bytes = self.original.get(header + 20..header + 24)?;
+        Some(i32::from_le_bytes(bytes.try_into().ok()?))
+    }
+
     pub fn import_png(&mut self, png: &[u8], at: Point) -> Result<usize, String> {
         if self.partial_view
             || self.page_count != 1
@@ -130,22 +144,39 @@ impl Document {
         if object.deleted {
             return None;
         }
-        let Kind::CroppedImage { source, polygon } = object.kind else {
-            return None;
-        };
-        let source_object = self.objects.get(source.checked_sub(1)?)?;
-        let Kind::Image { png, .. } = &source_object.kind else {
-            return None;
-        };
-        if source_object.deleted {
-            return None;
+        match &object.kind {
+            Kind::CroppedImage { source, polygon } => {
+                let source_object = self.objects.get(source.checked_sub(1)?)?;
+                let Kind::Image { png, .. } = &source_object.kind else {
+                    return None;
+                };
+                if source_object.deleted {
+                    return None;
+                }
+                Some((
+                    *source,
+                    png,
+                    self.image_transform(*source)?,
+                    self.polygon_points(*polygon)?,
+                ))
+            }
+            Kind::TransformedCroppedImage(definition) => {
+                let (source, png, transform, polygon) = self.cropped_image(definition.source())?;
+                let operation = self.transform_operation_matrix(definition).ok()?.0;
+                let [[a, b, x], [c, d, y]] = sketchpad_ir::affine::AffineMatrix::from_rows([
+                    [transform[0], transform[1], transform[2]],
+                    [transform[3], transform[4], transform[5]],
+                ])
+                .then(operation)
+                .rows();
+                let polygon = polygon
+                    .into_iter()
+                    .map(|point| operation.apply(point))
+                    .collect::<Option<Vec<_>>>()?;
+                Some((source, png, [a, b, x, c, d, y], polygon))
+            }
+            _ => None,
         }
-        Some((
-            source,
-            png,
-            self.image_transform(source)?,
-            self.polygon_points(polygon)?,
-        ))
     }
 
     pub fn can_crop_picture_to_polygon(&self, source: usize, polygon: usize) -> Result<(), String> {

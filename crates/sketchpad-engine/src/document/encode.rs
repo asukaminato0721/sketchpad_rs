@@ -1890,6 +1890,9 @@ impl Document {
                 added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
+            if matches!(o.kind, Kind::TransformedCroppedImage(..)) {
+                return Err("Adding a transformed cropped picture is not supported".into());
+            }
             if let Some(definition) = o.kind.transform_definition() {
                 use super::transform_wire::{PolygonWire, TransformWirePresentation};
                 let polygon = if definition.element() == ElementType::Polygon {

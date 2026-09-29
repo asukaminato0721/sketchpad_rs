@@ -451,6 +451,28 @@ fn ordered_region_fills(doc: &Document) -> Vec<&crate::document::Object> {
     polygons
 }
 
+pub fn ordered_picture_ids(doc: &Document) -> Vec<usize> {
+    let mut pictures = doc
+        .objects
+        .iter()
+        .filter(|object| {
+            doc.is_displayed(object.id)
+                && (doc.cropped_image(object.id).is_some()
+                    || doc.image_instances(object.id).is_some())
+        })
+        .map(|object| object.id)
+        .collect::<Vec<_>>();
+    pictures.sort_by(|first, second| {
+        match (doc.picture_order(*first), doc.picture_order(*second)) {
+            (Some(first_order), Some(second_order)) => first_order
+                .cmp(&second_order)
+                .then_with(|| first.cmp(second)),
+            _ => first.cmp(second),
+        }
+    });
+    pictures
+}
+
 pub fn point_iteration_hit(vp: &Viewport, doc: &Document, id: usize, at: Pos2) -> bool {
     doc.mapped_point_binding_images(id).is_some_and(|images| {
         images
@@ -1182,6 +1204,115 @@ pub fn svg_page_on_paper(
     )
 }
 
+#[derive(Clone, Copy)]
+enum SvgInterior {
+    Picture(usize),
+    Region(usize),
+}
+
+fn ordered_svg_interiors(doc: &Document) -> Vec<SvgInterior> {
+    let mut interiors = ordered_picture_ids(doc)
+        .into_iter()
+        .map(SvgInterior::Picture)
+        .chain(
+            doc.objects
+                .iter()
+                .filter(|object| doc.is_displayed(object.id) && object.kind.is_filled_region())
+                .map(|object| SvgInterior::Region(object.id)),
+        )
+        .collect::<Vec<_>>();
+    let rank = |interior: SvgInterior| match interior {
+        SvgInterior::Picture(id) => doc.picture_order(id),
+        SvgInterior::Region(id) => doc.objects[id - 1].interior_order,
+    };
+    let fallback = |interior: SvgInterior| match interior {
+        SvgInterior::Picture(id) => (0, id),
+        SvgInterior::Region(id) => (1, id),
+    };
+    interiors.sort_by(|first, second| match (rank(*first), rank(*second)) {
+        (Some(first_rank), Some(second_rank)) => first_rank
+            .cmp(&second_rank)
+            .then_with(|| fallback(*first).cmp(&fallback(*second))),
+        _ => fallback(*first).cmp(&fallback(*second)),
+    });
+    interiors
+}
+
+fn write_svg_picture(
+    svg: &mut String,
+    doc: &Document,
+    vp: &Viewport,
+    id: usize,
+) -> Result<(), String> {
+    if let Some((_, png, transform, polygon)) = doc.cropped_image(id) {
+        let (width, height) = crate::image_records::ImageFile::png_size(png)?;
+        let origin = vp.screen(Point {
+            x: transform[2],
+            y: transform[5],
+        });
+        let points = polygon
+            .into_iter()
+            .map(|point| {
+                let point = vp.screen(point);
+                format!("{},{}", point.x, point.y)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(
+            svg,
+            "<clipPath id=\"picture-crop-{id}\" clipPathUnits=\"userSpaceOnUse\"><polygon points=\"{points}\"/></clipPath>"
+        )
+        .unwrap();
+        writeln!(svg,
+            "<g clip-path=\"url(#picture-crop-{id})\"><image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/></g>",
+            transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
+            transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
+            origin.x, origin.y, base64(png)).unwrap();
+    } else if let Some((_, png, transforms)) = doc.image_instances(id) {
+        let (width, height) = crate::image_records::ImageFile::png_size(png)?;
+        for transform in transforms {
+            let origin = vp.screen(Point {
+                x: transform[2],
+                y: transform[5],
+            });
+            writeln!(svg,
+                "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/>",
+                transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
+                transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
+                origin.x, origin.y, base64(png)).unwrap();
+        }
+    }
+    Ok(())
+}
+
+fn write_svg_region(svg: &mut String, doc: &Document, vp: &Viewport, id: usize) {
+    let Some(points) = doc.filled_region_points(id) else {
+        return;
+    };
+    let vertices = points
+        .into_iter()
+        .map(|point| {
+            let at = vp.screen(point);
+            format!("{},{}", at.x, at.y)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    writeln!(
+        svg,
+        "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+        vertices,
+        match doc.effective_visual_style(id) {
+            Some(VisualStyle::Polygon { color, .. }) => css_color(color),
+            _ => "#f6ad60".into(),
+        },
+        match doc.effective_visual_style(id) {
+            Some(VisualStyle::Polygon { opacity, .. }) => f64::from(opacity) / 65535.,
+            _ => 0.5,
+        }
+    )
+    .unwrap();
+}
+
 fn svg_page_with_layout(
     doc: &Document,
     vp: &Viewport,
@@ -1229,51 +1360,10 @@ fn svg_page_with_layout(
         r.width(),
         r.height(),
     );
-    for object in doc
-        .objects
-        .iter()
-        .filter(|object| doc.is_displayed(object.id))
-    {
-        if let Some((_, png, transform, polygon)) = doc.cropped_image(object.id) {
-            let (width, height) = crate::image_records::ImageFile::png_size(png)?;
-            let origin = vp.screen(Point {
-                x: transform[2],
-                y: transform[5],
-            });
-            let points = polygon
-                .into_iter()
-                .map(|point| {
-                    let point = vp.screen(point);
-                    format!("{},{}", point.x, point.y)
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            writeln!(
-                svg,
-                "<clipPath id=\"picture-crop-{}\"><polygon points=\"{}\"/></clipPath>",
-                object.id, points
-            )
-            .unwrap();
-            writeln!(svg,
-                "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" clip-path=\"url(#picture-crop-{})\" href=\"data:image/png;base64,{}\"/>",
-                transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
-                transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
-                origin.x, origin.y, object.id, base64(png)).unwrap();
-            continue;
-        }
-        if let Some((_, png, transforms)) = doc.image_instances(object.id) {
-            let (width, height) = crate::image_records::ImageFile::png_size(png)?;
-            for transform in transforms {
-                let origin = vp.screen(Point {
-                    x: transform[2],
-                    y: transform[5],
-                });
-                writeln!(svg,
-                    "<image width=\"{width}\" height=\"{height}\" transform=\"matrix({} {} {} {} {} {})\" href=\"data:image/png;base64,{}\"/>",
-                    transform[0] * vp.scale as f64, transform[3] * vp.scale as f64,
-                    transform[1] * vp.scale as f64, transform[4] * vp.scale as f64,
-                    origin.x, origin.y, base64(png)).unwrap();
-            }
+    for interior in ordered_svg_interiors(doc) {
+        match interior {
+            SvgInterior::Picture(id) => write_svg_picture(&mut svg, doc, vp, id)?,
+            SvgInterior::Region(id) => write_svg_region(&mut svg, doc, vp, id),
         }
     }
     svg.push_str("<g fill=\"none\" stroke=\"#d4dbe1\" stroke-width=\"1\">\n");
@@ -1314,7 +1404,6 @@ fn svg_page_with_layout(
         )
         .unwrap();
     }
-    let mut polygon_fills = ordered_region_fills(doc).into_iter();
     for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
         if let Some((a, b, mode)) = doc.line_points(o.id)
             && let Some((a, b)) = clipped_line(vp.screen(a), vp.screen(b), mode, r)
@@ -1514,35 +1603,6 @@ fn svg_page_with_layout(
                 )
                 .unwrap();
             }
-        }
-        let polygon_object = if o.kind.is_filled_region() {
-            polygon_fills.next().unwrap()
-        } else {
-            o
-        };
-        if let Some(points) = doc.filled_region_points(polygon_object.id) {
-            let vertices = points
-                .into_iter()
-                .map(|point| {
-                    let at = vp.screen(point);
-                    format!("{},{}", at.x, at.y)
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            writeln!(
-                svg,
-                "<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
-                vertices,
-                match doc.effective_visual_style(polygon_object.id) {
-                    Some(VisualStyle::Polygon { color, .. }) => css_color(color),
-                    _ => "#f6ad60".into(),
-                },
-                match doc.effective_visual_style(polygon_object.id) {
-                    Some(VisualStyle::Polygon { opacity, .. }) => f64::from(opacity) / 65535.,
-                    _ => 0.5,
-                }
-            )
-            .unwrap();
         }
         if let Some(polygons) = doc.colorized_polygon_iteration_images(o.id) {
             let opacity = match doc.effective_visual_style(o.id) {

@@ -48,7 +48,12 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
                 && polygon_vertex_count(&document.objects, definition.source()).is_some()
         }
         E::Disk => source.kind.is_circle_interior(),
-        E::Image => matches!(source.kind, super::Kind::Image { .. }),
+        E::Image => matches!(
+            source.kind,
+            super::Kind::Image { .. }
+                | super::Kind::CroppedImage { .. }
+                | super::Kind::TransformedCroppedImage(..)
+        ),
     }
 }
 

@@ -102,7 +102,12 @@ pub(super) fn decode_native_transform(
         }
         ElementType::Sector => source_kind.is_sector(),
         ElementType::CircularSegment => source_kind.is_circular_segment(),
-        ElementType::Image => matches!(source_kind, super::Kind::Image { .. }),
+        ElementType::Image => matches!(
+            source_kind,
+            super::Kind::Image { .. }
+                | super::Kind::CroppedImage { .. }
+                | super::Kind::TransformedCroppedImage(..)
+        ),
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
         ElementType::Line => {
             if matches!(code, 27 | 29) {

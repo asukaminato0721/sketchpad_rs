@@ -57,6 +57,30 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn transformed_image_png(
+    objects: &[Object],
+    page: usize,
+    id: usize,
+    limit: usize,
+) -> Option<&Vec<u8>> {
+    let mut current = id;
+    loop {
+        if current == 0 || current >= limit {
+            return None;
+        }
+        let object = objects.get(current - 1)?;
+        if object.deleted || object.page != page {
+            return None;
+        }
+        match &object.kind {
+            Kind::Image { png, .. } => return Some(png),
+            Kind::CroppedImage { source, .. } => current = *source,
+            Kind::TransformedCroppedImage(definition) => current = definition.source(),
+            _ => return None,
+        }
+    }
+}
+
 /// Native transform literals use radians (0) or either observed degree form
 /// (1/2). Check the direction cache in its declared unit before normalizing
 /// to the shared model's degrees; preserving saves retain the original record.
@@ -1415,12 +1439,32 @@ impl Document {
                 if definition.element() == super::transform_model::ElementType::Image {
                     let source = definition.source();
                     let source_object = objects.get(source.saturating_sub(1));
-                    let source_png = source_object.and_then(|object| match &object.kind {
-                        Kind::Image { png, .. } if !object.deleted && object.page == page => {
-                            Some(png)
-                        }
-                        _ => None,
-                    });
+                    let source_png =
+                        transformed_image_png(&objects, page, source, objects.len() + 1);
+                    let source_crop_cache = source_object
+                        .filter(|object| {
+                            matches!(
+                                object.kind,
+                                Kind::CroppedImage { .. } | Kind::TransformedCroppedImage(..)
+                            )
+                        })
+                        .and_then(|object| object.header_offset)
+                        .and_then(|header| {
+                            let start = rs.iter().position(|record| {
+                                record.kind == 0x07d0 && record.data.start == header
+                            })?;
+                            let group = rs[start..]
+                                .iter()
+                                .take_while(|record| record.kind != 0x07d7)
+                                .collect::<Vec<_>>();
+                            (group.iter().filter(|record| record.kind == 0x090c).count() == 1).then(
+                                || {
+                                    let record =
+                                        group.iter().find(|record| record.kind == 0x090c).unwrap();
+                                    &b[record.data.clone()]
+                                },
+                            )
+                        });
                     let group = rs
                         .iter()
                         .filter(|record| record.start >= group_start && record.start <= rs[i].start)
@@ -1437,12 +1481,12 @@ impl Document {
                                     matches!(
                                         record.kind,
                                         0x07d0 | 0x07d2 | 0x07d3 | 0x090c | 0x07d7
-                                    )
+                                    ) || (record.kind == 0x232e && record.data.is_empty())
                                 })
                         })
                         .map(|record| &b[record.data.clone()]);
-                    match (source_png, cache) {
-                        (Some(png), Some(cache)) if cache.len() == 16 => {
+                    match (source_object.map(|object| &object.kind), source_png, cache) {
+                        (Some(Kind::Image { .. }), Some(png), Some(cache)) if cache.len() == 16 => {
                             let dimensions = ImageFile::png_size(png).ok();
                             let cached = (
                                 u32_at(cache, 0),
@@ -1460,6 +1504,13 @@ impl Document {
                             } else {
                                 Kind::Unsupported(code)
                             }
+                        }
+                        (
+                            Some(Kind::CroppedImage { .. } | Kind::TransformedCroppedImage(..)),
+                            Some(_),
+                            Some(cache),
+                        ) if cache.len() == 16 && source_crop_cache == Some(cache) => {
+                            Kind::TransformedCroppedImage(definition)
                         }
                         _ => Kind::Unsupported(code),
                     }

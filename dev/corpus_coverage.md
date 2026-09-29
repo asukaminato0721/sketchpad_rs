@@ -2033,3 +2033,23 @@ byte-identical with SHA-256
 No standalone test case was added. See
 [analysis](legacy_circular_segment_rotation_analysis.md). Full scan:
 `/tmp/circular_segment119_coverage.log`.
+
+## Transformed cropped pictures
+
+Eleven code-29 numeric rotations retain a live cropped-picture source, and one
+downstream code-16 vector translation retains that transformed crop. The
+dedicated model composes both the pixel transform and clipping polygon while
+requiring the exact observed picture-cache layout. SVG export also follows the
+shared Native picture/filled-region rank and applies crop polygons in screen
+space.
+
+Unsupported falls **789→777**, complete documents/drawings rise
+**1,504/1,545→1,506/1,547**, unsupported documents fall **95→93**, and partial
+views remain **802**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. Native and port renders show the same
+yellow/gray car composition; an untouched Native open/save is byte-identical
+with SHA-256
+`40d7b467ec4cfed98af88d36c4a4c258502c5134802e5214d9ee1124f32ffb73`.
+No standalone test case was added. See
+[analysis](transformed_cropped_pictures_analysis.md). Full scan:
+`/tmp/transformed_crop_final_full_coverage.log`.

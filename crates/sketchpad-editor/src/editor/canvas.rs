@@ -188,16 +188,8 @@ impl Editor {
                         self.selection_order.clear();
                     }
                 }
-                let mapped_numeric_labels = self.doc.visible_mapped_numeric_label_images();
-                for object in self
-                    .doc
-                    .objects
-                    .iter()
-                    .filter(|object| self.doc.is_displayed(object.id))
-                {
-                    if let Some((source, png, transform, polygon)) =
-                        self.doc.cropped_image(object.id)
-                    {
+                for id in crate::render::ordered_picture_ids(&self.doc) {
+                    if let Some((source, png, transform, polygon)) = self.doc.cropped_image(id) {
                         if !self.image_textures.contains_key(&source)
                             && let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -237,7 +229,7 @@ impl Editor {
                             ui.painter().add(egui::Shape::mesh(mesh));
                         }
                     }
-                    if let Some((source, png, transforms)) = self.doc.image_instances(object.id) {
+                    if let Some((source, png, transforms)) = self.doc.image_instances(id) {
                         if !self.image_textures.contains_key(&source)
                             && let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -277,6 +269,14 @@ impl Editor {
                             }
                         }
                     }
+                }
+                let mapped_numeric_labels = self.doc.visible_mapped_numeric_label_images();
+                for object in self
+                    .doc
+                    .objects
+                    .iter()
+                    .filter(|object| self.doc.is_displayed(object.id))
+                {
                     if let Some((text, rect)) = self.doc.text_content(object.id) {
                         let at = vp.screen(Point {
                             x: rect.left.into(),

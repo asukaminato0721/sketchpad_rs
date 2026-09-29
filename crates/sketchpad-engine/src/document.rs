@@ -494,6 +494,9 @@ pub enum Kind {
         source: usize,
         polygon: usize,
     },
+    /// A native picture transform whose source remains clipped to its live
+    /// polygon before the shared affine operation is applied.
+    TransformedCroppedImage(transform_model::TransformDefinition),
     PlainText {
         text: String,
         rect: TextRect,
