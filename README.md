@@ -486,3 +486,11 @@ its unique-carried-input guard. This restores 16 code-89 definitions and 59
 bindings, lowering unsupported objects to 1,881 and raising complete
 documents/drawings to 1,391/1,426. A recovered tiling sketch matches Native's
 iterated geometry, and Native saves all 8,184 source bytes unchanged.
+
+Mapped iterations can now capture an earlier complete mapped root and its
+structural bindings. The bindings remain scope descriptors rather than repeated
+output values, and import requires every inner construction that depends on an
+outer seed. This restores 11 code-89 definitions and 48 bindings, lowering
+unsupported objects to 1,822 and raising complete documents/drawings to
+1,401/1,436. Native and the port agree on the 3/9/18/30/45 pipe progression;
+Native preserves the 5,682-byte control exactly.

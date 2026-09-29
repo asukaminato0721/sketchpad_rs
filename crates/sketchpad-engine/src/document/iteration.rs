@@ -291,8 +291,8 @@ pub(super) fn supported_mapped_point_iteration(
     }) {
         return false;
     }
-    let Some(terminal_structures) =
-        super::nested_iteration_scope::terminal_structures(objects, page, seeds, branches, carried)
+    let Some(captured_structures) =
+        super::nested_iteration_scope::captured_structures(objects, page, seeds, branches, carried)
     else {
         return false;
     };
@@ -330,7 +330,7 @@ pub(super) fn supported_mapped_point_iteration(
         {
             return false;
         }
-        if !mapped_value_construction(&object.kind) && !terminal_structures.contains(&id) {
+        if !mapped_value_construction(&object.kind) && !captured_structures.contains(&id) {
             return false;
         }
         pending.extend(object.construction_dependencies());

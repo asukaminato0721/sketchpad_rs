@@ -1,10 +1,11 @@
-//! Resolve nested terminal adapters and their explicit construction capture.
+//! Resolve nested iteration adapters and their explicit construction capture.
 use super::{Kind, Object};
 use std::collections::BTreeSet;
 
 /// Structural bindings do not choose an environment; their mapped descriptor
-/// does. Return only descriptors reached through a valid single-point terminal.
-pub(super) fn terminal_structures(
+/// does. Return descriptors reached through a valid terminal or explicitly
+/// captured with their complete mapped root.
+pub(super) fn captured_structures(
     objects: &[Object],
     page: usize,
     seeds: &[usize],
@@ -66,6 +67,44 @@ pub(super) fn terminal_structures(
                             return None;
                         }
                     }
+                }
+            }
+        }
+        if let Kind::IterationBinding(source, root) = object.kind
+            && carried.contains(&id)
+        {
+            let Kind::MappedPointIteration {
+                seeds: local_seeds,
+                branches: local_branches,
+                carried: local_carried,
+                ..
+            } = &get(root)?.kind
+            else {
+                return None;
+            };
+            if !(source < root
+                && root < id
+                && carried.contains(&root)
+                && local_carried.contains(&source)
+                && get(source)
+                    .is_some_and(|object| super::iteration::mapped_binding_kind(&object.kind))
+                && super::iteration::supported_mapped_point_iteration(
+                    objects,
+                    local_seeds,
+                    local_branches,
+                    local_carried,
+                ))
+            {
+                return None;
+            }
+            structures.insert(id);
+            structures.insert(root);
+            for &local in local_carried.iter().chain(local_branches.iter().flatten()) {
+                if depends_on_seeds(objects, local, seeds)?
+                    && !seeds.contains(&local)
+                    && !carried.contains(&local)
+                {
+                    return None;
                 }
             }
         }

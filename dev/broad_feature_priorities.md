@@ -1230,3 +1230,16 @@ originals remain byte-exact. Native and port controls match the recovered tiling
 geometry, and Native saves its 8,184 bytes unchanged. Rebuild the frontier from
 1,881; the remaining ready code-89 roots are dominated by broader Locus outputs
 and unsupported carried-object roles.
+
+The next code-89 cohort is complete nested mapped capture. Eleven outer roots
+carry an earlier mapped root and its code-77 structural bindings; their visible
+outer bindings still select ordinary geometry or labels. Requiring an ordered
+same-page inner root, a valid local bound source, explicit root capture and every
+inner node dependent on an outer seed restores 11 code-89 definitions and 48
+code-77 bindings without making bindings generic mapped values. Unsupported
+falls 1,881→1,822 (1,224 drawing plus 598 prototype), complete
+documents/drawings rise 1,391/1,426→1,401/1,436, unsupported documents fall
+208→198, and partial views fall 831→826. All 1,599 originals remain byte-exact.
+Native and port controls agree on the nested 3/9/18/30/45 pipe progression, and
+Native saves the 5,682-byte source unchanged. Rebuild the frontier from 1,822;
+35 directly ready code-89 roots remain, led by broader Locus outputs.

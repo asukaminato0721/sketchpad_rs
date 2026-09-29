@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,391/1,599** documents have all object kinds
-decoded; **1,426** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **1,881** unsupported slots (1,283
-drawing slots and 598 prototype slots), and 208 documents still contain
+Latest snapshot, 2026-09-29: **1,401/1,599** documents have all object kinds
+decoded; **1,436** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **1,822** unsupported slots (1,224
+drawing slots and 598 prototype slots), and 198 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -12,7 +12,7 @@ plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
-general Plot Value, and duplicate-carried mapped-iteration recoveries
+general Plot Value, duplicate-carried, and nested-capture mapped-iteration recoveries
 are summarized at the end; the older detailed
 snapshots remain for comparison.
 
@@ -1890,3 +1890,30 @@ Sketchpad 5 under Xvfb/Wine opened and saved the 8,184-byte
 Its native view and the port SVG show the same repeated blue-square and green-arc
 tiling. No standalone test case was added. See
 [analysis](mapped_iteration_duplicate_carried_analysis.md).
+
+## Nested mapped-iteration capture
+
+Native mappings may carry an earlier mapped root and its code-77 bindings as
+structural scope descriptors. They are not themselves outer output values. The
+decoder now accepts that relationship only when the inner root and binding are
+earlier, valid, on the same page, the bound source belongs to the inner carried
+DAG, the root is explicitly present in the outer packet, and every inner node
+that depends on an outer seed is completely captured. Other carried code-77
+roles remain rejected.
+
+The compiled scan restores **11 code-89 definitions** and **48 code-77
+bindings**. Unsupported falls **1,881→1,822** (1,224 drawing plus 598 prototype),
+complete documents/drawings rise **1,391/1,426→1,401/1,436**, unsupported
+documents fall **208→198**, and partial views fall **831→826**. All **1,599**
+originals remain byte-exact with zero failures. The ready code-89 frontier falls
+from 46 roots/376 reachable slots to 35 roots/317 reachable slots. Full scan:
+`/tmp/sketchpad_code89_nested_capture_coverage.log`; frontier:
+`/tmp/sketchpad_frontier_after_code89_nested_capture.log`.
+
+Sketchpad 5 under Xvfb/Wine displays the `堆砌钢管.gsp` progression as piles
+labelled 3, 9, 18, 30, and 45. The port evaluates the four mapped labels as
+9/18/30/45 and produces 102 distinct mapped circles plus the three source
+circles. Native saves all 5,682 bytes unchanged (SHA-256
+`06f33ecd8f6d40995f7d3cdc872199c9f251e02c2413ff2daeee2d018837f5dc`).
+No standalone test case was added. See
+[analysis](mapped_iteration_nested_capture_analysis.md).

@@ -829,3 +829,18 @@ views fall 834→831. All 1,599 originals remain byte-exact. Native Xvfb/Wine
 opens, displays, and saves the 8,184-byte tiling control exactly; the port SVG
 matches its repeated square-and-arc geometry. No standalone test was added. See
 [analysis](dev/mapped_iteration_duplicate_carried_analysis.md).
+
+## Nested mapped-iteration capture
+
+An outer mapped iteration may carry an earlier complete mapped root and its
+code-77 bindings as structural scope descriptors. Import requires ordered,
+same-page objects, a valid bound source in the inner carried DAG, the explicit
+inner root, and complete capture of every inner node depending on an outer seed.
+The bindings do not become generic mapped values or outer binding kinds. The
+corpus restores 11 code-89 definitions and 48 code-77 bindings: unsupported
+falls 1,881→1,822, complete documents/drawings rise 1,391/1,426→1,401/1,436,
+unsupported documents fall 208→198, and partial views fall 831→826. All 1,599
+originals remain byte-exact. Native and port controls agree on the 3/9/18/30/45
+pipe piles, and Native preserves the 5,682-byte source exactly. No standalone
+test was added. See
+[analysis](dev/mapped_iteration_nested_capture_analysis.md).
