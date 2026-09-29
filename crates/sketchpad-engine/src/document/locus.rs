@@ -81,13 +81,25 @@ pub(super) fn is_mapped_polygon_locus(objects: &[Object], kind: &Kind) -> bool {
         .is_some_and(|object| !object.deleted && is_locus_polygon_kind(&object.kind))
 }
 
-fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
+pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
     let source = objects.get(path.checked_sub(1)?)?;
     match &source.kind {
         Kind::FunctionPlot(..) => Some(1),
         Kind::SampledMapped(definition) => {
-            let path = objects.get(definition.path().checked_sub(1)?)?;
-            Some(u32::from(!path.kind.is_circle()))
+            if definition.path() >= path {
+                return None;
+            }
+            let path_object = objects.get(definition.path().checked_sub(1)?)?;
+            if path_object.kind.is_circle() || path_object.kind.is_polygon() {
+                Some(0)
+            } else if matches!(
+                path_object.kind,
+                Kind::SampledMapped(_) | Kind::Locus(..) | Kind::ParameterLocus(..)
+            ) {
+                locus_curve_flags(objects, definition.path())
+            } else {
+                Some(1)
+            }
         }
         Kind::ParameterLocus(..) => Some(1),
         Kind::Locus(refs, _) => {

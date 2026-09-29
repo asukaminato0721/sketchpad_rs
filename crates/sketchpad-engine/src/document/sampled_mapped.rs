@@ -112,11 +112,19 @@ impl SampledMappedDefinition {
         } else if is_arc_kind(path) {
             Some(1)
         } else {
-            super::kind::locus_straight_source_mode(objects, self.path).map(|mode| match mode {
-                LineMode::Segment => 1,
-                LineMode::Ray => 2,
-                LineMode::Line => 3,
-            })
+            super::kind::locus_straight_source_mode(objects, self.path)
+                .map(|mode| match mode {
+                    LineMode::Segment => 1,
+                    LineMode::Ray => 2,
+                    LineMode::Line => 3,
+                })
+                .or_else(|| {
+                    if super::curve_points::free_supported(objects, self.path, page, before) {
+                        super::locus::locus_curve_flags(objects, self.path)
+                    } else {
+                        None
+                    }
+                })
         };
         let path_ok = closure.is_some_and(|closure| flag == (4 | (closure << 16)))
             && u32::from_le_bytes(self.native_range[32..36].try_into().unwrap()) <= 1;
@@ -150,24 +158,27 @@ pub(super) fn decode_sampled_mapped(
         .supported(objects, page, before)
         .then_some(definition)
 }
-#[derive(Clone)]
 enum PathGeometry {
     Straight(Point, Point),
     Polygon(Vec<Point>),
     Circle(Point, f64),
     LinearArc(Point, Point),
     Arc(Point, f64, f64, f64, bool),
+    Mapped(Box<SampledMappedEvaluator>),
+    Curve(Box<Document>, usize),
     Undefined,
 }
 impl PathGeometry {
-    fn at(&self, value: f64) -> Option<Point> {
+    fn at(&mut self, value: f64) -> Option<Point> {
         if !value.is_finite() {
             return None;
         }
         if let Self::Polygon(vertices) = self {
             return super::geometry::polygon_path_point(vertices, value);
         }
-        let p = match *self {
+        let p = match self {
+            Self::Mapped(evaluator) => return evaluator.at(value),
+            Self::Curve(document, path) => return document.point_on_curve(*path, value),
             Self::Straight(a, b) => Point {
                 x: a.x + (b.x - a.x) * value,
                 y: a.y + (b.y - a.y) * value,
@@ -182,21 +193,21 @@ impl PathGeometry {
                 }
             }
             Self::Circle(c, r) => Point {
-                x: c.x + r * value.cos(),
-                y: c.y - r * value.sin(),
+                x: c.x + *r * value.cos(),
+                y: c.y - *r * value.sin(),
             },
             Self::Arc(c, r, start, sweep, clockwise_y) => {
                 if !(0.0..=1.0).contains(&value) {
                     return None;
                 }
-                let a = start + sweep * value;
+                let a = *start + *sweep * value;
                 Point {
-                    x: c.x + r * a.cos(),
+                    x: c.x + *r * a.cos(),
                     y: c.y
-                        + if clockwise_y {
-                            -r * a.sin()
+                        + if *clockwise_y {
+                            -*r * a.sin()
                         } else {
-                            r * a.sin()
+                            *r * a.sin()
                         },
                 }
             }
@@ -228,6 +239,16 @@ impl SampledMappedEvaluator {
         } else if super::kind::locus_straight_source_mode(&doc.objects, d.path).is_some() {
             doc.point_constraint_line_points(d.path)
                 .map(|(a, b, _)| PathGeometry::Straight(a, b))
+        } else if matches!(kind, Kind::SampledMapped(_)) {
+            doc.sampled_mapped_evaluator(d.path)
+                .map(|evaluator| PathGeometry::Mapped(Box::new(evaluator)))
+        } else if super::curve_points::free_supported(
+            &doc.objects,
+            d.path,
+            doc.objects[d.path - 1].page,
+            d.output,
+        ) {
+            Some(PathGeometry::Curve(Box::new(doc.clone()), d.path))
         } else {
             doc.arc_geometry(d.path)
                 .map(|(c, r, a, s, y)| PathGeometry::Arc(c, r, a, s, y))
@@ -263,6 +284,10 @@ impl SampledMappedEvaluator {
             PathGeometry::Circle(..) => Some(fraction.rem_euclid(1.)),
             PathGeometry::Arc(..) | PathGeometry::LinearArc(..) => {
                 (0.0..=1.0).contains(&fraction).then_some(fraction)
+            }
+            PathGeometry::Mapped(ref evaluator) => evaluator.literal_fraction(fraction),
+            PathGeometry::Curve(ref document, path) => {
+                super::point_curve::PointCurve::new(document, path)?.literal_fraction(fraction)
             }
             PathGeometry::Undefined => None,
         }
