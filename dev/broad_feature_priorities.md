@@ -1044,11 +1044,21 @@ Checkpoint70 implements the point-output Locus collection prerequisite. Final me
 
 Checkpoint71 admits a Native π suffix and live numeric subscript as two typed referenced-text AST operators. The measured gain is171 object slots, with all1,599 originals exact and1,224 workspace executions passing. The two wire signatures had342 overlapping descendant reach before implementation; the actual recovery is smaller because other source/structure guards remain. Code77 still has no independently ready roots. See [implementation](referenced_token71_implementation.md), [Native evidence](referenced_token71_native_analysis.md) and the [post70 frontier](frontier71_analysis.md).
 
-The latest referenced-caption pass closes the bounded markup frontier rather
-than weakening source validation. Observed symbol-font codes, signed numeric
-terms, five geometry decorations, centered vertical groups, and outer frame
-metrics restore 156 slots and reduce direct unsupported code-73 captions
-180→115. Complete documents rise 1,170→1,200 and complete drawings
-1,199→1,230, with all 1,599 originals exact. The sole parser failure is legacy
-invalid UTF-8; the remaining caption frontier is source semantics and should be
-ranked by validated source kind/role rather than admitted from cached strings.
+The latest referenced-caption pass closes the bounded markup and source-semantic
+frontier without weakening source validation. Observed symbol-font codes, signed
+numeric terms, five geometry decorations, centered vertical groups, outer frame
+metrics, and source-specific name/definition/expression/value roles restore 259
+slots and reduce direct unsupported code-73 captions 180→14. Complete documents
+rise 1,170→1,228 and complete drawings 1,199→1,258, with all 1,599 originals
+exact. A strict whole-markup GBK fallback covers the legacy Chinese literals.
+Every remaining caption parses and has a recognized role; progress now depends
+on implementing its unsupported parent object rather than cached caption text.
+
+The following parameter-locus pass reuses the same scoped evaluator for native
+code-97 subtype-43 outputs. Seven segment families, 13 filled-region families,
+and 47 nested point-curve collections all execute through their runtime samplers;
+calculation-driven and unsupported-parent profiles remain guarded. The measured
+67-slot recovery lowers unsupported slots 3,471→3,404, raises complete documents
+1,228→1,239 and complete drawings 1,258→1,269, and preserves all 1,599 originals
+byte-for-byte. The next broad target should again be selected from decoded-parent
+roots rather than raw downstream code-77 or code-48 totals.

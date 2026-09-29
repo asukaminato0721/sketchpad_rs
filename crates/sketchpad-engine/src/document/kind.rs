@@ -1151,6 +1151,66 @@ pub(super) fn parameter_locus_refs_match(objects: &[Object], refs: &[usize]) -> 
     captured == expected[2..]
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ParameterLocusDriverProfile {
+    scale: f64,
+    tag: u32,
+    accepts_parameter_tag_variant: bool,
+}
+
+impl ParameterLocusDriverProfile {
+    pub(super) fn scale(self) -> f64 {
+        self.scale
+    }
+
+    pub(super) fn tag(self) -> u32 {
+        self.tag
+    }
+
+    pub(super) fn matches_tag(self, tag: u32) -> bool {
+        if self.accepts_parameter_tag_variant {
+            self.tag >> 16 == tag >> 16 && tag & 0xffff <= 1
+        } else {
+            self.tag == tag
+        }
+    }
+}
+
+/// Native parameter loci may replay either a parameter or the displayed result
+/// of a parameter calculation. Their ranges use radians for angular values.
+pub(super) fn parameter_locus_driver_profile(
+    objects: &[Object],
+    driver: usize,
+) -> Option<ParameterLocusDriverProfile> {
+    let object = objects.get(driver.checked_sub(1)?)?;
+    if object.deleted {
+        return None;
+    }
+    let (unit, tag, accepts_parameter_tag_variant) = match &object.kind {
+        Kind::Parameter(group) => (group.unit(), group.locus_unit_tag()?, true),
+        Kind::ParameterCalculation(_, group) => (
+            group.unit(),
+            match group.unit() {
+                NumericUnit::Scalar => 0,
+                NumericUnit::Degrees => 0x0001_0000,
+                _ => return None,
+            },
+            false,
+        ),
+        _ => return None,
+    };
+    let scale = match unit {
+        NumericUnit::Scalar => 1.,
+        NumericUnit::Degrees => crate::table_records::CALCULATOR_PI / 180.,
+        _ => return None,
+    };
+    Some(ParameterLocusDriverProfile {
+        scale,
+        tag,
+        accepts_parameter_tag_variant,
+    })
+}
+
 pub(super) fn expected_parameter_locus_refs(
     objects: &[Object],
     driver: usize,
@@ -1192,10 +1252,13 @@ pub(super) fn expected_parameter_locus_refs(
         || moving.deleted
         || traced.deleted
         || moving.page != traced.page
-        || !matches!(&moving.kind, Kind::Parameter(group) if group.locus_unit_tag().is_some())
-        || !is_point_kind(&traced.kind)
+        || parameter_locus_driver_profile(objects, driver).is_none()
+        || parameter_locus_subtype(objects, target).is_none()
     {
         return None;
+    }
+    if is_locus_straight_kind(&traced.kind) {
+        locus_straight_source_mode(objects, target)?;
     }
     let mut found = BTreeSet::new();
     if !dependent_path(
@@ -1211,6 +1274,26 @@ pub(super) fn expected_parameter_locus_refs(
     let mut refs = vec![target, driver];
     refs.extend(found);
     Some(refs)
+}
+
+/// Parameter loci use subtype 42 for a point trace and subtype 43 for a
+/// sampled geometric family. Keep the latter bounded to the same evaluated
+/// target categories as ordinary geometric loci.
+pub(super) fn parameter_locus_subtype(objects: &[Object], target: usize) -> Option<u16> {
+    let object = objects.get(target.checked_sub(1)?)?;
+    if object.deleted {
+        return None;
+    }
+    if is_point_kind(&object.kind) {
+        Some(42)
+    } else if is_locus_straight_kind(&object.kind)
+        || is_locus_polygon_kind(&object.kind)
+        || is_locus_curve_collection(objects, target)
+    {
+        Some(43)
+    } else {
+        None
+    }
 }
 
 fn locus_target_dependency_closure(
@@ -1433,7 +1516,7 @@ pub(super) fn is_locus_straight_kind(kind: &Kind) -> bool {
 }
 
 pub(super) fn is_straight_locus(objects: &[Object], kind: &Kind) -> bool {
-    matches!(kind, Kind::Locus(refs, _) if refs.first().and_then(|id| id.checked_sub(1))
+    matches!(kind, Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) if refs.first().and_then(|id| id.checked_sub(1))
         .and_then(|index| objects.get(index)).is_some_and(|target| is_locus_straight_kind(&target.kind)))
 }
 

@@ -246,6 +246,17 @@ fn authored_curve_defaults_match_native_templates_and_sweeps_keep_their_layout()
         Some(super::super::kind::point_locus_visual_style())
     );
     parameter.verify_roundtrip().unwrap();
+    let endpoint = parameter.add(Kind::Free(Point { x: 420., y: 180. }));
+    let segment = parameter.add(Kind::Segment(9, endpoint));
+    let family = parameter
+        .construct_parameter_locus(1, segment, 0., 1., 8)
+        .unwrap();
+    assert_eq!(parameter.locus_strokes(family, 4).unwrap().len(), 4);
+    let reopened = Document::from_bytes(&parameter.encode().unwrap(), None).unwrap();
+    assert!(matches!(
+        reopened.objects[family - 1].kind,
+        Kind::ParameterLocus(_, 0., 1., 8)
+    ));
     for (bytes, expected) in [
         (
             include_bytes!("../../../../../tests/fixtures/locus_segment_target_original.gsp")

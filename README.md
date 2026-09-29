@@ -278,8 +278,17 @@ Imported loci also retain native sparse or parallel-branch dependency captures a
 
 Imported live captions understand the remaining observed native symbol-font
 tokens, signed numeric terms, overbars/arrows/arcs, vertically centered groups,
-and outer frame metrics. These forms use the existing rich-text tree and live
-resolver; frame metrics remain non-text presentation metadata. This bounded
-expansion lowers unsupported corpus slots from 3,730 to 3,574 while preserving
-all 1,599 source files byte-for-byte. One legacy clock caption still contains
-an invalid UTF-8 literal and stays guarded.
+outer frame metrics, and source-specific names, definitions, expressions, and
+geometry values. Legacy Chinese markup is decoded strictly as GBK when the
+complete markup is not UTF-8. These forms use the existing rich-text tree and
+live resolver; frame metrics remain non-text presentation metadata. This
+bounded expansion lowers unsupported corpus slots from 3,730 to 3,471 while
+preserving all 1,599 source files byte-for-byte. The 14 remaining referenced
+captions are guarded by parents whose object kinds are not yet supported.
+
+Imported parameter-driven loci can now sweep a live segment, filled region, or
+nested point-curve collection instead of being limited to a single point trace.
+The same scoped parameter evaluator drives canvas/SVG geometry, picking, range
+edits, and newly authored subtype-43 records. This restores 67 native objects,
+reduces unsupported corpus slots from 3,471 to 3,404, and raises both complete
+document counts by 11 while retaining all 1,599 byte-exact round trips.

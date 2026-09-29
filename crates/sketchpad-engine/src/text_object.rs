@@ -36,6 +36,18 @@ pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
     })
 }
 
+/// Native Sketchpad files normally store UTF-8 markup, while a small legacy
+/// Chinese cohort stores complete literal runs in Windows code page 936.
+pub(crate) fn decode_markup_literal(bytes: &[u8], legacy_gbk: bool) -> Option<String> {
+    if legacy_gbk {
+        encoding_rs::GBK
+            .decode_without_bom_handling_and_without_replacement(bytes)
+            .map(std::borrow::Cow::into_owned)
+    } else {
+        std::str::from_utf8(bytes).map(str::to_owned).ok()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextRect {
     pub left: i16,
@@ -355,6 +367,7 @@ struct MarkupParser<'a> {
     markup: &'a [u8],
     pos: usize,
     depth: usize,
+    legacy_gbk: bool,
 }
 
 impl MarkupParser<'_> {
@@ -471,16 +484,14 @@ impl MarkupParser<'_> {
             if self.markup.get(end) != Some(&b'>') {
                 return Err("Invalid rich-text run boundary".into());
             }
-            let text = std::str::from_utf8(&self.markup[self.pos..end])
-                .map_err(|error| error.to_string())?;
-            if text.as_bytes().contains(&0) {
+            let bytes = &self.markup[self.pos..end];
+            if bytes.contains(&0) {
                 return Err("Text contains a NUL byte".into());
             }
+            let text = decode_markup_literal(bytes, self.legacy_gbk)
+                .ok_or("Invalid rich-text literal encoding")?;
             self.pos = end + 1;
-            return Ok(vec![vec![RichTextRun {
-                text: text.to_owned(),
-                style,
-            }]]);
+            return Ok(vec![vec![RichTextRun { text, style }]]);
         }
         if rest.starts_with(b"<VL") {
             self.pos += 3;
@@ -598,6 +609,7 @@ pub fn decode_rich_text(
         markup,
         pos: 0,
         depth: 0,
+        legacy_gbk: std::str::from_utf8(markup).is_err(),
     };
     let lines = match parser.sequence(true, RichRunStyle::default()) {
         Ok(lines) if parser.pos == markup.len() => lines,

@@ -144,6 +144,26 @@ fn point_distance_matches_original_and_updates_after_edit() {
     assert!((reopened.point_distance_cm(distance).unwrap() - 2.6458333333333335).abs() < 1e-10);
     reopened.selected.insert(a);
     assert_eq!(reopened.clear_selected().unwrap(), vec![a, distance]);
+
+    let mut caption_doc = Document::new();
+    let a = caption_doc.add(Kind::Free(Point { x: 0., y: 0. }));
+    let b = caption_doc.add(Kind::Free(Point { x: 100., y: 0. }));
+    let distance = caption_doc.add(Kind::PointDistance(a, b));
+    let caption = caption_doc
+        .add_referenced_text(vec![distance], "<?1xB0001<T2xAB>>", (20, 30))
+        .unwrap();
+    assert_eq!(
+        caption_doc.referenced_text_runs(caption).unwrap()[0][0].text,
+        "AB"
+    );
+    let segment = caption_doc.add(Kind::Segment(a, b));
+    let caption = caption_doc
+        .add_referenced_text(vec![segment], "<?x1>", (20, 60))
+        .unwrap();
+    assert_eq!(
+        caption_doc.referenced_text_runs(caption).unwrap()[0][0].text,
+        "AB"
+    );
 }
 #[test]
 fn circumference_matches_original_and_updates_after_resize() {

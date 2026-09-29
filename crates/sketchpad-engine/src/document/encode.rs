@@ -1350,9 +1350,38 @@ impl Document {
                 continue;
             }
             if let Kind::ParameterLocus(ref refs, min, max, samples) = o.kind {
+                let target = *refs.first().ok_or("Parameter locus has no target")?;
+                let subtype = super::kind::parameter_locus_subtype(&self.objects, target)
+                    .ok_or("Unsupported parameter locus target")?;
                 let mut h = [
-                    97, 0, 0, 0, 0, 0, 6, 0, 42, 0, 34, 1, 128, 0, 0, 0, 255, 255, 81, 92, 193,
-                    189, 240, 255, 0, 0, 0, 0,
+                    97,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    6,
+                    0,
+                    subtype as u8,
+                    0,
+                    34,
+                    1,
+                    128,
+                    0,
+                    0,
+                    0,
+                    255,
+                    255,
+                    81,
+                    92,
+                    193,
+                    189,
+                    240,
+                    255,
+                    0,
+                    0,
+                    0,
+                    0,
                 ];
                 if !o.visible {
                     h[2] |= 1;
@@ -1370,13 +1399,9 @@ impl Document {
                     4, 0, 3, 0, 0, 0, 0, 0, 36, 98, 92, 1, 1, 0, 0, 0, 0, 0, 0, 0,
                 ]);
                 let driver = *refs.get(1).ok_or("Parameter locus has no driver")?;
-                let Kind::Parameter(parameter) = &self.objects[driver - 1].kind else {
-                    return Err("Parameter locus has no parameter driver".into());
-                };
-                let tag = parameter
-                    .locus_unit_tag()
-                    .ok_or("Unsupported parameter locus units")?;
-                range[32..36].copy_from_slice(&tag.to_le_bytes());
+                let profile = super::kind::parameter_locus_driver_profile(&self.objects, driver)
+                    .ok_or("Parameter locus has no supported numeric driver")?;
+                range[32..36].copy_from_slice(&profile.tag().to_le_bytes());
                 put_record(&mut added, 0x0902, &range);
                 put_record(&mut added, 0x07d7, &[]);
                 continue;

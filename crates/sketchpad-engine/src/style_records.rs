@@ -431,7 +431,10 @@ pub fn visual_style(payload: &[u8]) -> Option<VisualStyle> {
 /// Class43 identifies several sweep targets. The document's resolved target
 /// supplies the straight-family context; polygon sweeps retain polygon style.
 pub fn locus_straight_visual_style(payload: &[u8]) -> Option<VisualStyle> {
-    if payload.len() != 28 || payload[..2] != [35, 0] || payload[6..10] != [6, 0, 43, 0] {
+    if payload.len() != 28
+        || !matches!(u16::from_le_bytes([payload[0], payload[1]]), 35 | 97)
+        || payload[6..10] != [6, 0, 43, 0]
+    {
         return None;
     }
     Some(VisualStyle::Stroke {

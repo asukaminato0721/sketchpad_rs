@@ -506,6 +506,7 @@ struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
     reference_count: usize,
+    legacy_gbk: bool,
 }
 impl<'a> Parser<'a> {
     fn parse(bytes: &'a [u8], reference_count: usize) -> Result<Vec<ReferencedNode>, String> {
@@ -513,6 +514,7 @@ impl<'a> Parser<'a> {
             bytes,
             at: 0,
             reference_count,
+            legacy_gbk: std::str::from_utf8(bytes).is_err(),
         };
         let nodes = parser.sequence(false, false, 0, false)?;
         if nodes.is_empty() || parser.at != bytes.len() {
@@ -623,9 +625,8 @@ impl<'a> Parser<'a> {
                 if text.contains(&0) {
                     return Err("NUL inside rich-text literal".into());
                 }
-                let text = std::str::from_utf8(text)
-                    .map_err(|_| "Invalid UTF-8 rich-text literal")?
-                    .to_owned();
+                let text = crate::text_object::decode_markup_literal(text, self.legacy_gbk)
+                    .ok_or("Invalid rich-text literal encoding")?;
                 self.at = end;
                 self.expect(b'>')?;
                 nodes.push(ReferencedNode::Literal(text));
@@ -1005,6 +1006,19 @@ mod tests {
                 .map(|row| row.into_iter().map(|run| run.text).collect::<String>())
                 .collect::<Vec<_>>(),
             ["a", "bbb"]
+        );
+
+        let legacy = ReferencedText::from_markup("<H<T2xaa><T2xbb>>", (0, 0), 1).unwrap();
+        let mut bytes = legacy.rich_bytes().to_vec();
+        bytes[24..26].copy_from_slice(&[0xca, 0xb1]);
+        bytes[31..33].copy_from_slice(&[0xb7, 0xd6]);
+        let legacy = ReferencedText::from_rich(&bytes, 1).unwrap();
+        assert_eq!(
+            legacy.evaluate(|_, _| None)[0]
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>(),
+            "时分"
         );
     }
     #[test]

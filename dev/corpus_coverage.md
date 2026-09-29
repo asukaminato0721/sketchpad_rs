@@ -1304,16 +1304,34 @@ The shared role-aware AST/evaluator supports selected live text/function/numeric
 
 ## Native rich-caption symbol and layout expansion
 
-The current full scan reports 1,200/1,599 documents with every object decoded,
-1,230 drawing-complete documents, 888 partial views, and 3,574 unsupported slots
-(2,962 drawing plus 612 embedded-tool prototype slots). All 1,599 files still
+The caption-checkpoint scan reports 1,228/1,599 documents with every object decoded,
+1,258 drawing-complete documents, 880 partial views, and 3,471 unsupported slots
+(2,859 drawing plus 612 embedded-tool prototype slots). All 1,599 files still
 round-trip byte-for-byte with no failures.
 
-This is a measured reduction of 156 unsupported slots from the preceding 3,730
-baseline. Direct code-73 captions fall 180→115; the other restored slots are
+This is a measured reduction of 259 unsupported slots from the preceding 3,730
+baseline. Direct code-73 captions fall 180→14; the other restored slots are
 their already-supported descendants. The parser now covers the observed symbol
 font, numeric signed-term role `D`, `O1`–`O5` geometry decorations, centered
-vertical layout, and trailing five-field frame metadata. A separate exhaustive
-parse audit leaves only one invalid-UTF-8 legacy clock caption. The remaining
-code-73 objects parse but do not satisfy the existing source-role and source-kind
-contracts, so cached display text is not promoted to live semantics.
+vertical layout, trailing five-field frame metadata, and observed source-specific
+names, definitions, expressions, and geometry values. A strict whole-markup GBK
+fallback decodes the legacy Chinese clock literals without misreading valid UTF-8.
+An exhaustive audit shows that all 14 remaining code-73 objects parse and satisfy
+their source-role contracts, but depend on parent object kinds that remain
+unsupported; cached display text is not promoted to live semantics.
+
+## Parameter-driven geometric loci
+
+The current full scan reports 1,239/1,599 documents with every object decoded,
+1,269 drawing-complete documents, 877 partial views, and 3,404 unsupported slots
+(2,792 drawing plus 612 embedded-tool prototype slots). All 1,599 files remain
+byte-exact with no failures.
+
+The shared parameter sampler now evaluates subtype-43 code-97 families whose
+target is a validated straight, filled region, or point-output locus collection.
+All 67 recovered records use decoded parents, an actual Parameter driver, exact
+captured dependencies, and the already-supported native range/unit payload.
+Runtime auditing exercises every recovered family: 7 straight sweeps, 13 filled
+region sweeps, and 47 nested curve collections. Direct unsupported code-97
+objects fall 122→55; calculation-driven and unsupported-parent variants remain
+closed.

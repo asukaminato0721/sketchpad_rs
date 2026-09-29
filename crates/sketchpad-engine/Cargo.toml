@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+encoding_rs.workspace = true
 sketchpad-format = { path = "../sketchpad-format" }
 sketchpad-ir = { path = "../sketchpad-ir" }
 image.workspace = true

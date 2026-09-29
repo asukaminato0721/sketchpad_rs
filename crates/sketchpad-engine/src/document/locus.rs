@@ -1,6 +1,6 @@
 use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_curve_collection,
-    is_locus_polygon_kind, is_locus_straight_kind, is_point_kind,
+    is_locus_polygon_kind, is_locus_straight_kind, is_point_kind, parameter_locus_driver_profile,
 };
 use super::{Document, Kind, LineMode, Object, Point};
 use crate::style_records::VisualStyle;
@@ -18,8 +18,9 @@ pub struct LocusStroke {
 /// Point-output loci are sampled as independent traces in a mapped scope.
 /// A locus used as the driver's own path has a separate nested-domain contract.
 pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
-    let Kind::Locus(refs, _) = kind else {
-        return false;
+    let refs = match kind {
+        Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
+        _ => return false,
     };
     let (Some(&target), Some(&path)) = (refs.first(), refs.get(1)) else {
         return false;
@@ -234,11 +235,10 @@ impl Document {
             return Err("Invalid parameter locus range or sketch".into());
         }
         let refs = expected_parameter_locus_refs(&self.objects, driver, target)
-            .ok_or("Select a parameter and a dependent point")?;
-        let Kind::Parameter(group) = &self.objects[driver - 1].kind else {
-            unreachable!()
-        };
-        let scale = group.native_unit_scale();
+            .ok_or("Select a parameter and a dependent object")?;
+        let scale = parameter_locus_driver_profile(&self.objects, driver)
+            .ok_or("Select a supported numeric driver")?
+            .scale();
         Ok(self.add(Kind::ParameterLocus(
             refs,
             min * scale,
@@ -247,42 +247,35 @@ impl Document {
         )))
     }
 
-    fn parameter_locus_strokes(
+    fn sample_parameter_locus<T>(
         &self,
         refs: &[usize],
         min: f64,
         max: f64,
         samples: u32,
         subdivisions: usize,
-    ) -> Option<Vec<(Point, Point, LineMode)>> {
+        mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
+    ) -> Option<Vec<Option<T>>> {
         let (&target, &driver) = (refs.first()?, refs.get(1)?);
-        let Kind::Parameter(parameter) = &self.objects.get(driver.checked_sub(1)?)?.kind else {
-            return None;
-        };
+        let profile = parameter_locus_driver_profile(&self.objects, driver)?;
         if !min.is_finite() || !max.is_finite() || min >= max || samples < 2 {
             return None;
         }
         let count = subdivisions.clamp(2, 4096).min(samples as usize);
         let mut sample = self.clone();
-        sample.invalidate_evaluation_dependents(driver);
-        let mut parameter = parameter.clone();
-        let mut points = Vec::with_capacity(count);
+        sample.ensure_evaluation_context(self)?;
+        let mut values = Vec::with_capacity(count);
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
-            let value = (min + (max - min) * fraction) / parameter.native_unit_scale();
-            if !parameter.set_evaluation_value(value) {
-                points.push(None);
+            let value = (min + (max - min) * fraction) / profile.scale();
+            sample.invalidate_evaluation_dependents(driver);
+            if sample.set_evaluation_number(driver, value).is_none() {
+                values.push(None);
                 continue;
             }
-            sample.objects[driver - 1].kind = Kind::Parameter(parameter.clone());
-            points.push(sample.position(target));
+            values.push(evaluate(&sample, target));
         }
-        Some(
-            points
-                .windows(2)
-                .filter_map(|pair| Some((pair[0]?, pair[1]?, LineMode::Segment)))
-                .collect(),
-        )
+        Some(values)
     }
 
     // Keep sample slots even when the target is undefined. Neighboring valid
@@ -317,6 +310,21 @@ impl Document {
             values.push(evaluate(&sample, target));
         }
         Some(values)
+    }
+
+    fn sample_any_locus<T>(
+        &self,
+        id: usize,
+        subdivisions: usize,
+        evaluate: impl FnMut(&Document, usize) -> Option<T>,
+    ) -> Option<Vec<Option<T>>> {
+        match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::ParameterLocus(refs, min, max, samples) => {
+                self.sample_parameter_locus(refs, *min, *max, *samples, subdivisions, evaluate)
+            }
+            Kind::Locus(..) => self.sample_locus(id, subdivisions, evaluate),
+            _ => None,
+        }
     }
 
     /// Replay a geometric driver without modifying the original or losing polygon edge phase.
@@ -466,8 +474,9 @@ impl Document {
         subdivisions: usize,
         style: VisualStyle,
     ) -> Option<Vec<LocusStroke>> {
-        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
+        let refs = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
+            _ => return None,
         };
         let target = *refs.first()?;
         super::kind::locus_straight_source_mode(&self.objects, target)?;
@@ -479,7 +488,7 @@ impl Document {
             Kind::Colorized(_)
         );
         Some(
-            self.sample_locus(id, subdivisions, |sample, target| {
+            self.sample_any_locus(id, subdivisions, |sample, target| {
                 let (start, end, mode) = sample.line_points(target)?;
                 let color = if sampled_color {
                     sample.colorized_color(target)?
@@ -504,18 +513,14 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<(Point, Point, LineMode)>> {
-        if let Kind::ParameterLocus(ref refs, min, max, samples) =
-            self.objects.get(id.checked_sub(1)?)?.kind
-        {
-            return self.parameter_locus_strokes(refs, min, max, samples, subdivisions);
-        }
-        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
+        let refs = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
+            _ => return None,
         };
         let target_kind = &self.objects.get(refs.first()?.checked_sub(1)?)?.kind;
         if is_locus_curve_collection(&self.objects, refs[0]) {
             return Some(
-                self.sample_locus(id, subdivisions, |sample, target| {
+                self.sample_any_locus(id, subdivisions, |sample, target| {
                     match &sample.objects.get(target.checked_sub(1)?)?.kind {
                         Kind::SampledMapped(_) => {
                             sample.sampled_mapped_strokes(target, subdivisions)
@@ -534,7 +539,7 @@ impl Document {
         }
         if is_locus_straight_kind(target_kind) {
             return Some(
-                self.sample_locus(id, subdivisions, |sample, target| {
+                self.sample_any_locus(id, subdivisions, |sample, target| {
                     sample.line_points(target)
                 })?
                 .into_iter()
@@ -543,7 +548,7 @@ impl Document {
             );
         }
         if target_kind.is_circle() {
-            let circles = self.sample_locus(id, subdivisions, |sample, target| {
+            let circles = self.sample_any_locus(id, subdivisions, |sample, target| {
                 sample.circle_points(target)
             })?;
             let units: Vec<_> = (0..=64)
@@ -566,7 +571,7 @@ impl Document {
         }
         if is_arc_kind(target_kind) || is_locus_polygon_kind(target_kind) {
             let polygons = is_locus_polygon_kind(target_kind);
-            let paths = self.sample_locus(id, subdivisions, |sample, target| {
+            let paths = self.sample_any_locus(id, subdivisions, |sample, target| {
                 if polygons {
                     sample.filled_region_points(target)
                 } else {
@@ -588,7 +593,7 @@ impl Document {
             return None;
         }
         let points =
-            self.sample_locus(id, subdivisions, |sample, target| sample.position(target))?;
+            self.sample_any_locus(id, subdivisions, |sample, target| sample.position(target))?;
         Some(
             points
                 .windows(2)
@@ -602,13 +607,14 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<Option<Vec<Point>>>> {
-        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {
-            return None;
+        let refs = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
+            _ => return None,
         };
         if !is_locus_polygon_kind(&self.objects.get(refs.first()?.checked_sub(1)?)?.kind) {
             return None;
         }
-        self.sample_locus(id, subdivisions, |sample, target| {
+        self.sample_any_locus(id, subdivisions, |sample, target| {
             sample.filled_region_points(target)
         })
     }

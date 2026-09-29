@@ -626,9 +626,25 @@ symbol-font codes decode to Unicode, including correction of code `103` to the
 native minus sign. Reference role `D` is accepted only for numeric sources and
 renders as a signed additive term from the live value.
 
-Across the complete corpus this bounded work restores 156 slots, including 65
+Across the complete corpus this bounded work restores 259 slots, including 166
 direct code-73 captions and their existing descendants. Unsupported slots fall
-3,730→3,574; all-kind-complete documents rise 1,170→1,200 and drawing-complete
-documents 1,199→1,230. All 1,599 originals remain byte-exact. The only remaining
-rich-text parse failure is one legacy clock caption with an invalid UTF-8
-literal; other unsupported captions remain behind source-semantic guards.
+3,730→3,471; all-kind-complete documents rise 1,170→1,228 and drawing-complete
+documents 1,199→1,258. All 1,599 originals remain byte-exact. Source-aware
+resolution covers observed geometry values, names, definitions, and expressions.
+Legacy Chinese markup uses a strict whole-markup GBK fallback. The 14 remaining
+code-73 captions parse successfully but depend on unsupported parent objects.
+
+## Parameter-driven geometric locus families
+
+Code-97 parameter loci now share the geometric sampler used by ordinary loci
+when their live target is a supported straight, filled region, or nested
+point-curve collection. Admission still requires an actual Parameter driver,
+the exact dependency capture, matching unit/range metadata, and subtype 43;
+calculation-driven and unsupported-parent profiles remain guarded. The writer
+emits subtype 42 for point traces and subtype 43 for geometric families, and
+save/reopen preserves editable range and stroke styles.
+
+The complete corpus restores 67 direct code-97 objects. Unsupported slots fall
+3,471→3,404; all-kind-complete documents rise 1,228→1,239,
+drawing-complete documents rise 1,258→1,269, and partial views fall 880→877.
+All 1,599 originals remain byte-exact.

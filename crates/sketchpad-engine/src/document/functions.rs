@@ -341,10 +341,8 @@ impl Document {
             | Kind::ParametricPlot(_, _, _, min, max, samples, _) => Some((*min, *max, *samples)),
             Kind::ParameterLocus(refs, min, max, samples) => {
                 let driver = *refs.get(1)?;
-                let Kind::Parameter(group) = &self.objects.get(driver.checked_sub(1)?)?.kind else {
-                    return None;
-                };
-                let scale = group.native_unit_scale();
+                let scale =
+                    super::kind::parameter_locus_driver_profile(&self.objects, driver)?.scale();
                 Some((*min / scale, *max / scale, *samples))
             }
             _ => None,
@@ -383,10 +381,9 @@ impl Document {
                 Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
             }
             Kind::ParameterLocus(ref refs, _, _, _) => {
-                let Kind::Parameter(group) = &self.objects[refs[1] - 1].kind else {
-                    return Err("Parameter locus has no parameter driver".into());
-                };
-                let scale = group.native_unit_scale();
+                let scale = super::kind::parameter_locus_driver_profile(&self.objects, refs[1])
+                    .ok_or("Parameter locus has no supported numeric driver")?
+                    .scale();
                 Kind::ParameterLocus(refs.clone(), min * scale, max * scale, samples)
             }
             _ => return Err("Select one function, parametric plot, or parameter locus".into()),

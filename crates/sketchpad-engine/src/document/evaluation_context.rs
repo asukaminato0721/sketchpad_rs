@@ -25,6 +25,15 @@ pub(super) struct EvaluationContext {
 }
 
 impl Document {
+    /// Establish a seedable evaluation context without replacing an existing
+    /// scoped context supplied by a caller.
+    pub(super) fn ensure_evaluation_context(&mut self, original: &Document) -> Option<()> {
+        if self.evaluation_context.is_none() {
+            self.freeze_evaluation_inputs(original, &[])?;
+        }
+        Some(())
+    }
+
     /// Freeze precisely the external construction nodes supplied by the caller.
     /// A cached undefined value is different from a construction without a cache.
     pub(super) fn freeze_evaluation_inputs(

@@ -1,7 +1,6 @@
 //! Evaluated point traces shared by curve constructions.
 use super::kind::is_point_kind;
 use super::{Document, Kind, Point};
-use crate::table_records::ParameterGroup;
 
 enum Source {
     Mapped(super::sampled_mapped::SampledMappedEvaluator),
@@ -11,13 +10,13 @@ enum Source {
         min: f64,
         max: f64,
     },
-    Parameter {
+    Numeric {
         sample: Box<Document>,
-        parameter: ParameterGroup,
         driver: usize,
         target: usize,
         min: f64,
         max: f64,
+        scale: f64,
     },
     Geometric {
         sample: Box<Document>,
@@ -35,7 +34,7 @@ pub(super) struct PointCurve<'a> {
 }
 impl<'a> PointCurve<'a> {
     pub(super) fn includes_maximum(&self) -> bool {
-        matches!(self.source, Source::Parameter { .. })
+        matches!(self.source, Source::Numeric { .. })
     }
 
     pub(super) fn new(doc: &'a Document, id: usize) -> Option<Self> {
@@ -65,10 +64,7 @@ impl<'a> PointCurve<'a> {
             }
             Kind::ParameterLocus(refs, min, max, samples) => {
                 let (&target, &driver) = (refs.first()?, refs.get(1)?);
-                let Kind::Parameter(parameter) = &doc.objects.get(driver.checked_sub(1)?)?.kind
-                else {
-                    return None;
-                };
+                let profile = super::kind::parameter_locus_driver_profile(&doc.objects, driver)?;
                 if !min.is_finite()
                     || !max.is_finite()
                     || min >= max
@@ -78,15 +74,16 @@ impl<'a> PointCurve<'a> {
                     return None;
                 }
                 let mut sample = Box::new(doc.clone());
+                sample.ensure_evaluation_context(doc)?;
                 sample.invalidate_evaluation_dependents(driver);
                 (
-                    Source::Parameter {
+                    Source::Numeric {
                         sample,
-                        parameter: parameter.clone(),
                         driver,
                         target,
                         min: *min,
                         max: *max,
+                        scale: profile.scale(),
                     },
                     samples.saturating_sub(1) as usize,
                 )
@@ -158,7 +155,7 @@ impl<'a> PointCurve<'a> {
                 path,
                 ..
             } => Self::new(self.original, *path)?.literal_fraction(value),
-            Source::Parameter { .. } | Source::Function { .. } => Some(value),
+            Source::Numeric { .. } | Source::Function { .. } => Some(value),
             Source::Mapped(evaluator) => evaluator.literal_fraction(value),
             _ => None,
         }
@@ -168,7 +165,7 @@ impl<'a> PointCurve<'a> {
             return None;
         }
         let fraction = match &self.source {
-            Source::Parameter { min, max, .. } => (value - min) / (max - min),
+            Source::Numeric { min, max, .. } => (value - min) / (max - min),
             Source::Geometric { .. } => return self.normalized_numeric_fraction(value),
             Source::Function { .. } => return None,
             Source::Mapped(_) => return self.normalized_numeric_fraction(value),
@@ -209,7 +206,7 @@ impl<'a> PointCurve<'a> {
                     _ => Self::new(self.original, *path)?.normalized_numeric_fraction(value),
                 }
             }
-            Source::Geometric { .. } | Source::Parameter { .. } => {
+            Source::Geometric { .. } | Source::Numeric { .. } => {
                 (0.0..=1.0).contains(&value).then_some(value)
             }
             Source::Function { .. } => None,
@@ -236,19 +233,17 @@ impl<'a> PointCurve<'a> {
                     y: value.y,
                 }
             }
-            Source::Parameter {
+            Source::Numeric {
                 sample,
-                parameter,
                 driver,
                 target,
                 min,
                 max,
+                scale,
             } => {
-                let value = (*min + (*max - *min) * fraction) / parameter.native_unit_scale();
-                if !parameter.set_evaluation_value(value) {
-                    return None;
-                }
-                sample.objects[*driver - 1].kind = Kind::Parameter(parameter.clone());
+                let value = (*min + (*max - *min) * fraction) / *scale;
+                sample.invalidate_evaluation_dependents(*driver);
+                sample.set_evaluation_number(*driver, value)?;
                 sample.position(*target)?
             }
             Source::Geometric {

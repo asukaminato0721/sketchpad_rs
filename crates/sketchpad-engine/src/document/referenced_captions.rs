@@ -8,8 +8,17 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
         return object.kind.numeric_unit().is_some();
     }
     if role != ReferenceRole::Value {
+        if role == ReferenceRole::Name
+            && object
+                .label
+                .as_ref()
+                .is_some_and(|label| label.name_utf8().is_ok_and(|name| !name.is_empty()))
+        {
+            return true;
+        }
         return match &object.kind {
             Kind::Parameter(group) => role == ReferenceRole::Expression || !group.name().is_empty(),
+            Kind::Calculation(_) => role == ReferenceRole::Expression,
             Kind::SegmentLength(segment) if role != ReferenceRole::Name => objects
                 .get(segment.saturating_sub(1))
                 .is_some_and(|source| {
@@ -18,6 +27,23 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                         && matches!(source.kind, Kind::Segment(..))
                 }),
             Kind::ParameterCalculation(..) | Kind::PointRatio(..) | Kind::SegmentLength(..) => true,
+            Kind::AngleMarker(..)
+            | Kind::AngleMeasurement(..)
+            | Kind::ArcAngle(..)
+            | Kind::CoordinateMeasurement {
+                kind:
+                    crate::coordinate_measure_records::CoordinateMeasureKind::Abscissa
+                    | crate::coordinate_measure_records::CoordinateMeasureKind::Ordinate
+                    | crate::coordinate_measure_records::CoordinateMeasureKind::CoordinateDistance,
+                ..
+            }
+            | Kind::NumericAlias { .. }
+            | Kind::PointDistance(..)
+            | Kind::PolygonArea(..)
+            | Kind::ValueEquation {
+                kind: crate::value_equation_records::ValueEquationKind::PointValue,
+                ..
+            } => role == ReferenceRole::Definition,
             Kind::FunctionDefinition(..)
             | Kind::ReferencedFunction(..)
             | Kind::DerivativeFunction(..)
@@ -37,6 +63,21 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                 | Kind::FunctionDefinition(..)
                 | Kind::ReferencedFunction(..)
                 | Kind::DerivativeFunction(..)
+                | Kind::CenterArc(..)
+                | Kind::Circle(..)
+                | Kind::Colorized(..)
+                | Kind::FunctionPlot(..)
+                | Kind::GraphAxis(..)
+                | Kind::Line(..)
+                | Kind::Locus(..)
+                | Kind::PointReferencedText { .. }
+                | Kind::Polygon(..)
+                | Kind::Ray(..)
+                | Kind::Segment(..)
+                | Kind::CoordinateMeasurement {
+                    kind: crate::coordinate_measure_records::CoordinateMeasureKind::Coordinates,
+                    ..
+                }
         )
 }
 
@@ -233,8 +274,12 @@ impl Document {
                 Kind::Parameter(_) if role == ReferenceRole::Expression => {
                     self.numeric_value_text(source)
                 }
+                Kind::Calculation(group) if role == ReferenceRole::Expression => {
+                    Some(group.expression())
+                }
                 Kind::Parameter(group) => Some(group.name().to_owned()),
                 _ if role == ReferenceRole::Name => self.measurement_reference_name(source),
+                _ if role == ReferenceRole::Definition => self.referenced_definition_text(source),
                 Kind::ParameterCalculation(..) => self.parameter_calculation_expression(source),
                 Kind::PointRatio(a, b, c) => Some(format!(
                     "{}/{}",
@@ -259,11 +304,20 @@ impl Document {
         if object.kind.numeric_unit().is_some() {
             return self.numeric_value_text(source);
         }
+        if matches!(object.kind, Kind::CoordinateMeasurement { .. }) {
+            return self.referenced_coordinate_value(source);
+        }
+        if matches!(object.kind, Kind::PointReferencedText { .. }) {
+            return self.point_numeric_label(source).map(|(_, text)| text);
+        }
         if let Some(label) = &object.label {
             return label.name_utf8().ok().map(str::to_owned);
         }
         if super::kind::is_point_kind(&object.kind) {
             return self.coordinate_point_name(source);
+        }
+        if let Some(name) = self.reference_geometry_name(source) {
+            return Some(name);
         }
         match &object.kind {
             Kind::HideShowButton { label, .. }
@@ -282,6 +336,149 @@ impl Document {
             "{}{}",
             self.coordinate_point_name(a)?,
             self.coordinate_point_name(b)?
+        ))
+    }
+
+    fn referenced_definition_text(&self, source: usize) -> Option<String> {
+        let object = self.objects.get(source.checked_sub(1)?)?;
+        if let Some(name) = object
+            .label
+            .as_ref()
+            .and_then(|label| label.name_utf8().ok())
+            .filter(|name| !name.is_empty())
+        {
+            return Some(name.to_owned());
+        }
+        match object.kind {
+            Kind::AngleMarker(first, vertex, last, _)
+            | Kind::AngleMeasurement(first, vertex, last) => Some(format!(
+                "∠{}{}{}",
+                self.coordinate_point_name(first)?,
+                self.coordinate_point_name(vertex)?,
+                self.coordinate_point_name(last)?
+            )),
+            Kind::ArcAngle(arc) => self.reference_geometry_name(arc),
+            Kind::CoordinateMeasurement {
+                kind: crate::coordinate_measure_records::CoordinateMeasureKind::Abscissa,
+                first,
+                ..
+            } => Some(format!("x{}", self.coordinate_point_name(first)?)),
+            Kind::CoordinateMeasurement {
+                kind: crate::coordinate_measure_records::CoordinateMeasureKind::Ordinate,
+                first,
+                ..
+            } => Some(format!("y{}", self.coordinate_point_name(first)?)),
+            Kind::CoordinateMeasurement {
+                kind: crate::coordinate_measure_records::CoordinateMeasureKind::CoordinateDistance,
+                first,
+                second: Some(second),
+                ..
+            }
+            | Kind::PointDistance(first, second) => self.reference_segment_name(first, second),
+            Kind::NumericAlias { source, .. } => self.referenced_definition_text(source),
+            Kind::PolygonArea(polygon) => Some(format!(
+                "Area of {}",
+                self.reference_geometry_name(polygon)?
+            )),
+            Kind::ValueEquation {
+                kind: crate::value_equation_records::ValueEquationKind::PointValue,
+                first,
+                second,
+            } => Some(format!(
+                "Value of {} on {}",
+                self.coordinate_point_name(first)?,
+                self.reference_geometry_name(second)?
+            )),
+            _ => self.calculation_source_name(source),
+        }
+    }
+
+    fn reference_geometry_name(&self, source: usize) -> Option<String> {
+        let object = self.objects.get(source.checked_sub(1)?)?;
+        if let Some(name) = object
+            .label
+            .as_ref()
+            .and_then(|label| label.name_utf8().ok())
+            .filter(|name| !name.is_empty())
+        {
+            return Some(name.to_owned());
+        }
+        if object.kind.is_point() {
+            return self.coordinate_point_name(source);
+        }
+        match &object.kind {
+            Kind::Segment(first, second) | Kind::Ray(first, second) | Kind::Line(first, second) => {
+                self.reference_segment_name(*first, *second)
+            }
+            Kind::Polygon(vertices) => {
+                let name = vertices
+                    .iter()
+                    .map(|point| self.coordinate_point_name(*point))
+                    .collect::<Option<String>>()?;
+                Some(if vertices.len() == 3 {
+                    format!("△{name}")
+                } else {
+                    name
+                })
+            }
+            Kind::Circle(center, edge) => Some(format!(
+                "⊙{}{}",
+                self.coordinate_point_name(*center)?,
+                self.coordinate_point_name(*edge)?
+            )),
+            Kind::CircleBySegment(center, segment) => Some(format!(
+                "⊙{}{}",
+                self.coordinate_point_name(*center)?,
+                self.reference_geometry_name(*segment)?
+            )),
+            Kind::Colorized(definition) => self.reference_geometry_name(definition.source()),
+            Kind::FunctionPlot(function, ..) => {
+                Some(format!("y = {}(x)", self.function_symbol(*function)?))
+            }
+            Kind::GraphAxis(_, _, form) => match form {
+                0 => Some("y".into()),
+                1 | 0x1_0001 => Some("x".into()),
+                _ => None,
+            },
+            Kind::Locus(..) => {
+                let page = object.page;
+                let ordinal = self
+                    .objects
+                    .iter()
+                    .take(source)
+                    .filter(|object| {
+                        !object.deleted
+                            && object.page == page
+                            && matches!(object.kind, Kind::Locus(..))
+                    })
+                    .count();
+                Some(format!("L{}", subscript_number(ordinal)))
+            }
+            Kind::ThreePointArc(first, middle, last) => Some(format!(
+                "{}{}{}",
+                self.coordinate_point_name(*first)?,
+                self.coordinate_point_name(*middle)?,
+                self.coordinate_point_name(*last)?
+            )),
+            Kind::ArcOnCircle(_, first, last) | Kind::CenterArc(_, first, last) => {
+                self.reference_segment_name(*first, *last)
+            }
+            _ => None,
+        }
+    }
+
+    fn referenced_coordinate_value(&self, source: usize) -> Option<String> {
+        let object = self.objects.get(source.checked_sub(1)?)?;
+        let crate::coordinate_measure_records::CoordinateMeasureValue::Pair(point) =
+            self.coordinate_measure_value(source)?
+        else {
+            return None;
+        };
+        let precision = usize::from(object.measurement_precision?);
+        Some(format!(
+            "({}, {})",
+            crate::table_records::format_numeric_value(point.x, precision),
+            crate::table_records::format_numeric_value(point.y, precision)
         ))
     }
     pub(super) fn referenced_caption_content(&self, id: usize) -> Option<(String, TextRect)> {
@@ -341,6 +538,26 @@ impl Document {
         }
         Ok(self.add(Kind::ReferencedText { parents, text }))
     }
+}
+
+fn subscript_number(value: usize) -> String {
+    value
+        .to_string()
+        .chars()
+        .map(|digit| match digit {
+            '0' => '₀',
+            '1' => '₁',
+            '2' => '₂',
+            '3' => '₃',
+            '4' => '₄',
+            '5' => '₅',
+            '6' => '₆',
+            '7' => '₇',
+            '8' => '₈',
+            '9' => '₉',
+            other => other,
+        })
+        .collect()
 }
 
 pub(super) fn encode_group(object: &Object, parents: &[u32], text: &ReferencedText) -> Vec<u8> {

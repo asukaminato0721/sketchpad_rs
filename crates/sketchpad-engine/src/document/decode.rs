@@ -1442,7 +1442,10 @@ impl Document {
                             .unwrap_or(Kind::Unsupported(code))
                     }
                     (97, None, _)
-                        if h[6..10] == [6, 0, 42, 0]
+                        if refs.first().is_some_and(|target| {
+                            super::kind::parameter_locus_subtype(&objects, *target)
+                                .is_some_and(|subtype| h[6..10] == [6, 0, subtype as u8, 0])
+                        })
                             && parameter_locus_refs_match(&objects, &refs)
                             && locus_range.as_ref().is_some_and(|data| data.len() == 40
                                 && f64_at(data, 0).is_finite() && f64_at(data, 8).is_finite()
@@ -1450,12 +1453,9 @@ impl Document {
                                 && u32_at(data, 16) >= 2
                                 && u32_at(data, 20) == 0x00030004
                                 && f64_at(data, 24).is_finite()
-                                && refs.get(1).and_then(|id| objects.get(id.saturating_sub(1))).is_some_and(|driver| match &driver.kind {
-                                    Kind::Parameter(group) => group.locus_unit_tag().is_some_and(|tag|
-                                        tag >> 16 == u32_at(data, 32) >> 16
-                                            && u32_at(data, 32) & 0xffff <= 1),
-                                    _ => false,
-                                })
+                                && refs.get(1).and_then(|driver| {
+                                    super::kind::parameter_locus_driver_profile(&objects, *driver)
+                                }).is_some_and(|profile| profile.matches_tag(u32_at(data, 32)))
                                 && u32_at(data, 36) == 0) => {
                         let data = locus_range.as_ref().unwrap();
                         Kind::ParameterLocus(refs.clone(), f64_at(data, 0), f64_at(data, 8), u32_at(data, 16))
