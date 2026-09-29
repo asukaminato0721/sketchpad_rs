@@ -136,16 +136,16 @@ pub(super) fn decode_native_transform(
     };
     use NativeTransformFlavor as F;
     let (transform, flavor) = match (code, references) {
-        (26, [_, angle, distance])
+        (26, [_, angle, marked_distance])
             if context.custom_polar_translation
                 && constraint.is_none()
                 && numeric(*angle, NumericUnit::Degrees)
-                && numeric(*distance, NumericUnit::Length) =>
+                && distance(*marked_distance) =>
         {
             (
                 Transform::Translate(DisplacementExpr::Polar {
                     angle: value(*angle, NumericUnit::Degrees),
-                    distance: value(*distance, NumericUnit::Length),
+                    distance: value(*marked_distance, NumericUnit::Length),
                 }),
                 F::DualMarkedPolar,
             )
