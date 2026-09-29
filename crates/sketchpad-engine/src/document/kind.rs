@@ -1214,6 +1214,8 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
         )
 }
 
+/// Native parameter loci fix the target and driver roles, but their capture list
+/// may omit inactive branches or retain other nodes from the target closure.
 pub(super) fn parameter_locus_refs_match(objects: &[Object], refs: &[usize]) -> bool {
     let Some((&target, &driver)) = refs.first().zip(refs.get(1)) else {
         return false;
@@ -1221,16 +1223,26 @@ pub(super) fn parameter_locus_refs_match(objects: &[Object], refs: &[usize]) -> 
     let Some(expected) = expected_parameter_locus_refs(objects, driver, target) else {
         return false;
     };
-    let mut captured = refs[2..].to_vec();
-    captured.sort_unstable();
-    captured == expected[2..]
+    if refs.len() < 3 || refs.get(..2) != expected.get(..2) || refs.last() != Some(&target) {
+        return false;
+    }
+    let mut allowed: BTreeSet<_> = expected[2..].iter().copied().collect();
+    if let Some(page) = objects.get(target - 1).map(|object| object.page) {
+        let mut closure = BTreeSet::new();
+        if locus_target_dependency_closure(objects, target, page, &mut closure).is_some() {
+            allowed.extend(closure);
+        }
+    }
+    allowed.remove(&driver);
+    let captured: BTreeSet<_> = refs[2..].iter().copied().collect();
+    captured.len() == refs.len() - 2 && captured.is_subset(&allowed)
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ParameterLocusDriverProfile {
     scale: f64,
     tag: u32,
-    accepts_parameter_tag_variant: bool,
+    accepts_tag_variant: bool,
 }
 
 impl ParameterLocusDriverProfile {
@@ -1243,7 +1255,7 @@ impl ParameterLocusDriverProfile {
     }
 
     pub(super) fn matches_tag(self, tag: u32) -> bool {
-        if self.accepts_parameter_tag_variant {
+        if self.accepts_tag_variant {
             self.tag >> 16 == tag >> 16 && tag & 0xffff <= 1
         } else {
             self.tag == tag
@@ -1261,7 +1273,7 @@ pub(super) fn parameter_locus_driver_profile(
     if object.deleted {
         return None;
     }
-    let (unit, tag, accepts_parameter_tag_variant) = match &object.kind {
+    let (unit, tag, accepts_tag_variant) = match &object.kind {
         Kind::Parameter(group) => (group.unit(), group.locus_unit_tag()?, true),
         Kind::ParameterCalculation(_, group) => (
             group.unit(),
@@ -1270,7 +1282,7 @@ pub(super) fn parameter_locus_driver_profile(
                 NumericUnit::Degrees => 0x0001_0000,
                 _ => return None,
             },
-            false,
+            true,
         ),
         _ => return None,
     };
@@ -1282,7 +1294,7 @@ pub(super) fn parameter_locus_driver_profile(
     Some(ParameterLocusDriverProfile {
         scale,
         tag,
-        accepts_parameter_tag_variant,
+        accepts_tag_variant,
     })
 }
 

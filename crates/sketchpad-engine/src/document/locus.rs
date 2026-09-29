@@ -697,14 +697,15 @@ impl Document {
         };
         let target_kind = &self.objects.get(refs.first()?.checked_sub(1)?)?.kind;
         if is_locus_curve_collection(&self.objects, refs[0]) {
+            let inner_subdivisions = subdivisions.isqrt().max(2);
             return Some(
                 self.sample_any_locus(id, subdivisions, |sample, target| {
                     match &sample.objects.get(target.checked_sub(1)?)?.kind {
                         Kind::SampledMapped(_) => {
-                            sample.sampled_mapped_strokes(target, subdivisions)
+                            sample.sampled_mapped_strokes(target, inner_subdivisions)
                         }
                         Kind::Locus(..) | Kind::ParameterLocus(..) => {
-                            sample.locus_strokes(target, subdivisions)
+                            sample.locus_strokes(target, inner_subdivisions)
                         }
                         _ => None,
                     }
