@@ -59,7 +59,10 @@ pub(super) fn is_mapped_stroke_locus(objects: &[Object], kind: &Kind) -> bool {
         .checked_sub(1)
         .and_then(|index| objects.get(index))
         .is_some_and(|object| {
-            !object.deleted && (is_locus_straight_kind(&object.kind) || object.kind.is_circle())
+            !object.deleted
+                && (is_locus_straight_kind(&object.kind)
+                    || object.kind.is_circle()
+                    || is_arc_kind(&object.kind))
         })
 }
 
