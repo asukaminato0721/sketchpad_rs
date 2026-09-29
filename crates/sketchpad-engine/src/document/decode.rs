@@ -2249,7 +2249,14 @@ impl Document {
                                                     .eq(expected.iter().copied())
                                             };
                                             exact_layout(&[0x07d0, 0x07d2, 0x07d3, 0x07d7])
+                                                || exact_layout(&[
+                                                    0x07d0, 0x07d2, 0x07d3, 0x232e, 0x07d7,
+                                                ])
                                                 || exact_layout(&[0x07d0, 0x07d2, 0x07d3, 0x07d5, 0x07d8, 0x07d7])
+                                                || exact_layout(&[
+                                                    0x07d0, 0x07d2, 0x07d3, 0x07d5, 0x07d8,
+                                                    0x232e, 0x07d7,
+                                                ])
                                         })
                                     && f64_at(payload, 4).is_finite()
                                     && (0.0..=1.0).contains(&f64_at(payload, 4))
