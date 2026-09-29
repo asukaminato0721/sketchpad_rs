@@ -238,6 +238,7 @@ pub enum NativeTransformFlavor {
     FixedVertical,
     MarkedCartesian,
     FixedPolar,
+    MarkedAnglePolar,
     MarkedPolar,
     DualMarkedPolar,
     FixedRotation,
@@ -257,6 +258,7 @@ impl NativeTransformFlavor {
             Self::FixedVertical => 19,
             Self::MarkedCartesian => 20,
             Self::FixedPolar => 21,
+            Self::MarkedAnglePolar => 23,
             Self::MarkedPolar => 24,
             Self::DualMarkedPolar => 26,
             Self::FixedRotation => 27,
@@ -364,6 +366,13 @@ impl TransformDefinition {
                 }),
                 F::FixedPolar,
             ) => literal(a, NumericUnit::Degrees) && literal(d, NumericUnit::Length),
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: a,
+                    distance: d,
+                }),
+                F::MarkedAnglePolar,
+            ) => object(a, NumericUnit::Degrees) && literal(d, NumericUnit::Length),
             (
                 Transform::Translate(DisplacementExpr::Polar {
                     angle: a,
@@ -540,6 +549,18 @@ impl TransformDefinition {
                 },
                 F::FixedRotation,
             ) => vec![item(R::AngleDegrees, *magnitude)],
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    distance:
+                        N::Literal {
+                            magnitude: d,
+                            scale: u,
+                            ..
+                        },
+                    ..
+                }),
+                F::MarkedAnglePolar,
+            ) => vec![item(R::PolarUnitsToPixels, *u), item(R::PolarMagnitude, *d)],
             (
                 Transform::Dilate {
                     ratio: N::Literal { magnitude, .. },

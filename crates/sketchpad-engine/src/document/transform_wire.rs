@@ -45,6 +45,7 @@ pub(super) fn encode_group(
     let modern_stroke = matches!(
         flavor,
         F::Vector
+            | F::MarkedAnglePolar
             | F::MarkedPolar
             | F::PointAngleRotation
             | F::FixedRotation
@@ -127,6 +128,17 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
             .ok_or("Missing native transform literal")
     };
     let payload = match definition.wire_flavor() {
+        F::MarkedAnglePolar => {
+            let units = value(R::PolarUnitsToPixels)?;
+            let magnitude = value(R::PolarMagnitude)?;
+            let mut payload = vec![0; 28];
+            payload[..4].copy_from_slice(&23_u32.to_le_bytes());
+            payload[4..12].copy_from_slice(&(units * magnitude).to_le_bytes());
+            payload[12..20].copy_from_slice(&magnitude.to_le_bytes());
+            payload[20..24]
+                .copy_from_slice(&if units == 96. { 2_u32 } else { 1_u32 }.to_le_bytes());
+            payload
+        }
         F::FixedPolar | F::MarkedPolar => {
             let angle = value(R::AngleDegrees)?;
             let mut payload = if definition.wire_flavor() == F::FixedPolar {

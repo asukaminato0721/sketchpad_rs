@@ -89,6 +89,22 @@ native_transform_constructors!(element_type; (source: usize, d: usize, a: f64);
     MarkedDistanceTranslatedPolygon => Polygon
 );
 
+native_transform_constructors!(element_type; (source: usize, a: usize, u: f64, d: f64);
+(
+            source,
+            element_type,
+            Transform::Translate(DisplacementExpr::Polar {
+                angle: value(a, NumericUnit::Degrees),
+                distance: literal(d, NumericUnit::Length, u),
+            }),
+            NativeTransformFlavor::MarkedAnglePolar,
+        );
+    MarkedAngleTranslatedPoint => Point,
+    MarkedAngleTranslatedSegment => Segment,
+    MarkedAngleTranslatedCircle => Circle,
+    MarkedAngleTranslatedPolygon => Polygon
+);
+
 native_transform_constructors!(element_type; (source: usize, d: usize, f: f64, h: bool);
 (
             source,

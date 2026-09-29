@@ -18,6 +18,35 @@ pub(super) struct DecodeContext {
     pub legacy_angle_rotation_layout: bool,
 }
 
+fn marked_angle_distance(payload: &[u8]) -> Option<(f64, f64)> {
+    let declared = match u32_at(payload, 20) {
+        1 => 37.79527559055118_f64,
+        2 => 96.,
+        _ => return None,
+    };
+    if payload.get(24..28) != Some(&[0; 4]) {
+        return None;
+    }
+    let pixels = f64_at(payload, 4);
+    let magnitude = f64_at(payload, 12);
+    if !pixels.is_finite() || !magnitude.is_finite() {
+        return None;
+    }
+    if magnitude == 0. {
+        return (pixels == 0.).then_some((declared, magnitude));
+    }
+    let scale = pixels / magnitude;
+    if !scale.is_finite() || scale <= 0. {
+        return None;
+    }
+    let scale = if (scale - declared).abs() <= declared * 1e-12 {
+        declared
+    } else {
+        scale
+    };
+    Some((scale, magnitude))
+}
+
 pub(super) fn decode_native_transform(
     objects: &[Object],
     page: usize,
@@ -179,6 +208,17 @@ pub(super) fn decode_native_transform(
                     distance: literal(f64_at(p, 40), NumericUnit::Length, scale),
                 }),
                 F::FixedPolar,
+            )
+        }
+        (23, [_, angle]) if numeric(*angle, NumericUnit::Degrees) => {
+            let p = payload(28)?;
+            let (scale, magnitude) = marked_angle_distance(p)?;
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: value(*angle, NumericUnit::Degrees),
+                    distance: literal(magnitude, NumericUnit::Length, scale),
+                }),
+                F::MarkedAnglePolar,
             )
         }
         (24, [_, measured]) if distance(*measured) => {
