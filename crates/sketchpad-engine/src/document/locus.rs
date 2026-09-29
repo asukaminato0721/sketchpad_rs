@@ -2,6 +2,7 @@ use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_curve_collection,
     is_locus_polygon_kind, is_locus_straight_kind, is_point_kind, parameter_locus_driver_profile,
 };
+use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
 use super::{Document, Kind, LineMode, Object, Point};
 use crate::style_records::VisualStyle;
 use std::collections::BTreeSet;
@@ -148,6 +149,66 @@ fn locus_driver_straight_mode(objects: &[Object], path: usize) -> Option<LineMod
     })
 }
 
+/// Native loci can name the full source segment while constraining their
+/// driver to a shortened copy of that segment.  This is used to keep a sweep
+/// away from a singular endpoint without changing its normalized domain.
+fn compatible_shortened_segment_host(objects: &[Object], path: usize, host: usize) -> bool {
+    if path == host {
+        return true;
+    }
+    let Some((source_a, source_b)) =
+        objects
+            .get(path.saturating_sub(1))
+            .and_then(|object| match object.kind {
+                Kind::Segment(a, b) if !object.deleted => Some((a, b)),
+                _ => None,
+            })
+    else {
+        return false;
+    };
+    let Some((host_a, host_b)) =
+        objects
+            .get(host.saturating_sub(1))
+            .and_then(|object| match object.kind {
+                Kind::Segment(a, b) if !object.deleted => Some((a, b)),
+                _ => None,
+            })
+    else {
+        return false;
+    };
+    let is_inner = |point: usize, source: usize, center: usize| {
+        objects.get(point.saturating_sub(1)).is_some_and(|object| {
+            let Kind::Transformed(definition) = &object.kind else {
+                return false;
+            };
+            if definition.source() != source
+                || definition.element() != ElementType::Point
+                || definition.wire_flavor() != NativeTransformFlavor::FixedDilation
+            {
+                return false;
+            }
+            matches!(
+                definition.transform(),
+                Transform::Dilate {
+                    center: transform_center,
+                    ratio: NumericExpr::Literal {
+                        magnitude,
+                        unit: crate::table_records::NumericUnit::Scalar,
+                        scale,
+                    },
+                } if *transform_center == center
+                    && *magnitude > 0.
+                    && *magnitude < 1.
+                    && *scale == 1.
+            )
+        })
+    };
+    (host_b == source_b && is_inner(host_a, source_b, source_a))
+        || (host_a == source_b && is_inner(host_b, source_b, source_a))
+        || (host_b == source_a && is_inner(host_a, source_a, source_b))
+        || (host_a == source_a && is_inner(host_b, source_a, source_b))
+}
+
 /// Resolve a locus driver against its explicit native path. Some native loci
 /// retain a free base point here; the locus record itself supplies the path
 /// constraint used only while evaluating the sweep.
@@ -183,7 +244,10 @@ pub(super) fn locus_driver_range_info_for_path(
         }
     };
     let info = match moving.kind {
-        Kind::PointOnSegment(host, _) if host == path && straight == Some(LineMode::Segment) => {
+        Kind::PointOnSegment(host, _)
+            if straight == Some(LineMode::Segment)
+                && compatible_shortened_segment_host(objects, path, host) =>
+        {
             Some((1., 1))
         }
         Kind::PointOnRay(host, _) if host == path && straight == Some(LineMode::Ray) => {
@@ -473,8 +537,10 @@ impl Document {
         }
         let kind = &self.objects.get(driver.checked_sub(1)?)?.kind;
         match kind {
-            Kind::PointOnSegment(host, _) if *host == path => {
-                Some(Kind::PointOnSegment(path, parameter))
+            Kind::PointOnSegment(host, _)
+                if compatible_shortened_segment_host(&self.objects, path, *host) =>
+            {
+                Some(Kind::PointOnSegment(*host, parameter))
             }
             Kind::PointOnRay(host, _) if *host == path => Some(Kind::PointOnRay(path, parameter)),
             Kind::PointOnLine(host, _) if *host == path => Some(Kind::PointOnLine(path, parameter)),

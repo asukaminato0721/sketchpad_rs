@@ -1917,3 +1917,22 @@ circles. Native saves all 5,682 bytes unchanged (SHA-256
 `06f33ecd8f6d40995f7d3cdc872199c9f251e02c2413ff2daeee2d018837f5dc`).
 No standalone test case was added. See
 [analysis](mapped_iteration_nested_capture_analysis.md).
+
+## Shortened segment locus drivers
+
+One native code-35 locus names a full source segment while its moving point is
+constrained to a shortened collinear segment which omits a singular endpoint.
+The decoder now admits only the proved shared-endpoint/fixed-dilation form and
+samples the moving point on its live shortened host. Arbitrary transformed and
+iterated locus drivers remain opaque.
+
+The sandglass root and nine downstream drawing slots are restored. Unsupported
+falls **853→843**, complete documents/drawings rise
+**1,495/1,536→1,496/1,537**, and unsupported documents fall **104→103**. All
+**1,599** originals remain byte-exact with zero failures; prototype coverage is
+unchanged. Native and port views show the same rail and magenta trace, and the
+Native control saves byte-for-byte with SHA-256
+`71369f4f5895f4038c42bf9693cd0867be08c65d30aafa157f919b662f975d06`.
+No standalone test case was added. See
+[analysis](shortened_segment_locus_analysis.md). Full scan:
+`/tmp/shortened_segment_locus_coverage.log`.
