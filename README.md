@@ -478,3 +478,11 @@ normalized physical perimeter for both live code-95 and literal code-123
 points. Native accepted freshly authored quantity-axis and sector controls
 byte-for-byte. This restores 90 slots, lowering unsupported objects to 1,956
 and raising complete documents/drawings to 1,380/1,415.
+
+Mapped-iteration import now canonicalizes repeated IDs in Native's carried-DAG
+tail while preserving the original wire packet. The evaluator still receives
+one ordered instance of each construction, and the public authoring API retains
+its unique-carried-input guard. This restores 16 code-89 definitions and 59
+bindings, lowering unsupported objects to 1,881 and raising complete
+documents/drawings to 1,391/1,426. A recovered tiling sketch matches Native's
+iterated geometry, and Native saves all 8,184 source bytes unchanged.

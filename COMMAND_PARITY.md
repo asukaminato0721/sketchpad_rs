@@ -815,3 +815,17 @@ corpus restores 23 direct roots and 67 dependents: unsupported falls
 2,046→1,956, complete documents/drawings rise 1,369/1,404→1,380/1,415,
 unsupported documents fall 230→219, and partial views fall 839→834. All 1,599
 originals remain byte-exact; no standalone test was added.
+
+## Duplicate carried references in mapped iterations
+
+Native code-89 reference tails may repeat carried prerequisites or branch
+images. Import canonicalizes that tail to the first occurrence of each object
+before using the existing mapped-DAG validation and evaluation paths; source
+records retain the exact native bytes, while fresh public authoring continues to
+require unique carried IDs. The corpus restores 16 code-89 definitions and 59
+code-77 bindings: unsupported falls 1,956→1,881, complete documents/drawings
+rise 1,380/1,415→1,391/1,426, unsupported documents fall 219→208, and partial
+views fall 834→831. All 1,599 originals remain byte-exact. Native Xvfb/Wine
+opens, displays, and saves the 8,184-byte tiling control exactly; the port SVG
+matches its repeated square-and-arc geometry. No standalone test was added. See
+[analysis](dev/mapped_iteration_duplicate_carried_analysis.md).

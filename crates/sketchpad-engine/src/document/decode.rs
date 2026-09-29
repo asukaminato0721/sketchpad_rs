@@ -949,7 +949,14 @@ impl Document {
                     .chunks_exact(count)
                     .map(<[usize]>::to_vec)
                     .collect::<Vec<_>>();
-                let carried = refs[branch_end..].to_vec();
+                // Native packets may repeat carried prerequisites and branch images.
+                // They describe one reevaluated DAG, so keep the first occurrence.
+                let mut seen = BTreeSet::new();
+                let carried = refs[branch_end..]
+                    .iter()
+                    .copied()
+                    .filter(|id| seen.insert(*id))
+                    .collect::<Vec<_>>();
                 if !supported_mapped_point_iteration(&objects, &seeds, &branches, &carried) {
                     return None;
                 }

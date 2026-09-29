@@ -1217,3 +1217,16 @@ unsupported documents fall 230→219, and partial views fall 839→834. All 1,59
 originals remain byte-exact. Rebuild the next frontier from 1,956; the remaining
 ten drawing code-95 records are blocked by opaque path parents rather than this
 value-point contract.
+
+The next code-89 slice is wire canonicalization, not a broader mapped evaluator.
+Native carried-DAG tails may repeat prerequisites and branch images; retaining
+their first occurrence gives the existing evaluator the semantic set while the
+preserving writer keeps the original packet bytes. Public authoring still
+requires unique carried IDs. This restores 16 code-89 definitions and 59
+code-77 bindings. Unsupported falls 1,956→1,881 (1,283 drawing plus 598
+prototype), complete documents/drawings rise 1,380/1,415→1,391/1,426,
+unsupported documents fall 219→208, and partial views fall 834→831. All 1,599
+originals remain byte-exact. Native and port controls match the recovered tiling
+geometry, and Native saves its 8,184 bytes unchanged. Rebuild the frontier from
+1,881; the remaining ready code-89 roots are dominated by broader Locus outputs
+and unsupported carried-object roles.

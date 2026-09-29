@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,380/1,599** documents have all object kinds
-decoded; **1,415** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **1,956** unsupported slots (1,358
-drawing slots and 598 prototype slots), and 219 documents still contain
+Latest snapshot, 2026-09-29: **1,391/1,599** documents have all object kinds
+decoded; **1,426** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **1,881** unsupported slots (1,283
+drawing slots and 598 prototype slots), and 208 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -12,7 +12,7 @@ plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
-and general Plot Value recoveries
+general Plot Value, and duplicate-carried mapped-iteration recoveries
 are summarized at the end; the older detailed
 snapshots remain for comparison.
 
@@ -1866,3 +1866,27 @@ Length-on-axis file and a fresh sector file containing both live and literal
 points each reopen and save byte-for-byte in Sketchpad 5. The port reproduces
 the same function point and sector-locus geometry. No standalone test case was
 added.
+
+## Duplicate carried references in mapped iterations
+
+Some native code-89 packets repeat a prerequisite or branch image in the
+carried-reference tail. The tail describes a construction DAG rather than
+multiple output instances, so import now keeps the first occurrence of each ID
+before applying the existing mapped-DAG validator. The original reference bytes
+remain in the preserving source records. Public construction still rejects
+duplicate carried inputs, and no evaluator, renderer, or binding rule was
+broadened.
+
+The compiled scan restores **16 code-89 definitions** and **59 code-77
+bindings**. Unsupported falls **1,956→1,881** (1,283 drawing plus 598 prototype),
+complete documents/drawings rise **1,380/1,415→1,391/1,426**, unsupported
+documents fall **219→208**, and partial views fall **834→831**. All **1,599**
+originals remain byte-exact with zero failures. Full scan:
+`/tmp/code89_dedup_coverage.log`.
+
+Sketchpad 5 under Xvfb/Wine opened and saved the 8,184-byte
+`磁砖拼花（系列）.gsp` control byte-for-byte (SHA-256
+`80bca845cf2a3a1a2243aedd6de1c5b01b796fc8dbb37c6a4e721a16f9dc0c1c`).
+Its native view and the port SVG show the same repeated blue-square and green-arc
+tiling. No standalone test case was added. See
+[analysis](mapped_iteration_duplicate_carried_analysis.md).

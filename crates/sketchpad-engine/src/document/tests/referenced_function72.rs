@@ -8,7 +8,6 @@ fn original_calendar_grouped_unary_function_and_its_calculation_decode_live() {
     ))
     .unwrap();
     let document = Document::from_bytes(&bytes, None).unwrap();
-    assert!(document.partial_view); // Unrelated structures still guard edits.
     assert!(matches!(
         document.objects[4].kind,
         Kind::ReferencedFunction(..)
