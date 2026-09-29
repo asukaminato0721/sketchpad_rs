@@ -1955,3 +1955,23 @@ saves byte-for-byte with SHA-256
 No standalone test case was added. See
 [analysis](parametric_curve_points_analysis.md). Full scan:
 `/tmp/parametric_curve_points_coverage.log`.
+
+## Function-plot intersections
+
+Native code-98 intersections between two same-frame `YFromX` plots now use a
+dedicated proper-crossing kernel ordered by increasing x. It retains the existing
+high-hint clamping policy, rejects tangencies, overlaps, and pole bridges, and
+freezes invariant referenced-function inputs once per calculation. Other
+curve-pair profiles remain opaque.
+
+All ten ready code-98 roots and four dependents are restored. Unsupported falls
+**831→817**, complete documents/drawings rise
+**1,496/1,537→1,499/1,540**, unsupported documents fall **103→100**, and partial
+views remain **802**. All **1,599** originals remain byte-exact with zero
+failures; prototype coverage is unchanged. A fresh `y=x`/`y=x²` control opens
+in Native with intersections at `(0,0)` and `(1,1)` and saves byte-for-byte with
+SHA-256
+`dd57fcda4bd6b5ee1ab7df7114a77cf3ca92d913f09bf771894cc1fe4badfc0f`.
+No standalone test case was added. See
+[analysis](function_plot_intersections_analysis.md). Full scan:
+`/tmp/function_plot_intersections_coverage.log`.

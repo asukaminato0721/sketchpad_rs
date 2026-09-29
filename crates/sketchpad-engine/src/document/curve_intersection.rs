@@ -2,6 +2,8 @@
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
 use super::point_curve::PointCurve;
 use super::{Document, Kind, LineMode, Object, Point};
+use crate::function_records::FunctionPlotMode;
+use std::collections::BTreeSet;
 
 fn point_curve(objects: &[Object], kind: &Kind) -> bool {
     match kind {
@@ -14,6 +16,28 @@ fn point_curve(objects: &[Object], kind: &Kind) -> bool {
         _ => false,
     }
 }
+
+fn function_plot_pair(objects: &[Object], first: usize, second: usize) -> bool {
+    let Some(Kind::FunctionPlot(_, first_frame, first_min, first_max, _, first_mode)) = first
+        .checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .map(|object| &object.kind)
+    else {
+        return false;
+    };
+    let Some(Kind::FunctionPlot(_, second_frame, second_min, second_max, _, second_mode)) = second
+        .checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .map(|object| &object.kind)
+    else {
+        return false;
+    };
+    first_frame == second_frame
+        && *first_mode == FunctionPlotMode::YFromX
+        && *second_mode == FunctionPlotMode::YFromX
+        && first_min.max(*second_min) < first_max.min(*second_max)
+}
+
 pub(super) fn supported(
     objects: &[Object],
     carrier: usize,
@@ -33,9 +57,10 @@ pub(super) fn supported(
         && !b.deleted
         && a.page == page
         && b.page == page
-        && (is_straight_kind(&a.kind) || a.kind.is_circle() || is_arc_kind(&a.kind))
-        && !matches!(a.kind, Kind::ToolInput(..))
-        && point_curve(objects, &b.kind)
+        && (((is_straight_kind(&a.kind) || a.kind.is_circle() || is_arc_kind(&a.kind))
+            && !matches!(a.kind, Kind::ToolInput(..))
+            && point_curve(objects, &b.kind))
+            || function_plot_pair(objects, carrier, curve))
 }
 pub(super) fn decode(
     objects: &[Object],
@@ -153,11 +178,181 @@ impl Carrier {
 }
 
 impl Document {
+    fn function_plot_intersections(&self, first: usize, second: usize) -> Option<Vec<Point>> {
+        let Kind::FunctionPlot(
+            first_definition,
+            frame,
+            first_min,
+            first_max,
+            first_samples,
+            FunctionPlotMode::YFromX,
+        ) = self.objects.get(first.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let Kind::FunctionPlot(
+            second_definition,
+            second_frame,
+            second_min,
+            second_max,
+            second_samples,
+            FunctionPlotMode::YFromX,
+        ) = self.objects.get(second.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        if frame != second_frame {
+            return None;
+        }
+        self.function_expression(first_definition)?;
+        self.function_expression(second_definition)?;
+        let frame = self.graph_frame(frame)?;
+        fn numeric_inputs(
+            document: &Document,
+            function: usize,
+            seen: &mut BTreeSet<usize>,
+            inputs: &mut BTreeSet<usize>,
+        ) -> Option<()> {
+            if !seen.insert(function) {
+                return Some(());
+            }
+            for &source in document.function_sources(function)? {
+                let object = document.objects.get(source.checked_sub(1)?)?;
+                if object.kind.is_function() {
+                    numeric_inputs(document, source, seen, inputs)?;
+                } else if object.kind.numeric_unit().is_some() {
+                    inputs.insert(source);
+                } else {
+                    return None;
+                }
+            }
+            Some(())
+        }
+        let mut inputs = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        numeric_inputs(self, first_definition, &mut seen, &mut inputs)?;
+        numeric_inputs(self, second_definition, &mut seen, &mut inputs)?;
+        let mut evaluation = self.clone();
+        evaluation
+            .freeze_scoped_evaluation_inputs(self, &inputs.into_iter().collect::<Vec<_>>())?;
+        let minimum = first_min.max(second_min);
+        let maximum = first_max.min(second_max);
+        if minimum >= maximum {
+            return None;
+        }
+        let intervals = first_samples
+            .max(second_samples)
+            .saturating_sub(1)
+            .clamp(64, 4096) as usize;
+        let sample = |x: f64| {
+            let first = evaluation.function_value(first_definition, x)?;
+            let second = evaluation.function_value(second_definition, x)?;
+            [first, second, first - second]
+                .into_iter()
+                .all(f64::is_finite)
+                .then_some((first, second, first - second))
+        };
+        let samples: Vec<_> = (0..=intervals)
+            .map(|index| {
+                let x = minimum + (maximum - minimum) * index as f64 / intervals as f64;
+                (x, sample(x))
+            })
+            .collect();
+        let has_poles = self.function_may_have_poles(first_definition)
+            || self.function_may_have_poles(second_definition);
+        let bracket_crosses_gap =
+            |left_x: f64, left: (f64, f64, f64), right_x: f64, right: (f64, f64, f64)| {
+                has_poles
+                    && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
+                        let x = left_x + (right_x - left_x) * fraction;
+                        let Some((first, second, _)) = sample(x) else {
+                            return true;
+                        };
+                        [(first, left.0, right.0), (second, left.1, right.1)]
+                            .into_iter()
+                            .any(|(value, a, b)| {
+                                let low = a.min(b);
+                                let high = a.max(b);
+                                let tolerance = 1e-3 * high.abs().max(low.abs()).max(1.);
+                                value < low - tolerance || value > high + tolerance
+                            })
+                    })
+            };
+        let mut hits = Vec::<(f64, Point)>::new();
+        let mut record = |x: f64, first: f64, second: f64| {
+            let value = frame.world(x, (first + second) * 0.5)?;
+            let point = Point {
+                x: value.x,
+                y: value.y,
+            };
+            if !hits.iter().any(|(_, old)| old.distance(point) <= 1e-7) {
+                hits.push((x, point));
+            }
+            Some(())
+        };
+        for pair in samples.windows(2) {
+            let [(left_x, Some(left)), (right_x, Some(right))] = pair else {
+                continue;
+            };
+            if left.2 == 0.
+                || right.2 == 0.
+                || left.2.is_sign_positive() == right.2.is_sign_positive()
+                || bracket_crosses_gap(*left_x, *left, *right_x, *right)
+            {
+                continue;
+            }
+            let (mut low, mut high, mut low_value) = (*left_x, *right_x, left.2);
+            let mut root = None;
+            for _ in 0..64 {
+                let x = (low + high) * 0.5;
+                let Some(value) = sample(x) else {
+                    root = None;
+                    break;
+                };
+                root = Some((x, value.0, value.1));
+                if value.2.abs() <= 1e-10 {
+                    break;
+                }
+                if value.2.is_sign_positive() == low_value.is_sign_positive() {
+                    low = x;
+                    low_value = value.2;
+                } else {
+                    high = x;
+                }
+            }
+            if let Some((x, first, second)) = root {
+                record(x, first, second)?;
+            }
+        }
+        if let (x, Some((first, second, difference))) = samples[0]
+            && difference == 0.
+        {
+            record(x, first, second)?;
+        }
+        for window in samples.windows(3) {
+            let [(_, Some(before)), (x, Some(value)), (_, Some(after))] = window else {
+                continue;
+            };
+            if value.2 == 0.
+                && before.2 != 0.
+                && after.2 != 0.
+                && before.2.is_sign_positive() != after.2.is_sign_positive()
+            {
+                record(*x, value.0, value.1)?;
+            }
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Some(hits.into_iter().map(|(_, point)| point).collect())
+    }
+
     /// Ordered crossings. Curve tangencies and gaps do not create crossings.
     pub fn curve_intersections(&self, carrier: usize, curve: usize) -> Option<Vec<Point>> {
         let page = self.objects.get(curve.checked_sub(1)?)?.page;
         if !supported(&self.objects, carrier, curve, page, self.objects.len() + 1) {
             return None;
+        }
+        if function_plot_pair(&self.objects, carrier, curve) {
+            return self.function_plot_intersections(carrier, curve);
         }
         let carrier = Carrier::new(self, carrier)?;
         let mut curve = PointCurve::new(self, curve)?;

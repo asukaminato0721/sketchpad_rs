@@ -106,7 +106,7 @@ impl Document {
         );
         value.is_finite().then_some(value)
     }
-    fn function_may_have_poles(&self, id: usize) -> bool {
+    pub(super) fn function_may_have_poles(&self, id: usize) -> bool {
         self.function_expression(id)
             .is_some_and(|expression| expression.may_have_poles())
             || self.function_sources(id).is_some_and(|sources| {
