@@ -943,14 +943,38 @@ impl Document {
                 if refs.len() <= start + count * (branches_count + 1) {
                     return None;
                 }
-                let seeds = refs[start..start + count].to_vec();
+                let raw_seeds = &refs[start..start + count];
                 let branch_end = start + count * (branches_count + 1);
-                let branches = refs[start + count..branch_end]
+                let raw_branches = refs[start + count..branch_end]
                     .chunks_exact(count)
                     .map(<[usize]>::to_vec)
                     .collect::<Vec<_>>();
-                // Native packets may repeat carried prerequisites and branch images.
-                // They describe one reevaluated DAG, so keep the first occurrence.
+                // Native packets may repeat identical substitution columns as well as
+                // carried prerequisites. Both describe one reevaluated DAG, so keep
+                // the first occurrence while requiring duplicate columns to agree.
+                let mut first_seed_columns = BTreeMap::new();
+                let mut columns = Vec::new();
+                for (column, seed) in raw_seeds.iter().copied().enumerate() {
+                    if let Some(first) = first_seed_columns.get(&seed).copied() {
+                        if raw_branches
+                            .iter()
+                            .any(|branch| branch[column] != branch[first])
+                        {
+                            return None;
+                        }
+                    } else {
+                        first_seed_columns.insert(seed, column);
+                        columns.push(column);
+                    }
+                }
+                let seeds = columns
+                    .iter()
+                    .map(|column| raw_seeds[*column])
+                    .collect::<Vec<_>>();
+                let branches = raw_branches
+                    .iter()
+                    .map(|branch| columns.iter().map(|column| branch[*column]).collect())
+                    .collect::<Vec<_>>();
                 let mut seen = BTreeSet::new();
                 let carried = refs[branch_end..]
                     .iter()
