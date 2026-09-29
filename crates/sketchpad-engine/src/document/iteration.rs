@@ -125,8 +125,7 @@ fn mapped_reference_value(kind: &Kind) -> bool {
         _ => return false,
     };
     // Names are stable presentation metadata while values share the mapped
-    // live/frozen resolver. Definition and expression capture have separate
-    // scope contracts and remain unsupported.
+    // live/frozen resolver. Other live roles have separate scope contracts.
     let roles = text.referenced_roles();
     roles.iter().all(|(_, role)| {
         matches!(
@@ -139,6 +138,23 @@ fn mapped_reference_value(kind: &Kind) -> bool {
         .any(|(_, role)| *role == super::referenced_text::ReferenceRole::Value)
 }
 
+/// Unbound captions can remain in the carried construction list without being
+/// sampled as iteration images. Their names and expressions are presentation
+/// metadata; any live values still use the proved mapped resolver above.
+fn mapped_reference_construction(kind: &Kind) -> bool {
+    let Kind::ReferencedText { text, .. } = kind else {
+        return mapped_reference_value(kind);
+    };
+    text.referenced_roles().iter().all(|(_, role)| {
+        matches!(
+            role,
+            super::referenced_text::ReferenceRole::Name
+                | super::referenced_text::ReferenceRole::Value
+                | super::referenced_text::ReferenceRole::Expression
+        )
+    })
+}
+
 fn mapped_value_construction(kind: &Kind) -> bool {
     !matches!(kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
         && (is_point_kind(kind)
@@ -148,7 +164,7 @@ fn mapped_value_construction(kind: &Kind) -> bool {
             || is_arc_kind(kind)
             || kind.numeric_unit().is_some()
             || kind.is_function()
-            || mapped_reference_value(kind)
+            || mapped_reference_construction(kind)
             || matches!(kind, Kind::Colorized(definition) if definition.element() == ElementType::Disk)
             || matches!(
                 kind,
