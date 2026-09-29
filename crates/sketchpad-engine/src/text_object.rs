@@ -14,6 +14,9 @@ pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
     Some(match code {
         0x5c => "∴",
         0x5e => "⊥",
+        0x61 => "α",
+        0x62 => "β",
+        0x6a => "ϕ",
         0x70 => "π",
         0x71 => "θ",
         0x7e => "∼",
@@ -22,6 +25,7 @@ pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
         0xae => "→",
         0xb0 => "°",
         0xb1 => "±",
+        0xb3 => "≥",
         0xb7 => "•",
         0xb8 => "÷",
         0xbb => "≈",
@@ -30,6 +34,7 @@ pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
         0xde => "⇒",
         0xf2 => "∫",
         0x100 => "⊙",
+        0x101 => "∥",
         0x102 => "△",
         0x103 => "−",
         _ => return None,
@@ -426,6 +431,13 @@ impl MarkupParser<'_> {
         let rest = &self.markup[self.pos..];
         if rest.starts_with(b"<0>") {
             self.pos += 3;
+            return Ok(vec![vec![RichTextRun {
+                text: String::new(),
+                style,
+            }]]);
+        }
+        if rest.starts_with(b"<T''>") {
+            self.pos += 5;
             return Ok(vec![vec![RichTextRun {
                 text: String::new(),
                 style,

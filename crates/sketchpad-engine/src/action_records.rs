@@ -594,11 +594,11 @@ impl LinkUrlButtonGroup {
             || u16_at(action, 12) != 6
             // Native word 14 may contain opaque data (Ant: 0x3264); keep it verbatim.
             || u32_at(action, 16) != 0
-            || !valid_url_zero_terminated_text(action, 24, true)
+            || !valid_url_zero_terminated_text(action, 24)
         {
             return Err("Unsupported Link URL action".into());
         }
-        if label.len() < 26 || !valid_url_zero_terminated_text(label, 22, false) {
+        if label.len() < 26 || !valid_url_zero_terminated_text(label, 22) {
             return Err("Link URL label is truncated".into());
         }
         if self.records[3].payload.len() != 2
@@ -700,17 +700,15 @@ fn translate_caption_rect(rect: &mut [u8], anchor: (i16, i16)) -> Result<(), Str
 }
 
 // Native URL buttons use either even-byte or four-byte string payload alignment.
-// Observed action payloads of length 44 and 56 retain opaque bytes after the
-// terminator. The label record still requires zero padding.
-fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize, action: bool) -> bool {
+// Alignment bytes after the terminator are opaque in both action and label
+// records, and can remain nonzero after an original-application save.
+fn valid_url_zero_terminated_text(payload: &[u8], length_offset: usize) -> bool {
     if payload.len() < length_offset + 4 {
         return false;
     }
     let end = length_offset + 2 + usize::from(u16_at(payload, length_offset));
     end < payload.len()
         && payload[end] == 0
-        && ((action && matches!(payload.len(), 44 | 56))
-            || payload[end + 1..].iter().all(|byte| *byte == 0))
         && [2usize, 4]
             .iter()
             .any(|alignment| payload.len() == (end + alignment) & !(alignment - 1))

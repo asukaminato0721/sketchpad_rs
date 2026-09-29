@@ -541,7 +541,7 @@ impl<'a> Parser<'a> {
                 self.at += 1;
                 return Ok(nodes);
             }
-            if in_cache && self.bytes[self.at..].starts_with(b"<T''>") {
+            if self.bytes[self.at..].starts_with(b"<T''>") {
                 self.at += 5;
                 nodes.push(ReferencedNode::Literal(String::new()));
             } else if self.bytes[self.at..].starts_with(b"<0>") {
@@ -674,6 +674,16 @@ impl<'a> Parser<'a> {
                 let children = self.sequence(true, true, depth + 1, false)?;
                 if children.is_empty() {
                     return Err("Empty calculated reference cache".into());
+                }
+                nodes.push(ReferencedNode::Horizontal(children));
+            } else if self.bytes[self.at..].starts_with(b"<?1<") {
+                // Older native files use ?1 as a cache-only presentation
+                // wrapper, including nested wrappers around styled names.
+                // It carries no live slot; retain and render its explicit tree.
+                self.at += 3;
+                let children = self.sequence(true, true, depth + 1, false)?;
+                if children.is_empty() {
+                    return Err("Empty legacy presentation cache".into());
                 }
                 nodes.push(ReferencedNode::Horizontal(children));
             } else if self.bytes[self.at..].starts_with(b"<?") {
