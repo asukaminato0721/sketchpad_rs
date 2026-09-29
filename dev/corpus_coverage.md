@@ -1975,3 +1975,22 @@ SHA-256
 No standalone test case was added. See
 [analysis](function_plot_intersections_analysis.md). Full scan:
 `/tmp/function_plot_intersections_coverage.log`.
+
+## Movement and Scroll action state words
+
+Native Movement and Scroll buttons may retain state word `1` in the final word
+of their otherwise standard 24-byte action payload. The strict readers now
+accept only the observed values `0` and `1`, preserve imported state through
+edits, and continue authoring/copying with state zero.
+
+The two action roots and one dependent caption are restored. Unsupported falls
+**817→814**, code-62 drawing objects fall **31→29**, complete
+documents/drawings rise **1,499/1,540→1,501/1,542**, unsupported documents fall
+**100→98**, and partial views remain **802**. Embedded-tool coverage is
+unchanged and all **1,599** originals remain byte-exact. Both source files also
+open and save byte-for-byte in Sketchpad 5, with SHA-256 values
+`6e88700d4461eb5e8f2663ebba77c4aff1271b9fbd28b2acbf60a45e78514c9c` and
+`ce52fadb3378082b737a546fb9073a0679b1bda43d67df2b287b03d3a9eac928`.
+No standalone test case was added. See
+[analysis](action_state_words_analysis.md). Full scan:
+`/tmp/action_state_coverage.log`.

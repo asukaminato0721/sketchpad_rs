@@ -1253,7 +1253,8 @@ impl ScrollButtonGroup {
             || u32_at(action, 8) != 12
             || u16_at(action, 12) != 4
             || u16_at(action, 14) > 1
-            || u32_at(action, 16) != 0
+            || u16_at(action, 16) != 0
+            || u16_at(action, 18) > 1
         {
             return Err("Unsupported Scroll button action".into());
         }
@@ -1387,7 +1388,7 @@ impl MovementButtonGroup {
             || u16_at(action, 12) != 3
             || u16_at(action, 14) > 3
             || u16_at(action, 16) > 1
-            || u16_at(action, 18) != 0
+            || u16_at(action, 18) > 1
         {
             return Err("Unsupported Movement button action".into());
         }
