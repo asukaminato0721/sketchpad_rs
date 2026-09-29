@@ -69,7 +69,7 @@ use crate::action_records::{
     VisibilityAction, VisibilityOptions,
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
-use crate::function_records::SimpleFunction;
+use crate::function_records::{FunctionPlotMode, SimpleFunction};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use crate::style_records::{
@@ -552,7 +552,7 @@ pub enum Kind {
         frame: usize,
         smoothing: u32,
     },
-    FunctionPlot(usize, usize, f64, f64, u32),
+    FunctionPlot(usize, usize, f64, f64, u32, FunctionPlotMode),
     ParametricPlot(usize, usize, usize, f64, f64, u32, PlotPointsMode),
     PathLiteralPoint(usize, f64),
     PathValuePoint(usize, usize),

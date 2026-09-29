@@ -1,6 +1,7 @@
 //! Evaluated point traces shared by curve constructions.
 use super::kind::is_point_kind;
 use super::{Document, Kind, Point};
+use crate::function_records::FunctionPlotMode;
 
 enum Source {
     Mapped(super::sampled_mapped::SampledMappedEvaluator),
@@ -9,6 +10,7 @@ enum Source {
         frame: crate::graph::CoordinateFrame,
         min: f64,
         max: f64,
+        mode: FunctionPlotMode,
     },
     Numeric {
         sample: Box<Document>,
@@ -48,7 +50,7 @@ impl<'a> PointCurve<'a> {
                 Source::Mapped(doc.sampled_mapped_evaluator(id)?),
                 definition.samples().saturating_sub(1) as usize,
             ),
-            Kind::FunctionPlot(definition, frame, min, max, samples) => {
+            Kind::FunctionPlot(definition, frame, min, max, samples, mode) => {
                 if !min.is_finite() || !max.is_finite() || min >= max || *samples < 2 {
                     return None;
                 }
@@ -58,6 +60,7 @@ impl<'a> PointCurve<'a> {
                         frame: doc.graph_frame(*frame)?,
                         min: *min,
                         max: *max,
+                        mode: *mode,
                     },
                     samples.saturating_sub(1) as usize,
                 )
@@ -229,9 +232,12 @@ impl<'a> PointCurve<'a> {
                 frame,
                 min,
                 max,
+                mode,
             } => {
-                let x = *min + (*max - *min) * fraction;
-                let value = frame.world(x, self.original.function_value(*definition, x)?)?;
+                let parameter = *min + (*max - *min) * fraction;
+                let result = self.original.function_value(*definition, parameter)?;
+                let (x, y) = super::functions::function_plot_coordinates(*mode, parameter, result);
+                let value = frame.world(x, y)?;
                 Point {
                     x: value.x,
                     y: value.y,

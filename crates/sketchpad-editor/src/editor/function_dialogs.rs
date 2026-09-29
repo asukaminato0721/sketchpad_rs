@@ -1,6 +1,6 @@
 use super::Editor;
 use sketchpad_engine::document::Kind;
-use sketchpad_engine::function_records::SimpleFunction;
+use sketchpad_engine::function_records::{FunctionPlotMode, SimpleFunction};
 use sketchpad_engine::plot_points_records::PlotPointsMode;
 
 impl Editor {
@@ -247,13 +247,11 @@ impl Editor {
             }
         }
         if let Some(plot) = self.plot_range_dialog {
-            let variable = if matches!(
-                self.doc.objects.get(plot - 1).map(|o| &o.kind),
-                Some(Kind::FunctionPlot(_, _, _, _, _))
-            ) {
-                "x"
-            } else {
-                "t"
+            let variable = match self.doc.objects.get(plot - 1).map(|o| &o.kind) {
+                Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::YFromX)) => "x",
+                Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::XFromY)) => "y",
+                Some(Kind::FunctionPlot(_, _, _, _, _, FunctionPlotMode::Polar)) => "θ",
+                _ => "t",
             };
             let mut apply = false;
             let mut cancel = false;

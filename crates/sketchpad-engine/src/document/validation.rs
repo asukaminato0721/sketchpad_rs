@@ -80,7 +80,7 @@ impl Document {
                         | Kind::ReferencedFunction(_, _)
                         | Kind::DerivativeFunction(_, _)
                         | Kind::DataFunction { .. }
-                        | Kind::FunctionPlot(_, _, _, _, _)
+                        | Kind::FunctionPlot(_, _, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::PathLiteralPoint(_, _)
                         | Kind::PathValuePoint(_, _)
@@ -1002,7 +1002,7 @@ impl Document {
             {
                 return Err(format!("Invalid data-defined function {}", o.id));
             }
-            if let Kind::FunctionPlot(definition, frame, min, max, samples) = o.kind
+            if let Kind::FunctionPlot(definition, frame, min, max, samples, _) = o.kind
                 && (self.function_expression(definition).is_none()
                     || self.graph_frame(frame).is_none()
                     || !min.is_finite()

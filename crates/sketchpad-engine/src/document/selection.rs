@@ -281,7 +281,7 @@ impl Document {
             .filter(|object| !object.deleted && object.page == self.active_page)
         {
             match object.kind {
-                Kind::FunctionPlot(definition, _, _, _, _)
+                Kind::FunctionPlot(definition, _, _, _, _, _)
                     if self.selected.contains(&definition) =>
                 {
                     pending.push(object.id)
@@ -362,7 +362,7 @@ impl Document {
             .filter(|object| included.contains(&object.id))
         {
             let frame = match object.kind {
-                Kind::FunctionPlot(_, frame, _, _, _)
+                Kind::FunctionPlot(_, frame, _, _, _, _)
                 | Kind::ParametricPlot(_, _, frame, _, _, _, _) => frame,
                 _ => continue,
             };

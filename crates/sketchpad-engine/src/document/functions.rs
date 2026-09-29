@@ -1,5 +1,5 @@
 use super::{Document, Kind, Object, Point};
-use crate::function_records::SimpleFunction;
+use crate::function_records::{FunctionPlotMode, SimpleFunction};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use std::collections::BTreeMap;
@@ -300,6 +300,7 @@ impl Document {
             -5.265208333333335,
             5.265208333333335,
             750,
+            FunctionPlotMode::YFromX,
         )))
     }
     pub fn plot_function(&mut self, definition: usize, origin: Point) -> Result<usize, String> {
@@ -329,6 +330,7 @@ impl Document {
             -5.265208333333335,
             5.265208333333335,
             750,
+            FunctionPlotMode::YFromX,
         )))
     }
     /// Plot ranges use public numeric values. Angle parameter curves expose
@@ -339,7 +341,7 @@ impl Document {
             return None;
         }
         match &object.kind {
-            Kind::FunctionPlot(_, _, min, max, samples)
+            Kind::FunctionPlot(_, _, min, max, samples, _)
             | Kind::ParametricPlot(_, _, _, min, max, samples, _) => Some((*min, *max, *samples)),
             Kind::ParameterLocus(refs, min, max, samples) => {
                 let driver = *refs.get(1)?;
@@ -376,8 +378,8 @@ impl Document {
             return Ok(());
         }
         let updated = match object.kind {
-            Kind::FunctionPlot(definition, frame, _, _, _) => {
-                Kind::FunctionPlot(definition, frame, min, max, samples)
+            Kind::FunctionPlot(definition, frame, _, _, _, mode) => {
+                Kind::FunctionPlot(definition, frame, min, max, samples, mode)
             }
             Kind::ParametricPlot(x, y, frame, _, _, _, mode) => {
                 Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
@@ -398,7 +400,7 @@ impl Document {
         Ok(())
     }
     pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
-        let Kind::FunctionPlot(definition, frame, min, max, samples) =
+        let Kind::FunctionPlot(definition, frame, min, max, samples, mode) =
             self.objects.get(id.checked_sub(1)?)?.kind
         else {
             return None;
@@ -408,14 +410,18 @@ impl Document {
         let count = count.min(samples as usize).clamp(2, 4096);
         (0..count)
             .map(|i| {
-                let x = min + (max - min) * (i as f64 / (count - 1) as f64);
-                let p = frame.world(x, self.function_value(definition, x).unwrap_or(f64::NAN))?;
+                let parameter = min + (max - min) * (i as f64 / (count - 1) as f64);
+                let value = self
+                    .function_value(definition, parameter)
+                    .unwrap_or(f64::NAN);
+                let (x, y) = function_plot_coordinates(mode, parameter, value);
+                let p = frame.world(x, y)?;
                 Some(Point { x: p.x, y: p.y })
             })
             .collect()
     }
     pub fn function_plot_segments(&self, id: usize, count: usize) -> Option<Vec<(Point, Point)>> {
-        let Kind::FunctionPlot(definition, frame, min, max, samples) =
+        let Kind::FunctionPlot(definition, frame, min, max, samples, mode) =
             self.objects.get(id.checked_sub(1)?)?.kind
         else {
             return None;
@@ -424,31 +430,38 @@ impl Document {
         let frame = self.graph_frame(frame)?;
         let count = count.min(samples as usize).clamp(2, 4096);
         let sample = |index: usize| {
-            let x = min + (max - min) * (index as f64 / (count - 1) as f64);
-            (x, self.function_value(definition, x).unwrap_or(f64::NAN))
+            let parameter = min + (max - min) * (index as f64 / (count - 1) as f64);
+            let value = self
+                .function_value(definition, parameter)
+                .unwrap_or(f64::NAN);
+            (parameter, value)
         };
         let mut segments = Vec::with_capacity(count - 1);
         let mut left = sample(0);
         for index in 1..count {
             let right = sample(index);
-            let (x0, y0) = left;
-            let (x1, y1) = right;
+            let (parameter0, value0) = left;
+            let (parameter1, value1) = right;
             left = right;
-            if !y0.is_finite() || !y1.is_finite() {
+            if !value0.is_finite() || !value1.is_finite() {
                 continue;
             }
-            let low = y0.min(y1);
-            let high = y0.max(y1);
+            let low = value0.min(value1);
+            let high = value0.max(value1);
             let tolerance = 1e-3 * high.abs().max(low.abs()).max(1.0);
             let crosses_gap = self.function_may_have_poles(definition)
                 && [0.25, 0.5, 0.75].into_iter().any(|fraction| {
-                    let x = x0 + (x1 - x0) * fraction;
-                    let y = self.function_value(definition, x).unwrap_or(f64::NAN);
-                    !y.is_finite() || y < low - tolerance || y > high + tolerance
+                    let parameter = parameter0 + (parameter1 - parameter0) * fraction;
+                    let value = self
+                        .function_value(definition, parameter)
+                        .unwrap_or(f64::NAN);
+                    !value.is_finite() || value < low - tolerance || value > high + tolerance
                 });
             if crosses_gap {
                 continue;
             }
+            let (x0, y0) = function_plot_coordinates(mode, parameter0, value0);
+            let (x1, y1) = function_plot_coordinates(mode, parameter1, value1);
             if let (Some(a), Some(b)) = (frame.world(x0, y0), frame.world(x1, y1)) {
                 segments.push((Point { x: a.x, y: a.y }, Point { x: b.x, y: b.y }));
             }
@@ -633,6 +646,19 @@ impl Document {
             -5.265208333333335,
             5.265208333333335,
             750,
+            FunctionPlotMode::YFromX,
         )))
+    }
+}
+
+pub(super) fn function_plot_coordinates(
+    mode: FunctionPlotMode,
+    parameter: f64,
+    value: f64,
+) -> (f64, f64) {
+    match mode {
+        FunctionPlotMode::YFromX => (parameter, value),
+        FunctionPlotMode::XFromY => (value, parameter),
+        FunctionPlotMode::Polar => (value * parameter.cos(), value * parameter.sin()),
     }
 }

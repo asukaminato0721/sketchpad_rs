@@ -1239,12 +1239,12 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::FunctionPlot(definition, frame, min, max, samples) = o.kind {
+            if let Kind::FunctionPlot(definition, frame, min, max, samples, mode) = o.kind {
                 let expression = self
                     .function_expression(definition)
                     .ok_or("Invalid function definition")?;
                 let mut group = function_records::encode_plot_group_with_range(
-                    expression, definition, frame, min, max, samples,
+                    expression, definition, frame, min, max, samples, mode,
                 )?;
                 if !o.visible {
                     group[10] |= 1;
@@ -2152,7 +2152,7 @@ impl Document {
                         | Kind::ReferencedFunction(_, _)
                         | Kind::DerivativeFunction(_, _)
                         | Kind::DataFunction { .. }
-                        | Kind::FunctionPlot(_, _, _, _, _)
+                        | Kind::FunctionPlot(_, _, _, _, _, _)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
                         | Kind::ParameterLocus(_, _, _, _)

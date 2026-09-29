@@ -441,7 +441,7 @@ impl Editor {
                                     .min_by(f32::total_cmp)?
                             }
                         }
-                        Kind::FunctionPlot(_, _, _, _, _)
+                        Kind::FunctionPlot(..)
                         | Kind::ParametricPlot(_, _, _, _, _, _, _)
                         | Kind::Locus(_, _)
                         | Kind::ParameterLocus(_, _, _, _) => {

@@ -14,7 +14,7 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
     }
     if matches!(
         object.kind,
-        Kind::FunctionPlot(_, _, min, max, samples)
+        Kind::FunctionPlot(_, _, min, max, samples, _)
             if min.is_finite() && max.is_finite() && min < max && samples >= 2
     ) {
         return object.kind.dependencies().iter().all(|id| {
@@ -129,7 +129,7 @@ impl Document {
             Kind::SampledMapped(_) => self
                 .sampled_mapped_evaluator(path)?
                 .logical_point_value(fraction),
-            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _) => {
+            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _, _) => {
                 Some(min + (max - min) * t)
             }
             _ => None,

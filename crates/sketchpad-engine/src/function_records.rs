@@ -840,6 +840,24 @@ pub struct FunctionPlot {
     pub x_min: f64,
     pub x_max: f64,
     pub samples: u32,
+    pub mode: FunctionPlotMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FunctionPlotMode {
+    YFromX,
+    XFromY,
+    Polar,
+}
+
+impl FunctionPlotMode {
+    pub(crate) fn native_word(self) -> u32 {
+        match self {
+            Self::YFromX => 0x30000,
+            Self::XFromY => 0x30001,
+            Self::Polar => 0x30002,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1151,9 +1169,7 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
             .find(|record| record.kind == 0x0902)
             .ok_or("Function plot has no range")?;
         let descriptor = payload(bytes, *descriptor);
-        if descriptor.len() != 40 || u32_at(descriptor, 20) & 0xffff != 0 {
-            return Err("Unsupported function plot mode".into());
-        }
+        let mode = decode_function_plot_mode(descriptor)?;
         let x_min = f64::from_le_bytes(descriptor[0..8].try_into().unwrap());
         let x_max = f64::from_le_bytes(descriptor[8..16].try_into().unwrap());
         let samples = u32_at(descriptor, 16);
@@ -1171,9 +1187,10 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
             x_min,
             x_max,
             samples,
+            mode,
         });
     }
-    found.ok_or_else(|| "No Cartesian function plot".into())
+    found.ok_or_else(|| "No function plot".into())
 }
 
 fn original_template(expression: &SimpleFunction) -> &'static [u8] {
@@ -1190,10 +1207,20 @@ fn original_template(expression: &SimpleFunction) -> &'static [u8] {
     }
 }
 
-pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32), String> {
-    if data.len() != 40 || u32_at(data, 20) & 0xffff != 0 {
-        return Err("Unsupported function plot mode".into());
+fn decode_function_plot_mode(data: &[u8]) -> Result<FunctionPlotMode, String> {
+    if data.len() != 40 {
+        return Err("Unsupported function plot descriptor".into());
     }
+    match u32_at(data, 20) {
+        0 | 0x30000 => Ok(FunctionPlotMode::YFromX),
+        0x30001 => Ok(FunctionPlotMode::XFromY),
+        0x30002 => Ok(FunctionPlotMode::Polar),
+        _ => Err("Unsupported function plot mode".into()),
+    }
+}
+
+pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32, FunctionPlotMode), String> {
+    let mode = decode_function_plot_mode(data)?;
     let x_min = f64::from_le_bytes(data[0..8].try_into().unwrap());
     let x_max = f64::from_le_bytes(data[8..16].try_into().unwrap());
     let samples = u32_at(data, 16);
@@ -1201,7 +1228,7 @@ pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32), String> {
     {
         return Err("Invalid function plot range".into());
     }
-    Ok((x_min, x_max, samples))
+    Ok((x_min, x_max, samples, mode))
 }
 
 pub fn decode_parametric_range(data: &[u8], polar: bool) -> Result<(f64, f64, u32), String> {
@@ -1443,6 +1470,7 @@ pub fn encode_plot_group_with_range(
     min: f64,
     max: f64,
     samples: u32,
+    mode: FunctionPlotMode,
 ) -> Result<Vec<u8>, String> {
     if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
         return Err("Invalid function plot range".into());
@@ -1459,6 +1487,8 @@ pub fn encode_plot_group_with_range(
     bytes[range.payload_start + 8..range.payload_start + 16].copy_from_slice(&max.to_le_bytes());
     bytes[range.payload_start + 16..range.payload_start + 20]
         .copy_from_slice(&samples.to_le_bytes());
+    bytes[range.payload_start + 20..range.payload_start + 24]
+        .copy_from_slice(&mode.native_word().to_le_bytes());
     Ok(bytes[4..].to_vec())
 }
 

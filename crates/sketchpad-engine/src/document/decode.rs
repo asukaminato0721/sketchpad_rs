@@ -1887,7 +1887,7 @@ impl Document {
                         && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
                         match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
-                            Ok((min,max,samples)) => Kind::FunctionPlot(*definition,*frame,min,max,samples),
+                            Ok((min,max,samples,mode)) => Kind::FunctionPlot(*definition,*frame,min,max,samples,mode),
                             Err(_) => Kind::Unsupported(code),
                         }
                     }

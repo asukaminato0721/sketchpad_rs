@@ -113,10 +113,7 @@ fn clearing_trailing_function_objects_keeps_savable_state() {
     assert_eq!(saved.clear_selected().unwrap(), vec![first]);
     let reopened = Document::from_bytes(&saved.encode().unwrap(), None).unwrap();
     assert!(!reopened.partial_view);
-    assert!(matches!(
-        reopened.objects[7].kind,
-        Kind::FunctionPlot(_, _, _, _, _)
-    ));
+    assert!(matches!(reopened.objects[7].kind, Kind::FunctionPlot(..)));
     assert_eq!(
         reopened.position(second - 1),
         Some(Point { x: 340., y: 210. })
@@ -138,7 +135,7 @@ fn clearing_independent_point_before_saved_plot_remaps_its_dependencies() {
     assert_eq!(reopened.function_plot_points(plot - 1, 8).unwrap(), before);
     assert!(matches!(
         reopened.objects[plot - 2].kind,
-        Kind::FunctionPlot(7, 6, _, _, _)
+        Kind::FunctionPlot(7, 6, ..)
     ));
 }
 #[test]
@@ -292,7 +289,7 @@ fn copying_function_plot_keeps_its_frame_style_and_curve() {
         Some((30, 25))
     );
     assert!(
-        matches!(reopened.objects[pasted[7] - 1].kind, Kind::FunctionPlot(definition, frame, _, _, _) if definition == pasted[6] && frame == pasted[5])
+        matches!(reopened.objects[pasted[7] - 1].kind, Kind::FunctionPlot(definition, frame, ..) if definition == pasted[6] && frame == pasted[5])
     );
     let after = reopened.function_plot_points(pasted[7], 8).unwrap();
     assert!(

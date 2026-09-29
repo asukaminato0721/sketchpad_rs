@@ -480,7 +480,7 @@ impl Kind {
             | Kind::DistanceAxis(a, b, _)
             | Kind::CoordinateSystem(a, b)
             | Kind::SlopeMeasurement(a, b)
-            | Kind::FunctionPlot(a, b, _, _, _)
+            | Kind::FunctionPlot(a, b, _, _, _, _)
             | Kind::PathValuePoint(a, b) => vec![a, b],
             Kind::DataFunction { source, frame, .. } => vec![source, frame],
             Kind::PlottedPoint(frame, _, _) => vec![frame],
@@ -893,8 +893,8 @@ impl Kind {
                 frame: m(frame),
                 smoothing,
             },
-            Kind::FunctionPlot(a, b, min, max, samples) => {
-                Kind::FunctionPlot(m(a), m(b), min, max, samples)
+            Kind::FunctionPlot(a, b, min, max, samples, mode) => {
+                Kind::FunctionPlot(m(a), m(b), min, max, samples, mode)
             }
             Kind::ParametricPlot(x, y, frame, min, max, samples, mode) => {
                 Kind::ParametricPlot(m(x), m(y), m(frame), min, max, samples, mode)
@@ -1831,7 +1831,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::ThreePointArc(_, _, _)
         | Kind::ArcOnCircle(_, _, _)
         | Kind::CenterArc(_, _, _) => Some(VisualStyle::Stroke { line, color: green }),
-        Kind::FunctionPlot(_, _, _, _, _) => Some(VisualStyle::Stroke {
+        Kind::FunctionPlot(_, _, _, _, _, _) => Some(VisualStyle::Stroke {
             line: SegmentLineStyle {
                 width: LineWidth::Thin,
                 pattern: LinePattern::Solid,

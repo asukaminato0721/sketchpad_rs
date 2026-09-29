@@ -595,23 +595,38 @@ impl Document {
                 }
                 continue;
             }
-            if let Some((min, max, samples, polar)) = match object.kind {
-                Kind::FunctionPlot(_, _, min, max, samples) => Some((min, max, samples, None)),
-                Kind::ParametricPlot(_, _, _, min, max, samples, mode) => {
-                    Some((min, max, samples, Some(mode == PlotPointsMode::Polar)))
-                }
-                _ => None,
-            } {
+            if let Kind::FunctionPlot(_, _, min, max, samples, mode) = object.kind {
                 let range = group
                     .iter()
                     .find(|record| record.kind == 0x0902)
                     .ok_or("Missing saved plot range")?;
                 let original = &bytes[range.data.clone()];
-                let previous = match polar {
-                    Some(polar) => function_records::decode_parametric_range(original, polar)?,
-                    None => function_records::decode_plot_range(original)?,
-                };
-                if previous != (min, max, samples) {
+                if function_records::decode_plot_range(original)? != (min, max, samples, mode) {
+                    let mut payload = original.to_vec();
+                    payload[..8].copy_from_slice(&min.to_le_bytes());
+                    payload[8..16].copy_from_slice(&max.to_le_bytes());
+                    payload[16..20].copy_from_slice(&samples.to_le_bytes());
+                    payload[20..24].copy_from_slice(&mode.native_word().to_le_bytes());
+                    let mut replacement = Vec::new();
+                    put_record(&mut replacement, 0x0902, &payload);
+                    edits.push((
+                        range.start,
+                        range.data.end + original.len() % 2,
+                        replacement,
+                    ));
+                }
+                continue;
+            }
+            if let Kind::ParametricPlot(_, _, _, min, max, samples, mode) = object.kind {
+                let polar = mode == PlotPointsMode::Polar;
+                let range = group
+                    .iter()
+                    .find(|record| record.kind == 0x0902)
+                    .ok_or("Missing saved plot range")?;
+                let original = &bytes[range.data.clone()];
+                if function_records::decode_parametric_range(original, polar)?
+                    != (min, max, samples)
+                {
                     let mut payload = original.to_vec();
                     payload[..8].copy_from_slice(&min.to_le_bytes());
                     payload[8..16].copy_from_slice(&max.to_le_bytes());
