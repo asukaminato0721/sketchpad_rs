@@ -2735,7 +2735,7 @@ impl Document {
                         || matches!(o.kind, Kind::CircleInterior(_))
                         || matches!(&o.kind, Kind::Colorized(definition) if definition.element() == super::transform_model::ElementType::Disk)
                         || is_arc_kind(&o.kind)
-                        || super::kind::is_straight_locus(&objects, &o.kind)
+                        || super::locus::is_mapped_stroke_locus(&objects, &o.kind)
                         || super::locus::is_point_locus(&objects, &o.kind)
                         || matches!(o.kind, Kind::SampledMapped(..))
                 })

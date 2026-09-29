@@ -15,6 +15,19 @@ pub struct LocusStroke {
     pub style: VisualStyle,
 }
 
+fn circle_strokes(center: Point, radius: f64) -> Vec<(Point, Point, LineMode)> {
+    let point = |step: usize| {
+        let angle = step as f64 * std::f64::consts::TAU / 64.;
+        Point {
+            x: center.x + radius * angle.cos(),
+            y: center.y + radius * angle.sin(),
+        }
+    };
+    (0..64)
+        .map(|index| (point(index), point(index + 1), LineMode::Segment))
+        .collect()
+}
+
 /// Point-output loci are sampled as independent traces in a mapped scope.
 /// A locus used as the driver's own path has a separate nested-domain contract.
 pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
@@ -32,6 +45,22 @@ pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
         && objects
             .get(path)
             .is_some_and(|o| !matches!(o.kind, Kind::Locus(..)))
+}
+
+/// A sampled family whose members can be replayed efficiently inside a mapped
+/// scope. These must not be joined like a point trace: every sampled line or
+/// circle is rendered as a separate member and may carry its own dynamic color.
+pub(super) fn is_mapped_stroke_locus(objects: &[Object], kind: &Kind) -> bool {
+    let target = match kind {
+        Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first().unwrap_or(&0),
+        _ => return false,
+    };
+    target
+        .checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .is_some_and(|object| {
+            !object.deleted && (is_locus_straight_kind(&object.kind) || object.kind.is_circle())
+        })
 }
 
 fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
@@ -407,7 +436,14 @@ impl Document {
     }
 
     pub fn locus_styled_strokes(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusStroke>> {
-        self.locus_styled_strokes_with_style(id, subdivisions, self.effective_visual_style(id)?)
+        let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
+            _ => return None,
+        };
+        let style = self
+            .effective_visual_style(id)
+            .or_else(|| self.effective_visual_style(target))?;
+        self.locus_styled_strokes_with_style(id, subdivisions, style)
     }
 
     /// A carried collection owns its local sampling domain. Replay each outer
@@ -422,16 +458,16 @@ impl Document {
             return None;
         };
         let source_kind = &self.objects.get(source.checked_sub(1)?)?.kind;
-        let straight_locus = super::kind::is_straight_locus(&self.objects, source_kind);
+        let stroke_locus = is_mapped_stroke_locus(&self.objects, source_kind);
         let point_locus = is_point_locus(&self.objects, source_kind);
         let sampled = matches!(source_kind, Kind::SampledMapped(..));
-        if object.deleted || (!straight_locus && !point_locus && !sampled) {
+        if object.deleted || (!stroke_locus && !point_locus && !sampled) {
             return None;
         }
         let style = self.effective_visual_style(id)?;
         Some(
             self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
-                if straight_locus {
+                if stroke_locus {
                     sample.locus_styled_strokes_with_style(source, subdivisions, style)
                 } else if point_locus {
                     Some(
@@ -479,7 +515,13 @@ impl Document {
             _ => return None,
         };
         let target = *refs.first()?;
-        super::kind::locus_straight_source_mode(&self.objects, target)?;
+        let target_kind = &self.objects.get(target.checked_sub(1)?)?.kind;
+        if !is_locus_straight_kind(target_kind)
+            && !target_kind.is_circle()
+            && !is_arc_kind(target_kind)
+        {
+            return None;
+        }
         let VisualStyle::Stroke { line, color } = style else {
             return None;
         };
@@ -489,20 +531,50 @@ impl Document {
         );
         Some(
             self.sample_any_locus(id, subdivisions, |sample, target| {
-                let (start, end, mode) = sample.line_points(target)?;
                 let color = if sampled_color {
                     sample.colorized_color(target)?
                 } else {
                     color
                 };
-                Some(LocusStroke {
-                    start,
-                    end,
-                    mode,
-                    style: VisualStyle::Stroke { line, color },
-                })
+                let style = VisualStyle::Stroke { line, color };
+                if is_locus_straight_kind(&sample.objects.get(target - 1)?.kind) {
+                    let (start, end, mode) = sample.line_points(target)?;
+                    return Some(vec![LocusStroke {
+                        start,
+                        end,
+                        mode,
+                        style,
+                    }]);
+                }
+                if sample.objects.get(target - 1)?.kind.is_circle() {
+                    let (center, radius) = sample.circle_points(target)?;
+                    return Some(
+                        circle_strokes(center, radius)
+                            .into_iter()
+                            .map(|(start, end, mode)| LocusStroke {
+                                start,
+                                end,
+                                mode,
+                                style,
+                            })
+                            .collect(),
+                    );
+                }
+                Some(
+                    sample
+                        .arc_points(target, 64)?
+                        .windows(2)
+                        .map(|pair| LocusStroke {
+                            start: pair[0],
+                            end: pair[1],
+                            mode: LineMode::Segment,
+                            style,
+                        })
+                        .collect(),
+                )
             })?
             .into_iter()
+            .flatten()
             .flatten()
             .collect(),
         )
@@ -551,21 +623,9 @@ impl Document {
             let circles = self.sample_any_locus(id, subdivisions, |sample, target| {
                 sample.circle_points(target)
             })?;
-            let units: Vec<_> = (0..=64)
-                .map(|index| {
-                    let angle = index as f64 * std::f64::consts::TAU / 64.;
-                    (angle.cos(), angle.sin())
-                })
-                .collect();
             let mut strokes = Vec::new();
             for (center, radius) in circles.into_iter().flatten() {
-                for pair in units.windows(2) {
-                    let point = |unit: (f64, f64)| Point {
-                        x: center.x + radius * unit.0,
-                        y: center.y + radius * unit.1,
-                    };
-                    strokes.push((point(pair[0]), point(pair[1]), LineMode::Segment));
-                }
+                strokes.extend(circle_strokes(center, radius));
             }
             return Some(strokes);
         }
