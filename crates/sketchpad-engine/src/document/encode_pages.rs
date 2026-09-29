@@ -609,11 +609,14 @@ impl Document {
                     | Kind::PointOnLine(host, t)
                     | Kind::PointOnArc(host, t)
                     | Kind::PointOnSector(host, t)
+                    | Kind::PointOnCircularSegment(host, t)
                     | Kind::PointOnCurve(host, t) => {
                         if !t.is_finite()
                             || matches!(
                                 object.kind,
-                                Kind::PointOnSegment(_, _) | Kind::PointOnArc(_, _)
+                                Kind::PointOnSegment(_, _)
+                                    | Kind::PointOnArc(_, _)
+                                    | Kind::PointOnCircularSegment(_, _)
                             ) && !(0.0..=1.0).contains(t)
                             || matches!(object.kind, Kind::PointOnRay(_, _)) && *t < 0.
                         {
@@ -634,6 +637,13 @@ impl Document {
                                 && !is_arc_kind(&host_object.kind)
                             || matches!(object.kind, Kind::PointOnSector(..))
                                 && !super::sector_boundary::supported_host(
+                                    &self.objects,
+                                    *host,
+                                    page,
+                                    object.id,
+                                )
+                            || matches!(object.kind, Kind::PointOnCircularSegment(..))
+                                && !super::sector_boundary::supported_circular_segment_host(
                                     &self.objects,
                                     *host,
                                     page,
@@ -679,6 +689,7 @@ impl Document {
                             Kind::PointOnSegment(_, _) => 14,
                             Kind::PointOnArc(_, _) => 67,
                             Kind::PointOnSector(_, _) => 68,
+                            Kind::PointOnCircularSegment(_, _) => 69,
                             Kind::PointOnCurve(host, _) => {
                                 super::curve_points::free_constraint_subtype(&self.objects, host)
                                     .ok_or("Invalid curve-point host")?
@@ -1868,6 +1879,20 @@ impl Document {
                 {
                     expected.kind = current.kind.clone();
                 }
+                (
+                    Kind::PointOnCircularSegment(old_host, _),
+                    Kind::PointOnCircularSegment(host, t),
+                ) if old_host == host
+                    && (0.0..=1.0).contains(t)
+                    && super::sector_boundary::supported_circular_segment_host(
+                        &self.objects,
+                        *host,
+                        current.page,
+                        current.id,
+                    ) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
                 (Kind::PointOnCurve(old_host, _), Kind::PointOnCurve(host, t))
                     if old_host == host
                         && t.is_finite()
@@ -1984,6 +2009,7 @@ impl Document {
                         | Kind::PointOnLine(_, _)
                         | Kind::PointOnArc(_, _)
                         | Kind::PointOnSector(_, _)
+                        | Kind::PointOnCircularSegment(_, _)
                         | Kind::PointOnCurve(_, _)
                         | Kind::PointOnPolygon(_, _, _)
                         | Kind::PointOnCircle(_, _, _)
@@ -2031,6 +2057,14 @@ impl Document {
                         }
                         out.get_mut(at + 4..at + 12)
                             .ok_or("Short sector-point constraint")?
+                            .copy_from_slice(&t.to_le_bytes());
+                    }
+                    Kind::PointOnCircularSegment(_, t) => {
+                        if out.get(at..at + 4) != Some(&[15, 0, 69, 0]) {
+                            return Err("Invalid circular-segment-point constraint".into());
+                        }
+                        out.get_mut(at + 4..at + 12)
+                            .ok_or("Short circular-segment-point constraint")?
                             .copy_from_slice(&t.to_le_bytes());
                     }
                     Kind::PointOnCurve(host, t) => {

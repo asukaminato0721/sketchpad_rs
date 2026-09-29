@@ -713,6 +713,7 @@ impl Document {
             if matches!(o.kind, Kind::PointOnSegment(_, t) | Kind::PointOnArc(_, t) | Kind::PointOnPolygon(_, _, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnRay(_, t) if !t.is_finite() || t < 0.)
                 || matches!(o.kind, Kind::PointOnLine(_, t) | Kind::PointOnSector(_, t) if !t.is_finite())
+                || matches!(o.kind, Kind::PointOnCircularSegment(_, t) if !t.is_finite() || !(0.0..=1.0).contains(&t))
                 || matches!(o.kind, Kind::PointOnCircle(_, x, y) if !x.is_finite() || !y.is_finite() || (x*x+y*y-1.).abs() > 1e-6)
             {
                 return Err(format!("Invalid point constraint in object {}", o.id));
@@ -724,6 +725,7 @@ impl Document {
             if matches!(o.kind, Kind::SectorBoundary(source) if !super::sector_boundary::supported_source(&self.objects, source, o.page, o.id))
                 || matches!(o.kind, Kind::CircularSegmentBoundary(source) if !super::sector_boundary::supported_circular_segment_source(&self.objects, source, o.page, o.id))
                 || matches!(o.kind, Kind::PointOnSector(host, _) if !super::sector_boundary::supported_host(&self.objects, host, o.page, o.id))
+                || matches!(o.kind, Kind::PointOnCircularSegment(host, _) if !super::sector_boundary::supported_circular_segment_host(&self.objects, host, o.page, o.id))
             {
                 return Err(format!("Invalid sector dependency in object {}", o.id));
             }
@@ -1273,13 +1275,25 @@ impl Document {
                         Some(Kind::PointOnSector(host, t)) if *host == second && t.is_finite()
                     )
                     && super::sector_boundary::supported_host(&self.objects, second, o.page, o.id);
+                let undefined_circular_segment_value = kind == ValueEquationKind::PointValue
+                    && matches!(
+                        self.objects.get(first.saturating_sub(1)).map(|point| &point.kind),
+                        Some(Kind::PointOnCircularSegment(host, t)) if *host == second && t.is_finite()
+                    )
+                    && super::sector_boundary::supported_circular_segment_host(
+                        &self.objects,
+                        second,
+                        o.page,
+                        o.id,
+                    );
                 if !hosts_match
                     || (self.value_equation_value(o.id).is_none()
                         && !undefined_center_value
                         && !undefined_straight_value
                         && !undefined_path_value
                         && !undefined_curve_value
-                        && !undefined_sector_value)
+                        && !undefined_sector_value
+                        && !undefined_circular_segment_value)
                 {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }
@@ -1426,6 +1440,7 @@ impl Document {
                                 Kind::BoundaryIntersection(straight, polygon) => super::boundary_intersection::supported(&self.objects, straight, polygon, point.page, point.id),
                                 Kind::IterationPointAlias(binding) => super::iteration_endpoint::binding_source(&self.objects, binding, point.page, point.id).is_some(),
                                 Kind::PointOnSector(host, t) => t.is_finite() && super::sector_boundary::supported_host(&self.objects, host, point.page, point.id),
+                                Kind::PointOnCircularSegment(host, t) => (0.0..=1.0).contains(&t) && super::sector_boundary::supported_circular_segment_host(&self.objects, host, point.page, point.id),
                                 Kind::PointOnCurve(path, _) => super::curve_points::free_supported(&self.objects, path, point.page, point.id),
                                 Kind::PathValuePoint(source, path) => super::curve_points::supported(&self.objects, path, point.page, point.id)
                                     || self.numeric_value(source).is_some_and(|value| self.undefined_native_path_plot(path, value)),
@@ -1444,6 +1459,7 @@ impl Document {
                 if (self.position(a).is_none()||self.position(b).is_none())
                     && !(matches!(o.kind, Kind::Midpoint(..)) && [a,b].into_iter().all(|id| self.position(id).is_some() || self.objects.get(id.saturating_sub(1)).is_some_and(|point| match point.kind {
                         Kind::PointOnSector(host, t) => t.is_finite() && super::sector_boundary::supported_host(&self.objects, host, point.page, point.id),
+                        Kind::PointOnCircularSegment(host, t) => (0.0..=1.0).contains(&t) && super::sector_boundary::supported_circular_segment_host(&self.objects, host, point.page, point.id),
                         _ => false,
                     }))))
             {

@@ -795,6 +795,7 @@ impl Document {
                 }
                 Kind::PointOnArc(host, t) => d.point_on_arc(*host, *t),
                 Kind::PointOnSector(host, t) => d.point_on_sector(*host, *t),
+                Kind::PointOnCircularSegment(host, t) => d.point_on_circular_segment(*host, *t),
                 Kind::PointOnCurve(host, t) => {
                     if super::curve_points::free_supported(
                         &d.objects,
@@ -1495,6 +1496,13 @@ impl Document {
                 };
                 Kind::PointOnSector(host, t)
             }
+            Some(Kind::PointOnCircularSegment(host, _)) => {
+                let host = *host;
+                let Some(t) = self.circular_segment_boundary_projection(host, p) else {
+                    return false;
+                };
+                Kind::PointOnCircularSegment(host, t)
+            }
             Some(Kind::PointOnArc(host, _)) => {
                 let host = *host;
                 let Some(t) = self.arc_parameter(host, p) else {
@@ -1620,6 +1628,9 @@ impl Document {
             Kind::SectorBoundary(_) => self
                 .sector_boundary_projection(host, p)
                 .map(|t| Kind::PointOnSector(host, t)),
+            Kind::CircularSegmentBoundary(_) => self
+                .circular_segment_boundary_projection(host, p)
+                .map(|t| Kind::PointOnCircularSegment(host, t)),
             ref kind if kind.is_polygon() => self
                 .polygon_boundary_projection(host, p)
                 .map(|(edge, t)| Kind::PointOnPolygon(host, edge, t)),

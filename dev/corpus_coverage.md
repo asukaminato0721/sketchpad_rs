@@ -2053,3 +2053,21 @@ with SHA-256
 No standalone test case was added. See
 [analysis](transformed_cropped_pictures_analysis.md). Full scan:
 `/tmp/transformed_crop_final_full_coverage.log`.
+
+## Circular-segment boundary point
+
+The observed code-15 class-1/subtype-10 point with constraint subtype 69 now
+retains a live circular-segment boundary host. Its unit parameter traverses the
+arc and then the closing chord by physical perimeter; exact arc/chord projection
+supports dragging without depending on presentation sampling.
+
+The single root is restored. Unsupported falls **777→776**, complete
+documents/drawings rise **1,506/1,547→1,507/1,548**, unsupported documents fall
+**93→92**, and partial views fall **802→801**. Embedded-tool coverage remains
+**4,766/5,356**, and all **1,599** originals remain byte-exact. The port render
+places the fixture's late-parameter point on the chord close to A, and the
+untouched source round-trips with SHA-256
+`73b2ae197c314e0b1d0aefb55e0f8c0841536766af63ad9e811bd39e2a273a6f`.
+No standalone test case was added. See
+[analysis](circular_segment_point_analysis.md). Full scan:
+`/tmp/circular_segment_point_coverage.log`.

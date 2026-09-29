@@ -184,6 +184,7 @@ impl Editor {
                 | Kind::PointOnCurve(_, _)
                 | Kind::PointOnPolygon(_, _, _)
                 | Kind::PointOnSector(_, _)
+                | Kind::PointOnCircularSegment(_, _)
                 | Kind::Parameter(_)
         ) {
             (ids[0], ids[1])

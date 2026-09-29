@@ -199,7 +199,8 @@ impl Editor {
                         | Kind::PointOnCurve(host, _)
                         | Kind::PointOnCircle(host, _, _)
                         | Kind::PointOnPolygon(host, _, _)
-                        | Kind::PointOnSector(host, _),
+                        | Kind::PointOnSector(host, _)
+                        | Kind::PointOnCircularSegment(host, _),
                     ) if !equation => (ValueEquationKind::PointValue, *host),
                     Some(Kind::PathLiteralPoint(host, _) | Kind::PathValuePoint(_, host))
                         if !equation

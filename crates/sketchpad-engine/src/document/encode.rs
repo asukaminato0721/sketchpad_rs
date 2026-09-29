@@ -281,6 +281,11 @@ impl Document {
                     Kind::PointOnSector(_, t) if out.get(i..i + 4) == Some(&[15, 0, 68, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
+                    Kind::PointOnCircularSegment(_, t)
+                        if out.get(i..i + 4) == Some(&[15, 0, 69, 0]) =>
+                    {
+                        out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
+                    }
                     Kind::PointOnArc(_, t) if out.get(i..i + 4) == Some(&[15, 0, 67, 0]) => {
                         out[i + 4..i + 12].copy_from_slice(&t.to_le_bytes());
                     }
@@ -1945,6 +1950,7 @@ impl Document {
                 | Kind::PointOnCircle(host, _, _)
                 | Kind::PointOnArc(host, _)
                 | Kind::PointOnSector(host, _)
+                | Kind::PointOnCircularSegment(host, _)
                 | Kind::PointOnCurve(host, _)
                 | Kind::PointOnPolygon(host, _, _) => (15, vec![host]),
                 Kind::Midpoint(_, _) => (
@@ -2024,6 +2030,7 @@ impl Document {
                     | Kind::PointOnCircle(..)
                     | Kind::PointOnArc(..)
                     | Kind::PointOnSector(..)
+                    | Kind::PointOnCircularSegment(..)
                     | Kind::PointOnCurve(..)
                     | Kind::PointOnPolygon(..)
             );
@@ -2079,6 +2086,11 @@ impl Document {
                     }
                     Kind::PointOnSector(_, t) => {
                         let mut payload = vec![15, 0, 68, 0];
+                        payload.extend_from_slice(&t.to_le_bytes());
+                        put_record(&mut added, 0x7d3, &payload);
+                    }
+                    Kind::PointOnCircularSegment(_, t) => {
+                        let mut payload = vec![15, 0, 69, 0];
                         payload.extend_from_slice(&t.to_le_bytes());
                         put_record(&mut added, 0x7d3, &payload);
                     }

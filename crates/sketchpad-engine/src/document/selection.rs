@@ -22,6 +22,7 @@ impl Document {
                             | Kind::PointOnCircle(..)
                             | Kind::PointOnArc(..)
                             | Kind::PointOnSector(..)
+                            | Kind::PointOnCircularSegment(..)
                             | Kind::PointOnCurve(..)
                             | Kind::PointOnPolygon(..)
                             | Kind::SegmentMidpoint(..)

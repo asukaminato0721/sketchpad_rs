@@ -31,6 +31,18 @@ pub(super) fn supported_host(objects: &[Object], host: usize, page: usize, befor
         .and_then(|i| objects.get(i))
         .is_some_and(|o| host < before && !o.deleted && o.page == page && o.kind.is_sector())
 }
+pub(super) fn supported_circular_segment_host(
+    objects: &[Object],
+    host: usize,
+    page: usize,
+    before: usize,
+) -> bool {
+    host.checked_sub(1)
+        .and_then(|i| objects.get(i))
+        .is_some_and(|o| {
+            host < before && !o.deleted && o.page == page && o.kind.is_circular_segment()
+        })
+}
 fn arc_at((center, radius, start, sweep, clockwise_y): SectorArc, t: f64) -> Point {
     let angle = start + sweep * t;
     Point {
@@ -97,6 +109,24 @@ impl Document {
             return Err("Sector point requires a live sector and a finite parameter".into());
         }
         Ok(self.add(Kind::PointOnSector(host, t)))
+    }
+    /// Add a point on the arc-and-chord perimeter of a circular segment.
+    pub fn add_point_on_circular_segment(&mut self, host: usize, t: f64) -> Result<usize, String> {
+        if !t.is_finite()
+            || !(0.0..=1.0).contains(&t)
+            || !supported_circular_segment_host(
+                &self.objects,
+                host,
+                self.active_page,
+                self.objects.len() + 1,
+            )
+        {
+            return Err(
+                "Circular-segment point requires a live circular segment and a unit parameter"
+                    .into(),
+            );
+        }
+        Ok(self.add(Kind::PointOnCircularSegment(host, t)))
     }
     pub(super) fn sector_arc_geometry(&self, id: usize) -> Option<SectorArc> {
         if let Some(original) = self.frozen_evaluation_document(id) {
@@ -215,6 +245,34 @@ impl Document {
             })
         }
     }
+    /// Native Point69 traverses the arc and then its closing chord by physical perimeter.
+    pub fn point_on_circular_segment(&self, id: usize, t: f64) -> Option<Point> {
+        if !t.is_finite() || !(0.0..=1.).contains(&t) {
+            return None;
+        }
+        let geometry = self.circular_segment_geometry(id)?;
+        let (_, radius, _, sweep, _) = geometry;
+        let start = arc_at(geometry, 0.);
+        let end = arc_at(geometry, 1.);
+        let arc = radius * sweep.abs();
+        let chord = start.distance(end);
+        let perimeter = arc + chord;
+        if !arc.is_finite() || arc <= 0. || !chord.is_finite() || !perimeter.is_finite() {
+            return None;
+        }
+        let distance = t * perimeter;
+        if distance <= arc {
+            Some(arc_at(geometry, distance / arc))
+        } else if chord > 0. {
+            let q = ((distance - arc) / chord).clamp(0., 1.);
+            Some(Point {
+                x: end.x + (start.x - end.x) * q,
+                y: end.y + (start.y - end.y) * q,
+            })
+        } else {
+            Some(start)
+        }
+    }
     /// Exact nearest boundary parameter; presentation subdivisions do not affect dragging.
     pub fn sector_boundary_projection(&self, id: usize, p: Point) -> Option<f64> {
         if !p.x.is_finite() || !p.y.is_finite() {
@@ -232,6 +290,42 @@ impl Document {
             (first * r / perimeter, fp),
             ((r + arc * length) / perimeter, ap),
             ((r + length + last * r) / perimeter, lp),
+        ]
+        .into_iter()
+        .min_by(|(ta, a), (tb, b)| {
+            a.distance(p)
+                .total_cmp(&b.distance(p))
+                .then_with(|| ta.total_cmp(tb))
+        })
+        .map(|(t, _)| t)
+    }
+    pub fn circular_segment_boundary_projection(&self, id: usize, p: Point) -> Option<f64> {
+        if !p.x.is_finite() || !p.y.is_finite() {
+            return None;
+        }
+        let geometry = self.circular_segment_geometry(id)?;
+        let (_, radius, _, sweep, _) = geometry;
+        let start = arc_at(geometry, 0.);
+        let end = arc_at(geometry, 1.);
+        let arc_length = radius * sweep.abs();
+        let chord_length = start.distance(end);
+        let perimeter = arc_length + chord_length;
+        if !arc_length.is_finite()
+            || arc_length <= 0.
+            || !chord_length.is_finite()
+            || !perimeter.is_finite()
+        {
+            return None;
+        }
+        let arc = arc_projection(geometry, p);
+        let arc_point = arc_at(geometry, arc);
+        if chord_length == 0. {
+            return Some(arc);
+        }
+        let (chord, chord_point) = segment_projection(end, start, p);
+        [
+            (arc * arc_length / perimeter, arc_point),
+            ((arc_length + chord * chord_length) / perimeter, chord_point),
         ]
         .into_iter()
         .min_by(|(ta, a), (tb, b)| {

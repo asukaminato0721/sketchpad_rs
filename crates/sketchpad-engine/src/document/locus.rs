@@ -271,6 +271,17 @@ pub(super) fn locus_driver_range_info_for_path(
         {
             Some((1., 0))
         }
+        Kind::PointOnCircularSegment(host, _)
+            if host == path
+                && super::sector_boundary::supported_circular_segment_host(
+                    objects,
+                    path,
+                    moving.page,
+                    driver,
+                ) =>
+        {
+            Some((1., 0))
+        }
         Kind::PointOnCurve(host, _)
             if host == path
                 && super::curve_points::free_supported(objects, path, moving.page, driver) =>
@@ -554,6 +565,9 @@ impl Document {
             Kind::PointOnSector(host, _) if *host == path => {
                 Some(Kind::PointOnSector(path, parameter))
             }
+            Kind::PointOnCircularSegment(host, _) if *host == path => {
+                Some(Kind::PointOnCircularSegment(path, parameter))
+            }
             Kind::PointOnPolygon(host, ..) if *host == path => {
                 self.locus_polygon_driver_kind_at(path, parameter)
             }
@@ -574,6 +588,9 @@ impl Document {
                     }
                     None if self.objects[path - 1].kind.is_sector() => {
                         Some(Kind::PointOnSector(path, parameter))
+                    }
+                    None if self.objects[path - 1].kind.is_circular_segment() => {
+                        Some(Kind::PointOnCircularSegment(path, parameter))
                     }
                     None => Some(Kind::PointOnCurve(path, parameter)),
                 }

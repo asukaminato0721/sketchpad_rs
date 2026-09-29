@@ -522,6 +522,8 @@ pub enum Kind {
     CircleInterior(usize),
     /// Normalized physical perimeter parameter on a closed sector boundary.
     PointOnSector(usize, f64),
+    /// Normalized physical perimeter parameter on an arc-and-chord boundary.
+    PointOnCircularSegment(usize, f64),
     /// A draggable point constrained to an evaluated point trace.
     PointOnCurve(usize, f64),
     PointOnPolygon(usize, usize, f64),

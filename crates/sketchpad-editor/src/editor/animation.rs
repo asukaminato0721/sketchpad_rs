@@ -201,6 +201,11 @@ impl Editor {
             Kind::PointOnSector(host, t) if self.doc.point_on_sector(host, t).is_some() => {
                 (t, None)
             }
+            Kind::PointOnCircularSegment(host, t)
+                if self.doc.point_on_circular_segment(host, t).is_some() =>
+            {
+                (t, None)
+            }
             _ => return None,
         };
         phase.is_finite().then_some(AnimationTrack {
@@ -562,6 +567,7 @@ impl Editor {
                 Kind::PointOnCircle(_, _, _)
                     | Kind::PointOnPolygon(_, _, _)
                     | Kind::PointOnSector(_, _)
+                    | Kind::PointOnCircularSegment(_, _)
             );
             match track.button_settings.map(|settings| settings.direction) {
                 Some(AnimationDirection::Forward) => {
@@ -645,6 +651,9 @@ impl Editor {
                 }
                 Kind::PointOnCurve(host, _) => self.doc.point_on_curve(host, track.phase),
                 Kind::PointOnSector(host, _) => self.doc.point_on_sector(host, track.phase),
+                Kind::PointOnCircularSegment(host, _) => {
+                    self.doc.point_on_circular_segment(host, track.phase)
+                }
                 _ => None,
             };
             let moved = destination.is_some_and(|point| self.doc.move_point(track.id, point));

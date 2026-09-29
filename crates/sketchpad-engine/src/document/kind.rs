@@ -433,6 +433,7 @@ impl Kind {
             | Kind::CircularSegmentBoundary(host)
             | Kind::CircleInterior(host)
             | Kind::PointOnSector(host, _)
+            | Kind::PointOnCircularSegment(host, _)
             | Kind::PointOnCurve(host, _)
             | Kind::PointOnPolygon(host, _, _)
             | Kind::PathLiteralPoint(host, _)
@@ -797,6 +798,7 @@ impl Kind {
             Kind::CircularSegmentBoundary(a) => Kind::CircularSegmentBoundary(m(a)),
             Kind::CircleInterior(a) => Kind::CircleInterior(m(a)),
             Kind::PointOnSector(a, t) => Kind::PointOnSector(m(a), t),
+            Kind::PointOnCircularSegment(a, t) => Kind::PointOnCircularSegment(m(a), t),
             Kind::PointOnCurve(a, t) => Kind::PointOnCurve(m(a), t),
             Kind::PointOnPolygon(a, edge, t) => Kind::PointOnPolygon(m(a), edge, t),
             Kind::Locus(ref refs, samples) => {
@@ -1046,6 +1048,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnArc(_, _)
             | Kind::PointOnSector(_, _)
+            | Kind::PointOnCircularSegment(_, _)
             | Kind::PointOnCurve(_, _)
             | Kind::PointOnPolygon(_, _, _)
             | Kind::Segment(_, _)
@@ -1202,6 +1205,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PointOnCircle(_, _, _)
                 | Kind::PointOnArc(_, _)
                 | Kind::PointOnSector(_, _)
+                | Kind::PointOnCircularSegment(_, _)
                 | Kind::PointOnCurve(_, _)
                 | Kind::PointOnPolygon(_, _, _)
                 | Kind::GraphHorizontalUnit(_, _)
@@ -1469,7 +1473,8 @@ pub(super) fn expected_locus_refs(
         | Kind::PointOnArc(path, _)
         | Kind::PointOnCurve(path, _)
         | Kind::PointOnPolygon(path, ..)
-        | Kind::PointOnSector(path, _) => path,
+        | Kind::PointOnSector(path, _)
+        | Kind::PointOnCircularSegment(path, _) => path,
         _ => return None,
     };
     expected_locus_refs_for_path(objects, driver, target, path)
@@ -1826,6 +1831,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PointOnCircle(_, _, _)
         | Kind::PointOnArc(_, _)
         | Kind::PointOnSector(_, _)
+        | Kind::PointOnCircularSegment(_, _)
         | Kind::PointOnCurve(_, _)
         | Kind::PointOnPolygon(_, _, _)
         | Kind::PathLiteralPoint(_, _)

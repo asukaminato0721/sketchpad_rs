@@ -593,7 +593,10 @@ impl Document {
             Kind::Free(_)
             | Kind::PointOnCircle(_, _, _)
             | Kind::PointOnPolygon(_, _, _)
-            | Kind::PointOnSector(_, _) => crate::action_records::AnimationDirection::Forward,
+            | Kind::PointOnSector(_, _)
+            | Kind::PointOnCircularSegment(_, _) => {
+                crate::action_records::AnimationDirection::Forward
+            }
             Kind::Parameter(_)
             | Kind::PointOnSegment(_, _)
             | Kind::PointOnRay(_, _)
@@ -736,6 +739,7 @@ impl Document {
                         | Kind::PointOnPolygon(_, _, _)
                         | Kind::PointOnCurve(_, _)
                         | Kind::PointOnSector(_, _)
+                        | Kind::PointOnCircularSegment(_, _)
                 )
             {
                 return Err(

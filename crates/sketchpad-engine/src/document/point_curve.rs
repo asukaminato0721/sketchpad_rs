@@ -133,6 +133,7 @@ impl<'a> PointCurve<'a> {
                             | Kind::PointOnCurve(..)
                             | Kind::PointOnPolygon(..)
                             | Kind::PointOnSector(..)
+                            | Kind::PointOnCircularSegment(..)
                     )
                 {
                     return None;
@@ -180,7 +181,10 @@ impl<'a> PointCurve<'a> {
                 ..
             } => (0.0..=1.0).contains(&value).then_some(value),
             Source::Geometric {
-                kind: Kind::PointOnPolygon(..) | Kind::PointOnSector(..),
+                kind:
+                    Kind::PointOnPolygon(..)
+                    | Kind::PointOnSector(..)
+                    | Kind::PointOnCircularSegment(..),
                 ..
             } => (0.0..=1.0).contains(&value).then_some(value),
             Source::Geometric {
@@ -216,7 +220,11 @@ impl<'a> PointCurve<'a> {
         }
         match &self.source {
             Source::Geometric {
-                kind: Kind::PointOnCircle(..) | Kind::PointOnPolygon(..) | Kind::PointOnSector(..),
+                kind:
+                    Kind::PointOnCircle(..)
+                    | Kind::PointOnPolygon(..)
+                    | Kind::PointOnSector(..)
+                    | Kind::PointOnCircularSegment(..),
                 ..
             } => Some(value.rem_euclid(1.)),
             Source::Geometric {

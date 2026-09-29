@@ -2011,6 +2011,7 @@ impl Document {
                                             | Kind::PointOnPolygon(_, _, _)
                                             | Kind::PointOnCurve(_, _)
                                             | Kind::PointOnSector(_, _)
+                                            | Kind::PointOnCircularSegment(_, _)
                                     ) || object.kind.is_point() && object.kind.transform_definition().is_some())
                                     && (matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_))
                                         || matches!(object.kind, Kind::Parameter(_)) == settings.parameter.is_some())
@@ -2253,6 +2254,23 @@ impl Document {
                             _ => false,
                         }) => {
                         Kind::PointOnSector(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
+                    }
+                    (15, None, [host]) if point_curve_constraint_count == 1
+                        && h.len() == 28 && h[6..10] == [1, 0, 10, 0]
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| {
+                            payload.len() == 12
+                                && payload[..4] == [15, 0, 69, 0]
+                                && (0.0..=1.0).contains(&f64_at(payload, 4))
+                        })
+                        && super::sector_boundary::supported_circular_segment_host(&objects, *host, page, objects.len() + 1)
+                        && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1
+                        && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start).all(|r| match r.kind {
+                            0x07d0 | 0x07d5 | 0x07d8 | 0x07d7 => true,
+                            0x07d2 => r.data.len() == 8,
+                            0x07d3 => r.data.len() == 12,
+                            _ => false,
+                        }) => {
+                        Kind::PointOnCircularSegment(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
                     }
                     (15, None, [host]) if point_curve_constraint_count == 1
                         && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58 | 90 | 99, 0]))) =>

@@ -36,7 +36,11 @@ pub(super) fn point_value_refs_match(
             || host_object.kind.is_polygon()
             || super::curve_points::free_supported(objects, host, page, before)
             || (matches!(point_object.kind, Kind::PointOnSector(point_host, t) if point_host == host && t.is_finite())
-                && super::sector_boundary::supported_host(objects, host, page, before)))
+                && super::sector_boundary::supported_host(objects, host, page, before))
+            || (matches!(point_object.kind, Kind::PointOnCircularSegment(point_host, t) if point_host == host && t.is_finite())
+                && super::sector_boundary::supported_circular_segment_host(
+                    objects, host, page, before,
+                )))
 }
 
 impl Document {
@@ -561,6 +565,13 @@ impl Document {
                 {
                     return self
                         .point_on_sector(host, t)
+                        .and_then(|_| t.is_finite().then_some(EquationValue::PointValue(t)));
+                }
+                if let Kind::PointOnCircularSegment(host, t) = self.objects.get(first - 1)?.kind
+                    && host == second
+                {
+                    return self
+                        .point_on_circular_segment(host, t)
                         .and_then(|_| t.is_finite().then_some(EquationValue::PointValue(t)));
                 }
                 let point = screen(self.position(first)?);
