@@ -2014,3 +2014,22 @@ saves byte-for-byte with SHA-256
 No standalone test case was added. See
 [analysis](parametric_plot_locus_analysis.md). Full scan:
 `/tmp/parametric_locus_coverage.log`.
+
+## Legacy circular-segment rotations
+
+Four code-119 class-13/subtype-69 groups rotate supported circular segments
+using the already validated legacy three-reference numeric-rotation layout.
+The circular-segment transform guard now includes that opcode while retaining
+the existing strict header, record, reference, ordering, page, and degree-unit
+checks. Two code-119 point rotations with unsupported sources remain opaque.
+
+Unsupported falls **793→789**, complete documents/drawings rise
+**1,503/1,544→1,504/1,545**, unsupported documents fall **96→95**, and partial
+views remain **802**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. Native and port views show the same
+overlapping circular-segment construction; an untouched Native open/save is
+byte-identical with SHA-256
+`e773a15dfe848aef87c4c644ab2ec85f0981fbcd4a0799cbcfbde23e0a5bdc12`.
+No standalone test case was added. See
+[analysis](legacy_circular_segment_rotation_analysis.md). Full scan:
+`/tmp/circular_segment119_coverage.log`.

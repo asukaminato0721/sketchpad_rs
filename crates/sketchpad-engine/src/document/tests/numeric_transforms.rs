@@ -409,8 +409,8 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
 
     // GSP4 code 119 stores an angle-value object rather than the modern
     // numeric-rotation code. Keep its original bytes, but expose the same live
-    // transform semantics for the point, segment, and arc families observed in
-    // the legacy corpus.
+    // transform semantics for the point, segment, arc, and filled
+    // circular-segment families observed in the legacy corpus.
     for (bytes, expected_elements) in [
         (
             include_bytes!(concat!(
@@ -436,6 +436,10 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
                 ElementType::Point,
                 ElementType::Arc,
                 ElementType::Arc,
+                ElementType::CircularSegment,
+                ElementType::CircularSegment,
+                ElementType::CircularSegment,
+                ElementType::CircularSegment,
             ]
             .as_slice(),
         ),
@@ -488,6 +492,16 @@ fn numeric_angle_shapes_match_native_records_and_follow_edits() {
                         .unwrap()
                         .into_iter()
                         .zip(doc.arc_points(definition.source(), 8).unwrap())
+                    {
+                        assert!(actual.distance(rotate(source)) < 1e-8);
+                    }
+                }
+                ElementType::CircularSegment => {
+                    for (actual, source) in doc
+                        .filled_region_points(object.id)
+                        .unwrap()
+                        .into_iter()
+                        .zip(doc.filled_region_points(definition.source()).unwrap())
                     {
                         assert!(actual.distance(rotate(source)) < 1e-8);
                     }

@@ -75,7 +75,7 @@ pub(super) fn decode_native_transform(
         _ => return None,
     };
     // Keep this region type bounded to independently observed native flavors.
-    if element == ElementType::CircularSegment && !matches!(code, 19 | 27 | 30 | 34) {
+    if element == ElementType::CircularSegment && !matches!(code, 19 | 27 | 30 | 34 | 119) {
         return None;
     }
     let get = |id: usize| {
