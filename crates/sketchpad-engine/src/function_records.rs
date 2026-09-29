@@ -914,7 +914,10 @@ pub fn decode_expression_with_sources(
             let token_count = (data.len() - 92) / 2;
             let high_word = count_word >> 16;
             (count_word & 0xffff) as usize != token_count
-                || (high_word != 0 && (source_count == 0 || high_word > 2))
+                // Native source-free and referenced functions both use these
+                // two bounded wrapper states. Source roles remain validated
+                // independently from the token stream below.
+                || high_word > 2
         }
     {
         return Err("Unsupported function expression wrapper".into());
