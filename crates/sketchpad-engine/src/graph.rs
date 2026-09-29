@@ -262,8 +262,8 @@ pub fn decode_graph_object(
                     .zip(sample)
                     .enumerate()
                     .all(|(i, (actual, expected))| {
-                        // Label position and the numeric presentation key vary.
-                        matches!(i, 12..=15 | 22..=23 | 28..=29) || actual == expected
+                        // Label position and the native presentation/cache tail vary.
+                        matches!(i, 12..=15 | 22..=23 | 26..=31) || actual == expected
                     })
                 && (style == [1, 0] || style == [2, 0]))
             .then_some(GraphObject::Slope {
