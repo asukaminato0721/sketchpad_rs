@@ -28,9 +28,23 @@ the referenced coordinate frame, and linearly interpolates between columns.
 Creation rejects rotated/sheared images, empty columns, and shapes that cannot
 be represented as a single-valued function.
 
-Native drawing sources use the same code-122 record family, but their source
-object and three opaque `0907` fields differ. Drawing authoring, non-alpha image
-edge extraction, the smoothing property UI, approximate derivatives, and direct
-graphing remain outside this proved writer boundary.
+Native drawing sources use the same code-122 record family and retain the
+drawing as a transparent PNG source. Their three opaque `0907` cache fields
+differ from picture-authored files. The reader ignores exactly those fields and
+still requires the shared expression structure, references, record layout, and
+a source whose alpha top edge evaluates as a single-valued function. The corpus
+drawing fixture therefore uses the same live sampler while preserving its
+original cache bytes. Drawing authoring, non-alpha image edge extraction, the
+smoothing property UI, approximate derivatives, and direct graphing remain
+outside this proved writer boundary.
+
+The earlier reader accidentally ignored bytes 56–59, which are fixed, while
+requiring the actual third opaque cache field at bytes 60–63. Correcting that
+window restores `绘图函数.gsp`; its original SHA-256 is
+`88555d49ece2998b3e28b40b640fd5a382eff82bab76a7c5085b68b4df168ebc`.
+The full scan is `/tmp/drawing_function_cache_coverage.log`. Unsupported slots
+fall 776→775, complete documents/drawings rise 1,507/1,548→1,508/1,549,
+unsupported documents fall 92→91, and partial views remain 801. All 1,599
+originals remain byte-exact. No standalone test case was added.
 
 Reference: [Functions and data-defined functions](https://keyonline.keypress.com/gsp-reference-center/objects_functions.htm).

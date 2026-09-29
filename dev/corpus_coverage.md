@@ -2071,3 +2071,20 @@ untouched source round-trips with SHA-256
 No standalone test case was added. See
 [analysis](circular_segment_point_analysis.md). Full scan:
 `/tmp/circular_segment_point_coverage.log`.
+
+## Drawing-function expression cache
+
+Code-122 functions defined from a drawing retain that drawing as a transparent
+PNG and use the established alpha-top-edge evaluator. Their third opaque
+expression cache field occupies bytes 60–63; the reader had accidentally
+ignored the preceding fixed word and required this cache instead. Correcting
+the four-byte window preserves all structural and evaluability checks.
+
+The single drawing-function root is restored. Unsupported falls **776→775**,
+complete documents/drawings rise **1,507/1,548→1,508/1,549**, unsupported
+documents fall **92→91**, and partial views remain **801**. Embedded-tool
+coverage remains **4,766/5,356**, and all **1,599** originals remain
+byte-exact. The untouched fixture round-trips with SHA-256
+`88555d49ece2998b3e28b40b640fd5a382eff82bab76a7c5085b68b4df168ebc`.
+No standalone test case was added. See [analysis](data_function_analysis.md).
+Full scan: `/tmp/drawing_function_cache_coverage.log`.

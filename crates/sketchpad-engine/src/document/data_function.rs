@@ -43,8 +43,8 @@ pub(super) fn decode_data_function(
         || expression.len() != 92
         || expression[..22] != EXPRESSION[..22]
         || expression[26..30] != EXPRESSION[26..30]
-        || expression[32..56] != EXPRESSION[32..56]
-        || expression[60..] != EXPRESSION[60..]
+        || expression[32..60] != EXPRESSION[32..60]
+        || expression[64..] != EXPRESSION[64..]
     {
         return None;
     }
