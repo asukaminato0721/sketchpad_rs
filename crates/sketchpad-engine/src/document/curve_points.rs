@@ -47,9 +47,9 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
         })
 }
 
-/// Literal code 123 is independently observed on intrinsic sampled curves and
-/// ordinary geometric point loci. Parameter-locus literals have a distinct raw
-/// numeric domain and remain guarded until that contract is established.
+/// Literal code 123 is independently observed on intrinsic sampled curves,
+/// ordinary geometric point loci, and parameter loci. Parameter-locus values
+/// use the saved driver domain rather than a normalized curve fraction.
 pub(super) fn literal_supported(
     objects: &[Object],
     path: usize,
@@ -58,7 +58,12 @@ pub(super) fn literal_supported(
 ) -> bool {
     path.checked_sub(1)
         .and_then(|index| objects.get(index))
-        .is_some_and(|object| matches!(object.kind, Kind::SampledMapped(_) | Kind::Locus(..)))
+        .is_some_and(|object| {
+            matches!(
+                object.kind,
+                Kind::SampledMapped(_) | Kind::Locus(..) | Kind::ParameterLocus(..)
+            )
+        })
         && supported(objects, path, page, before)
 }
 

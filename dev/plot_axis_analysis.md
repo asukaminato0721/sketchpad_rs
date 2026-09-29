@@ -18,6 +18,18 @@ Selecting segment AB and typing `0.4` produced `graph_plot_segment_literal_origi
 
 The same code 123 layout also appears when the original app plots values on a circle, line, or ray. Original fixtures `graph_plot_circle_literal_original.gsp`, `graph_plot_line_literal_original.gsp`, and `graph_plot_ray_literal_original.gsp` use values 0.25, -0.5, and 2 respectively. The circle point is at the top, so its value is measured in counterclockwise turns from the rightmost point. Line and ray values extrapolate from the first point through the second; rays require values of at least zero, while lines accept negative values. `tests/graph_plot_more_paths_replay.txt` generates these three literal forms and a parameter driven circle point. Each generated file opened and saved byte-identically in Sketchpad 5. Rust tests check the original bytes, path movement, domain validation, and exact generated files.
 
+Native labeled code-123 points also use presentation header state 4. The literal
+decoder now accepts the same bounded `0..=4` range as the live code-95 decoder,
+recovering a polygon-boundary point and a center-arc point. Parameter-locus
+literals store values in the locus driver's saved domain: in `墙角的稻谷.gsp`,
+value 0 with range `0..pi/2` places labeled point B at the first locus sample in
+both Sketchpad 5 and the port. Disposable all-visible copies establish the
+endpoint identity; both originals and edited copies save byte-identically in
+Sketchpad 5.
+
+The three recovered roots restore 28 drawing slots and make three additional
+documents structurally complete. No new test case was added.
+
 The writer supports the parsed t₁ parameter, finite numeric literals, graph axes, and segments. Expressions, other numeric sources, and further paths remain to be probed.
 
 ## Coordinate-system value points

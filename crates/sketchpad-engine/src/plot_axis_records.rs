@@ -72,7 +72,7 @@ pub fn decode_literal_group(group: &[u8]) -> Result<(u32, f64), String> {
         || word(group, 0) != 28
         || word(group, 4) != 0x07d0
         || word(group, 8) & 0xffff != 123
-        || word(group, 8) >> 16 > 3
+        || word(group, 8) >> 16 > 4
         || word(group, 36) != 8
         || word(group, 40) != 0x07d2
         || word(group, 44) != 1
