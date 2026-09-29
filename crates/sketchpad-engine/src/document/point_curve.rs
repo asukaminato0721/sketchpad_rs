@@ -108,6 +108,9 @@ impl<'a> PointCurve<'a> {
                     return None;
                 }
                 let mut sample = Box::new(doc.clone());
+                if let Some(external) = doc.locus_external_inputs(refs) {
+                    sample.freeze_scoped_evaluation_inputs(doc, &external)?;
+                }
                 sample.invalidate_evaluation_dependents(driver);
                 (
                     Source::Geometric {

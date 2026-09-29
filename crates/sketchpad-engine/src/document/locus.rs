@@ -4,6 +4,7 @@ use super::kind::{
 };
 use super::{Document, Kind, LineMode, Object, Point};
 use crate::style_records::VisualStyle;
+use std::collections::BTreeSet;
 
 /// One independently evaluated member of a straight sweep. Rendering clips its
 /// carrier and retains its style instead of joining differently coloured samples.
@@ -47,10 +48,7 @@ pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
     let (Some(target), Some(path)) = (target.checked_sub(1), path.checked_sub(1)) else {
         return false;
     };
-    objects.get(target).is_some_and(|o| is_point_kind(&o.kind))
-        && objects
-            .get(path)
-            .is_some_and(|o| !matches!(o.kind, Kind::Locus(..)))
+    objects.get(target).is_some_and(|o| is_point_kind(&o.kind)) && objects.get(path).is_some()
 }
 
 /// A sampled family whose members can be replayed efficiently inside a mapped
@@ -225,6 +223,27 @@ pub(super) fn locus_driver_range_matches(
 }
 
 impl Document {
+    /// Cache the invariant boundary of a locus's driver-dependent subgraph.
+    /// Nested sweeps can then reuse expensive intersections and measurements.
+    pub(super) fn locus_external_inputs(&self, refs: &[usize]) -> Option<Vec<usize>> {
+        let (&path, &driver) = (refs.get(1)?, refs.get(2)?);
+        let index = self.dependency_index().ok()?;
+        let affected = index
+            .affected_by(driver)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let mut external = BTreeSet::from([path]);
+        for id in refs.iter().copied().filter(|id| affected.contains(id)) {
+            external.extend(
+                index.forward[&id]
+                    .iter()
+                    .copied()
+                    .filter(|dependency| !affected.contains(dependency)),
+            );
+        }
+        Some(external.into_iter().collect())
+    }
+
     pub(super) fn locus_sampling_interval(&self, id: usize) -> Option<[f64; 2]> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::Locus(refs, _) = &object.kind else {
@@ -345,17 +364,37 @@ impl Document {
             return None;
         }
         let steps = subdivisions.clamp(2, 1000).min(samples as usize);
+        let external = self.locus_external_inputs(refs);
         let mut sample = self.clone();
+        let mut nested_curve = matches!(
+            self.objects.get(driver.checked_sub(1)?)?.kind,
+            Kind::PointOnCurve(host, _) if host == path
+        )
+        .then(|| super::point_curve::PointCurve::new(self, path))
+        .flatten();
+        if let Some(external) = &external {
+            sample.freeze_scoped_evaluation_inputs(self, external)?;
+        } else if nested_curve.is_some() {
+            sample.ensure_evaluation_context(self)?;
+        }
         sample.invalidate_evaluation_dependents(driver);
         let mut values = Vec::with_capacity(steps + 1);
         for step in 0..=steps {
             let fraction = step as f64 / steps as f64;
             let parameter = minimum + (maximum - minimum) * fraction;
-            let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
-                values.push(None);
-                continue;
-            };
-            sample.objects[driver - 1].kind = kind;
+            if let Some(curve) = &mut nested_curve {
+                let Some(point) = curve.at_literal(parameter) else {
+                    values.push(None);
+                    continue;
+                };
+                sample.set_evaluation_point(driver, point)?;
+            } else {
+                let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
+                    values.push(None);
+                    continue;
+                };
+                sample.objects[driver - 1].kind = kind;
+            }
             values.push(evaluate(&sample, target));
         }
         Some(values)
@@ -487,21 +526,8 @@ impl Document {
         let style = self.effective_visual_style(id)?;
         Some(
             self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
-                if stroke_locus {
+                if stroke_locus || point_locus {
                     sample.locus_styled_strokes_with_style(source, subdivisions, style)
-                } else if point_locus {
-                    Some(
-                        sample
-                            .locus_strokes(source, subdivisions)?
-                            .into_iter()
-                            .map(|(start, end, mode)| LocusStroke {
-                                start,
-                                end,
-                                mode,
-                                style,
-                            })
-                            .collect(),
-                    )
                 } else {
                     Some(
                         sample
@@ -536,6 +562,54 @@ impl Document {
         };
         let target = *refs.first()?;
         let target_kind = &self.objects.get(target.checked_sub(1)?)?.kind;
+        if is_point_kind(target_kind) {
+            let VisualStyle::Stroke { line, color } = style else {
+                return None;
+            };
+            let driver = match &self.objects.get(id.checked_sub(1)?)?.kind {
+                Kind::Locus(refs, _) => *refs.get(2)?,
+                Kind::ParameterLocus(refs, ..) => *refs.get(1)?,
+                _ => return None,
+            };
+            let sampled_color = if let Kind::Colorized(definition) = target_kind {
+                let affected = self.dependency_index().ok()?.affected_by(driver);
+                definition
+                    .binding()
+                    .native_operands()
+                    .iter()
+                    .any(|operand| affected.contains(operand))
+            } else {
+                false
+            };
+            let color = if matches!(target_kind, Kind::Colorized(_)) && !sampled_color {
+                self.colorized_color(target)?
+            } else {
+                color
+            };
+            let samples = self.sample_any_locus(id, subdivisions, |sample, target| {
+                let point = sample.position(target)?;
+                let color = if sampled_color {
+                    sample.colorized_color(target)?
+                } else {
+                    color
+                };
+                Some((point, color))
+            })?;
+            return Some(
+                samples
+                    .windows(2)
+                    .filter_map(|pair| {
+                        let ((start, _), (end, color)) = (pair[0]?, pair[1]?);
+                        Some(LocusStroke {
+                            start,
+                            end,
+                            mode: LineMode::Segment,
+                            style: VisualStyle::Stroke { line, color },
+                        })
+                    })
+                    .collect(),
+            );
+        }
         if !is_locus_straight_kind(target_kind)
             && !target_kind.is_circle()
             && !is_arc_kind(target_kind)
