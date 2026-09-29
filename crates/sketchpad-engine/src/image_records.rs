@@ -332,20 +332,28 @@ pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String
         if header.kind != OBJECT_HEADER
             || h.len() != 28
             || h[..2] != [0, 0]
-            || h[6..10] != [16, 0, 78, 0]
+            || h[6..8] != [16, 0]
+            || !matches!(h[8..10], [78, 0] | [98, 0])
         {
             continue;
         }
         let Some(size) = records.get(index + 1) else {
             continue;
         };
-        let Some(transform) = records.get(index + 2) else {
+        let mut transform_index = index + 2;
+        if records
+            .get(transform_index)
+            .is_some_and(|record| record.kind == 0x07d5)
+        {
+            transform_index += 1;
+        }
+        let Some(transform) = records.get(transform_index) else {
             continue;
         };
         let marker = records
-            .get(index + 3)
+            .get(transform_index + 1)
             .filter(|record| record.kind == 0x232e);
-        let resource_index = index + if marker.is_some() { 4 } else { 3 };
+        let resource_index = transform_index + if marker.is_some() { 2 } else { 1 };
         let Some(resource_ref) = records.get(resource_index) else {
             continue;
         };
