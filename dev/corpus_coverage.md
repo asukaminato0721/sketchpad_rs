@@ -1994,3 +1994,23 @@ open and save byte-for-byte in Sketchpad 5, with SHA-256 values
 No standalone test case was added. See
 [analysis](action_state_words_analysis.md). Full scan:
 `/tmp/action_state_coverage.log`.
+
+## Parametric-plot loci
+
+Native code-35 loci driven by a code-15 point on a Cartesian parametric plot use
+the same normalized `0..1` open-curve profile as function-plot loci. The locus
+classifier now admits that path kind through the already established shared
+point-curve evaluator. Other path profiles and unsupported plot intersections
+remain opaque.
+
+Thirteen loci and eight dependent code-98 intersections are restored.
+Unsupported falls **814→793**, complete documents/drawings rise
+**1,501/1,542→1,503/1,544**, unsupported documents fall **98→96**, and partial
+views remain **802**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. Native `Show All Hidden` and the port
+render expose the parametric construction, and the original Native control
+saves byte-for-byte with SHA-256
+`6cea4c774f57b8dda6bd6623be6ce549071d5c9714f8fd28a9615c34dfd2035b`.
+No standalone test case was added. See
+[analysis](parametric_plot_locus_analysis.md). Full scan:
+`/tmp/parametric_locus_coverage.log`.

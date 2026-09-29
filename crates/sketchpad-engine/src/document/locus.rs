@@ -109,7 +109,7 @@ pub(super) fn is_locus_surface_collection(objects: &[Object], id: usize) -> bool
 pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
     let source = objects.get(path.checked_sub(1)?)?;
     match &source.kind {
-        Kind::FunctionPlot(..) => Some(1),
+        Kind::FunctionPlot(..) | Kind::ParametricPlot(..) => Some(1),
         Kind::SampledMapped(definition) => {
             if definition.path() >= path {
                 return None;
