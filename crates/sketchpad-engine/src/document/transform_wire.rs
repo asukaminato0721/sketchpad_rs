@@ -47,6 +47,7 @@ pub(super) fn encode_group(
         F::Vector
             | F::MarkedAnglePolar
             | F::MarkedPolar
+            | F::PointAngleMarkedPolar
             | F::PointAngleRotation
             | F::FixedRotation
             | F::NumericRotation

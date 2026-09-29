@@ -240,6 +240,7 @@ pub enum NativeTransformFlavor {
     FixedPolar,
     MarkedAnglePolar,
     MarkedPolar,
+    PointAngleMarkedPolar,
     DualMarkedPolar,
     FixedRotation,
     PointAngleRotation,
@@ -260,6 +261,7 @@ impl NativeTransformFlavor {
             Self::FixedPolar => 21,
             Self::MarkedAnglePolar => 23,
             Self::MarkedPolar => 24,
+            Self::PointAngleMarkedPolar => 25,
             Self::DualMarkedPolar => 26,
             Self::FixedRotation => 27,
             Self::PointAngleRotation => 28,
@@ -380,6 +382,13 @@ impl TransformDefinition {
                 }),
                 F::MarkedPolar,
             ) => literal(a, NumericUnit::Degrees) && object(d, NumericUnit::Length),
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: N::DirectedAngle { .. },
+                    distance: d,
+                }),
+                F::PointAngleMarkedPolar,
+            ) => matches!(element, ElementType::Point) && object(d, NumericUnit::Length),
             (
                 Transform::Translate(DisplacementExpr::Polar {
                     angle: a,

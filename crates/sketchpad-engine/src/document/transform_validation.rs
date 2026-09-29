@@ -152,9 +152,9 @@ pub(super) fn validate_transform(
         return Err(invalid());
     }
     let flavor = definition.wire_flavor();
-    // Imported point and segment profiles are proved. Authoring still needs
-    // an independent Native writer control for this custom-transform opcode.
-    if is_new && flavor == F::DualMarkedPolar {
+    // Imported profiles are proved. Authoring still needs independent Native
+    // writer controls for these custom-transform opcodes.
+    if is_new && matches!(flavor, F::PointAngleMarkedPolar | F::DualMarkedPolar) {
         return Err(invalid());
     }
     if is_new

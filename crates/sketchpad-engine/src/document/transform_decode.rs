@@ -232,6 +232,23 @@ pub(super) fn decode_native_transform(
                 F::MarkedPolar,
             )
         }
+        (25, [_, first, vertex, last, measured])
+            if constraint.is_none()
+                && [*first, *vertex, *last].into_iter().all(point)
+                && distance(*measured) =>
+        {
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: NumericExpr::DirectedAngle {
+                        first: *first,
+                        vertex: *vertex,
+                        last: *last,
+                    },
+                    distance: value(*measured, NumericUnit::Length),
+                }),
+                F::PointAngleMarkedPolar,
+            )
+        }
         (27, [_, center]) if point(*center) => {
             let p = payload(36)?;
             (
