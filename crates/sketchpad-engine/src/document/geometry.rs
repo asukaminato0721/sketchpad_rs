@@ -452,6 +452,21 @@ impl Document {
 
     pub(super) fn undefined_native_path_plot(&self, path: usize, value: f64) -> bool {
         if value.is_finite()
+            && self
+                .objects
+                .get(path.saturating_sub(1))
+                .is_some_and(|host| {
+                    super::sector_boundary::supported_host(
+                        &self.objects,
+                        path,
+                        host.page,
+                        self.objects.len() + 1,
+                    )
+                })
+        {
+            return self.point_on_sector(path, value).is_none();
+        }
+        if value.is_finite()
             && self.objects.get(path.saturating_sub(1)).is_some_and(|o| {
                 super::curve_points::literal_supported(
                     &self.objects,
@@ -553,6 +568,9 @@ impl Document {
                 seen: &mut BTreeSet<usize>,
             ) -> Option<Point> {
                 let kind = &d.objects.get(path.checked_sub(1)?)?.kind;
+                if kind.is_sector() {
+                    return d.point_on_sector(path, t);
+                }
                 if !plot_path_accepts(kind, t) {
                     return None;
                 }
@@ -707,8 +725,7 @@ impl Document {
                     if scalar.deleted
                         || scalar.page != object.page
                         || *source >= object.id
-                        || scalar.kind.numeric_unit()
-                            != Some(crate::table_records::NumericUnit::Scalar)
+                        || scalar.kind.numeric_unit().is_none()
                     {
                         return None;
                     }

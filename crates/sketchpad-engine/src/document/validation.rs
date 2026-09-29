@@ -1054,7 +1054,7 @@ impl Document {
                         !parent.deleted
                             && parent.page == o.page
                             && source < o.id
-                            && parent.kind.numeric_unit() == Some(NumericUnit::Scalar)
+                            && parent.kind.numeric_unit().is_some()
                     })
                     || !self
                         .objects

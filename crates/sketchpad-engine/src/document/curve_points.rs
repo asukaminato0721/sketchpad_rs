@@ -12,6 +12,19 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
     if let Kind::SampledMapped(definition) = &object.kind {
         return definition.supported(objects, page, path);
     }
+    if matches!(
+        object.kind,
+        Kind::FunctionPlot(_, _, min, max, samples)
+            if min.is_finite() && max.is_finite() && min < max && samples >= 2
+    ) {
+        return object.kind.dependencies().iter().all(|id| {
+            *id < path
+                && id
+                    .checked_sub(1)
+                    .and_then(|index| objects.get(index))
+                    .is_some_and(|parent| !parent.deleted && parent.page == page)
+        });
+    }
     let refs = match &object.kind {
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
         _ => return false,
@@ -49,13 +62,8 @@ pub(super) fn literal_supported(
         && supported(objects, path, page, before)
 }
 
-/// Interactive function points use15/58; numeric95 admission remains separate.
 pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
-    supported(objects, path, page, before) || path.checked_sub(1).and_then(|i| objects.get(i)).is_some_and(|o| {
-        path < before && !o.deleted && o.page == page
-            && matches!(o.kind, Kind::FunctionPlot(_, _, min, max, samples) if min.is_finite() && max.is_finite() && min < max && samples >= 2)
-            && o.kind.dependencies().iter().all(|id| *id < path && id.checked_sub(1).and_then(|i|objects.get(i)).is_some_and(|p| !p.deleted && p.page == page))
-    })
+    supported(objects, path, page, before)
 }
 
 pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option<u8> {

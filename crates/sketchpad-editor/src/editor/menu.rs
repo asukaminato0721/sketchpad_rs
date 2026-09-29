@@ -780,7 +780,7 @@ impl Editor {
                         .clicked()
                     {
                         let source = self.doc.selected.iter().copied()
-                            .find(|&id| self.doc.is_scalar_plot_source(id));
+                            .find(|&id| self.doc.is_plot_value_source(id));
                         self.status = match source {
                             Some(source) => match self.doc.plot_parameter_on_path(source, path) {
                                 Ok(id) => format!("Plotted path value {id}"),

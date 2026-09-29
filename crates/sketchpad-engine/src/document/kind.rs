@@ -1677,7 +1677,10 @@ pub(super) fn plot_path_accepts(kind: &Kind, value: f64) -> bool {
 }
 
 pub(super) fn is_value_plot_path_kind(kind: &Kind) -> bool {
-    is_plot_path_kind(kind) || kind.is_polygon() || matches!(kind, Kind::SampledMapped(_))
+    is_plot_path_kind(kind)
+        || kind.is_polygon()
+        || kind.is_sector()
+        || matches!(kind, Kind::SampledMapped(_))
 }
 
 pub(super) fn value_plot_path_accepts(kind: &Kind, value: f64) -> bool {

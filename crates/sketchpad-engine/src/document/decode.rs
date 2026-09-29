@@ -317,47 +317,6 @@ impl Document {
             }
         }
         let document_indices: BTreeSet<_> = document_record_indices(&rs).into_iter().collect();
-        // Code 26 can denote a point bound to a later custom-transform trace.
-        // Those points need the trace's program, not the standalone polar
-        // fallback; identify its endpoints before lowering any object.
-        let mut custom_trace_endpoints = BTreeSet::new();
-        let (mut scan_page, mut scan_pages, mut scan_code) = (0, 0, 0);
-        for (index, record) in rs.iter().enumerate() {
-            if !document_indices.contains(&index) {
-                continue;
-            }
-            match record.kind {
-                0x03e8 => {
-                    if scan_pages > 0 {
-                        scan_page += 1;
-                    }
-                    scan_pages += 1;
-                    scan_code = 0;
-                }
-                0x07d0 => {
-                    let header = &b[record.data.clone()];
-                    scan_code = if header.len() >= 2 {
-                        u16::from_le_bytes([header[0], header[1]])
-                    } else {
-                        0
-                    };
-                }
-                0x07d2 if scan_code == 102 => {
-                    let path = &b[record.data.clone()];
-                    if path.len() >= 28
-                        && (path.len() - 4).is_multiple_of(4)
-                        && u32_at(path, 0) as usize == (path.len() - 4) / 4
-                    {
-                        for offset in [4, path.len() - 4] {
-                            custom_trace_endpoints
-                                .insert((scan_page, u32_at(path, offset) as usize));
-                        }
-                    }
-                }
-                0x07d7 => scan_code = 0,
-                _ => {}
-            }
-        }
         let title_slots = page_title_slots(b, &rs)?;
         let title_offsets: BTreeSet<usize> = title_slots
             .iter()
@@ -510,6 +469,7 @@ impl Document {
                             | 20
                             | 21
                             | 24
+                            | 26
                             | 27
                             | 28
                             | 29
@@ -1376,15 +1336,18 @@ impl Document {
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
                 super::transform_decode::DecodeContext {
-                    standalone_custom_point: code == 26
-                        && !custom_trace_endpoints.contains(&(page, objects.len() + 1 - page_base))
-                        && rs
-                            .iter()
-                            .filter(|record| {
-                                record.start >= group_start && record.start <= rs[i].start
-                            })
-                            .map(|record| record.kind)
-                            .eq([0x07d0, 0x07d2, 0x07d7]),
+                    custom_polar_translation: code == 26
+                        && matches!(h[6..10], [1, 0, 4, 0] | [2, 0, 14, 0])
+                        && matches!(
+                            rs.iter()
+                                .filter(|record| {
+                                    record.start >= group_start && record.start <= rs[i].start
+                                })
+                                .map(|record| record.kind)
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                            [0x07d0, 0x07d2, 0x07d7] | [0x07d0, 0x07d2, 0x07d5, 0x07d8, 0x07d7]
+                        ),
                     source_is_generic_polygon: refs
                         .first()
                         .and_then(|source| objects.get(source.saturating_sub(1)))
@@ -1675,7 +1638,9 @@ impl Document {
                     (95, _, [source, path])
                         if h[6..10] == [1, 0, 56, 0]
                             && axis_value_refs == Some([(*source - page_base) as u32, (*path - page_base) as u32])
-                            && objects.get(source - 1).is_some_and(|o| o.page == page && o.kind.numeric_unit() == Some(NumericUnit::Scalar))
+                            && objects.get(source - 1).is_some_and(|o| {
+                                o.page == page && o.kind.numeric_unit().is_some()
+                            })
                             && objects.get(path - 1).is_some_and(|o| o.page == page && (is_value_plot_path_kind(&o.kind) || super::curve_points::supported(&objects, *path, page, objects.len() + 1))) => {
                         Kind::PathValuePoint(*source, *path)
                     }

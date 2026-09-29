@@ -378,7 +378,7 @@ impl TransformDefinition {
                 }),
                 F::DualMarkedPolar,
             ) => {
-                element == ElementType::Point
+                matches!(element, ElementType::Point | ElementType::Segment)
                     && object(a, NumericUnit::Degrees)
                     && object(d, NumericUnit::Length)
             }

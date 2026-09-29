@@ -13,7 +13,7 @@ use super::{LineMode, Object};
 use crate::table_records::NumericUnit;
 
 pub(super) struct DecodeContext {
-    pub standalone_custom_point: bool,
+    pub custom_polar_translation: bool,
     pub source_is_generic_polygon: bool,
     pub legacy_angle_rotation_layout: bool,
 }
@@ -108,7 +108,7 @@ pub(super) fn decode_native_transform(
     use NativeTransformFlavor as F;
     let (transform, flavor) = match (code, references) {
         (26, [_, angle, distance])
-            if context.standalone_custom_point
+            if context.custom_polar_translation
                 && constraint.is_none()
                 && numeric(*angle, NumericUnit::Degrees)
                 && numeric(*distance, NumericUnit::Length) =>

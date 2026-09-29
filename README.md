@@ -462,3 +462,19 @@ Native and port checks cover both a nine-row coordinate history and a zero-state
 drawing records: unsupported slots fall to 2,141 and complete
 documents/drawings rise to 1,358/1,393, with all 1,599 originals still
 byte-exact.
+
+Strict imported code-26 polar translations now cover native Point and Segment
+outputs with exact Degrees/Length operands, including labelled objects and
+points later consumed by sampled mappings. Native Xvfb/Wine checks cover free,
+nested, trace-linked, and Segment examples; all tested saves are byte-exact.
+This restores 95 slots, lowering unsupported objects to 2,046 and raising
+complete documents/drawings to 1,369/1,404. Scalar-operand and embedded-tool
+variants remain deliberately opaque.
+
+Plot Value points now accept every decoded numeric quantity and retain its unit
+for presentation while using the displayed magnitude on axes and geometric
+paths. Function plots consume the live value as x; sector boundaries use their
+normalized physical perimeter for both live code-95 and literal code-123
+points. Native accepted freshly authored quantity-axis and sector controls
+byte-for-byte. This restores 90 slots, lowering unsupported objects to 1,956
+and raising complete documents/drawings to 1,380/1,415.

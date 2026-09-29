@@ -1194,3 +1194,26 @@ drawing plus 598 prototype), complete documents/drawings rise
 1,346/1,381→1,358/1,393, unsupported documents fall 253→241, and partial views
 fall 843→840. All 1,599 originals remain byte-exact. Rebuild the next frontier
 from 2,141.
+
+The adjacent code-26 cohort is a strict imported polar translation, not a reason
+to admit every custom-transform record. Accepting only Point or Segment outputs
+with exact Degrees/Length operands and either observed native group layout
+restores 20 direct records and 75 dependents. Label metadata stays semantic, and
+trace-linked points remain ordinary polar constructions consumed independently
+by code 102. Unsupported falls 2,141→2,046 (1,448 drawing plus 598 prototype),
+complete documents/drawings rise 1,358/1,393→1,369/1,404, unsupported documents
+fall 241→230, and partial views fall 840→839. All 1,599 originals remain
+byte-exact. Rebuild the next frontier from 2,046; keep the nine scalar-operand
+drawing records and five embedded-tool records opaque until separately proved.
+
+The next code-95 slice is general Plot Value behavior rather than another path-
+specific point type. All decoded numeric units contribute their finite displayed
+magnitude; function paths map it through the x domain, and sector paths reuse
+their normalized physical-perimeter parameter. The matching code-123 sector
+literal shares that evaluator. This restores 22 code-95 roots, one code-123 root,
+and 67 dependents. Unsupported falls 2,046→1,956 (1,358 drawing plus 598
+prototype), complete documents/drawings rise 1,369/1,404→1,380/1,415,
+unsupported documents fall 230→219, and partial views fall 839→834. All 1,599
+originals remain byte-exact. Rebuild the next frontier from 1,956; the remaining
+ten drawing code-95 records are blocked by opaque path parents rather than this
+value-point contract.

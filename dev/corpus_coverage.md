@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,358/1,599** documents have all object kinds
-decoded; **1,393** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **2,141** unsupported slots (1,543
-drawing slots and 598 prototype slots), and 241 documents still contain
+Latest snapshot, 2026-09-29: **1,380/1,599** documents have all object kinds
+decoded; **1,415** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **1,956** unsupported slots (1,358
+drawing slots and 598 prototype slots), and 219 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -11,7 +11,8 @@ legacy polar-coordinate, circular-segment transform, and axis-rotation recoverie
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
-plus general native snapshot-table recovery
+plus general native snapshot-table, labeled/traced custom polar-translation,
+and general Plot Value recoveries
 are summarized at the end; the older detailed
 snapshots remain for comparison.
 
@@ -1815,3 +1816,53 @@ Sketchpad 5 and the port both display the nine-row coordinate-history table in
 zero-state `抛豆实验估算圆周率.gsp` table, including its cached undefined π
 cell; Native Ctrl+S preserves both source files byte-for-byte. No standalone
 regression test was added.
+
+## General imported custom polar translations
+
+Native code-26 objects with the strict `[source, Degrees, Length]` reference
+shape now use the shared polar-translation evaluator for both Point and Segment
+outputs. The decoder accepts the exact unlabelled group and the observed native
+label/font group, so labels remain visible and byte-preserved. A code-26 point
+may also be the endpoint of a later code-102 sampled mapping: the point keeps its
+own polar construction while the mapping independently consumes it.
+
+All 20 typed drawing code-26 records in this cohort are restored, together with
+75 downstream slots. Unsupported falls **2,141→2,046** (1,448 drawing plus 598
+prototype), complete documents/drawings rise **1,358/1,393→1,369/1,404**,
+unsupported documents fall **241→230**, and partial views fall **840→839**. All
+**1,599** originals remain byte-exact with zero failures. Nine drawing code-26
+objects with different scalar operand profiles and five embedded-tool instances
+remain opaque pending separate semantic evidence. Full scan:
+`/tmp/sketchpad_code26_general_polar_coverage.log`.
+
+Sketchpad 5 under Xvfb/Wine opened and saved representative labelled free-source,
+nested-source, trace-linked, and Segment files byte-for-byte. The labelled point
+control independently matches its 60.27891° and 0.6028 cm displacement in Native
+and the port; the Segment control confirms Native accepts the same typed opcode.
+No standalone regression test was added.
+
+## General Plot Value sources and paths
+
+Native code-95 Plot Value points now consume every decoded numeric magnitude,
+not only dimensionless scalars. Length, Area, and Degrees sources retain their
+units for display while their finite magnitude drives an axis, straight path,
+circle, polygon, arc, or sampled path. Function-plot hosts interpret the source
+as a live x-domain value. Sector-boundary hosts use the same normalized physical-
+perimeter parameter as ordinary sector points; the symmetric code-123 literal
+form shares that path evaluator.
+
+The compiled corpus restores **22 code-95 roots**, **one code-123 sector root**,
+and **67 dependents**. Unsupported falls **2,046→1,956** (1,358 drawing plus 598
+prototype), complete documents/drawings rise **1,369/1,404→1,380/1,415**,
+unsupported documents fall **230→219**, and partial views fall **839→834**. All
+**1,599** originals remain byte-exact with zero failures. The remaining ten
+drawing code-95 records depend on still-opaque path parents; 16 embedded-tool
+instances remain separate. Full scan:
+`/tmp/sketchpad_code95_general_sector_coverage.log`.
+
+Native Xvfb/Wine controls show Area and Length magnitudes at their numeric axis
+coordinates and a scalar at x=1.57 on its function plot. A freshly authored
+Length-on-axis file and a fresh sector file containing both live and literal
+points each reopen and save byte-for-byte in Sketchpad 5. The port reproduces
+the same function point and sector-locus geometry. No standalone test case was
+added.

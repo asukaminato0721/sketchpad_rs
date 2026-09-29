@@ -101,15 +101,15 @@ impl Document {
         }
         Ok(ids)
     }
-    /// The numeric category accepted by Plot Value; undefined values report an
-    /// error when plotting rather than opening the literal-value dialog.
-    pub fn is_scalar_plot_source(&self, id: usize) -> bool {
+    /// The numeric categories accepted by Plot Value; undefined values report
+    /// an error when plotting rather than opening the literal-value dialog.
+    pub fn is_plot_value_source(&self, id: usize) -> bool {
         id.checked_sub(1)
             .and_then(|index| self.objects.get(index))
             .is_some_and(|object| {
                 !object.deleted
                     && object.page == self.active_page
-                    && object.kind.numeric_unit() == Some(crate::table_records::NumericUnit::Scalar)
+                    && object.kind.numeric_unit().is_some()
             })
     }
 
@@ -139,9 +139,22 @@ impl Document {
         if super::curve_points::supported(&self.objects, path, object.page, self.objects.len() + 1)
         {
             if !value.is_finite() {
-                return Err("Select a finite scalar value".into());
+                return Err("Select a finite numeric value".into());
             }
             return Ok(self.plotted_curve_position(path, value));
+        }
+        if object.kind.is_sector() {
+            if !value.is_finite()
+                || !super::sector_boundary::supported_host(
+                    &self.objects,
+                    path,
+                    object.page,
+                    self.objects.len() + 1,
+                )
+            {
+                return Err("Select a valid sector boundary and a finite value".into());
+            }
+            return Ok(self.point_on_sector(path, value));
         }
         if is_arc_kind(&object.kind) {
             if !value.is_finite() || !self.plot_arc_host_available(path) {
@@ -219,8 +232,8 @@ impl Document {
         let path = path
             .or_else(|| self.active_x_axis(self.active_page))
             .ok_or("No coordinate axis or selected path")?;
-        if !self.is_scalar_plot_source(source) {
-            return Err("Select a scalar numeric value".into());
+        if !self.is_plot_value_source(source) {
+            return Err("Select a numeric value".into());
         }
         let value = self
             .numeric_value(source)

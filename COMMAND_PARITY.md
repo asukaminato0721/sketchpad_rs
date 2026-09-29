@@ -783,3 +783,35 @@ prototype), complete documents rise 1,262→1,268, complete drawings rise
 1,292→1,298, and partial views fall 869→867. One sampled-curve arrow remains
 unsupported rather than being misclassified as segment geometry. All 1,599
 originals remain byte-exact.
+
+## General imported code-26 polar translations
+
+The strict code-26 `[source, Degrees, Length]` operation now decodes native Point
+and Segment outputs in both observed record layouts: unlabelled and labelled with
+font metadata. Trace-linked points retain their own polar construction while the
+later sampled mapping independently references them. Native Xvfb/Wine controls
+cover labelled free and nested sources, a trace-linked source, and a Segment;
+each Ctrl+S save is whole-file exact.
+
+The compiled corpus restores all 20 typed drawing code-26 records and 75
+dependents. Unsupported falls 2,141→2,046, complete documents/drawings rise
+1,358/1,393→1,369/1,404, unsupported documents fall 241→230, and partial views
+fall 840→839. All 1,599 originals remain byte-exact. Scalar-operand profiles and
+embedded-tool code-26 records remain outside this admission; no standalone test
+was added.
+
+## General Plot Value sources and paths
+
+Code-95 Plot Value accepts scalar, Length, Area, and Degrees sources on the
+already-supported axis and geometric path families. Numeric points on a function
+plot treat their source as the x-domain value. Sector boundaries use normalized
+physical-perimeter parameters for both code-95 live values and code-123
+literals, including structurally valid undefined states.
+
+Native Xvfb/Wine controls establish quantity-axis placement, x=1.57 function
+placement, and sector traversal. Freshly authored Length-on-axis and combined
+live/literal sector files reopen and save whole-file exact in Sketchpad 5. The
+corpus restores 23 direct roots and 67 dependents: unsupported falls
+2,046→1,956, complete documents/drawings rise 1,369/1,404→1,380/1,415,
+unsupported documents fall 230→219, and partial views fall 839→834. All 1,599
+originals remain byte-exact; no standalone test was added.

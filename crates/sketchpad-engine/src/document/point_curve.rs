@@ -165,9 +165,10 @@ impl<'a> PointCurve<'a> {
             return None;
         }
         let fraction = match &self.source {
-            Source::Numeric { min, max, .. } => (value - min) / (max - min),
+            Source::Numeric { min, max, .. } | Source::Function { min, max, .. } => {
+                (value - min) / (max - min)
+            }
             Source::Geometric { .. } => return self.normalized_numeric_fraction(value),
-            Source::Function { .. } => return None,
             Source::Mapped(_) => return self.normalized_numeric_fraction(value),
         };
         (0.0..=1.0).contains(&fraction).then_some(fraction)
