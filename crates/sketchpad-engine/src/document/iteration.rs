@@ -264,7 +264,7 @@ pub(super) fn supported_mapped_point_iteration(
             .filter(|o| !o.deleted && o.page == page)
     };
     if !(1..=16).contains(&seeds.len())
-        || !(1..=8).contains(&branches.len())
+        || !(1..=16).contains(&branches.len())
         || carried.is_empty()
         || seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len()
         || carried.iter().copied().collect::<BTreeSet<_>>().len() != carried.len()
