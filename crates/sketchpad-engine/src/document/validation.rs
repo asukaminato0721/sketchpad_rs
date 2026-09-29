@@ -970,10 +970,18 @@ impl Document {
                     o.id
                 ));
             }
-            if let Kind::DerivativeFunction(source, _) = o.kind
-                && (source >= o.id || self.function_expression(source).is_none())
+            if let Kind::DerivativeFunction(sources, expression) = &o.kind
+                && (sources.is_empty()
+                    || sources[0] >= o.id
+                    || self.function_expression(sources[0]).is_none()
+                    || !super::functions::function_sources_valid(
+                        expression,
+                        sources,
+                        &self.objects,
+                        o.page,
+                    ))
             {
-                return Err(format!("Invalid derivative source in object {}", o.id));
+                return Err(format!("Invalid derivative sources in object {}", o.id));
             }
             if let Kind::DataFunction {
                 source,

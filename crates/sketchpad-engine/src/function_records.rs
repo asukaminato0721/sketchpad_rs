@@ -1393,12 +1393,21 @@ pub fn encode_referenced_definition_group(
 }
 
 pub fn encode_derivative_group(
-    source_id: usize,
+    sources: &[usize],
     expression: &SimpleFunction,
 ) -> Result<Vec<u8>, String> {
-    let source_id = u32::try_from(source_id).map_err(|_| "Too many objects")?;
-    if source_id == 0 {
-        return Err("Invalid derivative source".into());
+    if sources.is_empty() || sources.len() > 256 {
+        return Err("Invalid derivative sources".into());
+    }
+    expression.source_kinds(sources.len())?;
+    let mut references = Vec::with_capacity(4 + sources.len() * 4);
+    references.extend_from_slice(&(sources.len() as u32).to_le_bytes());
+    for &source in sources {
+        let source = u32::try_from(source).map_err(|_| "Too many objects")?;
+        if source == 0 {
+            return Err("Invalid derivative source".into());
+        }
+        references.extend_from_slice(&source.to_le_bytes());
     }
     let source = include_bytes!("../../../tests/fixtures/function_derivative_square_original.gsp");
     let rs = records(source)?;
@@ -1416,14 +1425,26 @@ pub fn encode_derivative_group(
     if payload(source, *refs).len() != 8 {
         return Err("Invalid derivative template source".into());
     }
-    let ref_offset = refs.payload_start - start + 4;
-    group[ref_offset..ref_offset + 4].copy_from_slice(&source_id.to_le_bytes());
+    let ref_offset = refs.start - start;
+    let mut replacement = Vec::with_capacity(references.len() + 8);
+    replacement.extend_from_slice(&(references.len() as u32).to_le_bytes());
+    replacement.extend_from_slice(&0x07d2_u32.to_le_bytes());
+    replacement.extend_from_slice(&references);
+    let reference_delta = replacement.len() as isize - (refs.end - refs.start) as isize;
+    group.splice(ref_offset..refs.end - start, replacement);
     let record = rs[first + 1..last]
         .iter()
         .find(|record| record.kind == 0x0907)
         .ok_or("Derivative template has no expression")?;
-    let replacement = encode_expression_record(payload(source, *record), expression)?;
-    group.splice(record.start - start..record.end - start, replacement);
+    let record_start = (record.start - start)
+        .checked_add_signed(reference_delta)
+        .ok_or("Invalid derivative expression offset")?;
+    let replacement =
+        encode_expression_record_with_sources(payload(source, *record), expression, sources.len())?;
+    group.splice(
+        record_start..record_start + record.end - record.start,
+        replacement,
+    );
     Ok(group)
 }
 

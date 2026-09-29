@@ -487,7 +487,7 @@ impl Kind {
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
             | Kind::NumericCoordinatePoint(x, y, frame, _) => vec![x, y, frame],
             Kind::ReferencedFunction(ref sources, _) => sources.clone(),
-            Kind::DerivativeFunction(source, _) => vec![source],
+            Kind::DerivativeFunction(ref sources, _) => sources.clone(),
             Kind::Bisector(a, b, c)
             | Kind::ThreePointArc(a, b, c)
             | Kind::ArcOnCircle(a, b, c)
@@ -881,8 +881,8 @@ impl Kind {
                 Kind::ReferencedFunction(sources.iter().map(|&id| m(id)).collect(), expr.clone())
             }
             Kind::FunctionDefinition(ref expr) => Kind::FunctionDefinition(expr.clone()),
-            Kind::DerivativeFunction(source, ref expr) => {
-                Kind::DerivativeFunction(m(source), expr.clone())
+            Kind::DerivativeFunction(ref sources, ref expr) => {
+                Kind::DerivativeFunction(sources.iter().map(|&id| m(id)).collect(), expr.clone())
             }
             Kind::DataFunction {
                 source,

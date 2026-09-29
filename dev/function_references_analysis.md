@@ -141,7 +141,9 @@ The scoped gates pass642 library,112 editor,34 numeric-import and4 coverage test
 Function-call results currently use Scalar units. Native Sketchpad can retain
 an angular result unit (for example, a function returning an angle displays90°
 in degree mode); full result-unit propagation remains pending even though these
-numeric values match. Referenced symbolic derivatives also remain pending.
+numeric values match. Native cached derivatives with referenced dependencies
+are supported, while creating a symbolic derivative through a referenced
+function call remains pending.
 Wrapper bytes46..48 contain observed high words0/1/2 whose meanings are unproved;
 the strict wrapper check and64-word expression bound remain. Further wrappers,
 longer expressions and unsupported source parents are still coverage gaps.

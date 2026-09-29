@@ -30,5 +30,18 @@ changing its source to `x³` (`3·x²`). Screenshots and temporary `.gsp` files 
 The current symbolic differentiator covers constants, `x`, unary signs,
 arithmetic, constant exponents, `sin`, `cos`, and `tan`, with product, quotient,
 power, and chain rules. It rejects variable exponents and expressions whose
-result exceeds the supported 64-token limit. The broader native function
+result exceeds the supported 256-token limit. The broader native function
 language remains to be decoded.
+
+Native code-78 records can contain more than the differentiated function in
+their dependency list. The first dependency remains the source function; later
+slots are live inputs used by the cached derivative expression. The corpus
+example `过笛卡尔心形线外一点的切线.gsp` retains a parameter in its two derivative
+caches. Those records now decode, evaluate, display, remap, copy, and serialize
+through the same contextual-expression path as referenced definitions. Their
+values at `x=1` agree with centered finite differences of the source functions
+to about `1e-10`, and the original opens and saves byte-identically in
+Sketchpad 5.
+
+This does not yet symbolically differentiate through a referenced function
+call. Imported native caches remain authoritative for that case.

@@ -1228,8 +1228,8 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::DerivativeFunction(source, expression) = &o.kind {
-                let mut group = function_records::encode_derivative_group(*source, expression)?;
+            if let Kind::DerivativeFunction(sources, expression) = &o.kind {
+                let mut group = function_records::encode_derivative_group(sources, expression)?;
                 if let Some(anchor) = o.function_anchor {
                     function_records::set_group_expression_anchor(&mut group, anchor)?;
                 }

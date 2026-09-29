@@ -42,7 +42,7 @@ impl Document {
     }
     pub(super) fn function_symbol(&self, id: usize) -> Option<String> {
         let object = self.objects.get(id.checked_sub(1)?)?;
-        match object.kind {
+        match &object.kind {
             Kind::FunctionDefinition(_)
             | Kind::ReferencedFunction(_, _)
             | Kind::DataFunction { .. } => Some(
@@ -53,18 +53,18 @@ impl Document {
                     .unwrap_or("f")
                     .to_owned(),
             ),
-            Kind::DerivativeFunction(source, _) => {
-                Some(format!("{}′", self.function_symbol(source)?))
+            Kind::DerivativeFunction(sources, _) => {
+                Some(format!("{}′", self.function_symbol(*sources.first()?)?))
             }
             _ => None,
         }
     }
     pub fn function_sources(&self, id: usize) -> Option<&[usize]> {
         match &self.objects.get(id.checked_sub(1)?)?.kind {
-            Kind::ReferencedFunction(sources, _) => Some(sources),
-            Kind::FunctionDefinition(_)
-            | Kind::DerivativeFunction(_, _)
-            | Kind::DataFunction { .. } => Some(&[]),
+            Kind::ReferencedFunction(sources, _) | Kind::DerivativeFunction(sources, _) => {
+                Some(sources)
+            }
+            Kind::FunctionDefinition(_) | Kind::DataFunction { .. } => Some(&[]),
             _ => None,
         }
     }
@@ -141,14 +141,16 @@ impl Document {
         }
         let expression = self.function_expression(id)?;
         let symbol = self.function_symbol(id)?;
-        let text = if let Kind::ReferencedFunction(sources, _) = &self.objects[id - 1].kind {
-            let names = sources
-                .iter()
-                .map(|&source| self.calculation_source_name(source))
-                .collect::<Option<Vec<_>>>()?;
-            expression.display_for_sources(&names.iter().map(String::as_str).collect::<Vec<_>>())
-        } else {
-            expression.display()
+        let text = match &self.objects[id - 1].kind {
+            Kind::ReferencedFunction(sources, _) | Kind::DerivativeFunction(sources, _) => {
+                let names = sources
+                    .iter()
+                    .map(|&source| self.calculation_source_name(source))
+                    .collect::<Option<Vec<_>>>()?;
+                expression
+                    .display_for_sources(&names.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+            _ => expression.display(),
         };
         Some(text.replacen("f(x)", &format!("{symbol}(x)"), 1))
     }
@@ -180,7 +182,7 @@ impl Document {
         if uses_trigonometry {
             self.angle_unit_radians = radians;
         }
-        Ok(self.append_object(Kind::DerivativeFunction(source, derivative)))
+        Ok(self.append_object(Kind::DerivativeFunction(vec![source], derivative)))
     }
     pub fn add_function_definition_with_angle_unit(
         &mut self,
@@ -244,8 +246,9 @@ impl Document {
         let mut updates = BTreeMap::new();
         updates.insert(definition, expression.clone());
         for object in &self.objects {
-            if let Kind::DerivativeFunction(source, _) = object.kind
-                && let Some(source_expression) = updates.get(&source)
+            if let Kind::DerivativeFunction(sources, _) = &object.kind
+                && let Some(source_expression) =
+                    sources.first().and_then(|source| updates.get(source))
             {
                 updates.insert(object.id, source_expression.symbolic_derivative()?);
             }
@@ -258,9 +261,9 @@ impl Document {
         };
         for (id, expression) in updates {
             if id != definition
-                && let Kind::DerivativeFunction(source, _) = self.objects[id - 1].kind
+                && let Kind::DerivativeFunction(sources, _) = &self.objects[id - 1].kind
             {
-                self.objects[id - 1].kind = Kind::DerivativeFunction(source, expression);
+                self.objects[id - 1].kind = Kind::DerivativeFunction(sources.clone(), expression);
             }
         }
         if uses_trigonometry {

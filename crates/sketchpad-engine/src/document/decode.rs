@@ -1891,11 +1891,12 @@ impl Document {
                             Err(_) => Kind::Unsupported(code),
                         }
                     }
-                    (78, None, [source]) if *source > 0 && function_expression.is_some()
-                        && matches!(objects.get(source - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _))) => {
-                        match function_records::decode_simple_expression(function_expression.as_ref().unwrap()) {
-                            Ok(expression) => Kind::DerivativeFunction(*source, expression),
+                    (78, None, sources) if !sources.is_empty() && function_expression.is_some()
+                        && matches!(sources.first().and_then(|source| objects.get(source - 1)).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _))) => {
+                        match function_records::decode_expression_with_sources(function_expression.as_ref().unwrap(), sources.len()) {
+                            Ok(expression) if super::functions::function_sources_valid(&expression, sources, &objects, page) => Kind::DerivativeFunction(sources.to_vec(), expression),
                             Err(_) => Kind::Unsupported(code),
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (126 | 127, None, [x, y, frame]) if function_range.is_some()

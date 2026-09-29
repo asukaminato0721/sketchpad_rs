@@ -545,7 +545,9 @@ pub enum Kind {
     },
     FunctionDefinition(SimpleFunction),
     ReferencedFunction(Vec<usize>, SimpleFunction),
-    DerivativeFunction(usize, SimpleFunction),
+    /// The first dependency is the differentiated function. Native cached
+    /// derivatives may retain additional live numeric/function dependencies.
+    DerivativeFunction(Vec<usize>, SimpleFunction),
     /// Code 122: a scalar function sampled from a drawing or picture's top edge.
     DataFunction {
         source: usize,

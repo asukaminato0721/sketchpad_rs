@@ -405,13 +405,13 @@ impl Document {
                                 )?
                             })
                         }
-                        Kind::DerivativeFunction(source, expression) => {
+                        Kind::DerivativeFunction(sources, expression) => {
                             Some(if let Some(anchor) = object.function_anchor {
                                 anchor
                             } else {
                                 function_records::group_expression_anchor(
                                     &function_records::encode_derivative_group(
-                                        *source, expression,
+                                        sources, expression,
                                     )?,
                                 )?
                             })
