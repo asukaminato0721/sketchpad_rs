@@ -198,7 +198,7 @@ impl Document {
                     .any(super::referenced_text::ReferencedNode::has_math_layout) =>
             {
                 Some(text.resolved_nodes(|slot, role| {
-                    self.referenced_source_text(*parents.get(slot - 1)?, role)
+                    self.referenced_source_text(*parents.get(slot - 1)?, role, None)
                 }))
             }
             Kind::PointReferencedText {
@@ -212,7 +212,7 @@ impl Document {
             {
                 let parents = [*point, *source];
                 Some(text.resolved_nodes(|slot, role| {
-                    self.referenced_source_text(*parents.get(slot - 1)?, role)
+                    self.referenced_source_text(*parents.get(slot - 1)?, role, None)
                 }))
             }
             _ => None,
@@ -235,14 +235,19 @@ impl Document {
         parents: &[usize],
         text: &ReferencedText,
     ) -> Vec<Vec<ReferencedRun>> {
-        text.evaluate_roles(|slot, role, _cached| {
-            self.referenced_source_text(*parents.get(slot.checked_sub(1)?)?, role)
+        text.evaluate_roles(|slot, role, cached| {
+            self.referenced_source_text(*parents.get(slot.checked_sub(1)?)?, role, cached)
         })
     }
 
-    fn referenced_source_text(&self, source: usize, role: ReferenceRole) -> Option<String> {
+    fn referenced_source_text(
+        &self,
+        source: usize,
+        role: ReferenceRole,
+        cached: Option<&str>,
+    ) -> Option<String> {
         if let Some(original) = self.frozen_evaluation_document(source) {
-            return original.referenced_source_text(source, role);
+            return original.referenced_source_text(source, role, cached);
         }
         let object = self.objects.get(source.checked_sub(1)?)?;
         if object.deleted {
@@ -316,7 +321,7 @@ impl Document {
             return self.numeric_value_text(source);
         }
         if matches!(object.kind, Kind::CoordinateMeasurement { .. }) {
-            return self.referenced_coordinate_value(source);
+            return self.referenced_coordinate_value(source, cached);
         }
         if matches!(
             object.kind,
@@ -491,7 +496,7 @@ impl Document {
         }
     }
 
-    fn referenced_coordinate_value(&self, source: usize) -> Option<String> {
+    fn referenced_coordinate_value(&self, source: usize, cached: Option<&str>) -> Option<String> {
         let object = self.objects.get(source.checked_sub(1)?)?;
         let crate::coordinate_measure_records::CoordinateMeasureValue::Pair(point) =
             self.coordinate_measure_value(source)?
@@ -499,13 +504,27 @@ impl Document {
             return None;
         };
         // Coordinate-pair readouts store their formatting in rich text rather
-        // than the scalar measurement precision field. The ordinary pair
-        // renderer uses two decimals when no scalar precision is present.
-        let precision = usize::from(object.measurement_precision.unwrap_or(2));
+        // than the scalar measurement precision field. Recover the decimal
+        // count from the first cached component when Native supplied one.
+        let cached_precision = cached.and_then(|text| {
+            let first = text
+                .trim()
+                .trim_start_matches('(')
+                .split_once(',')?
+                .0
+                .trim();
+            Some(first.split_once('.').map_or(0, |(_, decimals)| {
+                decimals.chars().take_while(char::is_ascii_digit).count()
+            }))
+        });
+        let precision = cached_precision
+            .unwrap_or_else(|| usize::from(object.measurement_precision.unwrap_or(2)));
+        let x = if point.x == 0. { 0. } else { point.x };
+        let y = if point.y == 0. { 0. } else { point.y };
         Some(format!(
             "({}, {})",
-            crate::table_records::format_numeric_value(point.x, precision),
-            crate::table_records::format_numeric_value(point.y, precision)
+            crate::table_records::format_numeric_value(x, precision),
+            crate::table_records::format_numeric_value(y, precision)
         ))
     }
     pub(super) fn referenced_caption_content(&self, id: usize) -> Option<(String, TextRect)> {

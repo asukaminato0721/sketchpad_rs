@@ -169,6 +169,10 @@ fn mapped_value_construction(kind: &Kind) -> bool {
             || matches!(
                 kind,
                 Kind::CoordinateSystem(..)
+                    | Kind::CoordinateMeasurement {
+                        kind: crate::coordinate_measure_records::CoordinateMeasureKind::Coordinates,
+                        ..
+                    }
                     | Kind::PointNumericLabel(..)
                     | Kind::PlainText { .. }
                     | Kind::Image { .. }
