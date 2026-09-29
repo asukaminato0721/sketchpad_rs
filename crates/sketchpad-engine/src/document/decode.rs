@@ -1683,11 +1683,11 @@ impl Document {
                             && objects.get(path - 1).is_some_and(|o| o.page == page && (is_value_plot_path_kind(&o.kind) || super::curve_points::supported(&objects, *path, page, objects.len() + 1))) => {
                         Kind::PathValuePoint(*source, *path)
                     }
-                    (69, None, [x, y, frame])
+                    (code @ (69 | 70), None, [x, y, frame])
                         if h[6..10] == [1, 0, 56, 0]
                             && [x, y].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.numeric_unit().is_some()))
                             && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
-                        Kind::NumericCoordinatePoint(*x, *y, *frame)
+                        Kind::NumericCoordinatePoint(*x, *y, *frame, if code == 70 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian })
                     }
                     (67 | 68, _, [frame])
                         if plotted_point.as_ref().is_some_and(|plot| {

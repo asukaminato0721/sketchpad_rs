@@ -739,10 +739,14 @@ impl Document {
                     }
                 }
                 Kind::CoordinatePoint(definition) => d.evaluate_coordinate_point(definition),
-                Kind::NumericCoordinatePoint(x, y, frame) => {
+                Kind::NumericCoordinatePoint(x, y, frame, mode) => {
                     let frame = d.graph_frame(*frame)?;
-                    let x = d.numeric_value(*x)?;
-                    let y = d.numeric_value(*y)?;
+                    let first = d.numeric_value(*x)?;
+                    let second = d.numeric_value(*y)?;
+                    let [x, y] = match mode {
+                        PlotPointsMode::Cartesian => [first, second],
+                        PlotPointsMode::Polar => [first * second.cos(), first * second.sin()],
+                    };
                     let point = frame.world(x, y)?;
                     Some(Point {
                         x: point.x,

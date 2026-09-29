@@ -85,7 +85,7 @@ impl Document {
                         | Kind::PathLiteralPoint(_, _)
                         | Kind::PathValuePoint(_, _)
                         | Kind::PlottedPoint(_, _, _)
-                        | Kind::NumericCoordinatePoint(_, _, _)
+                        | Kind::NumericCoordinatePoint(_, _, _, _)
                         | Kind::ParameterLocus(_, _, _, _)
                 )
         });
@@ -1095,7 +1095,7 @@ impl Document {
             {
                 return Err(format!("Invalid literal path point {}", o.id));
             }
-            if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind
+            if let Kind::NumericCoordinatePoint(x, y, frame, _) = o.kind
                 && (![x, y].iter().all(|&id| {
                     self.objects
                         .get(id.saturating_sub(1))

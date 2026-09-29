@@ -485,7 +485,7 @@ impl Kind {
             Kind::DataFunction { source, frame, .. } => vec![source, frame],
             Kind::PlottedPoint(frame, _, _) => vec![frame],
             Kind::ParametricPlot(x, y, frame, _, _, _, _)
-            | Kind::NumericCoordinatePoint(x, y, frame) => vec![x, y, frame],
+            | Kind::NumericCoordinatePoint(x, y, frame, _) => vec![x, y, frame],
             Kind::ReferencedFunction(ref sources, _) => sources.clone(),
             Kind::DerivativeFunction(source, _) => vec![source],
             Kind::Bisector(a, b, c)
@@ -902,8 +902,8 @@ impl Kind {
             Kind::PathLiteralPoint(axis, value) => Kind::PathLiteralPoint(m(axis), value),
             Kind::PathValuePoint(a, b) => Kind::PathValuePoint(m(a), m(b)),
             Kind::PlottedPoint(frame, mode, stored) => Kind::PlottedPoint(m(frame), mode, stored),
-            Kind::NumericCoordinatePoint(x, y, frame) => {
-                Kind::NumericCoordinatePoint(m(x), m(y), m(frame))
+            Kind::NumericCoordinatePoint(x, y, frame, mode) => {
+                Kind::NumericCoordinatePoint(m(x), m(y), m(frame), mode)
             }
             Kind::SegmentLength(a) => Kind::SegmentLength(m(a)),
             Kind::PolygonPerimeter(a) => Kind::PolygonPerimeter(m(a)),
@@ -1204,7 +1204,7 @@ pub(super) fn is_point_kind(kind: &Kind) -> bool {
                 | Kind::PathValuePoint(_, _)
                 | Kind::PlottedPoint(_, _, _)
                 | Kind::CoordinatePoint(_)
-                | Kind::NumericCoordinatePoint(_, _, _)
+                | Kind::NumericCoordinatePoint(_, _, _, _)
                 | Kind::Midpoint(_, _)
                 | Kind::Intersection(_, _)
                 | Kind::CurveIntersection(_, _, _)
@@ -1810,7 +1810,7 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
         | Kind::PathLiteralPoint(_, _)
         | Kind::PathValuePoint(_, _)
         | Kind::CoordinatePoint(_)
-        | Kind::NumericCoordinatePoint(_, _, _)
+        | Kind::NumericCoordinatePoint(_, _, _, _)
         | Kind::Midpoint(_, _)
         | Kind::Intersection(_, _)
         | Kind::CurveIntersection(_, _, _)

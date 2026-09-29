@@ -557,7 +557,7 @@ pub enum Kind {
     PathLiteralPoint(usize, f64),
     PathValuePoint(usize, usize),
     PlottedPoint(usize, PlotPointsMode, [f64; 2]),
-    NumericCoordinatePoint(usize, usize, usize),
+    NumericCoordinatePoint(usize, usize, usize, PlotPointsMode),
     CoordinatePoint(coordinate_points::CoordinatePointDefinition),
     // Parameter ranges retain native units (radians for angles). Public range
     // access and editing use the driver's displayed numeric units.

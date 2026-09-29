@@ -1268,11 +1268,41 @@ impl Document {
                 added.extend_from_slice(&group);
                 continue;
             }
-            if let Kind::NumericCoordinatePoint(x, y, frame) = o.kind {
+            if let Kind::NumericCoordinatePoint(x, y, frame, mode) = o.kind {
                 // Native PlotXY has only its point header and three references.
                 let mut point_header = [
-                    69, 0, 0, 0, 0, 0, 1, 0, 56, 0, 33, 2, 255, 0, 0, 0, 255, 255, 81, 92, 193,
-                    189, 240, 255, 0, 0, 0, 0,
+                    if mode == PlotPointsMode::Polar {
+                        70
+                    } else {
+                        69
+                    },
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    56,
+                    0,
+                    33,
+                    2,
+                    255,
+                    0,
+                    0,
+                    0,
+                    255,
+                    255,
+                    81,
+                    92,
+                    193,
+                    189,
+                    240,
+                    255,
+                    0,
+                    0,
+                    0,
+                    0,
                 ];
                 if !o.visible {
                     point_header[2] |= 1;
@@ -2128,7 +2158,7 @@ impl Document {
                         | Kind::ParameterLocus(_, _, _, _)
                         | Kind::SampledMapped(_)
                         | Kind::PlottedPoint(_, _, _)
-                        | Kind::NumericCoordinatePoint(_, _, _)
+                        | Kind::NumericCoordinatePoint(_, _, _, _)
                         | Kind::CoordinateMeasurement { .. }
                 ) || o
                     .kind
