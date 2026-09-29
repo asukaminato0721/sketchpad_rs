@@ -2,6 +2,7 @@
 use super::kind::is_point_kind;
 use super::{Document, Kind, Point};
 use crate::function_records::FunctionPlotMode;
+use crate::plot_points_records::PlotPointsMode;
 
 enum Source {
     Mapped(super::sampled_mapped::SampledMappedEvaluator),
@@ -11,6 +12,14 @@ enum Source {
         min: f64,
         max: f64,
         mode: FunctionPlotMode,
+    },
+    Parametric {
+        x_definition: usize,
+        y_definition: usize,
+        frame: crate::graph::CoordinateFrame,
+        min: f64,
+        max: f64,
+        mode: PlotPointsMode,
     },
     Numeric {
         sample: Box<Document>,
@@ -57,6 +66,24 @@ impl<'a> PointCurve<'a> {
                 (
                     Source::Function {
                         definition: *definition,
+                        frame: doc.graph_frame(*frame)?,
+                        min: *min,
+                        max: *max,
+                        mode: *mode,
+                    },
+                    samples.saturating_sub(1) as usize,
+                )
+            }
+            Kind::ParametricPlot(x, y, frame, min, max, samples, mode) => {
+                if !min.is_finite() || !max.is_finite() || min >= max || *samples < 2 {
+                    return None;
+                }
+                doc.function_expression(*x)?;
+                doc.function_expression(*y)?;
+                (
+                    Source::Parametric {
+                        x_definition: *x,
+                        y_definition: *y,
                         frame: doc.graph_frame(*frame)?,
                         min: *min,
                         max: *max,
@@ -161,7 +188,9 @@ impl<'a> PointCurve<'a> {
                 path,
                 ..
             } => Self::new(self.original, *path)?.literal_fraction(value),
-            Source::Numeric { .. } | Source::Function { .. } => Some(value),
+            Source::Numeric { .. } | Source::Function { .. } | Source::Parametric { .. } => {
+                Some(value)
+            }
             Source::Mapped(evaluator) => evaluator.literal_fraction(value),
             _ => None,
         }
@@ -171,9 +200,9 @@ impl<'a> PointCurve<'a> {
             return None;
         }
         let fraction = match &self.source {
-            Source::Numeric { min, max, .. } | Source::Function { min, max, .. } => {
-                (value - min) / (max - min)
-            }
+            Source::Numeric { min, max, .. }
+            | Source::Function { min, max, .. }
+            | Source::Parametric { min, max, .. } => (value - min) / (max - min),
             Source::Geometric { .. } => return self.normalized_numeric_fraction(value),
             Source::Mapped(_) => return self.normalized_numeric_fraction(value),
         };
@@ -216,7 +245,7 @@ impl<'a> PointCurve<'a> {
             Source::Geometric { .. } | Source::Numeric { .. } => {
                 (0.0..=1.0).contains(&value).then_some(value)
             }
-            Source::Function { .. } => None,
+            Source::Function { .. } | Source::Parametric { .. } => None,
             Source::Mapped(_) => (0.0..=1.0).contains(&value).then_some(value),
         }
     }
@@ -237,6 +266,27 @@ impl<'a> PointCurve<'a> {
                 let parameter = *min + (*max - *min) * fraction;
                 let result = self.original.function_value(*definition, parameter)?;
                 let (x, y) = super::functions::function_plot_coordinates(*mode, parameter, result);
+                let value = frame.world(x, y)?;
+                Point {
+                    x: value.x,
+                    y: value.y,
+                }
+            }
+            Source::Parametric {
+                x_definition,
+                y_definition,
+                frame,
+                min,
+                max,
+                mode,
+            } => {
+                let parameter = *min + (*max - *min) * fraction;
+                let x = self.original.function_value(*x_definition, parameter)?;
+                let y = self.original.function_value(*y_definition, parameter)?;
+                let (x, y) = match mode {
+                    PlotPointsMode::Cartesian => (x, y),
+                    PlotPointsMode::Polar => (x * y.cos(), x * y.sin()),
+                };
                 let value = frame.world(x, y)?;
                 Point {
                     x: value.x,

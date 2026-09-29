@@ -5,7 +5,7 @@ use super::{Document, Kind, LineMode, Object, Point};
 
 fn point_curve(objects: &[Object], kind: &Kind) -> bool {
     match kind {
-        Kind::FunctionPlot(..) | Kind::SampledMapped(_) => true,
+        Kind::FunctionPlot(..) | Kind::ParametricPlot(..) | Kind::SampledMapped(_) => true,
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs
             .first()
             .and_then(|id| id.checked_sub(1))

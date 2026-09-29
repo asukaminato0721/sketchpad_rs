@@ -1936,3 +1936,22 @@ Native control saves byte-for-byte with SHA-256
 No standalone test case was added. See
 [analysis](shortened_segment_locus_analysis.md). Full scan:
 `/tmp/shortened_segment_locus_coverage.log`.
+
+## Points on parametric curves
+
+Native code-15 subtype-99 points use a normalized fraction on Cartesian
+parametric plots. The shared point-curve evaluator now evaluates both component
+functions in the saved frame; the same host admission also restores four
+circle/parametric code-98 intersections through the existing ranked crossing
+kernel. Plot/plot crossings and live/literal Plot Value admission are unchanged.
+
+Five point roots, four curve intersections, and three dependents are restored:
+unsupported falls **843→831**, while complete documents/drawings remain
+**1,496/1,537** and partial views remain **802**. All **1,599** originals remain
+byte-exact with zero failures; prototype coverage is unchanged. Native `Show
+All Hidden` confirms the points on the plotted outline, and the original control
+saves byte-for-byte with SHA-256
+`6cea4c774f57b8dda6bd6623be6ce549071d5c9714f8fd28a9615c34dfd2035b`.
+No standalone test case was added. See
+[analysis](parametric_curve_points_analysis.md). Full scan:
+`/tmp/parametric_curve_points_coverage.log`.

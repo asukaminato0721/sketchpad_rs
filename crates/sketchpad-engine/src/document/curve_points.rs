@@ -47,6 +47,28 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
         })
 }
 
+fn parametric_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
+    path.checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .is_some_and(|object| {
+            path < before
+                && !object.deleted
+                && object.page == page
+                && matches!(
+                    object.kind,
+                    Kind::ParametricPlot(_, _, _, min, max, samples, _)
+                        if min.is_finite() && max.is_finite() && min < max && samples >= 2
+                )
+                && object.kind.dependencies().iter().all(|id| {
+                    *id < path
+                        && id
+                            .checked_sub(1)
+                            .and_then(|index| objects.get(index))
+                            .is_some_and(|parent| !parent.deleted && parent.page == page)
+                })
+        })
+}
+
 /// Literal code 123 is independently observed on intrinsic sampled curves,
 /// ordinary geometric point loci, and parameter loci. Parameter-locus values
 /// use the saved driver domain rather than a normalized curve fraction.
@@ -68,12 +90,13 @@ pub(super) fn literal_supported(
 }
 
 pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
-    supported(objects, path, page, before)
+    supported(objects, path, page, before) || parametric_supported(objects, path, page, before)
 }
 
 pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option<u8> {
     match &objects.get(path.checked_sub(1)?)?.kind {
         Kind::FunctionPlot(..) => Some(58),
+        Kind::ParametricPlot(..) => Some(99),
         Kind::SampledMapped(_) => Some(90),
         Kind::Locus(..) | Kind::ParameterLocus(..) => Some(42),
         _ => None,
@@ -134,9 +157,9 @@ impl Document {
             Kind::SampledMapped(_) => self
                 .sampled_mapped_evaluator(path)?
                 .logical_point_value(fraction),
-            Kind::ParameterLocus(_, min, max, _) | Kind::FunctionPlot(_, _, min, max, _, _) => {
-                Some(min + (max - min) * t)
-            }
+            Kind::ParameterLocus(_, min, max, _)
+            | Kind::FunctionPlot(_, _, min, max, _, _)
+            | Kind::ParametricPlot(_, _, _, min, max, _, _) => Some(min + (max - min) * t),
             _ => None,
         }
     }

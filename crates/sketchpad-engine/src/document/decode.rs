@@ -2204,7 +2204,7 @@ impl Document {
                         Kind::PointOnSector(*host, f64_at(&constraint_payload.as_ref().unwrap().0, 4))
                     }
                     (15, None, [host]) if point_curve_constraint_count == 1
-                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58 | 90, 0]))) =>
+                        && constraint_payload.as_ref().is_some_and(|(payload, _)| payload.len() == 12 && matches!(payload.get(..4), Some([15, 0, 42 | 58 | 90 | 99, 0]))) =>
                         super::curve_points::decode(&objects, *host, page, objects.len() + 1, h, &constraint_payload.as_ref().unwrap().0).unwrap_or(Kind::Unsupported(code)),
                     (15, _, [host]) => {
                         match (objects.get(host - 1).map(|o| &o.kind), &constraint_payload) {
