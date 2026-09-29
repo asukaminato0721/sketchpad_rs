@@ -17,6 +17,23 @@ fn native_midpoint_locus_import_generation_and_parent_edit() {
         &native.objects,
         &[7, 3, 4, 5, 6, 7]
     ));
+    let mut plotted_native = native.clone();
+    let plotted = plotted_native
+        .plot_literal_on_path(2. / 3., Some(8))
+        .unwrap();
+    let expected = plotted_native.position(plotted).unwrap();
+    let reopened = Document::from_bytes(&plotted_native.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.position(plotted), Some(expected));
+
+    let spiral_bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/贺基旭作品/双控旋梯（hjx4882）.gsp"
+    ));
+    let spiral = Document::from_bytes(spiral_bytes, None).unwrap();
+    assert_eq!(
+        spiral.mapped_collection_strokes(17, 96).unwrap().len(),
+        1440
+    );
 
     let base = include_bytes!("../../../../../tests/fixtures/locus_midpoint_base.gsp");
     let mut created = Document::from_bytes(base, None).unwrap();

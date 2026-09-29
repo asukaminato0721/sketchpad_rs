@@ -406,6 +406,60 @@ fn circle_area_matches_original_and_updates_after_resize() {
     assert!((reopened.polygon_area_cm2(segment_area).unwrap() - expected_area).abs() < 1e-10);
     assert!((reopened.perimeter_cm(segment_perimeter).unwrap() - expected_perimeter).abs() < 1e-10);
 
+    let marked_distance = segment_doc.add(Kind::PointDistance(center, start));
+    let translated = segment_doc.add(Kind::Transformed(
+        TransformDefinition::new(
+            segment,
+            ElementType::CircularSegment,
+            Transform::Translate(DisplacementExpr::Cartesian {
+                horizontal: NumericExpr::ObjectValue {
+                    id: marked_distance,
+                    unit: NumericUnit::Length,
+                },
+                vertical: NumericExpr::Literal {
+                    magnitude: 1.,
+                    unit: NumericUnit::Length,
+                    scale: pixels_per_cm,
+                },
+            }),
+            NativeTransformFlavor::FixedVertical,
+        )
+        .unwrap(),
+    ));
+    let translated_area = segment_doc.add(Kind::PolygonArea(translated));
+    let translated_perimeter = segment_doc.add(Kind::PolygonPerimeter(translated));
+    let source_outline = segment_doc.filled_region_points(segment).unwrap();
+    let translated_outline = segment_doc.filled_region_points(translated).unwrap();
+    assert_eq!(source_outline.len(), translated_outline.len());
+    for (source, image) in source_outline.iter().zip(&translated_outline) {
+        assert!((image.x - source.x - 100.).abs() < 1e-10);
+        assert!((image.y - source.y + pixels_per_cm).abs() < 1e-10);
+    }
+    assert!((segment_doc.polygon_area_cm2(translated_area).unwrap() - expected_area).abs() < 1e-10);
+    assert!(
+        (segment_doc.perimeter_cm(translated_perimeter).unwrap() - expected_perimeter).abs()
+            < 1e-10
+    );
+    let bytes = segment_doc.encode().unwrap();
+    let transformed_header = records(&bytes)
+        .unwrap()
+        .into_iter()
+        .filter(|record| record.kind == 0x07d0 && record.data.len() == 28)
+        .map(|record| &bytes[record.data])
+        .find(|header| header[..2] == 19u16.to_le_bytes())
+        .unwrap();
+    assert_eq!(&transformed_header[6..10], &[13, 0, 69, 0]);
+    let reopened = Document::from_bytes(&bytes, None).unwrap();
+    assert!(transform_is(
+        &reopened.objects[translated - 1].kind,
+        NativeTransformFlavor::FixedVertical,
+        &[ElementType::CircularSegment]
+    ));
+    assert!((reopened.polygon_area_cm2(translated_area).unwrap() - expected_area).abs() < 1e-10);
+    assert!(
+        (reopened.perimeter_cm(translated_perimeter).unwrap() - expected_perimeter).abs() < 1e-10
+    );
+
     for (path, id) in [
         (
             concat!(

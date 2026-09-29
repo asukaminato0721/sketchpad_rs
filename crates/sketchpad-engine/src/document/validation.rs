@@ -820,7 +820,14 @@ impl Document {
                         !host.deleted
                             && host.page == o.page
                             && path < o.id
-                            && literal_plot_path_accepts(&host.kind, value)
+                            && (literal_plot_path_accepts(&host.kind, value)
+                                || value.is_finite()
+                                    && super::curve_points::literal_supported(
+                                        &self.objects,
+                                        path,
+                                        o.page,
+                                        o.id,
+                                    ))
                     })
                     || (self.position(o.id).is_none()
                         && !self.undefined_native_path_plot(path, value)))
@@ -896,13 +903,13 @@ impl Document {
             } = o.kind
             {
                 let hosts_match = match kind {
-                    ValueEquationKind::PointValue => {
-                        self.objects.get(first.saturating_sub(1)).is_some_and(|object| is_point_kind(&object.kind))
-                            && self.objects.get(second.saturating_sub(1)).is_some_and(|object| is_straight_kind(&object.kind) || object.kind.is_circle() || is_arc_kind(&object.kind)
-                                || object.kind.is_polygon()
-                                || (matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
-                                    && super::curve_points::free_supported(&self.objects, second, o.page, first)))
-                    }
+                    ValueEquationKind::PointValue => super::measurements::point_value_refs_match(
+                        &self.objects,
+                        first,
+                        second,
+                        o.page,
+                        o.id,
+                    ),
                     ValueEquationKind::LineEquation => {
                         self.objects
                             .get(first.saturating_sub(1))
@@ -964,19 +971,21 @@ impl Document {
                             }
                             _ => false,
                         });
+                let undefined_curve_value = kind == ValueEquationKind::PointValue
+                    && super::curve_points::free_supported(&self.objects, second, o.page, o.id);
+                let undefined_sector_value = kind == ValueEquationKind::PointValue
+                    && matches!(
+                        self.objects.get(first.saturating_sub(1)).map(|point| &point.kind),
+                        Some(Kind::PointOnSector(host, t)) if *host == second && t.is_finite()
+                    )
+                    && super::sector_boundary::supported_host(&self.objects, second, o.page, o.id);
                 if !hosts_match
                     || (self.value_equation_value(o.id).is_none()
                         && !undefined_center_value
                         && !undefined_straight_value
                         && !undefined_path_value
-                        && !(kind == ValueEquationKind::PointValue
-                            && matches!(self.objects.get(first.saturating_sub(1)).map(|p| &p.kind), Some(Kind::PointOnCurve(host, _)) if *host == second)
-                            && super::curve_points::free_supported(
-                                &self.objects,
-                                second,
-                                o.page,
-                                first,
-                            )))
+                        && !undefined_curve_value
+                        && !undefined_sector_value)
                 {
                     return Err(format!("Invalid Value/Equation measurement {}", o.id));
                 }

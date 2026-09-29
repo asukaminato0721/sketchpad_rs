@@ -272,7 +272,7 @@ pub(super) fn decode_colorized(
                         && (p[16..24] == 1f64.to_le_bytes()
                             || (operation == 0x12 && p[16..24] == 2f64.to_le_bytes()))))
         }
-        ElementType::Image => false,
+        ElementType::CircularSegment | ElementType::Image => false,
     };
     if !matches_header {
         return None;

@@ -1,5 +1,5 @@
-//! Record support for the four Cartesian point measurements observed in
-//! Sketchpad 5. Unknown layouts are rejected rather than rewritten.
+//! Record support for the point-coordinate measurements observed in Sketchpad 5.
+//! Unknown layouts are rejected rather than rewritten.
 
 use std::ops::Range;
 
@@ -8,9 +8,9 @@ pub enum CoordinateMeasureKind {
     Coordinates,
     Abscissa,
     Ordinate,
-    /// Legacy code 125: x on Cartesian grids, radius on polar grids.
+    /// Legacy code 125: radial coordinate, independent of the displayed grid form.
     GraphCoordinateX,
-    /// Legacy code 124: y on Cartesian grids, angle in radians on polar grids.
+    /// Legacy code 124: polar angle, displayed in the document's angle unit.
     GraphCoordinateY,
     CoordinateDistance,
 }
@@ -220,7 +220,9 @@ pub fn decode_group(group: &[u8]) -> Result<CoordinateMeasurement, String> {
     if kind == CoordinateMeasureKind::Coordinates {
         if aux.len() < 20
             || u32_at(aux, 0) != 0x08fc
-            || u32_at(aux, 4) as usize != aux.len()
+            // Older Native writers exclude a preserved two-byte cache tail
+            // from the inner size, as they also do for equation readouts.
+            || !matches!(aux.len().checked_sub(u32_at(aux, 4) as usize), Some(0 | 2))
             || u32_at(aux, 8) != 4
         {
             return Err("Unsupported coordinate readout text".into());

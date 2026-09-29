@@ -3,8 +3,18 @@ use super::*;
 #[test]
 fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurements() {
     use sketchpad_engine::document::transform_model::ElementType;
-    for element in [ElementType::Arc, ElementType::Disk, ElementType::Sector] {
-        for operation in 0..14 {
+    for element in [
+        ElementType::Arc,
+        ElementType::Disk,
+        ElementType::Sector,
+        ElementType::CircularSegment,
+    ] {
+        let operations = if element == ElementType::CircularSegment {
+            vec![5, 7, 8, 11]
+        } else {
+            (0..14).collect()
+        };
+        for operation in operations {
             let mut doc = Document::new();
             for point in [
                 Point { x: 100., y: 180. },
@@ -21,6 +31,10 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
                 ElementType::Sector => {
                     let arc = doc.add(Kind::CenterArc(1, 2, 3));
                     doc.add(Kind::SectorBoundary(arc))
+                }
+                ElementType::CircularSegment => {
+                    let arc = doc.add(Kind::CenterArc(1, 2, 3));
+                    doc.add(Kind::CircularSegmentBoundary(arc))
                 }
                 _ => doc.add(Kind::CenterArc(1, 2, 3)),
             };

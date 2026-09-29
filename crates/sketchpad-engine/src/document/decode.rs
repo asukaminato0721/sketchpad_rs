@@ -108,6 +108,26 @@ pub(super) fn polar_distance_scale(payload: &[u8]) -> Option<f64> {
     })
 }
 
+/// Validate one fixed-Cartesian distance and return its declared pixel scale.
+/// Native tag 1 is centimeters and tag 2 is inches.
+pub(super) fn cartesian_distance_scale(
+    payload: &[u8],
+    pixel_offset: usize,
+    magnitude_offset: usize,
+    unit_offset: usize,
+) -> Option<f64> {
+    let scale = match u32_at(payload, unit_offset) {
+        0 => 1.,
+        1 => 37.79527559055118,
+        2 => 96.,
+        _ => return None,
+    };
+    let pixels = f64_at(payload, pixel_offset);
+    let magnitude = f64_at(payload, magnitude_offset);
+    (pixels.is_finite() && magnitude.is_finite() && (pixels - magnitude * scale).abs() < 1e-5)
+        .then_some(scale)
+}
+
 /// Structural saves may retain complete registered tool canvases unchanged.
 /// Their local object IDs and opaque auxiliary records are never drawing IDs.
 pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Record]) -> bool {
@@ -1575,7 +1595,16 @@ impl Document {
                     (123, _, [path])
                         if literal_axis_value
                             .is_some_and(|(local_path, _)| local_path as usize + page_base == *path)
-                            && objects.get(path - 1).is_some_and(|o| o.page == page && is_literal_plot_path_kind(&o.kind)) => {
+                            && objects.get(path - 1).is_some_and(|o| {
+                                o.page == page
+                                    && (is_literal_plot_path_kind(&o.kind)
+                                        || super::curve_points::literal_supported(
+                                            &objects,
+                                            *path,
+                                            page,
+                                            objects.len() + 1,
+                                        ))
+                            }) => {
                         Kind::PathLiteralPoint(*path, literal_axis_value.unwrap().1)
                     }
                     (95, _, [source, path])
@@ -1600,10 +1629,7 @@ impl Document {
                         Kind::PlottedPoint(*frame, plot.mode, plot.stored)
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && objects.get(first.saturating_sub(1)).is_some_and(|o| o.page == page && is_point_kind(&o.kind))
-                        && objects.get(second.saturating_sub(1)).is_some_and(|o| o.page == page && (is_straight_kind(&o.kind) || o.kind.is_circle() || is_arc_kind(&o.kind) || o.kind.is_polygon()
-                            || (matches!(objects[first - 1].kind, Kind::PointOnCurve(host, _) if host == *second)
-                                && super::curve_points::free_supported(&objects, *second, page, objects.len() + 1)))) => {
+                        && super::measurements::point_value_refs_match(&objects, *first, *second, page, objects.len() + 1) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
@@ -1959,7 +1985,7 @@ impl Document {
                     }
                     (39, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || matches!(o.kind, Kind::CircularSegmentBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || o.kind.is_circular_segment()) =>
                     {
                         Kind::PolygonPerimeter(*host)
                     }
@@ -2019,7 +2045,7 @@ impl Document {
                     }
                     (42, _, [host])
                         if measurement_format && measurement_style
-                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || matches!(o.kind, Kind::CircularSegmentBoundary(_))) =>
+                            && objects.get(host.saturating_sub(1)).is_some_and(|o| o.kind.is_polygon() || o.kind.is_sector() || o.kind.is_circular_segment()) =>
                     {
                         Kind::PolygonArea(*host)
                     }
@@ -2183,23 +2209,24 @@ impl Document {
                         Some((payload, _))
                             if payload.len() == 52
                                 && payload[..4] == [17, 0, 0, 0]
-                                && u32_at(payload, 20) == 1
-                                && u32_at(payload, 40) == 1
-                                && [4, 12, 24, 32].iter().all(|&offset| f64_at(payload, offset).is_finite())
-                                && (f64_at(payload, 4) - f64_at(payload, 12) * 37.79527559055118).abs() < 1e-5
-                                && (f64_at(payload, 24) - f64_at(payload, 32) * 37.79527559055118).abs() < 1e-5
+                                && cartesian_distance_scale(payload, 4, 12, 20).is_some()
+                                && cartesian_distance_scale(payload, 24, 32, 40).is_some()
                                 && *source > 0
                                 && objects.get(source - 1).is_some_and(|o| is_point_kind(&o.kind) || matches!(o.kind, Kind::Segment(_, _) | Kind::Circle(_, _) | Kind::CircleBySegment(_, _) | Kind::Polygon(_))) =>
                         {
+                            let horizontal_scale =
+                                cartesian_distance_scale(payload, 4, 12, 20).unwrap();
+                            let vertical_scale =
+                                cartesian_distance_scale(payload, 24, 32, 40).unwrap();
                             if h[8..10] == [14, 0] && matches!(objects[source - 1].kind, Kind::Segment(_, _)) {
-                                Kind::FixedRectangularTranslatedSegment(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                                Kind::FixedRectangularTranslatedSegment(*source, horizontal_scale, f64_at(payload, 12), vertical_scale, f64_at(payload, 32))
                             } else if h[8..10] == [28, 0] && matches!(objects[source - 1].kind, Kind::Circle(_, _) | Kind::CircleBySegment(_, _)) {
-                                Kind::FixedRectangularTranslatedCircle(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                                Kind::FixedRectangularTranslatedCircle(*source, horizontal_scale, f64_at(payload, 12), vertical_scale, f64_at(payload, 32))
                             } else if h[8..10] == [4, 0] && is_point_kind(&objects[source - 1].kind) {
-                                Kind::FixedRectangularTranslatedPoint(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                                Kind::FixedRectangularTranslatedPoint(*source, horizontal_scale, f64_at(payload, 12), vertical_scale, f64_at(payload, 32))
                             } else if matches!(&objects[source - 1].kind, Kind::Polygon(vertices) if polygon_subtype(vertices.len()) == Some(u16::from_le_bytes([h[8], h[9]])))
                                 && h.len() == 28 && h[6..8] == [4, 0] {
-                                Kind::FixedRectangularTranslatedPolygon(*source, 37.79527559055118, f64_at(payload, 12), 37.79527559055118, f64_at(payload, 32))
+                                Kind::FixedRectangularTranslatedPolygon(*source, horizontal_scale, f64_at(payload, 12), vertical_scale, f64_at(payload, 32))
                             } else {
                                 Kind::Unsupported(code)
                             }
@@ -2524,7 +2551,7 @@ impl Document {
                     }
                     (81, _, [a, b, c]) => Kind::ThreePointArc(*a, *b, *c),
                     (10, None, [circle])
-                        if h.len() == 28 && h[6..10] == [5, 0, 16, 0]
+                        if matches!(h.len(), 16 | 28) && h[6..10] == [5, 0, 16, 0]
                             && constraint_payload.is_none()
                             && super::circle_interior::supported_source(&objects, *circle, page, objects.len() + 1)
                             && rs.iter().filter(|r| r.start >= group_start && r.start <= rs[i].start && r.kind == 0x07d2).count() == 1

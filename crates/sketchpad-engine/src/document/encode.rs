@@ -58,6 +58,9 @@ impl Document {
             ElementType::Polygon => 8,
             ElementType::Sector => 82,
             ElementType::Disk => 10,
+            ElementType::CircularSegment => {
+                return Err("Colorized circular segments are not supported".into());
+            }
             ElementType::Image => return Err("Colorized pictures are not supported".into()),
         });
         h[..2].copy_from_slice(&75u16.to_le_bytes());
@@ -1874,7 +1877,7 @@ impl Document {
                         polygon,
                         region_order: if matches!(
                             definition.element(),
-                            ElementType::Sector | ElementType::Disk
+                            ElementType::Sector | ElementType::CircularSegment | ElementType::Disk
                         ) {
                             Some(o.interior_order.ok_or("Missing region drawing order")?)
                         } else {

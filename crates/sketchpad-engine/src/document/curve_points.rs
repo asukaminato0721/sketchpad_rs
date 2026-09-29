@@ -34,6 +34,21 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
         })
 }
 
+/// Literal code 123 is independently observed on intrinsic sampled curves and
+/// ordinary geometric point loci. Parameter-locus literals have a distinct raw
+/// numeric domain and remain guarded until that contract is established.
+pub(super) fn literal_supported(
+    objects: &[Object],
+    path: usize,
+    page: usize,
+    before: usize,
+) -> bool {
+    path.checked_sub(1)
+        .and_then(|index| objects.get(index))
+        .is_some_and(|object| matches!(object.kind, Kind::SampledMapped(_) | Kind::Locus(..)))
+        && supported(objects, path, page, before)
+}
+
 /// Interactive function points use15/58; numeric95 admission remains separate.
 pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
     supported(objects, path, page, before) || path.checked_sub(1).and_then(|i| objects.get(i)).is_some_and(|o| {

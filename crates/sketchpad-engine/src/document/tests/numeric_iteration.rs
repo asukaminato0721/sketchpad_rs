@@ -39,6 +39,35 @@ fn point_numeric_label_updates_and_remaps_both_parents() {
     assert_eq!(reopened.objects.len(), 1);
     assert!(reopened.position(1).is_some());
     assert!(doc.add_point_numeric_label(2, 3).is_err());
+
+    for (native, label, expected) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/钟科作品/前辈们的方向箭头（颗粒）.gsp"
+            ))
+            .as_slice(),
+            171,
+            "(0.00, -0.00)",
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/未分类档/天秤.gsp"
+            ))
+            .as_slice(),
+            300,
+            "2.0",
+        ),
+    ] {
+        let document = Document::from_bytes(native, None).unwrap();
+        assert_eq!(document.encode().unwrap(), native);
+        assert!(matches!(
+            document.objects[label - 1].kind,
+            Kind::PointReferencedText { .. }
+        ));
+        assert_eq!(document.point_numeric_label(label).unwrap().1, expected);
+    }
 }
 
 #[test]

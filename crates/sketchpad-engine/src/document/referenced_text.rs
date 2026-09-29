@@ -461,8 +461,8 @@ fn evaluate_node(
             rows
         }
         ReferencedNode::Reference { slot, role, cached } => {
-            // Nested references are rejected by the parser, so no document
-            // resolver is required to inspect a literal cache.
+            // Cache-only calculation wrappers contain no live document slots,
+            // so no document resolver is required to inspect them.
             let cache = cached.as_ref().map(|children| {
                 horizontal(children, inherited, &mut |_, _, _| None)
                     .into_iter()
@@ -662,9 +662,23 @@ impl<'a> Parser<'a> {
                     return Err("Frame metrics must end an outer layout".into());
                 }
                 nodes.push(ReferencedNode::FrameMetrics(fields));
+            } else if in_cache
+                && (self.bytes[self.at..].starts_with(b"<?3")
+                    || self.bytes[self.at..].starts_with(b"<?4"))
+            {
+                // Native calculation caches wrap their already-rendered math
+                // tree in observed ?3/?4 presentation containers. They are
+                // not live reference operands; retain the parsed cache only as
+                // a fallback display tree for the outer reference.
+                self.at += 3;
+                let children = self.sequence(true, true, depth + 1, false)?;
+                if children.is_empty() {
+                    return Err("Empty calculated reference cache".into());
+                }
+                nodes.push(ReferencedNode::Horizontal(children));
             } else if self.bytes[self.at..].starts_with(b"<?") {
                 if in_cache {
-                    return Err("Nested reference cache is unsupported".into());
+                    return Err("Unsupported nested reference cache".into());
                 }
                 self.at += 2;
                 let cached = match self.bytes.get(self.at) {
@@ -957,6 +971,18 @@ mod tests {
             ]
         );
         assert_eq!(&text.rich_bytes()[18..18 + markup.len()], markup.as_bytes());
+
+        let calculated = "<?1x2<H<H<H<T''><?3<+<H<!D7><T2x10>><T''>><!A5><H<T1x2><SS2<!70>>><S+1</<H<T''><SS2<!70>>><T''>>>>>><T''>>>";
+        let text = ReferencedText::from_markup(calculated, (0, 0), 2).unwrap();
+        assert_eq!(text.referenced_slots(), [2]);
+        assert_eq!(
+            text.evaluate_roles(|slot, role, _| {
+                assert_eq!((slot, role), (2, ReferenceRole::Value));
+                Some("LIVE".into())
+            })[0][0]
+                .text,
+            "LIVE"
+        );
     }
 
     #[test]

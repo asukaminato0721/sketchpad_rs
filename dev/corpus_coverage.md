@@ -1,13 +1,18 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,268/1,599** documents have all object kinds
-decoded; **1,298** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **2,952** unsupported slots (2,354
-drawing slots and 598 prototype slots), and 331 documents still contain
+Latest snapshot, 2026-09-29: **1,326/1,599** documents have all object kinds
+decoded; **1,358** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **2,223** unsupported slots (1,625
+drawing slots and 598 prototype slots), and 273 documents still contain
 unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
 4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
-measurement, transformed-point Animation, segment-marker, and legacy-angle-rotation recoveries are
-summarized at the end; the older detailed snapshots remain for comparison.
+measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
+legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
+plus literal locus-point, degree-coordinate, legacy coordinate-readout,
+sampled-path point-value, anchored referenced-label, mapped ParameterLocus
+collection, and mapped action-capture recoveries
+are summarized at the end; the older detailed
+snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -1489,3 +1494,279 @@ and partial-view counts unchanged. All 1,599 originals remain byte-exact. The
 16-page `课时7笔记.gsp` opened and resaved byte-identically (387,588 bytes) in
 Sketchpad 5 under Xvfb/Wine. Final scan:
 `/tmp/sketchpad_legacy_rotation_coverage.log`.
+
+## Legacy polar coordinate values
+
+Native codes 125 and 124 are respectively the radius and polar angle of a
+point relative to a coordinate system. Their meaning does not change with the
+displayed grid form. Code 125 evaluates to `hypot(x, y)` as a scalar. Code 124
+evaluates internally in degrees, then its caption follows the document's angle
+unit: degrees with a `°` suffix or radians without one. The strict decoder
+requires the exact scalar-measurement layout and references to an earlier
+supported Point and CoordinateSystem.
+
+The original `圆环的迭代(5环旋转迭代).gsp` displays `r_z = 5.71` and
+`θ_z = 0.04` in its radian document. A port-authored code-125/code-124 pair
+displayed `r_A = 1.36` and `θ_A = 5.60°` in Sketchpad 5 and resaved
+byte-identically at 2,796 bytes. Two direct roots and six dependent code-48
+calculations recover. Two code-124 roots and one code-125 root that depend on
+unsupported code-88 aliases remain guarded. The compiled scan lowers the total
+2,952→2,944 (2,346 drawing plus 598 prototype), with document-completion and
+partial-view counts unchanged. All 1,599 originals remain byte-exact. Final
+scan: `/tmp/sketchpad_legacy_polar_coordinates_final_coverage.log`.
+
+## Inch-unit fixed rectangular translations
+
+Native code-17 fixed-Cartesian payloads use length-unit tag 1 for centimeters
+at 37.79527559055118 pixels per unit and tag 2 for inches at 96 pixels per
+unit. The shared decoder now validates each axis against its own declared unit,
+the transform model retains both scales, and the writer restores the matching
+tags when an object is copied or authored.
+
+The 18-page `初中数学积件.gsp` contains ten visible Segment translations with
+inch tags on both axes. Each has magnitude `0.03937007983525594` and pixel cache
+`3.7795276641845703`; all ten now evaluate live and remain byte-exact. A
+port-authored `(0.5, -0.25)`-inch Segment translation displayed the expected
+48-pixel right and 24-pixel down displacement in Sketchpad 5 and resaved
+byte-identically at 2,088 bytes. The compiled scan lowers unsupported slots
+2,944→2,934 (2,336 drawing plus 598 prototype), with completion and partial-view
+counts unchanged. All 1,599 originals remain byte-exact.
+
+## Mixed translated circular segments
+
+Code 19 with class 13/subtype 69 is a circular-segment region translated by a
+marked horizontal Length and a fixed vertical centimeter literal. The two corpus
+files each contain one intrinsic circular-segment root followed by 21 live images;
+once the first image is typed, the full recursive chain decodes through the shared
+affine evaluator. Arc-plus-chord fill geometry, drawing order, style, picking,
+area, and perimeter all use the transformed region rather than treating it as a
+sector.
+
+The first pass admitted this independently observed fixed-vertical flavor. A
+port-authored source/image pair
+opened in Sketchpad 5 under Xvfb/Wine and displayed the expected 150-pixel right,
+37.79527559055118-pixel up offset. Its generated code-19 header is class
+13/subtype 69, and the port save/reopen preserves the live marked-distance
+dependency. The compiled scan restores all 44 drawing slots across the two
+`方轮小汽车` files: unsupported falls 2,934→2,890 (2,292 drawing plus 598
+prototype), complete documents rise 1,268→1,270, and complete drawings rise
+1,298→1,300. Partial views remain 867, and all 1,599 originals remain byte-exact.
+See `circular_segment_translation_analysis.md`.
+
+## Fixed circular-segment rotation, dilation, and reflection
+
+The same class-13/subtype-69 region appears with code 27 fixed rotation, code 30
+fixed dilation, and code 34 reflection. Fourteen roots have already decoded
+Point or straight-object operands; their ordinary constraint payloads match the
+shared transform schemas. Admitting those three native flavors also resolves
+recursive circular-segment chains while retaining the arc-plus-chord geometry.
+
+An isolated 13-object writer places a source region beside its 180-degree
+rotation, reflection, and half-scale dilation. Sketchpad 5 opened it under
+Xvfb/Wine and rendered all four filled regions with the expected orientation,
+placement, and radius. Existing editor commands now author exactly these verified
+fixed forms; marked-angle and marked-ratio variants remain guarded.
+
+The compiled scan restores 37 drawing slots: unsupported falls 2,890→2,853
+(2,255 drawing plus 598 prototype). Completion and partial-view counts remain
+1,270 all-kind documents, 1,300 drawing-complete documents, and 867 partial
+views. All 1,599 originals remain byte-exact.
+
+## Coordinate-axis rotations
+
+Two native constructions use a class-2/subtype-12 Line image whose source is an
+ordinary form-1 `GraphAxis`: one code-27 fixed rotation and one code-29 numeric
+rotation. The numeric image then feeds another numeric rotation. The decoder,
+evaluator, validator, document API, and editor now share this narrow rotation-only
+source rule; translation, dilation, reflection, point-angle rotation, y-axis, and
+other axis profiles remain closed.
+
+A 10-object, 2,750-byte port writer created 30-degree fixed and negative-45-degree
+calculation-driven images of an x-axis. Sketchpad 5 opened it under Xvfb/Wine and
+rendered both as full infinite lines at the expected angles. Save/reopen in the
+port preserves both live definitions.
+
+The compiled scan restores 23 drawing slots: the two axis-source roots and 21
+descendants. Unsupported falls 2,853→2,830 (2,232 drawing plus 598 prototype),
+complete documents rise 1,270→1,272, complete drawings rise 1,300→1,302, and
+partial views fall 867→865. All 1,599 originals remain byte-exact.
+
+## Pixel-unit fixed rectangular translations
+
+Code-17 fixed rectangular constraints use tag 0 for literal pixels, alongside
+the previously supported tag-1 centimeters and tag-2 inches. Seven point images
+in `初中数学积件.gsp` use tag 0 on both axes, with each pixel cache exactly equal
+to its stored magnitude. Their page-local sources are supported points on
+segments, circles, or an arc.
+
+The decoder, save validator, and writer now preserve scale 1 and emit tag 0. A
+1,956-byte port writer translated a point by `(120, −80)` pixels. Sketchpad 5
+opened it under Xvfb/Wine and displayed the image exactly 120 screen pixels right
+and 80 screen pixels down from its source.
+
+The compiled scan restores all seven drawing slots. Unsupported falls
+2,830→2,823 (2,225 drawing plus 598 prototype); completion and partial-view
+counts remain 1,272 all-kind documents, 1,302 drawing-complete documents, and
+865 partial views. All 1,599 originals remain byte-exact.
+
+## Legacy short-header circle interiors
+
+The legacy clock contains two code-10 class-5/subtype-16 circle interiors with
+16-byte GSP4 headers. Their reference groups are otherwise the ordinary
+one-Circle disk layout. The short header stores RGB but has no opacity or drawing
+rank field, matching legacy polygons: Native renders the implicit fill at 75%
+and no rank is invented while the original group is retained.
+
+Both disks now keep live analytic circle geometry and `0xbfff` implicit opacity.
+The legacy-upgrade path recognizes the same exact header if a future complete
+legacy document needs conversion to modern records. Sketchpad 5 opened the
+original clock under Xvfb/Wine and visibly rendered the overlapping filled disks
+above the dial. The compiled scan restores two drawing slots, lowering
+unsupported 2,823→2,821 (2,223 drawing plus 598 prototype). Completion and
+partial-view counts are unchanged because that clock retains unrelated legacy
+objects. All 1,599 originals remain byte-exact.
+
+## Literal points on ordinary point loci
+
+Four native code-123 class-1/subtype-56 groups reference already-supported
+ordinary point-output `Locus` objects. They use the existing strict literal-path
+record layout and store normalized fractions `1` or `2/3`. The decoder now uses
+the shared point-curve evaluator for this exact host family; intrinsic
+`SampledMapped` literals retain their previous support, while `ParameterLocus`
+and FunctionPlot literal contracts remain guarded.
+
+An existing locus regression now covers authoring, live evaluation, save, and
+reopen without adding another test case. A 2,456-byte port-authored midpoint
+locus with a literal point at `2/3` opened and rendered at the expected position
+in Sketchpad 5 under Xvfb/Wine. Native Ctrl+S preserved the file exactly (SHA-256
+`23c703216253a74ef1459ee9114190c027f4cd1ad507a931174a235d92f915eb`).
+
+The four roots unlock 72 descendants, restoring 76 drawing slots. Unsupported
+falls 2,821→2,745 (2,147 drawing plus 598 prototype); all-kind-complete documents
+rise 1,272→1,274 and drawing-complete documents rise 1,302→1,304. Partial views
+remain 865, all 1,599 originals remain byte-exact, and there are zero failures.
+
+## Degree-valued fixed-coordinate points
+
+Three remaining native code-110 fixed-y points use Degrees calculations as their
+live x coordinate. One is a nonzero control: `(t[4] · 180°)` evaluates to `360°`.
+The other two are duplicate sine/cosine sketches with degree-valued live sources.
+This is consistent with Native numeric XY points, which use the displayed degree
+magnitude as the coordinate rather than converting it to radians.
+
+`CoordinatePointDefinition` now retains the live operand's unit and admits only
+Scalar or Degrees sources whose declared unit matches the referenced object.
+Evaluation uses the ordinary numeric magnitude. Length, Area, and higher units
+remain rejected. A public writer control with `t=0.05`, `t·30°=1.5°`, and a
+fixed-y point encodes and reopens as a complete 10-object document; the optional
+Native launch was not counted because the local WoW64 wrapper became unavailable.
+
+The three roots unlock 82 descendants, restoring 85 drawing slots. Unsupported
+falls 2,745→2,660 (2,062 drawing plus 598 prototype); all-kind-complete documents
+rise 1,274→1,276 and drawing-complete documents rise 1,304→1,306. Partial views
+remain 865, all 1,599 originals remain byte-exact, and there are zero failures.
+Full scan: `/tmp/sketchpad_degree_coordinate_full_coverage.log`.
+
+## Legacy coordinate-pair rich-text tails
+
+Twenty decoded-parent code-49 Cartesian coordinate-pair readouts use the same
+class-0/subtype-34 group already supported by the shared measurement model. Their
+`0x08fc` payloads consistently store an inner size two bytes shorter than the
+record payload, leaving an opaque two-byte cache tail. Payload lengths range from
+84 to 100 bytes and the tail varies, so it is preserved rather than interpreted.
+The existing line/circle equation parser already recognizes exactly this Native
+`0 | 2` size delta.
+
+The coordinate parser now shares that bounded rule. All twenty ready sources are
+supported points: numeric-coordinate, curve-intersection, iteration-alias, or
+colorized point objects. The one remaining code-49 object retains an unsupported
+code-69 point parent and remains opaque. The existing coordinate regression now
+also covers the legacy tail, evaluated `(0, 0)` result, and exact whole-file
+round trip without adding another test case.
+
+Actual recovery is 21 drawing slots: unsupported falls 2,660→2,639 (2,041
+drawing plus 598 prototype); all-kind-complete documents rise 1,276→1,277 and
+drawing-complete documents rise 1,306→1,307. Partial views remain 865, all 1,599
+originals remain byte-exact, and there are zero failures. Full scan:
+`/tmp/sketchpad_legacy_coordinate_tail_full_coverage.log`.
+
+## Value of Point on sampled paths and sectors
+
+Twenty-two decoded-parent code-94 records measure points against ordinary loci,
+parameter loci, function plots, sampled mappings, or a sector boundary. The
+sampled path families now use the existing nearest-point evaluator and convert
+the normalized result to each path's established logical domain. A matching
+PointOnSector returns its exact stored physical-perimeter parameter. Structurally
+valid measurements survive currently undefined curve geometry.
+
+The common host predicate now drives import, validation, and editor selection.
+The existing point-value regression covers a six-measurement locus file and a
+sector file; no standalone test case was added. Twenty-two roots and 143
+dependents restore 165 drawing slots. Unsupported falls 2,639→2,474 (1,876
+drawing plus 598 prototype); all-kind-complete documents rise 1,277→1,285,
+drawing-complete documents rise 1,307→1,315, and unsupported documents fall
+322→314. Partial views remain 865, all 1,599 originals remain byte-exact, and
+there are zero failures. Eight code-94 objects with unsupported point or axis
+parents remain opaque. Full scan:
+`/tmp/sketchpad_curve_point_values_full_coverage.log`.
+
+The supplied Windows Sketchpad 5 executable opened a freshly authored
+sector-boundary Value-of-Point file under Xvfb/Wine and saved it without changing
+its 2,294 bytes or SHA-256
+`5091d091477ae3f18f883be1b57823abf4b10506feccfbbb30a628fbf4efeb23`.
+This is an open/save writer check, not a pixel-parity claim.
+
+The next code-90 pass removes a redundant source whitelist from anchored rich
+captions and relies on the same role validator used by ordinary referenced text.
+Coordinate-pair captions use the ordinary two-decimal fallback when the scalar
+precision field is absent, and nested point numeric/referenced labels resolve
+through their live caption value. Exact `?3` and `?4` containers are accepted
+only inside an outer reference's cached presentation tree; they do not create
+new live operands, and other nested reference-cache modes remain rejected.
+Thirty-two direct drawing slots are restored: unsupported falls 2,474→2,442
+(1,844 drawing plus 598 prototype), complete documents/drawings rise
+1,285/1,315→1,305/1,335, unsupported documents fall 314→294, and partial
+views fall 865→864. All 1,599 originals remain byte-exact. Eighteen drawing
+code-90 records remain blocked or outside the proved source/cache grammar.
+Full scan: `/tmp/sketchpad_calculation_cache_labels_full_coverage.log`.
+
+Mapped collection admission now treats point-output `ParameterLocus` objects the
+same as ordinary point-output `Locus` objects. Both already use the same local
+driver sampler and the same outer scoped evaluator; the decoder, binding guard,
+and new-binding template now agree with those shared runtime paths. Ten code-89
+roots, 25 code-77 bindings, and eight dependent objects restore 43 drawing
+slots. Unsupported falls 2,442→2,399 (1,801 drawing plus 598 prototype),
+complete documents/drawings rise 1,305/1,335→1,314/1,345, unsupported documents
+fall 294→285, and partial views fall 864→860. All 1,599 originals remain
+byte-exact with zero failures. Full scan:
+`/tmp/sketchpad_parameter_locus_iteration_coverage.log`.
+
+For the Native control, the direct `ParameterLocus` in
+`双控旋梯（hjx4882）.gsp` was hidden while its mapped binding remained visible.
+Sketchpad 5 still displayed the red five-level spiral; the port SVG displayed
+the same bound spiral. Native Ctrl+S retained all 4,532 bytes with SHA-256
+`53270fd8b9997ed80942028d8fdfa9d424097e1da0c2ccf51e66924242dfb14f`.
+This isolates collection-binding visibility rather than relying only on an
+untouched-source round trip.
+
+## Capture-only actions in mapped iterations
+
+Hide/show, animation, and movement buttons can be carried by a Native mapping
+even though actions themselves are not repeated output values. The evaluator now
+accepts these objects only as dependency-capture nodes: it traverses their target
+references while building the scoped graph, but `mapped_binding_kind` continues
+to reject action bindings. This keeps ordinary action activation semantics
+unchanged while allowing the mapped geometry in the same carried graph to run.
+
+Twenty-one code-89 roots, 147 code-77 geometry bindings, and eight dependent
+objects restore 176 drawing slots. Unsupported falls 2,399→2,223 (1,625 drawing
+plus 598 prototype), complete documents/drawings rise
+1,314/1,345→1,326/1,358, unsupported documents fall 285→273, and partial views
+fall 860→856. All 1,599 originals remain byte-exact with zero failures. Full
+scan: `/tmp/sketchpad_iteration_action_capture_coverage.log`.
+
+The Native control is derived from `未命名迭代钮炳坤老师.gsp`. Every ordinary
+source object is hidden, leaving only its five iteration bindings visible.
+Sketchpad 5 and the port both display the recovered red point sequence and green
+arc sequence. Native Ctrl+S preserves all 5,780 bytes with SHA-256
+`730248f8ed12e9c959e2811d7631174773438d360b83e3beb1bb86bf9a7276d2`.

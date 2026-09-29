@@ -1102,3 +1102,74 @@ retain valid undefined upstream geometry. Unsupported falls 3,100→3,027, compl
 documents/drawings rise to 1,260/1,290, and partial views fall to 870. Prototype
 coverage stays unchanged at 598 unsupported slots. Rebuild the next frontier from
 this measured baseline.
+
+The latest code-123 pass closes the bounded literal-point gap on ordinary
+point-output Locus paths. Four strict roots and 72 descendants restore 76 drawing
+slots: unsupported falls 2,821→2,745, complete documents/drawings rise to
+1,274/1,304, and all 1,599 originals remain byte-exact. A port-authored `2/3`
+midpoint-locus point rendered correctly and resaved byte-identically in Sketchpad
+5. ParameterLocus and FunctionPlot literal domains remain unproved; rebuild the
+decoded-parent frontier from the 2,745-slot baseline.
+
+The next bounded coordinate pass establishes Degrees as the second valid live
+operand for native fixed-coordinate helpers109/110. Three code-110 roots have
+degree-valued calculations; the nonzero profile evaluates `t[4]·180°` to 360°.
+They use the displayed magnitude, matching the already-proved generic numeric XY
+contract. Scalar and Degrees are accepted with exact unit matching; Length and
+Area remain guarded. These roots restore 82 descendants: unsupported slots fall
+2,745→2,660 and complete documents/drawings rise to 1,276/1,306, with all 1,599
+files byte-exact. Rebuild the decoded-parent frontier from the 2,660-slot baseline.
+
+The rebuilt frontier exposed a shared code-49 parsing inconsistency rather than
+a new measurement semantic. Twenty ready Cartesian pair readouts carry the
+Native rich-text inner-size delta already accepted for equation text: zero or a
+preserved two-byte cache tail. Reusing that exact rule restores 21 drawing slots,
+not the structural 103-slot upper bound, because other descendants retain
+independent guards. Unsupported falls 2,660→2,639 and complete documents/drawings
+rise to 1,277/1,307; all 1,599 files remain exact. One code-49 object correctly
+stays blocked by an unsupported code-69 point. Rebuild the frontier from 2,639.
+
+The rebuilt frontier's next bounded family is code-94 Value of Point on decoded
+sampled paths. The existing curve evaluator already owns live projection and
+canonical parameter conversion, so import, validation, evaluation, and the
+editor now share one structural host check instead of duplicating narrower
+lists. Matching points on sector boundaries return their stored physical-
+perimeter parameter. Twenty-two code-94 roots and 143 descendants restore 165
+drawing slots: unsupported falls 2,639→2,474 (1,876 drawing plus 598 prototype),
+complete documents/drawings rise to 1,285/1,315, and unsupported documents fall
+322→314. All 1,599 originals remain byte-exact. Eight code-94 records with
+unsupported point or axis parents remain opaque. Rebuild the frontier from 2,474.
+
+The following code-90 pass removes a stale anchored-label source whitelist that
+duplicated and contradicted the shared referenced-caption role validator.
+Coordinate pairs and nested point labels now use the existing live caption
+resolver. Native calculation caches may contain exact `?3`/`?4` presentation
+containers inside an outer live reference; those containers add no dependency
+or evaluation semantics, and all other unknown nested cache modes stay guarded.
+Thirty-two direct drawing slots are recovered: unsupported falls 2,474→2,442
+(1,844 drawing plus 598 prototype), complete documents/drawings rise
+1,285/1,315→1,305/1,335, unsupported documents fall 314→294, and partial
+views fall 865→864. All 1,599 originals remain byte-exact. Rebuild the
+decoded-parent frontier from 2,442.
+
+The refreshed code-89 frontier exposed a narrow collection inconsistency:
+`ParameterLocus` already shares point-locus sampling, scoped evaluation, and
+curve rendering with ordinary `Locus`, but the mapped construction and binding
+classifiers omitted it. Reusing those existing paths restores ten code-89 roots,
+25 code-77 bindings, and eight dependents. Unsupported falls 2,442→2,399 (1,801
+drawing plus 598 prototype), complete documents/drawings rise
+1,305/1,335→1,314/1,345, unsupported documents fall 294→285, and partial views
+fall 864→860. All 1,599 originals remain byte-exact. A hidden-source Native
+control isolates the bound spiral and saves unchanged. Rebuild the frontier from
+2,399.
+
+The next decoded-parent pass separates carried actions from action bindings.
+Hide/show, animation, and movement buttons are capture-only nodes in these
+mappings: their targets belong to the scoped dependency graph, but the actions
+are not themselves repeated values. Admitting only that role restores 21
+code-89 roots, 147 code-77 geometry bindings, and eight dependents. Unsupported
+falls 2,399→2,223 (1,625 drawing plus 598 prototype), complete
+documents/drawings rise 1,314/1,345→1,326/1,358, unsupported documents fall
+285→273, and partial views fall 860→856. All 1,599 originals remain byte-exact.
+A bindings-only Native control isolates five recovered outputs and saves
+unchanged. Rebuild the frontier from 2,223.

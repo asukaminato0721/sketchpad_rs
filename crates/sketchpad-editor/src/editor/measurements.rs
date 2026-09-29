@@ -175,20 +175,12 @@ impl Editor {
         }
         let (first, kind, second) = match self.selection_order.as_slice() {
             [first, second] if !equation => {
-                let point_polygon = |point: usize, polygon: usize| {
-                    self.doc.position(point).is_some()
-                        && self
-                            .doc
-                            .objects
-                            .get(polygon.saturating_sub(1))
-                            .is_some_and(|o| o.kind.is_polygon())
-                };
-                if point_polygon(*first, *second) {
+                if self.doc.supports_point_value(*first, *second) {
                     (*first, ValueEquationKind::PointValue, *second)
-                } else if point_polygon(*second, *first) {
+                } else if self.doc.supports_point_value(*second, *first) {
                     (*second, ValueEquationKind::PointValue, *first)
                 } else {
-                    self.status = "Select a point and a polygon for Value of Point".into();
+                    self.status = "Select a point and a supported path for Value of Point".into();
                     return;
                 }
             }
@@ -206,7 +198,8 @@ impl Editor {
                         | Kind::PointOnArc(host, _)
                         | Kind::PointOnCurve(host, _)
                         | Kind::PointOnCircle(host, _, _)
-                        | Kind::PointOnPolygon(host, _, _),
+                        | Kind::PointOnPolygon(host, _, _)
+                        | Kind::PointOnSector(host, _),
                     ) if !equation => (ValueEquationKind::PointValue, *host),
                     Some(Kind::PathLiteralPoint(host, _) | Kind::PathValuePoint(_, host))
                         if !equation
@@ -228,7 +221,7 @@ impl Editor {
                         self.status = if equation {
                             "Select one line or circle for Equation"
                         } else {
-                            "Select a constrained point, or a point and a polygon"
+                            "Select a constrained point, or a point and a supported path"
                         }
                         .into();
                         return;
@@ -237,7 +230,7 @@ impl Editor {
                 (*first, second.0, second.1)
             }
             _ => {
-                self.status = "Select a constrained point, or a point and a polygon".into();
+                self.status = "Select a constrained point, or a point and a supported path".into();
                 return;
             }
         };
@@ -492,9 +485,7 @@ impl Editor {
             }
             (ShapeMeasure::Area, Some(_)) if is_circle => (Kind::CircleArea(host), "area"),
             (ShapeMeasure::Area, Some(kind))
-                if kind.is_polygon()
-                    || kind.is_sector()
-                    || matches!(kind, Kind::CircularSegmentBoundary(_)) =>
+                if kind.is_polygon() || kind.is_sector() || kind.is_circular_segment() =>
             {
                 (Kind::PolygonArea(host), "area")
             }

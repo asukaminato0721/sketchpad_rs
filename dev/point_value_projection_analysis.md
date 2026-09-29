@@ -54,3 +54,38 @@ The trailer is preserved independently of the checked vector and distance
 semantics. The numeric format also retains its two separately stored u16 fields
 at offsets 24 and 26: type 6 and observed presentation variant 0, 1, or 3,
 rather than interpreting both as a single u32.
+
+## Sampled-path and sector values
+
+The decoded-parent frontier contains 22 further native code-94 measurements.
+Their second references are ordinary Locus, ParameterLocus, FunctionPlot,
+SampledMapped, or SectorBoundary objects; their first references cover free,
+constructed, transformed, colorized, coordinate, and path-derived points. Every
+group has the established 32-byte `0x0903` Value of Point layout.
+
+Sampled curve hosts use the existing live nearest-point search, then convert its
+normalized fraction through the host's canonical value domain: normalized for
+ordinary loci, the declared range for parameter loci and function plots, and the
+mapped path's logical value for sampled mappings. Undefined live curves retain
+their structurally valid measurement DAG. A matching PointOnSector uses its
+stored normalized physical-perimeter parameter; arbitrary sector projection is
+not inferred from this corpus.
+
+The shared structural predicate is used by decoding, validation, and editor
+selection. The existing point-value regression now includes one six-value locus
+document and one sector document without adding another test function. The full
+corpus restores 22 code-94 roots and 143 dependents: unsupported slots fall
+2,639→2,474 (1,876 drawing plus 598 prototype), all-kind-complete documents rise
+1,277→1,285, and drawing-complete documents rise 1,307→1,315. Unsupported
+documents fall 322→314; all 1,599 originals remain byte-exact. Eight code-94
+objects whose point or axis parents are still unsupported remain opaque. Full
+scan: `/tmp/sketchpad_curve_point_values_full_coverage.log`.
+
+A writer control created a sector, a constrained boundary point, and its
+Value-of-Point measurement through the public document API. The supplied Windows
+Sketchpad 5 executable opened `/tmp/sector_point_value_port.gsp` under Xvfb/Wine
+and Ctrl+S left all 2,294 bytes unchanged (SHA-256
+`5091d091477ae3f18f883be1b57823abf4b10506feccfbbb30a628fbf4efeb23`).
+The temporary file and Wine prefix were removed after the check. This proves the
+authored record's Native open/save acceptance; it is not a screenshot-based
+pixel claim.

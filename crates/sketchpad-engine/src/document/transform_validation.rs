@@ -25,16 +25,24 @@ fn source_supported(document: &Document, definition: &TransformDefinition) -> bo
         E::Point => is_point_kind(&source.kind),
         E::Segment => is_segment_kind(&source.kind),
         E::Ray | E::Line => {
-            source.kind.fixed_transform_straight_mode()
-                == Some(if definition.element() == E::Ray {
-                    LineMode::Ray
-                } else {
-                    LineMode::Line
-                })
+            let mode = if matches!(
+                definition.wire_flavor(),
+                F::FixedRotation | F::NumericRotation
+            ) {
+                source.kind.rotation_transform_straight_mode()
+            } else {
+                source.kind.fixed_transform_straight_mode()
+            };
+            mode == Some(if definition.element() == E::Ray {
+                LineMode::Ray
+            } else {
+                LineMode::Line
+            })
         }
         E::Circle => source.kind.is_circle(),
         E::Arc => is_arc_kind(&source.kind),
         E::Sector => source.kind.is_sector(),
+        E::CircularSegment => source.kind.is_circular_segment(),
         E::Polygon => {
             source.kind.is_polygon()
                 && polygon_vertex_count(&document.objects, definition.source()).is_some()
@@ -111,7 +119,9 @@ fn validate_literals(definition: &TransformDefinition) -> bool {
                 NativeLiteralRole::PolarUnitsToPixels => literal.value > 0.,
                 NativeLiteralRole::HorizontalUnitsToPixels
                 | NativeLiteralRole::VerticalUnitsToPixels => {
-                    (literal.value - 37.79527559055118).abs() <= 1e-9
+                    (literal.value - 1.).abs() <= 1e-9
+                        || (literal.value - 37.79527559055118).abs() <= 1e-9
+                        || (literal.value - 96.).abs() <= 1e-9
                 }
                 NativeLiteralRole::ScaleFactor => straight || literal.value != 0.,
                 _ => true,
@@ -145,6 +155,15 @@ pub(super) fn validate_transform(
     // Only the standalone imported point profile is proved. Authoring needs
     // an independent Native writer control for this custom-transform opcode.
     if is_new && flavor == F::DualMarkedPolar {
+        return Err(invalid());
+    }
+    if is_new
+        && definition.element() == E::CircularSegment
+        && !matches!(
+            flavor,
+            F::FixedVertical | F::FixedRotation | F::FixedDilation | F::Reflection
+        )
+    {
         return Err(invalid());
     }
     let numeric = matches!(flavor, F::NumericRotation | F::NumericDilation);

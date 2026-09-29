@@ -154,7 +154,8 @@ fn is_polygon_header(payload: &[u8]) -> bool {
     let code = u16::from_le_bytes([payload[0], payload[1]]);
     let subtype = u16::from_le_bytes([payload[8], payload[9]]);
     code == 8
-        || (matches!(code, 10 | 75) && payload.len() == 28 && payload[6..10] == [5, 0, 16, 0])
+        || (code == 10 && payload[6..10] == [5, 0, 16, 0])
+        || (code == 75 && payload.len() == 28 && payload[6..10] == [5, 0, 16, 0])
         || (code == 75 && payload.len() == 28 && payload[6..10] == [4, 0, 15, 0])
         || (code == 82 && payload.len() == 28 && payload[6..10] == [13, 0, 68, 0])
         || (code == 83 && payload.len() == 28 && payload[6..10] == [13, 0, 69, 0])
@@ -162,7 +163,11 @@ fn is_polygon_header(payload: &[u8]) -> bool {
             code,
             75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
         ) && ((subtype >= 52 && payload[6..8] == [4, 0])
-            || (payload.len() == 28 && matches!(payload[6..10], [5, 0, 16, 0] | [13, 0, 68, 0]))))
+            || (payload.len() == 28
+                && matches!(
+                    payload[6..10],
+                    [5, 0, 16, 0] | [13, 0, 68, 0] | [13, 0, 69, 0]
+                ))))
 }
 
 pub fn polygon_color(payload: &[u8]) -> Option<RgbColor> {
@@ -188,9 +193,10 @@ const LEGACY_POLYGON_OPACITY: u16 = 0xbfff;
 
 fn is_legacy_polygon_header(payload: &[u8]) -> bool {
     payload.len() == 16
-        && payload[..2] == [8, 0]
-        && payload[6..8] == [4, 0]
-        && u16::from_le_bytes([payload[8], payload[9]]) >= 52
+        && (payload[..2] == [8, 0]
+            && payload[6..8] == [4, 0]
+            && u16::from_le_bytes([payload[8], payload[9]]) >= 52
+            || payload[..2] == [10, 0] && payload[6..10] == [5, 0, 16, 0])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

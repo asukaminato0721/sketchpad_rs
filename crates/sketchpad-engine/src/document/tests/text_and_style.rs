@@ -320,6 +320,9 @@ fn geometric_labels_keep_native_placement_parameters() {
         37.79527559055118,
         0.,
     ));
+    let inch_transformed_segment = document.add(Kind::FixedRectangularTranslatedSegment(
+        segment, 96., 0.5, 96., -0.25,
+    ));
     let transformed_ray = document.add(Kind::RotatedRay(ray, a, 45.));
     let transformed_line = document.add(Kind::RotatedLine(line, a, 45.));
     let angle = document
@@ -447,7 +450,8 @@ fn geometric_labels_keep_native_placement_parameters() {
         document.point_on_arc(colorized_arc, 0.25)
     );
 
-    let reopened = Document::from_bytes(&document.encode().unwrap(), None).unwrap();
+    let encoded = document.encode().unwrap();
+    let reopened = Document::from_bytes(&encoded, None).unwrap();
     assert!(!reopened.partial_view);
     for id in [
         segment,
@@ -463,6 +467,7 @@ fn geometric_labels_keep_native_placement_parameters() {
         colorized_line,
         colorized_circle,
         colorized_arc,
+        inch_transformed_segment,
     ] {
         assert_eq!(
             reopened.objects[id - 1].label,
@@ -472,6 +477,35 @@ fn geometric_labels_keep_native_placement_parameters() {
             reopened.object_label_anchor(id),
             document.object_label_anchor(id)
         );
+    }
+
+    let records = records(&encoded).unwrap();
+    let header_offset = reopened.objects[inch_transformed_segment - 1]
+        .header_offset
+        .unwrap();
+    let start = records
+        .iter()
+        .position(|record| record.kind == 0x07d0 && record.data.start == header_offset)
+        .unwrap();
+    let constraint = records[start..]
+        .iter()
+        .find(|record| record.kind == 0x07d3)
+        .unwrap();
+    assert_eq!(u32_at(&encoded, constraint.data.start + 20), 2);
+    assert_eq!(u32_at(&encoded, constraint.data.start + 40), 2);
+    let definition = reopened.objects[inch_transformed_segment - 1]
+        .kind
+        .transform_definition()
+        .unwrap();
+    assert_eq!(
+        definition.wire_flavor(),
+        NativeTransformFlavor::FixedCartesian
+    );
+    let (source_a, source_b, _) = reopened.line_points(segment).unwrap();
+    let (image_a, image_b, _) = reopened.line_points(inch_transformed_segment).unwrap();
+    for (source, image) in [(source_a, image_a), (source_b, image_b)] {
+        assert_eq!(image.x - source.x, 48.);
+        assert_eq!(image.y - source.y, 24.);
     }
 }
 

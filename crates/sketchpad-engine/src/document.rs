@@ -327,6 +327,7 @@ fn object_class(kind: &Kind) -> Option<ObjectClass> {
             Some(
                 transform_model::ElementType::Polygon
                 | transform_model::ElementType::Sector
+                | transform_model::ElementType::CircularSegment
                 | transform_model::ElementType::Disk,
             ) => Some(ObjectClass::Interior),
             Some(transform_model::ElementType::Image) => None,
@@ -921,6 +922,7 @@ impl Document {
                     transform_model::ElementType::Polygon
                         | transform_model::ElementType::Disk
                         | transform_model::ElementType::Sector
+                        | transform_model::ElementType::CircularSegment
                         | transform_model::ElementType::Arc
                         | transform_model::ElementType::Ray
                         | transform_model::ElementType::Line

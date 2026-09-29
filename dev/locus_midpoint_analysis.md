@@ -222,3 +222,23 @@ fall to 895. All 1,599 source files still parse and round-trip byte-exactly;
 embedded prototype coverage remains 4,744/5,356. The existing locus tests cover
 the transient free-driver path, cyclic-path rejection, sparse capture
 validation, sampling, save, and reopen without adding another test case.
+
+## Parameter-locus mapped collections
+
+The remaining decoded-parent iteration frontier showed that `ParameterLocus`
+was already evaluated by the same point-locus sampler as `Locus`, including its
+explicit numeric range, but was absent from the mapped construction and binding
+classifiers. Adding it to those shared roles restores ten native code-89 roots,
+25 code-77 bindings, and eight downstream objects without a new evaluator or
+object variant. The existing locus regression now opens the compact
+`双控旋梯（hjx4882）.gsp` example, verifies its exact bytes, evaluates 1,440
+bound strokes, hides the direct source, and verifies the bound collection after
+save/reopen; no new test function was added.
+
+The same hidden-source state was opened under the supplied Windows Sketchpad 5
+using Xvfb/Wine. Native still displayed the red five-level spiral from the
+visible binding, matching the port SVG, and Ctrl+S preserved the 4,532-byte file
+with SHA-256
+`53270fd8b9997ed80942028d8fdfa9d424097e1da0c2ccf51e66924242dfb14f`.
+The full corpus remains 1,599/1,599 byte-exact; unsupported slots fall
+2,442→2,399 and complete documents/drawings rise 1,305/1,335→1,314/1,345.

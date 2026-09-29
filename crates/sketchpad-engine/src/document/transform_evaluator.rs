@@ -2,7 +2,9 @@
 //! native wire flavor.
 use super::geometry::{marked_rotation_theta, ratio_of_points};
 use super::kind::{is_arc_kind, is_point_kind};
-use super::transform_model::{DisplacementExpr, ElementType, NumericExpr, Transform};
+use super::transform_model::{
+    DisplacementExpr, ElementType, NativeTransformFlavor, NumericExpr, Transform,
+};
 use super::{Document, Kind, LineMode, Point};
 use crate::table_records::NumericUnit;
 use std::collections::BTreeSet;
@@ -119,7 +121,15 @@ impl Document {
                 } else {
                     LineMode::Line
                 };
-                if kind.fixed_transform_straight_mode() != Some(expected) {
+                let actual = if matches!(
+                    definition.wire_flavor(),
+                    NativeTransformFlavor::FixedRotation | NativeTransformFlavor::NumericRotation
+                ) {
+                    kind.rotation_transform_straight_mode()
+                } else {
+                    kind.fixed_transform_straight_mode()
+                };
+                if actual != Some(expected) {
                     return Err(Error::WrongElement(source));
                 }
                 let (start, end, mode) = self.line_points(source).ok_or(Error::Undefined)?;
@@ -166,6 +176,18 @@ impl Document {
             ElementType::Sector if kind.is_sector() => {
                 let (center, radius, start, sweep, clockwise_y) =
                     self.sector_arc_geometry(source).ok_or(Error::Undefined)?;
+                TransformGeometry::Sector {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                    clockwise_y,
+                }
+            }
+            ElementType::CircularSegment if kind.is_circular_segment() => {
+                let (center, radius, start, sweep, clockwise_y) = self
+                    .circular_segment_geometry(source)
+                    .ok_or(Error::Undefined)?;
                 TransformGeometry::Sector {
                     center,
                     radius,

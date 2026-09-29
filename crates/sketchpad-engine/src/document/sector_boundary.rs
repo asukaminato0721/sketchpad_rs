@@ -153,15 +153,39 @@ impl Document {
     pub(super) fn undefined_circular_segment(&self, id: usize) -> bool {
         self.objects
             .get(id.wrapping_sub(1))
-            .is_some_and(|o| !o.deleted && matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+            .is_some_and(|o| !o.deleted && o.kind.is_circular_segment())
             && self.circular_segment_geometry(id).is_none()
     }
-    fn circular_segment_geometry(&self, id: usize) -> Option<SectorArc> {
+    pub(super) fn circular_segment_geometry(&self, id: usize) -> Option<SectorArc> {
+        if let Some(original) = self.frozen_evaluation_document(id) {
+            return original.circular_segment_geometry(id);
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted {
+            return None;
+        }
+        if object
+            .kind
+            .transform_definition()
+            .is_some_and(|definition| definition.element() == ElementType::CircularSegment)
+        {
+            return match self.evaluate_transform(id).ok()? {
+                TransformGeometry::Sector {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                    clockwise_y,
+                } => Some((center, radius, start, sweep, clockwise_y)),
+                _ => None,
+            };
+        }
         let Kind::CircularSegmentBoundary(arc) = object.kind else {
             return None;
         };
-        (!object.deleted).then_some(())?;
+        if let Some(value) = self.evaluation_arc(id) {
+            return value;
+        }
         self.arc_geometry(arc)
     }
     /// Native Point68 traverses center→start→arc→center by physical perimeter.
@@ -229,15 +253,19 @@ impl Document {
     }
     /// Sampled presentation outline for filled shapes; this does not change path typing.
     pub fn filled_region_points(&self, id: usize) -> Option<Vec<Point>> {
-        if let Some(object) = self.objects.get(id.checked_sub(1)?)
-            && let Kind::CircularSegmentBoundary(arc) = object.kind
+        if self
+            .objects
+            .get(id.checked_sub(1)?)
+            .is_some_and(|object| object.kind.is_circular_segment())
         {
-            if object.deleted {
-                return None;
-            }
             // The closing edge is the chord from arc end back to arc start.
             // The fill tessellator closes the returned outline itself.
-            return self.arc_points(arc, 192);
+            let geometry = self.circular_segment_geometry(id)?;
+            return Some(
+                (0..=192)
+                    .map(|i| arc_at(geometry, i as f64 / 192.))
+                    .collect(),
+            );
         }
         if self
             .objects

@@ -1,6 +1,6 @@
 //! Shared native transform schemas with independently validated output typing.
 //! Appearance, caches and unknown auxiliary records remain in the preserving serializer.
-use super::decode::{polar_distance_scale, transform_angle_degrees};
+use super::decode::{cartesian_distance_scale, polar_distance_scale, transform_angle_degrees};
 use super::kind::{
     is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind, polygon_vertex_count,
 };
@@ -39,11 +39,16 @@ pub(super) fn decode_native_transform(
         [4, 0, _, _] => ElementType::Polygon,
         [12, 0, 67, 0] => ElementType::Arc,
         [13, 0, 68, 0] => ElementType::Sector,
+        [13, 0, 69, 0] => ElementType::CircularSegment,
         [16, 0, 78, 0] => ElementType::Image,
         [2, 0, 13, 0] => ElementType::Ray,
         [2, 0, 12, 0] => ElementType::Line,
         _ => return None,
     };
+    // Keep this region type bounded to independently observed native flavors.
+    if element == ElementType::CircularSegment && !matches!(code, 19 | 27 | 30 | 34) {
+        return None;
+    }
     let get = |id: usize| {
         objects
             .get(id.checked_sub(1)?)
@@ -67,9 +72,16 @@ pub(super) fn decode_native_transform(
                     || (header[8..10] == [15, 0] && context.source_is_generic_polygon))
         }
         ElementType::Sector => source_kind.is_sector(),
+        ElementType::CircularSegment => source_kind.is_circular_segment(),
         ElementType::Image => matches!(source_kind, super::Kind::Image { .. }),
         ElementType::Ray => source_kind.fixed_transform_straight_mode() == Some(LineMode::Ray),
-        ElementType::Line => source_kind.fixed_transform_straight_mode() == Some(LineMode::Line),
+        ElementType::Line => {
+            if matches!(code, 27 | 29) {
+                source_kind.rotation_transform_straight_mode() == Some(LineMode::Line)
+            } else {
+                source_kind.fixed_transform_straight_mode() == Some(LineMode::Line)
+            }
+        }
     };
     if !source_matches {
         return None;
@@ -118,18 +130,12 @@ pub(super) fn decode_native_transform(
         ),
         (17, [_]) => {
             let p = payload(52)?;
-            if u32_at(p, 20) != 1
-                || u32_at(p, 40) != 1
-                || [4, 12, 24, 32].iter().any(|at| !f64_at(p, *at).is_finite())
-                || (f64_at(p, 4) - f64_at(p, 12) * 37.79527559055118).abs() >= 1e-5
-                || (f64_at(p, 24) - f64_at(p, 32) * 37.79527559055118).abs() >= 1e-5
-            {
-                return None;
-            }
+            let horizontal_scale = cartesian_distance_scale(p, 4, 12, 20)?;
+            let vertical_scale = cartesian_distance_scale(p, 24, 32, 40)?;
             (
                 cartesian(
-                    literal(f64_at(p, 12), NumericUnit::Length, 37.79527559055118),
-                    literal(f64_at(p, 32), NumericUnit::Length, 37.79527559055118),
+                    literal(f64_at(p, 12), NumericUnit::Length, horizontal_scale),
+                    literal(f64_at(p, 32), NumericUnit::Length, vertical_scale),
                 ),
                 F::FixedCartesian,
             )

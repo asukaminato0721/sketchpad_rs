@@ -247,6 +247,27 @@ fn mixed_rectangular_translation_uses_the_other_marked_axis() {
     assert_eq!(fixed_x_position.y, 140.);
     assert_eq!(fixed_y_position.x, 250.);
     assert!((fixed_y_position.y - (210. + 0.5 * 37.79527559055118)).abs() < 1e-9);
+
+    let arc = editor.doc.add(Kind::CenterArc(h_start, h_end, v_start));
+    let region = editor.doc.add(Kind::CircularSegmentBoundary(arc));
+    editor.select_only(region);
+    editor.translation_mode = TranslationMode::RectangularVerticalFixed;
+    editor.translate_selected();
+    let image = editor.doc.objects.len();
+    let definition = editor.doc.objects[image - 1]
+        .kind
+        .transform_definition()
+        .unwrap();
+    assert_eq!(
+        definition.element(),
+        sketchpad_engine::document::transform_model::ElementType::CircularSegment
+    );
+    assert_eq!(
+        definition.wire_flavor(),
+        sketchpad_engine::document::transform_model::NativeTransformFlavor::FixedVertical
+    );
+    assert!(editor.doc.filled_region_points(image).is_some());
+    editor.doc.verify_roundtrip().unwrap();
 }
 
 #[test]

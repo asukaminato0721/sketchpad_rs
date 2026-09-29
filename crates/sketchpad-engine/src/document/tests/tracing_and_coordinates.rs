@@ -206,6 +206,26 @@ fn coordinate_measurements_decode_track_drag_and_reopen() {
         ),
         before
     );
+
+    let legacy_bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../gsp-rs/tests/Samples/个人专栏/钟科作品/前辈们的方向箭头（颗粒）.gsp"
+    ));
+    let legacy = Document::from_bytes(legacy_bytes, None).unwrap();
+    assert_eq!(legacy.encode().unwrap(), legacy_bytes);
+    assert!(matches!(
+        legacy.objects[168].kind,
+        Kind::CoordinateMeasurement {
+            kind: CoordinateMeasureKind::Coordinates,
+            first: 152,
+            frame: 102,
+            ..
+        }
+    ));
+    assert!(matches!(
+        legacy.coordinate_measure_value(169),
+        Some(CoordinateMeasureValue::Pair(point)) if point.x == 0. && point.y == 0.
+    ));
 }
 
 #[test]

@@ -116,6 +116,16 @@ impl Kind {
             }
         }
     }
+    /// Straight source families proved for native rotation schemas. Native
+    /// files also rotate the ordinary x-axis, but do not establish that axes
+    /// support the other affine transform opcodes.
+    pub fn rotation_transform_straight_mode(&self) -> Option<LineMode> {
+        if matches!(self, Kind::GraphAxis(_, _, 1)) {
+            Some(LineMode::Line)
+        } else {
+            self.fixed_transform_straight_mode()
+        }
+    }
     pub fn is_point(&self) -> bool {
         is_point_kind(self)
     }
@@ -126,11 +136,17 @@ impl Kind {
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Sector)
     }
+    pub fn is_circular_segment(&self) -> bool {
+        matches!(self, Kind::CircularSegmentBoundary(_))
+            || self
+                .transform_definition()
+                .is_some_and(|definition| definition.element() == ElementType::CircularSegment)
+    }
     pub fn is_filled_region(&self) -> bool {
         self.is_polygon()
             || self.is_sector()
             || self.is_circle_interior()
-            || matches!(self, Kind::CircularSegmentBoundary(_))
+            || self.is_circular_segment()
     }
     pub fn is_circle_interior(&self) -> bool {
         matches!(self, Kind::CircleInterior(_))
@@ -1745,16 +1761,17 @@ pub(super) fn default_visual_style(kind: &Kind) -> Option<VisualStyle> {
                 VisualStyle::Stroke { line, color: navy }
             }
             ElementType::Circle | ElementType::Arc => VisualStyle::Stroke { line, color: green },
-            ElementType::Polygon | ElementType::Sector | ElementType::Disk => {
-                VisualStyle::Polygon {
-                    opacity: 32767,
-                    color: RgbColor {
-                        red: 255,
-                        green: 128,
-                        blue: 0,
-                    },
-                }
-            }
+            ElementType::Polygon
+            | ElementType::Sector
+            | ElementType::CircularSegment
+            | ElementType::Disk => VisualStyle::Polygon {
+                opacity: 32767,
+                color: RgbColor {
+                    red: 255,
+                    green: 128,
+                    blue: 0,
+                },
+            },
             ElementType::Image => return None,
         });
     }

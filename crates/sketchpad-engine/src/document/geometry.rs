@@ -453,13 +453,12 @@ impl Document {
     pub(super) fn undefined_native_path_plot(&self, path: usize, value: f64) -> bool {
         if value.is_finite()
             && self.objects.get(path.saturating_sub(1)).is_some_and(|o| {
-                matches!(o.kind, Kind::SampledMapped(_))
-                    && super::curve_points::supported(
-                        &self.objects,
-                        path,
-                        o.page,
-                        self.objects.len() + 1,
-                    )
+                super::curve_points::literal_supported(
+                    &self.objects,
+                    path,
+                    o.page,
+                    self.objects.len() + 1,
+                )
             })
         {
             return self.plotted_curve_position(path, value).is_none();
@@ -690,9 +689,11 @@ impl Document {
                     })
                 }
                 Kind::PathLiteralPoint(path, t) => {
-                    if matches!(
-                        d.objects.get(path.checked_sub(1)?)?.kind,
-                        Kind::SampledMapped(_)
+                    if super::curve_points::literal_supported(
+                        &d.objects,
+                        *path,
+                        object.page,
+                        object.id,
                     ) {
                         d.plotted_curve_position(*path, *t)
                     } else if d.objects.get(path.checked_sub(1)?)?.kind.is_polygon() {

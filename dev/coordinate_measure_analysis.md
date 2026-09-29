@@ -99,3 +99,43 @@ This bounded integration does not cover nondefault rich-text names, custom
 display formats, non-Cartesian systems, or measurement tables. A new
 Coordinates readout with a multi-character point name refuses serialization
 because the observed rich-text template carries one ASCII letter.
+
+## Legacy polar coordinate values
+
+The corpus also contains scalar coordinate groups with the same two references
+and measurement structure but legacy codes 125 and 124. Native inspection
+establishes that these are not alternate Cartesian x/y records: code 125 is the
+radius `hypot(x, y)`, and code 124 is the polar angle `atan2(y, x)`. Their
+meaning is independent of whether the coordinate system currently displays a
+square, rectangular, or polar grid. The angle is evaluated internally in
+degrees and formatted according to the document angle unit.
+
+In the original `圆环的迭代(5环旋转迭代).gsp`, Sketchpad 5 displays
+`r_z = 5.71` and `θ_z = 0.04`; that document uses radians. A pair written by
+the port from `coordinate_measure_base.gsp` displayed `r_A = 1.36` and
+`θ_A = 5.60°` in the degree-mode base document. Sketchpad 5 resaved the
+2,796-byte authored file without changing a byte. Moving the source point in
+the port updates both values and their six dependent calculations.
+
+Admission remains narrow: an exact scalar-measurement layout, one supported
+Point reference, and one supported CoordinateSystem reference. Three other
+roots depend on unsupported code-88 aliases and remain opaque. The final corpus
+scan restores two roots and six descendants while preserving all 1,599 source
+files byte-for-byte; see
+`/tmp/sketchpad_legacy_polar_coordinates_final_coverage.log`.
+
+## Legacy pair-readout cache tail
+
+Twenty later-ready Cartesian pair readouts use the established code-49,
+class-0/subtype-34 layout with supported constructed points and frames. Their
+`0x08fc` inner size excludes exactly two trailing opaque bytes. This is the same
+bounded size convention already accepted for line/circle equation text. The
+tail varies independently of the displayed pair and remains byte-preserved.
+
+The shared parser now accepts only a zero- or two-byte difference between the
+record payload and its inner size. Numeric-coordinate, curve-intersection,
+iteration-alias, and colorized point sources then use the existing live frame
+evaluation. The remaining code-49 object still references an unsupported
+code-69 point. The compiled corpus restores 21 drawing slots, reaches 2,639
+unsupported slots and 1,277/1,307 complete documents/drawings, and preserves all
+1,599 inputs exactly. Log: `/tmp/sketchpad_legacy_coordinate_tail_full_coverage.log`.

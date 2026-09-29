@@ -37,6 +37,7 @@ pub(super) fn encode_group(
         E::Arc => 80,
         E::Polygon => 8,
         E::Sector => 82,
+        E::CircularSegment => 83,
         E::Disk => 10,
         E::Image => return Err("Writing transformed pictures is not supported".into()),
     });
@@ -79,7 +80,7 @@ pub(super) fn encode_group(
                 h[18..20].copy_from_slice(&[0x39, 0x20]);
             }
         }
-        E::Sector | E::Disk => {
+        E::Sector | E::CircularSegment | E::Disk => {
             h[20..24].copy_from_slice(
                 &presentation
                     .region_order
@@ -157,10 +158,25 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
                     .to_vec();
             let x = value(R::HorizontalMagnitude)?;
             let y = value(R::VerticalMagnitude)?;
-            payload[4..12].copy_from_slice(&(value(R::HorizontalUnitsToPixels)? * x).to_le_bytes());
+            let x_scale = value(R::HorizontalUnitsToPixels)?;
+            let y_scale = value(R::VerticalUnitsToPixels)?;
+            // Tag 0 stores literal pixel displacement; tags 1 and 2 store
+            // centimeters and inches. Validation rejects every other scale,
+            // while this lower-level helper retains its tag-1 fallback for
+            // literal-bit tests.
+            let unit_tag = |scale: f64| {
+                if (scale - 1.).abs() <= 1e-9 {
+                    0
+                } else {
+                    u32::from((scale - 96.).abs() <= 1e-9) + 1
+                }
+            };
+            payload[4..12].copy_from_slice(&(x_scale * x).to_le_bytes());
             payload[12..20].copy_from_slice(&x.to_le_bytes());
-            payload[24..32].copy_from_slice(&(value(R::VerticalUnitsToPixels)? * y).to_le_bytes());
+            payload[20..24].copy_from_slice(&unit_tag(x_scale).to_le_bytes());
+            payload[24..32].copy_from_slice(&(y_scale * y).to_le_bytes());
             payload[32..40].copy_from_slice(&y.to_le_bytes());
+            payload[40..44].copy_from_slice(&unit_tag(y_scale).to_le_bytes());
             payload
         }
         F::FixedHorizontal | F::FixedVertical => {
@@ -215,6 +231,17 @@ mod tests {
         assert_eq!(&payload[12..20], &(-0f64).to_le_bytes());
         assert_eq!(&payload[24..32], &46f64.to_le_bytes());
         assert_eq!(&payload[32..40], &2f64.to_le_bytes());
+
+        let definition = Kind::FixedRectangularTranslatedPoint(1, 1., 12., 1., -8.)
+            .transform_definition()
+            .unwrap();
+        let payload = literal_payload(&definition).unwrap().unwrap();
+        assert_eq!(&payload[4..12], &12f64.to_le_bytes());
+        assert_eq!(&payload[12..20], &12f64.to_le_bytes());
+        assert_eq!(&payload[20..24], &0u32.to_le_bytes());
+        assert_eq!(&payload[24..32], &(-8f64).to_le_bytes());
+        assert_eq!(&payload[32..40], &(-8f64).to_le_bytes());
+        assert_eq!(&payload[40..44], &0u32.to_le_bytes());
     }
 
     #[test]

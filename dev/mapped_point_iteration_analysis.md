@@ -99,3 +99,22 @@ Regression tests in `src/document/tests/mapped_iteration.rs` cover the native
 four-seed definitions, exact fresh bytes, simultaneous substitution, distinct
 branch states, seed/depth edits, undefined domains, saved binding colors,
 clipboard remapping, deletion, picking, SVG counts, and invalid mapping inputs.
+
+## Capture-only action dependencies
+
+Native mappings may include hide/show, animation, or movement buttons in their
+carried dependency packet even when no action is exposed as a repeated binding.
+These objects are now accepted only by `mapped_value_construction`, so their
+target dependencies enter the scoped graph. They remain excluded from
+`mapped_binding_kind`; mapped action activation has not been inferred or added.
+
+This bounded admission restores 21 code-89 roots, 147 ordinary code-77 bindings,
+and eight dependent objects. The full corpus remains 1,599/1,599 byte-exact while
+unsupported slots fall 2,399→2,223 and complete documents/drawings rise
+1,314/1,345→1,326/1,358.
+
+A 5,780-byte control derived from `未命名迭代钮炳坤老师.gsp` hides every
+ordinary source and leaves only five iteration bindings visible. Native
+Sketchpad 5 and the port both display the recovered red point sequence and green
+arc sequence; Native Ctrl+S preserves SHA-256
+`730248f8ed12e9c959e2811d7631174773438d360b83e3beb1bb86bf9a7276d2`.

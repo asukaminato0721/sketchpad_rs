@@ -15,6 +15,8 @@ pub enum ElementType {
     Arc,
     Polygon,
     Sector,
+    /// Region bounded by a circular arc and its endpoint chord.
+    CircularSegment,
     /// Filled circular region; currently admitted as a color carrier only.
     Disk,
     /// Raster picture transformed through its live affine placement.

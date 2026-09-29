@@ -1,6 +1,6 @@
 use super::geometry::ratio_of_points;
-use super::kind::{is_point_kind, is_segment_kind, is_straight_kind};
-use super::{Document, Kind, LineMode, Point};
+use super::kind::{is_arc_kind, is_point_kind, is_segment_kind, is_straight_kind};
+use super::{Document, Kind, LineMode, Object, Point};
 use crate::coordinate_measure_records::{
     CoordinateBasis, CoordinateMeasureKind, CoordinateMeasureValue, ScreenPoint,
 };
@@ -10,7 +10,46 @@ use crate::value_equation_records::{CartesianFrame, EquationValue, ValueEquation
 use crate::{coordinate_measure_records, value_equation_records};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(super) fn point_value_refs_match(
+    objects: &[Object],
+    point: usize,
+    host: usize,
+    page: usize,
+    before: usize,
+) -> bool {
+    let Some(point_object) = point.checked_sub(1).and_then(|index| objects.get(index)) else {
+        return false;
+    };
+    let Some(host_object) = host.checked_sub(1).and_then(|index| objects.get(index)) else {
+        return false;
+    };
+    point < before
+        && host < before
+        && !point_object.deleted
+        && !host_object.deleted
+        && point_object.page == page
+        && host_object.page == page
+        && is_point_kind(&point_object.kind)
+        && (is_straight_kind(&host_object.kind)
+            || host_object.kind.is_circle()
+            || is_arc_kind(&host_object.kind)
+            || host_object.kind.is_polygon()
+            || super::curve_points::free_supported(objects, host, page, before)
+            || (matches!(point_object.kind, Kind::PointOnSector(point_host, t) if point_host == host && t.is_finite())
+                && super::sector_boundary::supported_host(objects, host, page, before)))
+}
+
 impl Document {
+    pub fn supports_point_value(&self, point: usize, host: usize) -> bool {
+        let Some(page) = self
+            .objects
+            .get(point.saturating_sub(1))
+            .map(|object| object.page)
+        else {
+            return false;
+        };
+        point_value_refs_match(&self.objects, point, host, page, self.objects.len() + 1)
+    }
     pub fn add_point_numeric_label(&mut self, point: usize, value: usize) -> Result<usize, String> {
         if self.partial_view || !self.safe_structure || self.page_count != 1 {
             return Err("Cannot add a numeric label in this sketch safely".into());
@@ -517,6 +556,13 @@ impl Document {
                         .curve_point_value(host, t)
                         .map(EquationValue::PointValue);
                 }
+                if let Kind::PointOnSector(host, t) = self.objects.get(first - 1)?.kind
+                    && host == second
+                {
+                    return self
+                        .point_on_sector(host, t)
+                        .and_then(|_| t.is_finite().then_some(EquationValue::PointValue(t)));
+                }
                 let point = screen(self.position(first)?);
                 match self.objects.get(second - 1)?.kind {
                     ref kind if is_straight_kind(kind) => {
@@ -589,6 +635,23 @@ impl Document {
                             },
                         )?;
                         self.polygon_boundary_parameter(second, edge, t)
+                            .map(EquationValue::PointValue)
+                    }
+                    _ if super::curve_points::free_supported(
+                        &self.objects,
+                        second,
+                        self.objects[first - 1].page,
+                        self.objects.len() + 1,
+                    ) =>
+                    {
+                        let fraction = self.curve_parameter(
+                            second,
+                            Point {
+                                x: point.x,
+                                y: point.y,
+                            },
+                        )?;
+                        self.curve_point_value(second, fraction)
                             .map(EquationValue::PointValue)
                     }
                     _ => None,
@@ -790,7 +853,7 @@ impl Document {
         if self
             .objects
             .get(id.checked_sub(1)?)
-            .is_some_and(|o| matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+            .is_some_and(|o| o.kind.is_circular_segment())
         {
             return self
                 .circular_segment_perimeter_pixels(id)
@@ -892,7 +955,7 @@ impl Document {
         if self
             .objects
             .get(polygon.checked_sub(1)?)
-            .is_some_and(|o| matches!(o.kind, Kind::CircularSegmentBoundary(_)))
+            .is_some_and(|o| o.kind.is_circular_segment())
         {
             return self
                 .circular_segment_area_pixels2(polygon)

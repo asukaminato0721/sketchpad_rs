@@ -43,7 +43,7 @@ impl Document {
                 Kind::CalculatedAngleRotatedRay(source, center, angle)
             }
             Some(kind)
-                if kind.fixed_transform_straight_mode() == Some(LineMode::Line)
+                if kind.rotation_transform_straight_mode() == Some(LineMode::Line)
                     && self.line_points(source).is_some() =>
             {
                 Kind::CalculatedAngleRotatedLine(source, center, angle)

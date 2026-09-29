@@ -1235,7 +1235,7 @@ impl Document {
                             Kind::PolygonPerimeter(_)
                                 if host_kind.is_polygon()
                                     || host_kind.is_sector()
-                                    || matches!(host_kind, Kind::CircularSegmentBoundary(_)) =>
+                                    || host_kind.is_circular_segment() =>
                             {
                                 include_bytes!("../../../../assets/perimeter_measurement_group.bin")
                             }
@@ -1257,7 +1257,7 @@ impl Document {
                             Kind::PolygonArea(_)
                                 if host_kind.is_polygon()
                                     || host_kind.is_sector()
-                                    || matches!(host_kind, Kind::CircularSegmentBoundary(_)) =>
+                                    || host_kind.is_circular_segment() =>
                             {
                                 include_bytes!("../../../../assets/area_measurement_group.bin")
                             }

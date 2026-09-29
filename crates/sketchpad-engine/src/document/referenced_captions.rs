@@ -75,6 +75,7 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                 | Kind::GraphAxis(..)
                 | Kind::Line(..)
                 | Kind::Locus(..)
+                | Kind::PointNumericLabel(..)
                 | Kind::PointReferencedText { .. }
                 | Kind::Polygon(..)
                 | Kind::Ray(..)
@@ -317,7 +318,10 @@ impl Document {
         if matches!(object.kind, Kind::CoordinateMeasurement { .. }) {
             return self.referenced_coordinate_value(source);
         }
-        if matches!(object.kind, Kind::PointReferencedText { .. }) {
+        if matches!(
+            object.kind,
+            Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }
+        ) {
             return self.point_numeric_label(source).map(|(_, text)| text);
         }
         if let Some(label) = &object.label {
@@ -494,7 +498,10 @@ impl Document {
         else {
             return None;
         };
-        let precision = usize::from(object.measurement_precision?);
+        // Coordinate-pair readouts store their formatting in rich text rather
+        // than the scalar measurement precision field. The ordinary pair
+        // renderer uses two decimals when no scalar precision is present.
+        let precision = usize::from(object.measurement_precision.unwrap_or(2));
         Some(format!(
             "({}, {})",
             crate::table_records::format_numeric_value(point.x, precision),

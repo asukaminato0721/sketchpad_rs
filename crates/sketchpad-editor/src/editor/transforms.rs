@@ -13,6 +13,8 @@ impl Editor {
                     Some(ElementType::Disk)
                 } else if object.kind.is_sector() {
                     Some(ElementType::Sector)
+                } else if object.kind.is_circular_segment() {
+                    Some(ElementType::CircularSegment)
                 } else if object.kind.is_arc() {
                     Some(ElementType::Arc)
                 } else {
@@ -86,6 +88,8 @@ impl Editor {
                 .get(source.saturating_sub(1))
                 .map(|object| &object.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
+                || (self.translation_mode == TranslationMode::RectangularVerticalFixed
+                    && kind.is_circular_segment())
                 || (self.translation_mode == TranslationMode::MarkedVector && kind.is_polygon())
         );
         if self.doc.position(source).is_none()
@@ -387,6 +391,7 @@ impl Editor {
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
+                || kind.is_circular_segment()
         ) {
             Kind::ReflectedPolygon(source, mirror)
         } else {
@@ -705,6 +710,7 @@ impl Editor {
                 .get(source.saturating_sub(1))
                 .map(|o| &o.kind),
             Some(kind) if matches!(kind, Kind::Polygon(_)) || kind.is_circle_interior() || kind.is_sector()
+                || kind.is_circular_segment()
         ) {
             Kind::ScaledPolygon(source, center, self.dilation_factor)
         } else {
@@ -773,12 +779,13 @@ impl Editor {
         }) && self.doc.line_points(source).is_some();
         let source_line = source_kind.is_some_and(|kind| {
             (!self.rotation_use_marked || matches!(self.marked_angle, Some(MarkedAngle::Value(_))))
-                && kind.fixed_transform_straight_mode() == Some(LineMode::Line)
+                && kind.rotation_transform_straight_mode() == Some(LineMode::Line)
         }) && self.doc.line_points(source).is_some();
         let source_polygon = source_kind.is_some_and(|kind| {
             matches!(kind, Kind::Polygon(_))
                 || kind.is_circle_interior()
                 || kind.is_sector()
+                || (!self.rotation_use_marked && kind.is_circular_segment())
                 || (self.rotation_use_marked
                     && matches!(self.marked_angle, Some(MarkedAngle::Value(_)))
                     && kind.is_polygon())

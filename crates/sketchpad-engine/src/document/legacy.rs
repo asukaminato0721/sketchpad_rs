@@ -30,9 +30,10 @@ impl Document {
             } else if record.kind == 0x07d0 && payload.len() == 16 {
                 let code = u16::from_le_bytes(payload[..2].try_into().unwrap());
                 let free = code == 0 && payload[6..12] == [1, 0, 4, 0, 1, 0];
-                let polygon = code == 8
+                let polygon = (code == 8
                     && payload[6..8] == [4, 0]
                     && u16::from_le_bytes(payload[8..10].try_into().unwrap()) >= 52
+                    || code == 10 && payload[6..10] == [5, 0, 16, 0])
                     && payload[10..12] == [1, 0];
                 let stroke = payload[11] == 0
                     && payload[10] <= 2
@@ -85,7 +86,7 @@ impl Document {
         }
         let mut expected = self.clone();
         for object in &mut expected.objects {
-            if matches!(object.kind, super::Kind::Polygon(_)) && object.interior_order.is_none() {
+            if object.kind.is_filled_region() && object.interior_order.is_none() {
                 object.interior_order = Some(0);
             }
         }

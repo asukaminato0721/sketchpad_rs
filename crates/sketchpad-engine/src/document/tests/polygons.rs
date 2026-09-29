@@ -558,11 +558,33 @@ fn polygon_vertex_count_rejects_unsupported_cyclic_and_cross_page_chains() {
 }
 
 #[test]
-fn legacy_clock_polygon_headers_have_no_rank_and_stay_short_after_geometry_edits() {
+fn legacy_clock_polygon_and_disk_headers_keep_implicit_style_and_rank() {
     let clock = include_bytes!("../../../../../tests/fixtures/legacy_clock_original.gsp");
     let source = Document::from_bytes(clock, None).unwrap();
     assert_eq!(source.objects.len(), 161);
     assert_eq!(source.objects[78].interior_order, None);
+    for (id, circle) in [(148, 146), (149, 147)] {
+        assert_eq!(source.objects[id - 1].kind, Kind::CircleInterior(circle));
+        assert_eq!(source.objects[id - 1].interior_order, None);
+        assert!(source.circle_interior_geometry(id).is_some());
+        assert_eq!(
+            records(clock)
+                .unwrap()
+                .iter()
+                .find(|record| record.data.start == source.objects[id - 1].header_offset.unwrap())
+                .unwrap()
+                .data
+                .len(),
+            16
+        );
+        assert!(matches!(
+            source.objects[id - 1].visual_style,
+            Some(VisualStyle::Polygon {
+                opacity: 0xbfff,
+                ..
+            })
+        ));
+    }
     assert_eq!(source.encode().unwrap(), clock);
     // Actual Clock79 header and reference record, rebound only to four known
     // points so its dirty writer can be verified independently of old families.

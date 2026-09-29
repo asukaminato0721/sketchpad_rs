@@ -101,6 +101,47 @@ fn straight_transform_commands_preserve_extent_and_live_matrix_chains() {
         e.doc.undo();
         assert_eq!(e.doc.encode().unwrap(), saved);
     }
+
+    let mut d = Document::new();
+    let frame = d
+        .add_default_coordinate_system(Point { x: 100., y: 100. })
+        .unwrap();
+    let Kind::CoordinateSystem(x_axis, _) = d.objects[frame - 1].kind else {
+        panic!("Expected coordinate system");
+    };
+    let center = d.add(Kind::Free(Point { x: 100., y: 100. }));
+    let angle = d.add_calculation_expression("45°", (10, 30)).unwrap();
+    let mut e = Editor::new(d);
+    e.select_only(x_axis);
+    e.marked_center = Some(center);
+    e.rotation_use_marked = false;
+    e.rotation_angle = 90.;
+    e.rotate_selected();
+    let fixed = e.doc.objects.len();
+    e.select_only(x_axis);
+    e.rotation_use_marked = true;
+    e.marked_angle = Some(MarkedAngle::Value(angle));
+    e.rotate_selected();
+    let numeric = e.doc.objects.len();
+    for (id, flavor) in [
+        (fixed, NativeTransformFlavor::FixedRotation),
+        (numeric, NativeTransformFlavor::NumericRotation),
+    ] {
+        let definition = e.doc.objects[id - 1].kind.transform_definition().unwrap();
+        assert_eq!(definition.element(), ElementType::Line);
+        assert_eq!(definition.source(), x_axis);
+        assert_eq!(definition.wire_flavor(), flavor);
+        let (start, end, mode) = e.doc.line_points(id).unwrap();
+        assert_eq!(mode, LineMode::Line);
+        assert!(start.distance(end) > 1.);
+    }
+    let (fixed_start, fixed_end, _) = e.doc.line_points(fixed).unwrap();
+    assert!((fixed_start.x - fixed_end.x).abs() < 1e-9);
+    let saved = e.doc.encode().unwrap();
+    let reopened = Document::from_bytes(&saved, None).unwrap();
+    assert!(!reopened.partial_view);
+    assert_eq!(reopened.line_points(fixed), e.doc.line_points(fixed));
+    assert_eq!(reopened.line_points(numeric), e.doc.line_points(numeric));
 }
 
 #[test]

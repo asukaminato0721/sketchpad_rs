@@ -160,6 +160,33 @@ fn native_arc_point_values_follow_moved_points() {
             matches!(reopened.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (value - expected).abs() < 1e-12)
         );
     }
+
+    for (native, measurement, expected) in [
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/个人专栏/郑飞宇作品/全方位折纸（涂色）.gsp"
+            ))
+            .as_slice(),
+            41,
+            0.10873570652301849,
+        ),
+        (
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../gsp-rs/tests/Samples/未分类档/定长线的爬行.gsp"
+            ))
+            .as_slice(),
+            9,
+            0.3031252013989233,
+        ),
+    ] {
+        let document = Document::from_bytes(native, None).unwrap();
+        assert_eq!(document.encode().unwrap(), native);
+        assert!(
+            matches!(document.value_equation_value(measurement), Some(EquationValue::PointValue(value)) if (value - expected).abs() < 1e-12)
+        );
+    }
 }
 
 #[test]

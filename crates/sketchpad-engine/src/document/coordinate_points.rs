@@ -1,4 +1,4 @@
-//! One literal coordinate and one live scalar coordinate in a shared frame.
+//! One literal coordinate and one live scalar or degree coordinate in a shared frame.
 use super::records::{f64_at, put_record, u32_at};
 use super::transform_model::NumericExpr;
 use super::{Document, Kind, Object, Point};
@@ -38,11 +38,13 @@ impl CoordinatePointDefinition {
             flavor,
         };
         if frame == 0 || d.parts().is_none() {
-            return Err("Select one finite literal and one live scalar coordinate".into());
+            return Err(
+                "Select one finite literal and one live scalar or degree coordinate".into(),
+            );
         }
         Ok(d)
     }
-    fn parts(&self) -> Option<(usize, f64)> {
+    fn parts(&self) -> Option<(usize, f64, NumericUnit)> {
         let (literal, value) = match self.flavor {
             CoordinatePointFlavor::FixedX => (&self.x, &self.y),
             CoordinatePointFlavor::FixedY => (&self.y, &self.x),
@@ -54,11 +56,14 @@ impl CoordinatePointDefinition {
                     unit: NumericUnit::Scalar,
                     scale,
                 },
-                NumericExpr::ObjectValue {
-                    id,
-                    unit: NumericUnit::Scalar,
-                },
-            ) if magnitude.is_finite() && *scale == 1. && *id > 0 => Some((*id, *magnitude)),
+                NumericExpr::ObjectValue { id, unit },
+            ) if magnitude.is_finite()
+                && *scale == 1.
+                && *id > 0
+                && matches!(unit, NumericUnit::Scalar | NumericUnit::Degrees) =>
+            {
+                Some((*id, *magnitude, *unit))
+            }
             _ => None,
         }
     }
@@ -96,7 +101,7 @@ impl CoordinatePointDefinition {
         p
     }
     pub(super) fn supported(&self, objects: &[Object], page: usize, id: usize) -> bool {
-        let Some((value, _)) = self.parts() else {
+        let Some((value, _, unit)) = self.parts() else {
             return false;
         };
         self.native_references().iter().all(|r| {
@@ -105,7 +110,7 @@ impl CoordinatePointDefinition {
                     .get(r.saturating_sub(1))
                     .is_some_and(|o| o.id == *r && !o.deleted && o.page == page)
         }) && matches!(objects[self.frame - 1].kind, Kind::CoordinateSystem(..))
-            && objects[value - 1].kind.numeric_unit() == Some(NumericUnit::Scalar)
+            && objects[value - 1].kind.numeric_unit() == Some(unit)
     }
     pub(super) fn remap(&self, ids: &[usize]) -> Self {
         let mut d = self.clone();
@@ -144,10 +149,8 @@ pub(super) fn decode(
         unit: NumericUnit::Scalar,
         scale: 1.,
     };
-    let value = NumericExpr::ObjectValue {
-        id: refs[0],
-        unit: NumericUnit::Scalar,
-    };
+    let unit = objects.get(refs[0].checked_sub(1)?)?.kind.numeric_unit()?;
+    let value = NumericExpr::ObjectValue { id: refs[0], unit };
     let (x, y) = match flavor {
         CoordinatePointFlavor::FixedX => (literal, value),
         CoordinatePointFlavor::FixedY => (value, literal),
@@ -206,8 +209,10 @@ impl Document {
         Ok(())
     }
     pub(super) fn evaluate_coordinate_point(&self, d: &CoordinatePointDefinition) -> Option<Point> {
-        let (value, literal) = d.parts()?;
-        let value = self.unitless_numeric_value(value)?;
+        let (value, literal, _) = d.parts()?;
+        // Native coordinate construction consumes the displayed numeric
+        // magnitude. In particular, a degree value plots 360° at x=360.
+        let value = self.numeric_value(value)?;
         let (x, y) = match d.flavor {
             CoordinatePointFlavor::FixedX => (literal, value),
             CoordinatePointFlavor::FixedY => (value, literal),
@@ -224,7 +229,7 @@ impl Document {
             || self.page_count != 1
             || !definition.supported(&self.objects, self.active_page, self.objects.len() + 1)
         {
-            return Err("Select a live scalar value and coordinate frame".into());
+            return Err("Select a live scalar or degree value and coordinate frame".into());
         }
         self.checkpoint();
         Ok(self.append_object(Kind::CoordinatePoint(definition)))

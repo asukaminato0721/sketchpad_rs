@@ -197,7 +197,7 @@ Standalone code26 points also follow a FixedPolar-transformed Point source. A Na
 
 The same operation now follows a MarkedPolar-transformed Point source. Native controls also exposed a separate segment PointValue boundary rule; [the evidence and regression](dev/code26_markedpolar77_implementation.md) distinguish constrained points from free-point projection.
 
-Scalar x/y coordinate measurements now preserve a Native empty marker after their style record. A visible x-value changes live in a byte-exact Native original, while a paired x/y original verifies the marker's retention under Native normalization; [the bounded parser change](dev/coordinate_measurements78_implementation.md) restores their downstream calculations and mappings.
+Scalar x/y coordinate measurements now preserve a Native empty marker after their style record. A visible x-value changes live in a byte-exact Native original, while a paired x/y original verifies the marker's retention under Native normalization; [the coordinate-measurement evidence](dev/coordinate_measure_analysis.md) records their downstream calculations and mappings.
 
 An intrinsic sector boundary can now be fixed-rotated as a live analytic element. Native 180°/90° controls and an upstream move verify the [strict transform case](dev/sector_transform79_implementation.md), while the parser still preserves unproved sector operations as unsupported records.
 
@@ -352,3 +352,97 @@ their original bytes and restore three dependents, lowering unsupported slots to
 2,952; six roots whose source family is not yet represented remain guarded.
 The original 16-page example also opened and resaved byte-identically in
 Sketchpad 5 under Xvfb/Wine.
+
+Legacy code-125 and code-124 coordinate values now evaluate as radius and polar
+angle for a supported point/frame pair, regardless of the displayed grid form.
+The angle readout follows the document's degree/radian setting. Two roots and
+six dependent calculations recover, lowering unsupported slots to 2,944 while
+all 1,599 originals remain byte-exact. A port-authored pair opened and resaved
+byte-identically in Sketchpad 5 under Xvfb/Wine.
+
+Fixed rectangular translations now retain native centimeter or inch units on
+each axis. This restores ten visible Segment translations, lowering unsupported
+slots to 2,934. A port-authored half-inch by negative-quarter-inch translation
+displayed at the expected 48-by-24-pixel offset and resaved byte-identically in
+Sketchpad 5 under Xvfb/Wine.
+
+The same code-17 payload also uses unit tag 0 for literal pixel displacement.
+Seven path-point images in the multi-page teaching sample now decode, lowering
+the latest unsupported total from 2,830 to 2,823. A port-authored `(120, −80)`
+pixel translation opened in Sketchpad 5 and displayed exactly 120 pixels right
+and 80 pixels down under Xvfb/Wine.
+
+Native code-19 class-13/subtype-69 circular-segment translations now retain their
+live marked horizontal distance and fixed vertical offset. Both 22-object chains
+in the `方轮小汽车` samples decode, render, pick, and measure as arc-plus-chord
+regions, restoring 44 drawing slots and lowering the unsupported total to 2,890.
+A port-authored pair displayed at the expected offset in Sketchpad 5 under
+Xvfb/Wine.
+
+Fixed rotation, reflection, and fixed dilation now use that same distinct
+circular-segment geometry. Fourteen ready native roots restore 37 further drawing
+objects, lowering the current unsupported total to 2,853. Sketchpad 5 rendered a
+port-authored source with its 180-degree rotation, reflection, and half-scale
+dilation at the expected positions under Xvfb/Wine.
+
+The ordinary x-axis can now be the source of the two rotation forms observed in
+native files: code-27 fixed angle and code-29 numeric angle. The axis remains an
+infinite line through live evaluation, editing, and save/reopen. Two roots and
+21 descendants restore 23 drawing slots, lowering unsupported objects to 2,830;
+fully decoded and drawing-complete documents rise to 1,272 and 1,302. A
+port-authored fixed/numeric pair opened and rendered correctly in Sketchpad 5
+under Xvfb/Wine. Other axis transforms remain guarded.
+
+Two legacy 16-byte code-10 disk headers now retain their live Circle sources,
+RGB fill, and native implicit 75% opacity. The original clock renders the two
+overlapping filled disks in Sketchpad 5, both files remain byte-exact, and the
+latest unsupported total falls to 2,821.
+
+Literal code-123 points now follow ordinary point-output Locus paths at their
+stored normalized fraction. Four roots and 72 descendants restore 76 drawing
+slots, lowering unsupported objects to 2,745 and raising fully decoded/drawing-
+complete documents to 1,274/1,304. A port-authored `2/3` midpoint-locus point
+rendered correctly in Sketchpad 5 under Xvfb/Wine, whose Ctrl+S save remained
+byte-identical. Parameter-locus and FunctionPlot literal forms remain guarded.
+
+Native fixed-coordinate points now also accept a live Degrees value and use its
+displayed magnitude as the graph coordinate, matching the established numeric
+XY rule. Three code-110 roots and 82 descendants restore 85 drawing slots;
+unsupported objects fall to 2,660 and fully decoded/drawing-complete documents
+rise to 1,276/1,306. Length and area sources remain guarded.
+
+Legacy Cartesian coordinate-pair readouts now preserve Native's alternate
+two-byte rich-text cache tail, using the same bounded size rule as equation
+readouts. Twenty ready code-49 roots and one descendant restore 21 drawing
+slots; unsupported objects fall to 2,639 and complete documents/drawings rise
+to 1,277/1,307. The remaining code-49 object still has an unsupported point.
+
+Legacy Value of Point measurements now project supported points onto live Locus,
+ParameterLocus, FunctionPlot, and sampled-mapping paths; matching points on sector
+boundaries retain their exact perimeter parameter. Twenty-two code-94 roots and
+143 dependents restore 165 drawing slots. Unsupported objects fall to 2,474 and
+complete documents/drawings rise to 1,285/1,315, with all 1,599 originals still
+byte-exact. A newly authored sector-boundary value file also opened and saved
+unchanged in the supplied Windows Sketchpad 5 under Xvfb/Wine.
+
+Anchored referenced labels now use the shared rich-caption source rules instead
+of a second, narrower whitelist. This restores coordinate-pair and nested
+point-label values, including the observed calculation-cache `?3`/`?4`
+containers. Thirty-two code-90 drawing slots are recovered: unsupported objects
+fall to 2,442 and complete documents/drawings rise to 1,305/1,335, while all
+1,599 originals remain byte-exact.
+
+Mapped iterations now carry `ParameterLocus` point traces through the same
+scoped collection evaluator as ordinary point loci. Ten code-89 roots, 25
+bindings, and eight dependents restore 43 drawing slots; unsupported objects fall
+to 2,399 and complete documents/drawings rise to 1,314/1,345. A hidden-source
+spiral control displays the bound traces in both Native Sketchpad 5 and the port,
+and Native saves the 4,532-byte control unchanged.
+
+Mapped iterations now retain hide/show, animation, and movement buttons as
+capture-only dependency nodes without treating actions as repeatable bindings.
+Twenty-one code-89 roots, 147 code-77 bindings, and eight dependents restore 176
+drawing slots; unsupported objects fall to 2,223 and complete
+documents/drawings rise to 1,326/1,358. With every ordinary source hidden, a
+five-binding control displays the recovered red point and green arc sequences in
+both Native Sketchpad 5 and the port, and Native saves all 5,780 bytes unchanged.

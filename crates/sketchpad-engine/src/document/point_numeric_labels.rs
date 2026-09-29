@@ -32,22 +32,13 @@ pub(super) fn supported_referenced_label(
     source: usize,
     text: &super::referenced_text::ReferencedText,
 ) -> bool {
-    let source_supported = objects.get(source.saturating_sub(1)).is_some_and(|object| {
-        object.kind.numeric_unit().is_some()
-            || object.kind.is_function()
-            || matches!(
-                object.kind,
-                Kind::PlainText { .. } | Kind::ReferencedText { .. }
-            )
-    });
     objects.get(point.saturating_sub(1)).is_some_and(|object| {
         point > 0
             && point < id
             && !object.deleted
             && object.page == page
             && is_point_kind(&object.kind)
-    }) && source_supported
-        && text.referenced_slots() == [2]
+    }) && text.referenced_slots() == [2]
         && super::referenced_captions::supported(&[point, source], text, objects, page, id)
 }
 

@@ -109,6 +109,7 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
         ElementType::Arc => is_arc_kind(&source.kind),
         ElementType::Polygon => source.kind.is_polygon(),
         ElementType::Sector => source.kind.is_sector(),
+        ElementType::CircularSegment => source.kind.is_circular_segment(),
         ElementType::Disk => source.kind.is_circle_interior(),
         ElementType::Image => false,
     };
@@ -116,7 +117,8 @@ fn mapped_transform_supported(objects: &[Object], definition: &TransformDefiniti
 }
 
 /// A supported value construction can be reevaluated in the substituted sample.
-/// Actions, iteration outputs and sampled loci have separate runtime semantics.
+/// Actions are capture-only dependencies and never binding kinds. Iteration
+/// outputs and sampled loci have separate runtime semantics.
 fn mapped_reference_value(kind: &Kind) -> bool {
     let text = match kind {
         Kind::PointReferencedText { text, .. } | Kind::ReferencedText { text, .. } => text,
@@ -146,7 +148,11 @@ fn mapped_value_construction(kind: &Kind) -> bool {
                     | Kind::PointNumericLabel(..)
                     | Kind::PlainText { .. }
                     | Kind::Image { .. }
+                    | Kind::HideShowButton { .. }
+                    | Kind::AnimationButton { .. }
+                    | Kind::MovementButton { .. }
                     | Kind::Locus(..)
+                    | Kind::ParameterLocus(..)
                     | Kind::SampledMapped(..)
                     | Kind::FunctionPlot(..)
                     | Kind::MappedPointIteration { .. }
@@ -159,6 +165,7 @@ pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
         Kind::PointNumericLabel(..)
             | Kind::Image { .. }
             | Kind::Locus(..)
+            | Kind::ParameterLocus(..)
             | Kind::SampledMapped(..)
     ) || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
         || is_point_kind(kind)
@@ -317,7 +324,7 @@ pub(super) fn supported_mapped_point_iteration(
             pending.extend(definition.dependencies());
             continue;
         }
-        if matches!(object.kind, Kind::Locus(..))
+        if matches!(object.kind, Kind::Locus(..) | Kind::ParameterLocus(..))
             && !super::kind::is_straight_locus(objects, &object.kind)
             && !super::locus::is_point_locus(objects, &object.kind)
         {
@@ -536,7 +543,7 @@ impl Document {
         ) {
             return if matches!(source, Kind::SampledMapped(..)) {
                 include_bytes!("../../../../assets/sampled_iteration_binding_group.bin")
-            } else if matches!(source, Kind::Locus(..)) {
+            } else if matches!(source, Kind::Locus(..) | Kind::ParameterLocus(..)) {
                 include_bytes!("../../../../assets/locus_iteration_binding_group.bin")
             } else if matches!(
                 source,
