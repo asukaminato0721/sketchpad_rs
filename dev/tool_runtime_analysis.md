@@ -215,3 +215,15 @@ Native0, exact independent comparison, and positive caption inspection. Fraction
 source expansion with generated/named non-formula captions, broader measurement
 layouts, broader authoring graphs, and other clipboard boundaries remain active
 work. Corpus checkpoint20 retains1599 exact original-file roundtrips.
+
+## Function operands in abstract calculations
+
+The three 39-input PI/root prototypes retain one referenced Function operand
+and 34 generic Numeric operands in a 35-source code-48 expression. Contextual
+decoding and runtime specialization now use the expression tree's exact
+Numeric/Function role vector instead of rejecting every nonnumeric parent before
+role parsing. Function roles require a supported function kind; numeric roles
+retain their existing unit and placeholder checks. The source order, count, and
+native expression bytes remain exact. These tools still contain an unrelated
+unsupported final object, so runtime execution is not claimed. See
+[the focused analysis](tool_function_calculation_analysis.md).

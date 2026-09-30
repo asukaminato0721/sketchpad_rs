@@ -463,14 +463,29 @@ impl Document {
                         candidate.imported_caption_font_index(caption_style.as_ref().unwrap())?;
                     let group = group.with_caption_font(font)?;
                     let sources = group.sources();
+                    let source_kinds = group.source_kinds()?;
                     let units = sources
                         .iter()
-                        .map(|&id| {
-                            candidate
+                        .zip(source_kinds)
+                        .map(|(&id, kind)| {
+                            let object = candidate
                                 .objects
                                 .get(id as usize - 1)
-                                .and_then(|object| object.kind.numeric_unit())
-                                .ok_or("Tool calculation requires numeric sources")
+                                .ok_or("Tool calculation source is unavailable")?;
+                            match kind {
+                                crate::table_records::CalculationSourceKind::Numeric => object
+                                    .kind
+                                    .numeric_unit()
+                                    .ok_or("Tool calculation requires a numeric source"),
+                                crate::table_records::CalculationSourceKind::Function
+                                    if object.kind.is_function() =>
+                                {
+                                    Ok(crate::table_records::NumericUnit::Scalar)
+                                }
+                                crate::table_records::CalculationSourceKind::Function => {
+                                    Err("Tool calculation requires a function source")
+                                }
+                            }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let group = group.specialize_tool_sources(&sources, &units)?;

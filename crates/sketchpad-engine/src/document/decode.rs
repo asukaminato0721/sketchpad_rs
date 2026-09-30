@@ -1237,14 +1237,24 @@ impl Document {
                                     .iter()
                                     .map(|id| (*id - page_base) as u32)
                                     .collect::<Vec<_>>()
-                            && refs.iter().all(|id| {
-                                objects.get(id - 1).is_some_and(|object| {
-                                    object.kind.numeric_unit().is_some()
-                                        || matches!(
-                                            object.kind,
-                                            Kind::ToolInput(EmbeddedToolInputKind::Numeric)
-                                        )
-                                })
+                            && group.source_kinds().is_ok_and(|kinds| {
+                                kinds.len() == refs.len()
+                                    && refs.iter().zip(kinds).all(|(id, kind)| {
+                                        objects.get(id - 1).is_some_and(|object| match kind {
+                                            crate::table_records::CalculationSourceKind::Numeric => {
+                                                object.kind.numeric_unit().is_some()
+                                                    || matches!(
+                                                        object.kind,
+                                                        Kind::ToolInput(
+                                                            EmbeddedToolInputKind::Numeric
+                                                        )
+                                                    )
+                                            }
+                                            crate::table_records::CalculationSourceKind::Function => {
+                                                object.kind.is_function()
+                                            }
+                                        })
+                                    })
                             }) =>
                     {
                         Kind::ParameterCalculation(refs[0], group)

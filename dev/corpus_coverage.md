@@ -2,10 +2,11 @@
 
 Latest snapshot, 2026-09-30: **1,562/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **394** unsupported slots, all in
+are byte-exact, with zero failures. There are **352** unsupported slots, all in
 embedded-tool prototypes, and 37 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 4,962
-decoded, 394 undecoded. The current coordinate-system, polygon, and scalar-Parameter custom-tool-given
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,004
+decoded, 352 undecoded. The current function-source tool-calculation,
+coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
 arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -2451,3 +2452,22 @@ materialization. All 1,599 drawings remain complete, all original files remain
 byte-exact, and no standalone test case was added. See
 [analysis](tool_coordinate_system_given_analysis.md). Full scan:
 `/tmp/tool_coordinate_system_given_coverage.log`.
+
+## Function sources in custom-tool calculations
+
+Three 39-input prototypes contain an identical wide code-48 shape: the native
+expression declares one referenced Function role followed by 34 Numeric roles.
+The abstract-tool decoder previously rejected the function parent before reading
+those roles. It now validates each exact reference against the parsed role, and
+runtime specialization applies the same check after remapping. Numeric unit
+specialization remains unchanged; a function slot cannot accept a numeric
+object or placeholder.
+
+This restores **42** prototype slots: nine code-48 calculations, three code-71
+functions, twelve code-33 objects, nine code-16 objects, and nine code-29
+objects. Prototype coverage rises **4,962→5,004/5,356** and unsupported falls
+**394→352**. The three prototypes remain partial because of unrelated code-100
+objects, so complete-view and all-kind-document counts do not change. All 1,599
+drawings remain complete, every original remains byte-exact, and no standalone
+test case was added. See [analysis](tool_function_calculation_analysis.md). Full
+scan: `/tmp/tool_function_calculation_coverage.log`.
