@@ -444,6 +444,11 @@ impl Document {
                 Some(EmbeddedToolInputKind::AngleParameter) => {
                     return Err("This tool input requires an available angle Parameter".into());
                 }
+                Some(EmbeddedToolInputKind::Preimage) => {
+                    return Err(
+                        "Polymorphic preimage tool construction is not supported yet".into(),
+                    );
+                }
                 None => return Err("This tool input category is unsupported".into()),
             }
             ids[local as usize] = destination;

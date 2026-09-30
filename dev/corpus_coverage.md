@@ -2,12 +2,12 @@
 
 Latest snapshot, 2026-09-30: **1,570/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **295** unsupported slots, all in
+are byte-exact, with zero failures. There are **294** unsupported slots, all in
 embedded-tool prototypes, and 29 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,061
-decoded, 295 undecoded. The current legacy Curve, angle-Parameter, legacy generic-numeric and distance
-custom-tool-given, function custom-tool-given, and
-function-source tool-calculation,
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,062
+decoded, 294 undecoded. The current polymorphic Preimage, legacy Curve,
+angle-Parameter, legacy generic-numeric and distance custom-tool-given,
+function custom-tool-given, and function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
 arc-length
@@ -2569,3 +2569,25 @@ because the prototype retains that intersection gap. All drawings remain
 complete, all originals remain byte-exact, and no standalone test case was
 added. See [analysis](tool_curve_given_analysis.md). Full scan:
 `/tmp/tool_curve_given_coverage.log`.
+
+## Polymorphic Preimage custom-tool given
+
+The sole class-1/subtype-92 given belongs to `换行迭代格式工具1` in
+`换行迭代格式工具及其运用示例.gsp`. A same-size temporary copy reordered only
+the first tool's inputs from `[4,2,3,1]` to `[3,1,4,2]`. Native displayed
+`1. 匹配原象 C` (match Preimage `C`). Clicking either the page-4 finite segment
+or its point-on-segment endpoint advanced to the second input; the source
+polygon also highlighted as eligible, while scalar Parameters did not.
+
+Subtype 92 is therefore retained as a distinct polymorphic `Preimage` root. It
+is not collapsed to Point, Path, or an iteration binding. The prototype's
+dependent code-16 and code-33 records carry an extra type-anchor reference and
+require a dynamic element type at invocation, so they remain unsupported and
+the runtime returns an explicit error instead of inventing a fixed type.
+
+The typed root restores one slot. Prototype coverage rises
+**5,061→5,062/5,356** and unsupported falls **295→294**. Complete documents and
+isolated views remain 1,570 and 47/56. All drawings remain complete, all 1,599
+originals remain byte-exact, and no standalone test case was added. See
+[analysis](tool_preimage_given_analysis.md). Full scan:
+`/tmp/subtype92_coverage.txt`.

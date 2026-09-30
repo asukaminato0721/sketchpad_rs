@@ -23,6 +23,9 @@ pub enum EmbeddedToolInputKind {
     /// An angle Parameter specifically, retaining Native's `Match Angle`
     /// category instead of accepting every degree-valued construction.
     AngleParameter,
+    /// A polymorphic geometric source whose concrete element type is retained
+    /// by Native's dependent custom-tool transformations.
+    Preimage,
 }
 
 /// A given's category is independent of its construction code. Native tools
@@ -43,6 +46,7 @@ impl EmbeddedToolInput {
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
+            (1, 92) => Some(EmbeddedToolInputKind::Preimage),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
             (11, 48) => Some(EmbeddedToolInputKind::Distance),
             (11, 51) => Some(EmbeddedToolInputKind::Numeric),

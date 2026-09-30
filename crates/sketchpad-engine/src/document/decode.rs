@@ -1226,7 +1226,8 @@ impl Document {
                         | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::Function
                         | EmbeddedToolInputKind::ScalarParameter
-                        | EmbeddedToolInputKind::AngleParameter),
+                        | EmbeddedToolInputKind::AngleParameter
+                        | EmbeddedToolInputKind::Preimage),
                     ) => {
                         point_offset = None;
                         Kind::ToolInput(category)

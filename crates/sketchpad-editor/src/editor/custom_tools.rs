@@ -374,7 +374,8 @@ impl Editor {
                             | EmbeddedToolInputKind::Distance
                             | EmbeddedToolInputKind::Function
                             | EmbeddedToolInputKind::ScalarParameter
-                            | EmbeddedToolInputKind::AngleParameter),
+                            | EmbeddedToolInputKind::AngleParameter
+                            | EmbeddedToolInputKind::Preimage),
                         ) => {
                             matches!(object.kind, Kind::ToolInput(actual) if actual == kind)
                         }
@@ -449,6 +450,8 @@ impl Editor {
                     })
                     .map(|(_, (id, _))| *id)
                     .ok_or("Choose an available function caption")?
+            } else if input.kind() == Some(EmbeddedToolInputKind::Preimage) {
+                return Err("Polymorphic preimage tool construction is not supported yet".into());
             } else if matches!(
                 input.kind(),
                 Some(
