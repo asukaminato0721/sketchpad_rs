@@ -327,8 +327,11 @@ order and sampling metadata. The wire evidence and admission boundary are in
 
 Imported Animation buttons retain the observed high-rate parameter-reset
 settings and the legacy clock variant with its short header and code-page-936
-label. Point rates remain separately bounded, and contradictory settings stay
-opaque. See [the compatibility analysis](dev/legacy_animation_settings_analysis.md).
+label. Point rates remain separately bounded. Imported bidirectional settings
+ignore an inapplicable stored Once bit, matching Native, and zero-rate members
+of multi-target buttons remain stationary while the other members animate.
+Newly authored buttons retain Native's stricter positive-rate and Once rules.
+See [the compatibility analysis](dev/legacy_animation_settings_analysis.md).
 
 Imported loci also retain native sparse or parallel-branch dependency captures
 and can apply an explicit stored path transiently to an existing point when

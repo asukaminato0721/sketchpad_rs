@@ -121,6 +121,9 @@ impl Default for AnimationSettings {
 }
 
 impl AnimationSettings {
+    /// Checks whether Native can represent and execute this settings block.
+    /// Native imports zero-rate tracks and ignores Once Only for bidirectional
+    /// motion even though its authoring dialog does not offer either choice.
     pub fn validate(self) -> Result<(), String> {
         let maximum_speed = if self.parameter.is_some() {
             // Imported reset-style parameter buttons use very large rates over
@@ -130,11 +133,8 @@ impl AnimationSettings {
         } else {
             MAX_POINT_ANIMATION_SPEED
         };
-        if !self.speed.is_finite() || self.speed <= 0. || self.speed > maximum_speed {
-            return Err("Animation speed must be positive and finite".into());
-        }
-        if self.once && self.direction == AnimationDirection::Bidirectional {
-            return Err("Once Only is unavailable for bidirectional motion".into());
+        if !self.speed.is_finite() || self.speed < 0. || self.speed > maximum_speed {
+            return Err("Animation speed must be nonnegative and finite".into());
         }
         if let Some(parameter) = self.parameter
             && (!parameter.step.is_finite()
@@ -147,6 +147,18 @@ impl AnimationSettings {
                     .any(|value| encode_parameter_number(*value).is_none()))
         {
             return Err("Invalid parameter Animation settings".into());
+        }
+        Ok(())
+    }
+
+    /// Applies the stricter choices exposed by Native's authoring dialog.
+    pub(crate) fn validate_for_authoring(self) -> Result<(), String> {
+        self.validate()?;
+        if self.speed == 0. {
+            return Err("Animation speed must be positive".into());
+        }
+        if self.once && self.direction == AnimationDirection::Bidirectional {
+            return Err("Once Only is unavailable for bidirectional motion".into());
         }
         Ok(())
     }

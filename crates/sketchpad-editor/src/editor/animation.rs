@@ -498,6 +498,11 @@ impl Editor {
             } else {
                 base_step * speed_scale
             };
+            // Native multi-target buttons retain a zero-rate target as a
+            // stationary member while their other targets keep animating.
+            if step == 0. {
+                return true;
+            }
             if let Some(mut velocity) = track.free_velocity {
                 let current = if track.transient_point {
                     let Some(current) = self.doc.position(track.id) else {
@@ -558,9 +563,6 @@ impl Editor {
                     self.doc.move_point(track.id, destination)
                 };
                 return moved && !track.button_settings.is_some_and(|settings| settings.once);
-            }
-            if track.parameter_domain.is_some() && step == 0. {
-                return true;
             }
             let circular = matches!(
                 kind,

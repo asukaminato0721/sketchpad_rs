@@ -774,7 +774,7 @@ impl Document {
             return Err("Animation button label must contain 1–64 ASCII characters".into());
         }
         for (index, &(target, settings)) in targets_and_settings.iter().enumerate() {
-            settings.validate()?;
+            settings.validate_for_authoring()?;
             let object = self
                 .objects
                 .get(target.checked_sub(1).ok_or("Invalid button target")?)

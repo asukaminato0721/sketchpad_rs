@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,557/1,599** documents have all object kinds
-decoded; **1,597** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **579** unsupported slots (2 drawing
-slots and 577 prototype slots), and 42 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,559/1,599** documents have all object kinds
+decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
+are byte-exact, with zero failures. There are **577** unsupported slots, all in
+embedded-tool prototypes, and 40 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -15,8 +15,8 @@ plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
 transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
 plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
-referenced-caption, point-angle fixed-polar, and sampled-curve direction-arrow
-recoveries are summarized at the end; the older detailed
+referenced-caption, point-angle fixed-polar, sampled-curve direction-arrow, and
+final Animation-edge recoveries are summarized at the end; the older detailed
 snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
@@ -2337,3 +2337,21 @@ original visibly renders and saves unchanged in Sketchpad 5 under Xvfb/Wine.
 No standalone test case was added. See
 [analysis](sampled_curve_arrow_analysis.md). Full scan:
 `/tmp/code121_coverage_all_tests.log`.
+
+## Final drawing Animation edge settings
+
+Native Xvfb runs establish semantics for the last two drawing code-62 records.
+A bidirectional point ignores its otherwise inapplicable stored Once bit and
+continues moving. In a three-target button, a zero-rate target stays stationary
+while the positive-rate targets animate. Import and runtime now preserve those
+behaviors; newly authored buttons still require positive rates and disallow
+Once Only for bidirectional motion.
+
+This restores the final two drawing slots. Unsupported falls **579→577**,
+complete documents/drawings rise **1,557/1,597→1,559/1,599**, unsupported
+documents fall **42→40**, and partial views fall **787→785**. The remaining
+**577** slots are all embedded-tool prototypes. Embedded-tool coverage remains
+**4,779/5,356**, and all **1,599** originals remain byte-exact. No standalone
+test case was added. See
+[analysis](legacy_animation_settings_analysis.md). Full scan:
+`/tmp/final62_coverage_all.log`.
