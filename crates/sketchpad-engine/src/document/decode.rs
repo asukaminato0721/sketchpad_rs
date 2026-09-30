@@ -1927,7 +1927,19 @@ impl Document {
                     }
                     (code @ (69 | 70), None, [x, y, frame])
                         if h[6..10] == [1, 0, 56, 0]
-                            && [x, y].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.numeric_unit().is_some()))
+                            && [x, y].iter().all(|&&id| {
+                                objects.get(id.saturating_sub(1)).is_some_and(|o| {
+                                    o.page == page
+                                        && (o.kind.numeric_unit().is_some()
+                                            || !tool_inputs.is_empty()
+                                                && matches!(
+                                                    o.kind,
+                                                    Kind::ToolInput(
+                                                        EmbeddedToolInputKind::Numeric
+                                                    )
+                                                ))
+                                })
+                            })
                             && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.is_coordinate_system()) => {
                         Kind::NumericCoordinatePoint(*x, *y, *frame, if code == 70 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian })
                     }
@@ -1958,7 +1970,16 @@ impl Document {
                         Kind::PlottedPoint(*frame, plot.mode, plot.stored)
                     }
                     (94, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::PointValue && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
-                        && super::measurements::point_value_refs_match(&objects, *first, *second, page, objects.len() + 1) => {
+                        && (super::measurements::point_value_refs_match(&objects, *first, *second, page, objects.len() + 1)
+                            || !tool_inputs.is_empty()
+                                && objects.get(first.saturating_sub(1)).is_some_and(|object| {
+                                    !object.deleted && object.page == page && is_point_kind(&object.kind)
+                                })
+                                && objects.get(second.saturating_sub(1)).is_some_and(|object| {
+                                    !object.deleted
+                                        && object.page == page
+                                        && matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Path))
+                                })) => {
                         Kind::ValueEquation { kind: ValueEquationKind::PointValue, first: *first, second: *second }
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])

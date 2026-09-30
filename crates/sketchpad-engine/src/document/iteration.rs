@@ -317,7 +317,12 @@ fn supported_mapped_point_iteration_impl(
         || seeds.iter().copied().collect::<BTreeSet<_>>().len() != seeds.len()
         || carried.iter().copied().collect::<BTreeSet<_>>().len() != carried.len()
         || !seeds.iter().all(|id| {
-            get(*id).is_some_and(|o| is_point_kind(&o.kind) || o.kind.numeric_unit().is_some())
+            get(*id).is_some_and(|o| {
+                is_point_kind(&o.kind)
+                    || o.kind.numeric_unit().is_some()
+                    || allow_tool_placeholders
+                        && matches!(o.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric))
+            })
         })
         || branches.iter().any(|b| {
             b.len() != seeds.len()
@@ -327,6 +332,19 @@ fn supported_mapped_point_iteration_impl(
                     .all(|(id, seed)| match (get(*id), get(*seed)) {
                         (Some(image), Some(seed)) if is_point_kind(&seed.kind) => {
                             is_point_kind(&image.kind)
+                        }
+                        (Some(image), Some(seed))
+                            if allow_tool_placeholders
+                                && matches!(
+                                    seed.kind,
+                                    Kind::ToolInput(EmbeddedToolInputKind::Numeric)
+                                ) =>
+                        {
+                            image.kind.numeric_unit().is_some()
+                                || matches!(
+                                    image.kind,
+                                    Kind::ToolInput(EmbeddedToolInputKind::Numeric)
+                                )
                         }
                         (Some(image), Some(seed)) => {
                             match (seed.kind.numeric_unit(), image.kind.numeric_unit()) {

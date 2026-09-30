@@ -866,3 +866,18 @@ and 106 outputs, reopen exactly, and save byte-identically in Sketchpad 5 under
 Xvfb/Wine. Multi-picture writing and unverified 36-point numeric-caption layouts
 remain pending. No standalone test was added. See
 [analysis](dev/tool_numeric_color_iteration_analysis.md).
+
+## Numeric mappings, coordinate points, and path values in custom tools
+
+Prototype-only typing now covers generic Numeric inputs used as mapped seeds or
+coordinate-point x/y operands, plus concrete points measured along declared
+Path inputs. The three recovered tool families add 39 decoded prototype slots
+and three complete isolated views without weakening ordinary drawing checks.
+
+The combinations and interval-path tools materialize real outputs and reopen
+exactly. Sketchpad 5 displays the combinations result `C = 10` and preserves
+the file byte-identically on Ctrl+S. The mapped grid prototype is structurally
+complete, but invoking its complete output graph still stops at the existing
+unverified formula-caption layout for `trunc(...)`; that command-parity item
+remains pending. No standalone test was added. See
+[analysis](dev/tool_numeric_mapping_analysis.md).

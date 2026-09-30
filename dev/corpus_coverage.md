@@ -1,13 +1,14 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,591/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,593/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **66** unsupported slots, all in
-embedded-tool prototypes, and 8 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,290
-decoded, 66 undecoded. Isolated decoding produces 75 complete and 28 partial
+are byte-exact, with zero failures. There are **27** unsupported slots, all in
+embedded-tool prototypes, and 6 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,329
+decoded, 27 undecoded. Isolated decoding produces 78 complete and 25 partial
 tool views. The current tool-prototype numeric-color, mapped-picture and
-direct-numeric-depth, mapped-element and nested-mapping,
+direct-numeric-depth, numeric mapped-seed, path-value, numeric-coordinate,
+mapped-element and nested-mapping,
 named referenced-caption, polymorphic-polygon tool, external-placeholder mapped-iteration,
 embedded attached-picture, final
 geometric-given, distance-Parameter,
@@ -2790,3 +2791,28 @@ colorized tool invocations reopen and re-encode exactly; Sketchpad 5 under
 Xvfb/Wine opens and saves both byte-identically. No standalone test case was
 added. See [analysis](tool_numeric_color_iteration_analysis.md). Full scan:
 `/tmp/tool_colorized_picture_iteration_coverage.log`.
+
+## Numeric mapped-tool operands and path values
+
+Declared generic Numeric tool inputs can now serve as mapped seeds and as x/y
+operands of prototype coordinate points. Mapped branches must still replace a
+numeric seed with a typed numeric value. A concrete prototype point can also be
+measured along a declared Path input. All three rules are tool-context-only;
+ordinary document validation is unchanged, and invocation still requires live
+objects of the declared types.
+
+The pass restores 25 slots in the combinations tool, eight in an interval-path
+value tool, and six in a mapped grid tool. Prototype coverage rises
+**5,290→5,329/5,356**, unsupported falls **66→27**, fully decoded documents
+rise **1,591→1,593/1,599**, and complete isolated tools rise **75→78/103**.
+All drawings remain complete and all originals remain byte-exact.
+
+A combinations invocation creates 32 outputs and displays `C = 10` in
+Sketchpad 5; Ctrl+S preserves SHA-256
+`12b30c07a483d7b9bc1f9159600ecd7e17aba37e8a97f0da66e08cfce09acfee`.
+An interval-path invocation creates eight outputs and also reopens and
+re-encodes exactly. The grid reaches the existing guarded `trunc(...)` caption
+layout boundary, which remains pending rather than accepting unverified
+geometry. No standalone test case was added. See
+[analysis](tool_numeric_mapping_analysis.md). Full scan:
+`/tmp/tool_numeric_mapping_path_values_coverage.log`.
