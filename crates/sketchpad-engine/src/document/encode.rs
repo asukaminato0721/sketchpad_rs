@@ -770,7 +770,7 @@ impl Document {
                 definition[8..12].copy_from_slice(&(branches.len() as u32).to_le_bytes());
                 definition[16..20].copy_from_slice(
                     &self
-                        .numeric_iteration_depth(depth)
+                        .mapped_iteration_depth(depth)
                         .unwrap_or(0)
                         .to_le_bytes(),
                 );

@@ -13,6 +13,8 @@ use crate::style_records::RgbColor;
 use crate::table_records::NumericUnit;
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(super) const MAX_MAPPED_ITERATION_DEPTH: u32 = 4096;
+
 fn point_iteration_definition(
     objects: &[Object],
     seed: usize,
@@ -1228,18 +1230,20 @@ impl Document {
                 return None;
             }
             let value = raw.trunc();
-            (minimum..=4096.).contains(&value).then_some(value as u32)
+            (minimum..=f64::from(MAX_MAPPED_ITERATION_DEPTH))
+                .contains(&value)
+                .then_some(value as u32)
         };
         let depth = if terminal_only {
             match *depth {
-                IterationDepth::Fixed(value) => (1..=128).contains(&value).then_some(value)?,
+                IterationDepth::Fixed(value) => (1..=MAX_MAPPED_ITERATION_DEPTH)
+                    .contains(&value)
+                    .then_some(value)?,
                 IterationDepth::Value(id) => mapped_value_depth(id, 0.)?,
             }
         } else {
             match *depth {
-                IterationDepth::Fixed(value) => {
-                    self.numeric_iteration_depth(IterationDepth::Fixed(value))?
-                }
+                IterationDepth::Fixed(_) => self.mapped_iteration_depth(*depth)?,
                 IterationDepth::Value(id) => mapped_value_depth(id, 1.)?,
             }
         };
@@ -1641,6 +1645,20 @@ impl Document {
         match depth {
             IterationDepth::Fixed(value) => (1..=128).contains(&value).then_some(value),
             IterationDepth::Value(id) => self.iteration_depth_value(id),
+        }
+    }
+
+    pub(super) fn mapped_iteration_depth(&self, depth: IterationDepth) -> Option<u32> {
+        match depth {
+            IterationDepth::Fixed(value) => (1..=MAX_MAPPED_ITERATION_DEPTH)
+                .contains(&value)
+                .then_some(value),
+            IterationDepth::Value(id) => {
+                let value = self.unitless_numeric_value(id)?.trunc();
+                (1. ..=f64::from(MAX_MAPPED_ITERATION_DEPTH))
+                    .contains(&value)
+                    .then_some(value as u32)
+            }
         }
     }
     pub fn point_parameter_iteration_labels(&self, id: usize) -> Option<Vec<(Point, String)>> {

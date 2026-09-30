@@ -1025,7 +1025,7 @@ impl Document {
                     IterationDepth::Value(id)
                 } else {
                     let value = u32_at(data, 16);
-                    if !(1..=128).contains(&value) {
+                    if !(1..=super::iteration::MAX_MAPPED_ITERATION_DEPTH).contains(&value) {
                         return None;
                     }
                     IterationDepth::Fixed(value)

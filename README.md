@@ -292,6 +292,13 @@ Mapped iterations can present a carried function plot as its own styled binding,
 reevaluating the function and coordinate frame in every mapped scope. Native and
 port evidence is recorded in [the function-plot completion analysis](dev/function_plot_completion_analysis.md).
 
+Imported general mapped iterations retain fixed depths through 4,096, matching
+the existing live-depth evaluator and its independent per-level and total-state
+resource guards. Desktop authoring and the specialized iteration commands keep
+their 1–128 limit. This restores the native 179-step protractor and the
+800-step Collatz construction; see
+[the high-depth iteration analysis](dev/high_depth_mapped_iteration_analysis.md).
+
 Imported code-26 custom polar translations treat their angle slot as a
 contextual degree magnitude. This includes native calculations reported as
 Scalar, matching the shared transform model's existing numeric-operand rule;

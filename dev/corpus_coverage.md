@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,551/1,599** documents have all object kinds
-decoded; **1,590** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **604** unsupported slots (27 drawing
-slots and 577 prototype slots), and 48 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,553/1,599** documents have all object kinds
+decoded; **1,592** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **587** unsupported slots (10 drawing
+slots and 577 prototype slots), and 46 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -14,8 +14,9 @@ collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
 transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
-plot, and scalar-angle custom-translation recoveries are summarized at the end;
-the older detailed snapshots remain for comparison.
+plot, scalar-angle custom-translation, and high-depth mapped-iteration
+recoveries are summarized at the end; the older detailed snapshots remain for
+comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -2239,3 +2240,32 @@ reproduces the native green-to-blue-to-violet involute spectrum. No standalone
 test case was added. See
 [analysis](scalar_angle_polar_translation_analysis.md). Full scan:
 `/tmp/scalar_angle_code26_coverage_final.log`.
+
+## High-depth general mapped iterations
+
+Two final code-76 drawing roots are ordinary general mapped iterations whose
+only rejected field was their fixed depth: the protractor stores 179 and the
+Collatz construction stores 800. Live mapped depths already accepted values
+through 4,096 and evaluation already stopped any branch expansion above 20,000
+states at one level or 100,000 generated states overall. Imported and preserved
+fixed depths now share that 4,096 ceiling. Desktop construction and specialized
+point, segment, circle, ray, polygon, and point/parameter iteration commands
+retain their separate 1–128 authoring limit.
+
+The two roots restore all ten remaining drawing code-77 bindings, two dependent
+code-89 mappings, and one each of codes 47, 48, and 88: **17 drawing slots** in
+total. The port renders all 179 protractor ticks and labels and the Collatz
+sequence `1541, 4624, ... 4, 2, 1` in the native ten-column layout. Sketchpad 5
+under Xvfb/Wine visibly rendered both untouched originals and saved them
+byte-for-byte with SHA-256 values
+`91bbd1a80bc1a983ce24ef75ecdb8bede9e617a3686c634725c89c0958339b4f`
+and
+`abce071097c876be745610e25ef59e7ce66265ffe6a1b56c874d4a6caba23c92`.
+
+Unsupported falls **604->587**, complete documents/drawings rise
+**1,551/1,590->1,553/1,592**, unsupported documents fall **48->46**, and
+partial views fall **792->790**. Embedded-tool coverage remains
+**4,779/5,356**, and all **1,599** originals remain byte-exact. No standalone
+test case was added. See
+[analysis](high_depth_mapped_iteration_analysis.md). Full scan:
+`/tmp/high_depth_iteration_coverage_full.log`.

@@ -268,7 +268,9 @@ impl Document {
                     ..
                 } => {
                     let valid_depth = match depth {
-                        IterationDepth::Fixed(n) => (1..=128).contains(n),
+                        IterationDepth::Fixed(n) => {
+                            (1..=super::iteration::MAX_MAPPED_ITERATION_DEPTH).contains(n)
+                        }
                         IterationDepth::Value(id) => {
                             *id > 0
                                 && *id < o.id
