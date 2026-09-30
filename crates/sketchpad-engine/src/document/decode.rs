@@ -561,6 +561,9 @@ impl Document {
             let image_internal_label = matches!(code, 99 | 100) && h[6..10] == [16, 0, 78, 0];
             let internal_iteration_label = (matches!(code, 76 | 89) && h[6..10] == [14, 0, 64, 0])
                 || (code == 77 && h[6..10] == [15, 0, 65, 0]);
+            let locus_internal_label =
+                code == 35 && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 43, 0]);
+            let referenced_caption = matches!(code, 73 | 90) && h[6..10] == [0, 0, 59, 0];
             let numeric_label = matches!(
                 code,
                 36 | 37
@@ -625,6 +628,15 @@ impl Document {
                             safe = false;
                         }
                     }
+                    0x07d5 if locus_internal_label => {
+                        if LabelAux::parse(d).is_err() {
+                            safe = false;
+                        }
+                    }
+                    0x07d5 if referenced_caption => match LabelAux::parse(d) {
+                        Ok(value) => label = Some(value),
+                        Err(_) => safe = false,
+                    },
                     0x07d5
                         if matches!(code, 0 | 15 | 92)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
@@ -654,13 +666,15 @@ impl Document {
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
                             || arc_label
-                            || angle_marker_label =>
+                            || angle_marker_label
+                            || locus_internal_label =>
                     {
                         text_style = d.len() == 2
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
                         if (labeled_shape
                             || arc_label
                             || angle_marker_label
+                            || locus_internal_label
                             || code == 15
                             || (code == 71 && h[6..10] == [11, 0, 57, 0]))
                             && !text_style
@@ -845,6 +859,7 @@ impl Document {
                         && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(image_internal_label && r.kind == 0x07d5)
                     && !(internal_iteration_label && r.kind == 0x07d5)
+                    && !(locus_internal_label && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(
                         code,
                         36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120
@@ -882,7 +897,7 @@ impl Document {
                         && r.kind == 0x232e
                         && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
-                    && !(matches!(code, 73 | 90) && matches!(r.kind, 0x08fc | 0x07d8))
+                    && !(referenced_caption && matches!(r.kind, 0x07d5 | 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
                     && !(is_attached_image
@@ -3023,6 +3038,9 @@ impl Document {
                         | Kind::CoordinateMeasurement { .. }
                         | Kind::IterationValues(..)
                         | Kind::PlainText { .. }
+                        | Kind::ReferencedText { .. }
+                        | Kind::PointNumericLabel(..)
+                        | Kind::PointReferencedText { .. }
                 )
                 && !(tool_input.is_some() && matches!(kind, Kind::ToolInput(_)))
             {

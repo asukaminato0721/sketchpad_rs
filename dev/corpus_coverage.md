@@ -2717,3 +2717,28 @@ resources intentionally remain read-only. All drawings remain complete, all
 originals remain byte-exact, and no standalone test case was added. See
 [analysis](tool_attached_picture_analysis.md). Full scan:
 `/tmp/tool_code100_coverage.txt`.
+
+## Named referenced captions in embedded tools
+
+Strict code-73/code-90 caption groups now retain an optional `07d5` object name
+between their rich text and font records. The same bounded name is written for
+newly materialized referenced, point-referenced, and point-numeric captions.
+Strict code-35 Locus name/font metadata is admitted as inert structural data,
+and attached point values no longer displace free-standing tool measurement
+rows. The observed bold 16-point `宋体` profile advances those rows by 19
+pixels; point and segment ratios retain their 64-pixel fraction row.
+
+The pass restores 48 code-90 roots, 20 code-73 roots, and 27 descendants.
+Prototype coverage rises **5,112→5,207/5,356**, unsupported prototype slots
+fall **244→149**, and fully decoded documents rise **1,576→1,581/1,599**.
+Strict Locus metadata raises complete isolated views **52→67/103** and lowers
+partial source views **785→769**. All drawings remain complete and all 1,599
+originals remain byte-exact.
+
+A three-point invocation creates 76 outputs and reparses all 79 objects with
+one named attached caption. Its 11,164-byte result opens and renders in Native
+Sketchpad 5 under Xvfb/Wine; Ctrl+S preserves SHA-256
+`26014846f70421cb6ed74646ab308ce86db50ab24c94f2dfca74c6bada089ad6`.
+No standalone test case was added. See
+[analysis](tool_named_referenced_caption_analysis.md). Full scan:
+`/tmp/locus_named_caption_final_coverage.log`.

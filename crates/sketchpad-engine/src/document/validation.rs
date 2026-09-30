@@ -698,7 +698,11 @@ impl Document {
                     o.kind,
                     Kind::ValueEquation { .. }
                         | Kind::CoordinateMeasurement { .. }
+                        | Kind::IterationValues(..)
                         | Kind::PlainText { .. }
+                        | Kind::ReferencedText { .. }
+                        | Kind::PointNumericLabel(..)
+                        | Kind::PointReferencedText { .. }
                 )
             {
                 return Err(format!("Invalid object label in object {}", o.id));

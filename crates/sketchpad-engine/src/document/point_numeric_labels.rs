@@ -107,14 +107,16 @@ pub(super) fn decode_numeric_label(
     if at != group.len() {
         return None;
     }
-    let [
-        (0x07d0, _),
-        (0x07d2, parents),
-        (0x08fc, rich),
-        (0x07d8, font),
-        tail @ ..,
-    ] = records.as_slice()
-    else {
+    let [(0x07d0, _), (0x07d2, parents), (0x08fc, rich), rest @ ..] = records.as_slice() else {
+        return None;
+    };
+    let rest = if let [(0x07d5, label), rest @ ..] = rest {
+        crate::text_records::LabelAux::parse(label).ok()?;
+        rest
+    } else {
+        rest
+    };
+    let [(0x07d8, font), tail @ ..] = rest else {
         return None;
     };
     if parents.len() != 12 || parents[..4] != 2u32.to_le_bytes() || font.len() != 2 {

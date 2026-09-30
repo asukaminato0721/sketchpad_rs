@@ -290,8 +290,9 @@ impl Document {
             _ => 33,
         }
     }
-    /// Native tool outputs follow the last numeric object on the active page,
-    /// using its current anchor rather than the spatially lowest caption.
+    /// Native tool outputs follow the last free-standing numeric caption on
+    /// the active page, using its current anchor rather than the spatially
+    /// lowest caption. Values attached to points do not occupy a row.
     pub(super) fn next_tool_numeric_anchor(&self) -> Result<(i16, i16), String> {
         use crate::table_records::{cached_numeric_caption_step, numeric_caption_font_index};
         let object = self
@@ -300,7 +301,16 @@ impl Document {
             .filter(|object| {
                 !object.deleted
                     && object.page == self.active_page
-                    && object.kind.numeric_unit().is_some()
+                    && (matches!(
+                        object.kind,
+                        Kind::Parameter(_)
+                            | Kind::Calculation(_)
+                            | Kind::ParameterCalculation(..)
+                            | Kind::MeasuredCalculation(..)
+                            | Kind::LengthPairCalculation(..)
+                            | Kind::SegmentRatio(..)
+                            | Kind::PointRatio(..)
+                    ) || numeric_measurement_caption_shape(&object.kind).is_some())
             })
             .max_by_key(|object| object.id)
             .ok_or("No numeric caption precedes the tool output")?;
@@ -393,6 +403,12 @@ impl Document {
                         .ok_or("Numeric caption layout overflow")?,
                 )
             }
+            Kind::SegmentRatio(..) | Kind::PointRatio(..) => (
+                object
+                    .measurement_anchor
+                    .ok_or("Missing ratio caption anchor")?,
+                64,
+            ),
             kind if numeric_measurement_caption_shape(kind).is_some() => {
                 let font = if let Some(header) = object.header_offset {
                     let rs = super::records::records(&self.original)?;
@@ -530,6 +546,14 @@ impl Document {
             {
                 return Ok(21);
             }
+            if font.family == "宋体"
+                && font.size_code == 16
+                && font.bold
+                && !font.italic
+                && !font.underline
+            {
+                return Ok(19);
+            }
             if font.family == "Tahoma"
                 && font.size_code == 18
                 && !font.bold
@@ -623,6 +647,14 @@ impl Document {
             && !font.underline
         {
             return Ok(21);
+        }
+        if font.family == "宋体"
+            && font.size_code == 16
+            && font.bold
+            && !font.italic
+            && !font.underline
+        {
+            return Ok(19);
         }
         Err(format!(
             "Tool placement needs a verified numeric caption font layout for object {}: {font:?}",

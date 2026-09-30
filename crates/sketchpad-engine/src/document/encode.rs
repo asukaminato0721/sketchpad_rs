@@ -900,7 +900,7 @@ impl Document {
                 if !o.visible {
                     group[10] |= 1;
                 }
-                added.extend_from_slice(&group);
+                added.extend_from_slice(&Self::caption_group_with_label(&group, o.label.as_ref())?);
                 continue;
             }
             if let Kind::PointReferencedText {

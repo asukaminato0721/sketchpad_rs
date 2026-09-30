@@ -171,14 +171,16 @@ pub(super) fn decode_group(
     if at != group.len() {
         return None;
     }
-    let [
-        (0x7d0, _),
-        (0x7d2, refs),
-        (0x8fc, rich),
-        (0x7d8, font),
-        tail @ ..,
-    ] = records.as_slice()
-    else {
+    let [(0x7d0, _), (0x7d2, refs), (0x8fc, rich), rest @ ..] = records.as_slice() else {
+        return None;
+    };
+    let rest = if let [(0x7d5, label), rest @ ..] = rest {
+        crate::text_records::LabelAux::parse(label).ok()?;
+        rest
+    } else {
+        rest
+    };
+    let [(0x7d8, font), tail @ ..] = rest else {
         return None;
     };
     if refs.len() != 4 + 4 * parents.len()
@@ -682,6 +684,9 @@ pub(super) fn encode_group(object: &Object, parents: &[u32], text: &ReferencedTe
     }
     put_record(&mut group, 0x7d2, &refs);
     put_record(&mut group, 0x8fc, text.rich_bytes());
+    if let Some(label) = &object.label {
+        put_record(&mut group, 0x7d5, label.payload());
+    }
     put_record(&mut group, 0x7d8, &0u16.to_le_bytes());
     put_record(&mut group, 0x7d7, &[]);
     group
