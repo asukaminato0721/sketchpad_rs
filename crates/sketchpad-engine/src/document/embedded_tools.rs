@@ -435,6 +435,15 @@ impl Document {
                 Some(EmbeddedToolInputKind::ScalarParameter) => {
                     return Err("This tool input requires an available scalar Parameter".into());
                 }
+                Some(EmbeddedToolInputKind::DistanceParameter)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::DistanceParameter)
+                    ) && matches!(&actual.kind, Kind::Parameter(group) if group.unit() == crate::table_records::NumericUnit::Length) =>
+                    {}
+                Some(EmbeddedToolInputKind::DistanceParameter) => {
+                    return Err("This tool input requires an available distance Parameter".into());
+                }
                 Some(EmbeddedToolInputKind::AngleParameter)
                     if matches!(
                         expected.kind,

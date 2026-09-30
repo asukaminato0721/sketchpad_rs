@@ -1,12 +1,12 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,571/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,572/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **291** unsupported slots, all in
-embedded-tool prototypes, and 28 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,065
-decoded, 291 undecoded. The current polymorphic Preimage, legacy Curve,
-angle-Parameter, legacy generic-numeric and distance custom-tool-given,
+are byte-exact, with zero failures. There are **288** unsupported slots, all in
+embedded-tool prototypes, and 27 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,068
+decoded, 288 undecoded. The current distance-Parameter, polymorphic Preimage,
+legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
 function custom-tool-given, and function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
@@ -2377,7 +2377,8 @@ Parameter. Runtime and desktop binding accept only an actual scalar
 `Kind::Parameter`; calculations and other scalar-valued objects do not match.
 The two source prototypes remain partial because of unrelated unsupported
 constructions, so this checkpoint does not claim successful port-side execution
-of either complete tool. Subtypes 80 and 81 remain unclassified.
+of either complete tool. At this checkpoint, subtypes 80 and 81 remained
+unclassified; later sections establish both categories.
 
 The dependency-aware scan restores **87** prototype slots: embedded-tool
 coverage rises **4,779→4,866/5,356**, and unsupported slots fall **577→490**.
@@ -2599,3 +2600,32 @@ of 103. All drawings remain complete, all 1,599 originals remain byte-exact,
 and no standalone test case was added. See
 [analysis](tool_preimage_given_analysis.md). Full scan:
 `/tmp/subtype92_runtime_coverage.txt`.
+
+## Distance-Parameter custom-tool given
+
+The sole class-11/subtype-80 given is the prerequisite of `工具#1` in
+`杨辉三角1（李章博）.gsp`. Native Script View identifies it as
+`距离参数 行距` (Distance Parameter `行距`) and explicitly asks the user to click
+a distance Parameter. This distinguishes subtype 80 from subtype 48, whose
+Native prompt accepts a Distance Measurement Value.
+
+The port retains subtype 80 as a length-valued `DistanceParameter` root while
+requiring the destination itself to be a live Length `Parameter`. The strict
+placeholder validator is shared with the established scalar- and
+angle-Parameter families. Contextual decoding restores its two code-48
+calculation descendants. Runtime invocation against the source `行距` parameter
+creates those two calculations and two movement buttons, then encodes and
+reparses all five objects.
+
+The 2,716-byte port-authored result opens in Sketchpad 5 under Xvfb/Wine with
+`行距 = 0.74 cm` and both buttons visible. Ctrl+S preserves SHA-256
+`c1981ec51c4fddd460fb765392e4920d2c1ee35d6dad9a81afbf77771822fe19`;
+clicking the first button changes the value to `0.75 cm` and saves successfully.
+
+The root and two descendants raise prototype coverage
+**5,065→5,068/5,356** and lower unsupported slots **291→288**. Fully decoded
+documents rise **1,571→1,572**, and complete isolated views rise from 48 to 49
+of 103. All drawings remain complete, all 1,599 originals remain byte-exact,
+and no standalone test case was added. See
+[analysis](tool_distance_parameter_given_analysis.md). Full scan:
+`/tmp/subtype80_runtime_coverage.txt`.

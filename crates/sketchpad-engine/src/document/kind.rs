@@ -69,6 +69,7 @@ impl Kind {
             Kind::ParameterCalculation(_, group) => Some(group.unit()),
             Kind::NumericAlias { unit, .. } => Some(*unit),
             Kind::ToolInput(EmbeddedToolInputKind::ScalarParameter) => Some(NumericUnit::Scalar),
+            Kind::ToolInput(EmbeddedToolInputKind::DistanceParameter) => Some(NumericUnit::Length),
             Kind::ToolInput(EmbeddedToolInputKind::AngleParameter) => Some(NumericUnit::Degrees),
             Kind::ToolInput(EmbeddedToolInputKind::Distance) => Some(NumericUnit::Length),
             Kind::AngleMeasurement(_, _, _)

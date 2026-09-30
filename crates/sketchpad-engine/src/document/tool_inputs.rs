@@ -20,6 +20,9 @@ pub enum EmbeddedToolInputKind {
     /// A scalar Parameter specifically, retaining Native's stricter input
     /// category instead of accepting every scalar-valued construction.
     ScalarParameter,
+    /// A distance Parameter specifically, retaining Native's stricter input
+    /// category instead of accepting every length-valued construction.
+    DistanceParameter,
     /// An angle Parameter specifically, retaining Native's `Match Angle`
     /// category instead of accepting every degree-valued construction.
     AngleParameter,
@@ -52,6 +55,7 @@ impl EmbeddedToolInput {
             (11, 51) => Some(EmbeddedToolInputKind::Numeric),
             (11, 57) => Some(EmbeddedToolInputKind::Function),
             (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
+            (11, 80) => Some(EmbeddedToolInputKind::DistanceParameter),
             (11, 81) => Some(EmbeddedToolInputKind::AngleParameter),
             _ => None,
         }
@@ -130,6 +134,12 @@ pub(super) fn distance_given_layout(bytes: &[u8]) -> Result<(), String> {
 /// tools. Native stores the same inert value/cache body as a generic numeric
 /// given; subtype 79 supplies the stricter binding category.
 pub(super) fn scalar_parameter_given_layout(bytes: &[u8]) -> Result<(), String> {
+    numeric_given_layout(bytes)
+}
+
+/// Validate the distance-Parameter placeholder retained by an older registered
+/// tool. Subtype 80 supplies the length-valued matching category.
+pub(super) fn distance_parameter_given_layout(bytes: &[u8]) -> Result<(), String> {
     numeric_given_layout(bytes)
 }
 

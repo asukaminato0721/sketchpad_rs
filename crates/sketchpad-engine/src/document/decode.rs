@@ -1214,6 +1214,10 @@ impl Document {
                     super::tool_inputs::scalar_parameter_given_layout(
                         &b[group_start..rs[i].data.end],
                     )?;
+                } else if input.kind() == Some(EmbeddedToolInputKind::DistanceParameter) {
+                    super::tool_inputs::distance_parameter_given_layout(
+                        &b[group_start..rs[i].data.end],
+                    )?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::AngleParameter) {
                     super::tool_inputs::angle_parameter_given_layout(
                         &b[group_start..rs[i].data.end],
@@ -1247,6 +1251,7 @@ impl Document {
                         | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::Function
                         | EmbeddedToolInputKind::ScalarParameter
+                        | EmbeddedToolInputKind::DistanceParameter
                         | EmbeddedToolInputKind::AngleParameter
                         | EmbeddedToolInputKind::Preimage),
                     ) => {

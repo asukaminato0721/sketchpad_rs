@@ -374,6 +374,7 @@ impl Editor {
                             | EmbeddedToolInputKind::Distance
                             | EmbeddedToolInputKind::Function
                             | EmbeddedToolInputKind::ScalarParameter
+                            | EmbeddedToolInputKind::DistanceParameter
                             | EmbeddedToolInputKind::AngleParameter
                             | EmbeddedToolInputKind::Preimage),
                         ) => {
@@ -460,10 +461,13 @@ impl Editor {
                     EmbeddedToolInputKind::Numeric
                         | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::ScalarParameter
+                        | EmbeddedToolInputKind::DistanceParameter
                         | EmbeddedToolInputKind::AngleParameter
                 )
             ) {
                 let scalar_parameter = input.kind() == Some(EmbeddedToolInputKind::ScalarParameter);
+                let distance_parameter =
+                    input.kind() == Some(EmbeddedToolInputKind::DistanceParameter);
                 let angle_parameter = input.kind() == Some(EmbeddedToolInputKind::AngleParameter);
                 let distance = input.kind() == Some(EmbeddedToolInputKind::Distance);
                 let overlays = self.overlay_rows();
@@ -478,6 +482,9 @@ impl Editor {
                             && (!scalar_parameter
                                 || matches!(&object.kind, Kind::Parameter(group)
                                     if group.unit() == sketchpad_engine::table_records::NumericUnit::Scalar))
+                            && (!distance_parameter
+                                || matches!(&object.kind, Kind::Parameter(group)
+                                    if group.unit() == sketchpad_engine::table_records::NumericUnit::Length))
                             && (!angle_parameter
                                 || matches!(&object.kind, Kind::Parameter(group)
                                     if group.unit() == sketchpad_engine::table_records::NumericUnit::Degrees))
