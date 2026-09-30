@@ -435,6 +435,15 @@ impl Document {
                 Some(EmbeddedToolInputKind::ScalarParameter) => {
                     return Err("This tool input requires an available scalar Parameter".into());
                 }
+                Some(EmbeddedToolInputKind::AngleParameter)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::AngleParameter)
+                    ) && matches!(&actual.kind, Kind::Parameter(group) if group.unit() == crate::table_records::NumericUnit::Degrees) =>
+                    {}
+                Some(EmbeddedToolInputKind::AngleParameter) => {
+                    return Err("This tool input requires an available angle Parameter".into());
+                }
                 None => return Err("This tool input category is unsupported".into()),
             }
             ids[local as usize] = destination;

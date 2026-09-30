@@ -1193,6 +1193,10 @@ impl Document {
                     super::tool_inputs::scalar_parameter_given_layout(
                         &b[group_start..rs[i].data.end],
                     )?;
+                } else if input.kind() == Some(EmbeddedToolInputKind::AngleParameter) {
+                    super::tool_inputs::angle_parameter_given_layout(
+                        &b[group_start..rs[i].data.end],
+                    )?;
                 } else if input.kind().is_some() {
                     let body: Vec<_> = rs
                         .iter()
@@ -1221,7 +1225,8 @@ impl Document {
                         | EmbeddedToolInputKind::Numeric
                         | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::Function
-                        | EmbeddedToolInputKind::ScalarParameter),
+                        | EmbeddedToolInputKind::ScalarParameter
+                        | EmbeddedToolInputKind::AngleParameter),
                     ) => {
                         point_offset = None;
                         Kind::ToolInput(category)

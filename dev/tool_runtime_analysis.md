@@ -254,3 +254,13 @@ exposes Length during prototype decoding and accepts only finite live distance
 values at runtime. The desktop picker applies the same unit gate to visible
 numeric captions. See
 [the focused analysis](tool_legacy_numeric_givens_analysis.md).
+
+## Angle-Parameter given
+
+A same-size Native input-order control moves the sole subtype81 given ahead of
+eight point givens. Native then requests `匹配角度参数 t[1]` and recognizes the
+visible `t[1] = 1.00°` Parameter caption. The port exposes Degrees on the
+prototype root, validates the exact inert Parameter-placeholder family, and
+accepts only a live degree-valued `Parameter` in both engine and desktop
+binding. The source tool remains structurally partial for unrelated reasons.
+See [the focused analysis](tool_angle_parameter_given_analysis.md).

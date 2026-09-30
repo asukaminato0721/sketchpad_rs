@@ -2,10 +2,10 @@
 
 Latest snapshot, 2026-09-30: **1,570/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **299** unsupported slots, all in
+are byte-exact, with zero failures. There are **297** unsupported slots, all in
 embedded-tool prototypes, and 29 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,057
-decoded, 299 undecoded. The current legacy generic-numeric and distance
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,059
+decoded, 297 undecoded. The current angle-Parameter, legacy generic-numeric and distance
 custom-tool-given, function custom-tool-given, and
 function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
@@ -2525,3 +2525,26 @@ restriction. All drawings remain complete, all originals remain byte-exact,
 and no standalone test case was added. See
 [analysis](tool_legacy_numeric_givens_analysis.md). Full scan:
 `/tmp/tool_legacy_numeric_distance_given_coverage.log`.
+
+## Angle-Parameter custom-tool given
+
+The sole class-11/subtype-81 given belongs to `工具#1` in
+`凸四边形的滚动（含七个）（yougui).gsp`. A same-size temporary copy changed only
+its complete `04b4` order from `[9,8,7,6,5,4,3,2,1]` to `[1,9,8,7,6,5,4,3,2]`.
+Native then displayed `1. 匹配角度参数 t[1]` (match Angle Parameter `t[1]`). On
+the drawing's third page, Native outlined the visible `t[1] = 1.00°` Parameter
+caption as an eligible match.
+
+Subtype 81 is therefore a degree-valued Parameter category rather than generic
+Numeric or every degree-valued measurement. Its inert 94-byte placeholder uses
+the same strict family as subtype-79 scalar-Parameter givens. Prototype/runtime
+binding and the desktop picker require an actual live `Parameter` whose unit is
+Degrees.
+
+The given root and its direct code-29 numeric-rotation descendant restore two
+slots. Prototype coverage rises **5,057→5,059/5,356** and unsupported falls
+**299→297**. Complete documents and isolated views remain 1,570 and 47/56: the
+83-object tool retains unrelated unsupported code-97 and code-15 constructions.
+All drawings remain complete, all originals remain byte-exact, and no standalone
+test case was added. See [analysis](tool_angle_parameter_given_analysis.md).
+Full scan: `/tmp/tool_angle_parameter_given_coverage.log`.

@@ -373,7 +373,8 @@ impl Editor {
                             | EmbeddedToolInputKind::Numeric
                             | EmbeddedToolInputKind::Distance
                             | EmbeddedToolInputKind::Function
-                            | EmbeddedToolInputKind::ScalarParameter),
+                            | EmbeddedToolInputKind::ScalarParameter
+                            | EmbeddedToolInputKind::AngleParameter),
                         ) => {
                             matches!(object.kind, Kind::ToolInput(actual) if actual == kind)
                         }
@@ -454,9 +455,11 @@ impl Editor {
                     EmbeddedToolInputKind::Numeric
                         | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::ScalarParameter
+                        | EmbeddedToolInputKind::AngleParameter
                 )
             ) {
                 let scalar_parameter = input.kind() == Some(EmbeddedToolInputKind::ScalarParameter);
+                let angle_parameter = input.kind() == Some(EmbeddedToolInputKind::AngleParameter);
                 let distance = input.kind() == Some(EmbeddedToolInputKind::Distance);
                 let overlays = self.overlay_rows();
                 self.doc
@@ -470,6 +473,9 @@ impl Editor {
                             && (!scalar_parameter
                                 || matches!(&object.kind, Kind::Parameter(group)
                                     if group.unit() == sketchpad_engine::table_records::NumericUnit::Scalar))
+                            && (!angle_parameter
+                                || matches!(&object.kind, Kind::Parameter(group)
+                                    if group.unit() == sketchpad_engine::table_records::NumericUnit::Degrees))
                             && self
                                 .doc
                                 .numeric_value(object.id)
