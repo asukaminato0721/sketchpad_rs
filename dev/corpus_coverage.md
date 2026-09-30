@@ -1,11 +1,11 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,570/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,571/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **294** unsupported slots, all in
-embedded-tool prototypes, and 29 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,062
-decoded, 294 undecoded. The current polymorphic Preimage, legacy Curve,
+are byte-exact, with zero failures. There are **291** unsupported slots, all in
+embedded-tool prototypes, and 28 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,065
+decoded, 291 undecoded. The current polymorphic Preimage, legacy Curve,
 angle-Parameter, legacy generic-numeric and distance custom-tool-given,
 function custom-tool-given, and function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
@@ -2581,13 +2581,18 @@ polygon also highlighted as eligible, while scalar Parameters did not.
 
 Subtype 92 is therefore retained as a distinct polymorphic `Preimage` root. It
 is not collapsed to Point, Path, or an iteration binding. The prototype's
-dependent code-16 and code-33 records carry an extra type-anchor reference and
-require a dynamic element type at invocation, so they remain unsupported and
-the runtime returns an explicit error instead of inventing a fixed type.
+dependent code-16/code-33/code-16 records have ordinary three-object reference
+lists `[3,4,10]`, `[11,10,7]`, and `[12,4,2]`; their subtype-92 headers carry
+the polymorphic result type. They decode through a prototype-only Point
+stand-in and specialize to the bound Point, finite Segment, or Polygon element
+type during invocation. The tool still encounters an independent legacy
+numeric-caption writer guard before those transforms are emitted, so a complete
+invocation is not yet claimed.
 
-The typed root restores one slot. Prototype coverage rises
-**5,061→5,062/5,356** and unsupported falls **295→294**. Complete documents and
-isolated views remain 1,570 and 47/56. All drawings remain complete, all 1,599
-originals remain byte-exact, and no standalone test case was added. See
+The three recovered descendants raise prototype coverage
+**5,062→5,065/5,356** and lower unsupported slots **294→291**. Fully decoded
+documents rise **1,570→1,571**, and complete isolated views rise from 47 to 48
+of 103. All drawings remain complete, all 1,599 originals remain byte-exact,
+and no standalone test case was added. See
 [analysis](tool_preimage_given_analysis.md). Full scan:
-`/tmp/subtype92_coverage.txt`.
+`/tmp/subtype92_transform_coverage.txt`.

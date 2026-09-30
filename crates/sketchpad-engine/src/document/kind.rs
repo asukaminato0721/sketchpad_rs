@@ -106,6 +106,12 @@ impl Kind {
     pub fn is_segment(&self) -> bool {
         is_segment_kind(self)
     }
+    /// Geometry classes independently observed as Native custom-tool
+    /// Preimages. Keep this narrower than the full transformable set until
+    /// additional binding controls establish more classes.
+    pub fn is_preimage_geometry(&self) -> bool {
+        is_point_kind(self) || is_segment_kind(self) || self.is_polygon()
+    }
     /// Straight source families supported by native transform schemas.
     pub fn fixed_transform_straight_mode(&self) -> Option<LineMode> {
         match self {

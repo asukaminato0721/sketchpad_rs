@@ -444,10 +444,13 @@ impl Document {
                 Some(EmbeddedToolInputKind::AngleParameter) => {
                     return Err("This tool input requires an available angle Parameter".into());
                 }
+                Some(EmbeddedToolInputKind::Preimage)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Preimage)
+                    ) && actual.kind.is_preimage_geometry() => {}
                 Some(EmbeddedToolInputKind::Preimage) => {
-                    return Err(
-                        "Polymorphic preimage tool construction is not supported yet".into(),
-                    );
+                    return Err("This tool input requires an available preimage".into());
                 }
                 None => return Err("This tool input category is unsupported".into()),
             }
@@ -487,7 +490,31 @@ impl Document {
             let mut materialized: Object = object.clone();
             materialized.id = id;
             materialized.page = candidate.active_page;
+            let polymorphic_preimage_transform = object
+                .header_offset
+                .is_some_and(|at| tool.original.get(at + 6..at + 10) == Some(&[1, 0, 92, 0]));
             materialized.kind = match object.kind.remap_checked(&ids)? {
+                Kind::Transformed(definition) if polymorphic_preimage_transform => {
+                    let source = candidate
+                        .objects
+                        .get(definition.source().saturating_sub(1))
+                        .ok_or("Tool preimage source is unavailable")?;
+                    let element = if super::kind::is_point_kind(&source.kind) {
+                        super::transform_model::ElementType::Point
+                    } else if super::kind::is_segment_kind(&source.kind) {
+                        super::transform_model::ElementType::Segment
+                    } else if source.kind.is_polygon() {
+                        super::transform_model::ElementType::Polygon
+                    } else {
+                        return Err("Tool preimage has an unsupported geometry type".into());
+                    };
+                    Kind::Transformed(super::transform_model::TransformDefinition::new(
+                        definition.source(),
+                        element,
+                        definition.transform().clone(),
+                        definition.wire_flavor(),
+                    )?)
+                }
                 Kind::ParameterCalculation(_, mut group) => {
                     group.set_anchor(candidate.next_tool_numeric_anchor()?)?;
                     let font =

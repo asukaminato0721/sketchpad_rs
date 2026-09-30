@@ -1167,6 +1167,27 @@ impl Document {
                     _ => None,
                 }
             })();
+            let polymorphic_preimage_transform = !tool_inputs.is_empty()
+                && matches!(code, 16 | 33)
+                && h.len() == 28
+                && h[6..10] == [1, 0, 92, 0]
+                && constraint_payload.is_none()
+                && refs.len() == 3
+                && refs
+                    .first()
+                    .and_then(|id| objects.get(id.saturating_sub(1)))
+                    .is_some_and(|object| {
+                        matches!(
+                            object.kind,
+                            Kind::ToolInput(EmbeddedToolInputKind::Preimage)
+                        ) || object
+                            .header_offset
+                            .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[1, 0, 92, 0]))
+                    });
+            let mut transform_header = h.to_vec();
+            if polymorphic_preimage_transform {
+                transform_header[6..10].copy_from_slice(&[1, 0, 4, 0]);
+            }
             let kind = if let Some(input) = tool_input {
                 if !refs.is_empty()
                     || constraint_payload.is_some()
@@ -1459,7 +1480,7 @@ impl Document {
                 &objects,
                 page,
                 objects.len() + 1,
-                h,
+                &transform_header,
                 &refs,
                 constraint_payload
                     .as_ref()
@@ -1500,6 +1521,7 @@ impl Document {
                                     (0x07d7, 0)
                                 ]
                         ),
+                    polymorphic_preimage: polymorphic_preimage_transform,
                 },
             ) {
                 if definition.element() == super::transform_model::ElementType::Image {

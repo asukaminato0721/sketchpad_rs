@@ -451,7 +451,9 @@ impl Editor {
                     .map(|(_, (id, _))| *id)
                     .ok_or("Choose an available function caption")?
             } else if input.kind() == Some(EmbeddedToolInputKind::Preimage) {
-                return Err("Polymorphic preimage tool construction is not supported yet".into());
+                self.hit(viewport, at)
+                    .filter(|id| self.doc.objects[*id - 1].kind.is_preimage_geometry())
+                    .ok_or("Choose an available preimage")?
             } else if matches!(
                 input.kind(),
                 Some(

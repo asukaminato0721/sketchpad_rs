@@ -16,6 +16,9 @@ pub(super) struct DecodeContext {
     pub custom_polar_translation: bool,
     pub source_is_generic_polygon: bool,
     pub legacy_angle_rotation_layout: bool,
+    /// An isolated subtype-92 tool transform uses Point only as an unbound
+    /// stand-in; invocation specializes it to the bound preimage element.
+    pub polymorphic_preimage: bool,
 }
 
 fn marked_angle_distance(payload: &[u8]) -> Option<(f64, f64)> {
@@ -89,7 +92,14 @@ pub(super) fn decode_native_transform(
     let source = *references.first()?;
     let source_kind = &get(source)?.kind;
     let source_matches = match element {
-        ElementType::Point => is_point_kind(source_kind),
+        ElementType::Point => {
+            is_point_kind(source_kind)
+                || context.polymorphic_preimage
+                    && matches!(
+                        source_kind,
+                        super::Kind::ToolInput(super::EmbeddedToolInputKind::Preimage)
+                    )
+        }
         ElementType::Arc => is_arc_kind(source_kind),
         ElementType::Segment => is_segment_kind(source_kind),
         ElementType::Circle => source_kind.is_circle(),

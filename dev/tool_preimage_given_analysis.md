@@ -14,21 +14,28 @@ the source polygon outlined it as eligible, while the visible scalar Parameters
 did not highlight. This is a polymorphic geometric source category, not an
 ordinary Point, Path, iteration binding, or numeric value.
 
-The prototype also establishes why recognizing the root does not establish
-invocation. Its code-16 and code-33 descendants retain class 1/subtype 92 and
-an extra leading type-anchor reference. Examples are `[3,3,4,10]` for vector
-translation and `[3,11,10,7]` for numeric dilation. Their concrete result type
-is chosen from the bound preimage at invocation. The current fixed-element
-transform model cannot represent that unbound state without inventing Point or
-Polygon semantics.
+The three dependent transforms are code 16, code 33, and code 16. Their `07d2`
+reference lists are `[3,4,10]`, `[11,10,7]`, and `[12,4,2]`; the leading count
+word is not a reference. Each descendant retains class 1/subtype 92 in its
+header, so that header, rather than an extra reference, carries the polymorphic
+result type. The concrete element type is chosen from the bound preimage only
+at invocation.
 
-The port therefore exposes subtype 92 as `EmbeddedToolInputKind::Preimage` only
-inside an isolated prototype and preserves every original byte. The remaining
-polymorphic transform descendants stay unsupported, and both engine and editor
-invocation return an explicit unsupported-construction error. This restores one
-prototype slot without broadening ordinary drawing decoding or falsely claiming
-the tool is executable.
+The isolated decoder admits exactly that three-reference code-16/code-33
+family. It reuses the fixed Point transform representation as an internal,
+unbound stand-in while retaining the original header bytes. Invocation accepts
+only the independently observed Point, finite Segment, and Polygon source
+families, then replaces the stand-in with the bound source's concrete element
+type before insertion. Ordinary drawing decoding is unchanged.
+
+All 13 objects in the affected prototype now decode. A direct invocation probe
+for Point, Segment, and Polygon inputs currently stops transactionally before
+these transforms are emitted because the same tool first reaches the separate
+legacy numeric-caption writer error, `Numeric caption expression layout needs a
+native control`. The transform specialization is therefore implemented, but
+end-to-end execution of this particular tool is not claimed.
 
 The full corpus remains 1,599/1,599 byte-exact and drawing-complete. Embedded
-tool coverage rises from 5,061 to 5,062 of 5,356 slots; unsupported prototype
-slots fall from 295 to 294. Complete isolated views remain 47/56.
+tool coverage rises from 5,062 to 5,065 of 5,356 slots; unsupported prototype
+slots fall from 294 to 291. Fully decoded documents rise from 1,570 to 1,571,
+and complete isolated views rise from 47 to 48 of 103.

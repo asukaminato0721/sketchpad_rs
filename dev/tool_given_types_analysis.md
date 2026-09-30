@@ -58,7 +58,7 @@ No complete prototype containing a subtype-5, 6, 8, 15, or 39 given was found in
 
 ## Contextual representation boundary
 
-The `EmbeddedToolInput` descriptor retains raw local ID/class/subtype. Current independently established categories are Point `(1,4)`, polymorphic Path/Curve `(1,5)` and `(1,8)`, finite Segment `(1,14)`, Polygon `(1,15)`, CoordinateSystem `(1,39)`, polymorphic Preimage `(1,92)`, generic Numeric `(11,33)` and `(11,51)`, Distance `(11,48)`, Function `(11,57)`, scalar Parameter `(11,79)`, and angle Parameter `(11,81)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Other proved categories become typed `Kind::ToolInput` roots without invented cached values or geometry; unknown categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization; subtype-92 descendants remain unimplemented pending a dynamic element-type model.
+The `EmbeddedToolInput` descriptor retains raw local ID/class/subtype. Current independently established categories are Point `(1,4)`, polymorphic Path/Curve `(1,5)` and `(1,8)`, finite Segment `(1,14)`, Polygon `(1,15)`, CoordinateSystem `(1,39)`, polymorphic Preimage `(1,92)`, generic Numeric `(11,33)` and `(11,51)`, Distance `(11,48)`, Function `(11,57)`, scalar Parameter `(11,79)`, and angle Parameter `(11,81)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Other proved categories become typed `Kind::ToolInput` roots without invented cached values or geometry; unknown categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization. The three subtype-92 transforms use a Point stand-in only in the isolated prototype and specialize it to the bound Point, finite Segment, or Polygon element type during invocation.
 
 The reproducible scratch audit is `/tmp/tool_given_audit.rs` linked to the settled library; `/tmp/tool_given_audit.tsv` records all 103 tools and 515 headers, `/tmp/tool_given_audit_full.tsv` includes presentation/descriptor bytes, and `/tmp/tool_given_consumers.tsv` records raw dependent reference payloads. These scratch files are not retained fixtures or Native writer proofs.
 
@@ -145,7 +145,9 @@ With subtype92 moved first only in a same-size temporary input-order control,
 Native prompts `匹配原象 C`. Clicking a finite segment or point advances to the
 next input, the source polygon highlights as eligible, and numeric Parameters do
 not. The port consequently retains a distinct polymorphic `Preimage` category.
-Its generic code-16/code-33 descendants stay unsupported until their bound
-element type can be materialized without pretending the input is one fixed
-geometry family. See
+Its generic code-16/code-33 descendants now decode with their original subtype
+92 header retained, and invocation specializes their internal transform element
+to the bound Point, finite Segment, or Polygon. The affected tool still reaches
+an independent legacy numeric-caption writer guard before emitting these
+transforms, so end-to-end invocation is not yet claimed. See
 [the focused analysis](tool_preimage_given_analysis.md).
