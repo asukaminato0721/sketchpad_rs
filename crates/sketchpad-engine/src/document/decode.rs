@@ -1180,6 +1180,10 @@ impl Document {
                 }
                 if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
                     super::tool_inputs::numeric_given_layout(&b[group_start..rs[i].data.end])?;
+                } else if input.kind() == Some(EmbeddedToolInputKind::ScalarParameter) {
+                    super::tool_inputs::scalar_parameter_given_layout(
+                        &b[group_start..rs[i].data.end],
+                    )?;
                 } else if input.kind().is_some() {
                     let body: Vec<_> = rs
                         .iter()
@@ -1203,7 +1207,8 @@ impl Document {
                     Some(
                         category @ (EmbeddedToolInputKind::Path
                         | EmbeddedToolInputKind::Segment
-                        | EmbeddedToolInputKind::Numeric),
+                        | EmbeddedToolInputKind::Numeric
+                        | EmbeddedToolInputKind::ScalarParameter),
                     ) => {
                         point_offset = None;
                         Kind::ToolInput(category)

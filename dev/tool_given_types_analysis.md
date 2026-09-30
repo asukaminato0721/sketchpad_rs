@@ -44,7 +44,7 @@ Representative non-4 labels are subtype 5 `j`, subtype 6 `面P[1]`, subtype 8 `c
 
 The separate Native controls for Segment + Point on Segment and Circle + Point on Circle both produce the **same code-0/class-1/subtype-5 given header**. The segment control is `/tmp/native_segment_given_tool_default_native.gsp` (2664 bytes). Both tools declare `[1]` and have a code-15/subtype-10 output referring to that input, with no `07d3` position record. Subtype 5 therefore cannot be classified as a segment or circle from the selected source used to create the tool. It is modeled as an abstract Path placeholder; concrete path matching and invocation placement need the separate Native binding controls. The six corpus subtype-5 entries must not be counted as six proved segment inputs. Other tags have no independently established ray, line, polygon, or coordinate-system meaning. A search of the 518 sibling `.htm`/`.html`/`.txt` files found no exported given declarations or custom-tool Script View descriptions. Paired HTML exports the main drawing; it does not establish the prototype input categories.
 
-Class-11/subtype-51 matches the ordinary calculation subtype; subtype 57 matches ordinary code-71 function headers. Subtypes 79–81 resemble scalar/length/angle parameter subtypes, but these placeholders lack the parameter value and animation layout. Subtype 33, which accounts for 248 slots, is especially important: `12T.gsp` uses such a given as the source of many code-48 calculations. Its apparent `<0>` words and cache fields must not be interpreted as an authored numeric literal.
+Class-11/subtype-51 matches the ordinary calculation subtype; subtype 57 matches ordinary code-71 function headers. Subtypes 79–81 resemble scalar/length/angle parameter subtypes, but these placeholders lack a usable parameter animation layout. A later Native invocation independently establishes subtype 79 as a scalar-Parameter input; subtypes 80 and 81 remain unclassified. Subtype 33, which accounts for 248 slots, is especially important: `12T.gsp` uses such a given as the source of many code-48 calculations. Its apparent `<0>` words and cache fields must not be interpreted as an authored numeric literal.
 
 ## Smallest complete-view candidates
 
@@ -58,7 +58,7 @@ No complete prototype containing a subtype-5, 6, 8, 15, or 39 given was found. T
 
 ## Contextual representation boundary
 
-The new `EmbeddedToolInput` descriptor retains raw local ID/class/subtype and recognizes only Point `(1,4)` and Path `(1,5)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Path givens become `Kind::ToolInput(Path)`, with no endpoints, dependencies, geometry, or segment/straight classifiers. Other categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization; numeric, function, and other subtype meanings remain unimplemented pending independent proofs.
+The `EmbeddedToolInput` descriptor retains raw local ID/class/subtype. Current independently established categories are Point `(1,4)`, Path `(1,5)`, finite Segment `(1,14)`, generic Numeric `(11,33)`, and scalar Parameter `(11,79)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Other proved categories become typed `Kind::ToolInput` roots without invented cached values or geometry; unknown categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization; function and other subtype meanings remain unimplemented pending independent proofs.
 
 The reproducible scratch audit is `/tmp/tool_given_audit.rs` linked to the settled library; `/tmp/tool_given_audit.tsv` records all 103 tools and 515 headers, `/tmp/tool_given_audit_full.tsv` includes presentation/descriptor bytes, and `/tmp/tool_given_consumers.tsv` records raw dependent reference payloads. These scratch files are not retained fixtures or Native writer proofs.
 
@@ -72,3 +72,14 @@ calculator unit comparison are retained and documented in
 [tool_numeric_inputs_analysis.md](tool_numeric_inputs_analysis.md). Other
 class11 tags remain separate prerequisites. The contextual Numeric placeholder
 has no units until invocation binds its actual source.
+
+## Scalar-Parameter follow-up
+
+A Native invocation of the second `系列迭代案例.gsp` tool prompts specifically
+to match Parameter `n`; selecting its visible scalar Parameter completes that
+input and allows the construction to be created. Class11/subtype79 is therefore
+modeled separately from generic Numeric. Its exact placeholder body shares the
+inert numeric-given layout, including unusable cache-like step/domain bytes, but
+destination matching accepts only a live scalar Parameter. This recovers 87
+prototype slots while both source tools remain partial. See
+[the focused analysis](tool_scalar_parameter_given_analysis.md).

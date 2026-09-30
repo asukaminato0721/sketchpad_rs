@@ -368,7 +368,8 @@ impl Editor {
                         Some(
                             kind @ (EmbeddedToolInputKind::Path
                             | EmbeddedToolInputKind::Segment
-                            | EmbeddedToolInputKind::Numeric),
+                            | EmbeddedToolInputKind::Numeric
+                            | EmbeddedToolInputKind::ScalarParameter),
                         ) => {
                             matches!(object.kind, Kind::ToolInput(actual) if actual == kind)
                         }
@@ -422,7 +423,11 @@ impl Editor {
                     return Ok(None);
                 };
                 id
-            } else if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
+            } else if matches!(
+                input.kind(),
+                Some(EmbeddedToolInputKind::Numeric | EmbeddedToolInputKind::ScalarParameter)
+            ) {
+                let scalar_parameter = input.kind() == Some(EmbeddedToolInputKind::ScalarParameter);
                 let overlays = self.overlay_rows();
                 self.doc
                     .objects
@@ -431,6 +436,9 @@ impl Editor {
                     .find(|object| {
                         self.doc.is_displayed(object.id)
                             && object.kind.numeric_unit().is_some()
+                            && (!scalar_parameter
+                                || matches!(&object.kind, Kind::Parameter(group)
+                                    if group.unit() == sketchpad_engine::table_records::NumericUnit::Scalar))
                             && self
                                 .doc
                                 .numeric_value(object.id)

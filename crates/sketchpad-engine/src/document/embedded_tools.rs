@@ -368,6 +368,15 @@ impl Document {
                 Some(EmbeddedToolInputKind::Numeric) => {
                     return Err("This tool input requires an available numeric value".into());
                 }
+                Some(EmbeddedToolInputKind::ScalarParameter)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::ScalarParameter)
+                    ) && matches!(&actual.kind, Kind::Parameter(group) if group.unit() == crate::table_records::NumericUnit::Scalar) =>
+                    {}
+                Some(EmbeddedToolInputKind::ScalarParameter) => {
+                    return Err("This tool input requires an available scalar Parameter".into());
+                }
                 None => return Err("This tool input category is unsupported".into()),
             }
             ids[local as usize] = destination;

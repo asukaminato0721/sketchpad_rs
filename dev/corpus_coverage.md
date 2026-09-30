@@ -2,10 +2,11 @@
 
 Latest snapshot, 2026-09-30: **1,559/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **577** unsupported slots, all in
+are byte-exact, with zero failures. There are **490** unsupported slots, all in
 embedded-tool prototypes, and 40 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
-decoded, 577 undecoded. The current circular-segment and endpoint arc-length
+objects. Embedded tools contain 5,356 slots across 103 definitions: 4,866
+decoded, 490 undecoded. The current scalar-Parameter custom-tool-given recovery
+plus circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
 legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
@@ -2355,3 +2356,28 @@ documents fall **42→40**, and partial views fall **787→785**. The remaining
 test case was added. See
 [analysis](legacy_animation_settings_analysis.md). Full scan:
 `/tmp/final62_coverage_all.log`.
+
+## Scalar-Parameter custom-tool given
+
+The two class-11/subtype-79 givens in `系列迭代案例.gsp` are now represented as
+an isolated `ScalarParameter` tool input rather than an unsupported code-zero
+object. A Native Xvfb invocation of `平方差方格系列图` prompted to match parameter
+`n`; selecting the visible `n=5` Parameter and a canvas point created the
+construction and increased the saved file by 3,546 bytes. The subtype therefore
+does not inherit the broader generic-numeric matching rule.
+
+Both placeholders use the established inert 94-byte numeric-given body. Their
+stored step/domain bytes decode as nonsensical finite cache values, so validation
+checks the exact placeholder family rather than treating the group as a live
+Parameter. Runtime and desktop binding accept only an actual scalar
+`Kind::Parameter`; calculations and other scalar-valued objects do not match.
+The two source prototypes remain partial because of unrelated unsupported
+constructions, so this checkpoint does not claim successful port-side execution
+of either complete tool. Subtypes 80 and 81 remain unclassified.
+
+The dependency-aware scan restores **87** prototype slots: embedded-tool
+coverage rises **4,779→4,866/5,356**, and unsupported slots fall **577→490**.
+The 1,599 drawing documents remain drawing-complete, all 1,599 original files
+round-trip byte-exactly, partial views remain 785, and no standalone test case
+was added. See [analysis](tool_scalar_parameter_given_analysis.md). Full scan:
+`/tmp/subtype79_coverage_all.log`.

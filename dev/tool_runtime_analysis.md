@@ -8,8 +8,11 @@ construction code. Contextual decoding recognizes point `(1,4)` and path
 geometry. Finite segment `(1,14)` and generic numeric `(11,33)` givens are also
 recognized; their independent controls are documented in
 [segment evidence](tool_segment_given_analysis.md) and
-[numeric evidence](tool_numeric_inputs_analysis.md). Other categories stay
-unsupported. Unplaced code15 outputs decode as
+[numeric evidence](tool_numeric_inputs_analysis.md). Scalar Parameter `(11,79)`
+is recognized separately and matches only an actual scalar Parameter; its two
+corpus prototypes remain partial, so runtime materialization is not claimed.
+See [scalar-Parameter evidence](tool_scalar_parameter_given_analysis.md). Other
+categories stay unsupported. Unplaced code15 outputs decode as
 `ToolPointOnPath` only in an isolated tool canvas; saving an unbound prototype
 as an ordinary drawing is rejected even when the prototype is unchanged.
 

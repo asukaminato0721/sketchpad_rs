@@ -67,6 +67,7 @@ impl Kind {
             } => Some(NumericUnit::Degrees),
             Kind::ParameterCalculation(_, group) => Some(group.unit()),
             Kind::NumericAlias { unit, .. } => Some(*unit),
+            Kind::ToolInput(EmbeddedToolInputKind::ScalarParameter) => Some(NumericUnit::Scalar),
             Kind::AngleMeasurement(_, _, _)
             | Kind::AngleMarker(_, _, _, _)
             | Kind::SignedAngleValue(_, _, _)

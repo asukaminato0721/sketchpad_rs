@@ -9,6 +9,9 @@ pub enum EmbeddedToolInputKind {
     Segment,
     /// A generic numeric magnitude; its units are determined when bound.
     Numeric,
+    /// A scalar Parameter specifically, retaining Native's stricter input
+    /// category instead of accepting every scalar-valued construction.
+    ScalarParameter,
 }
 
 /// A given's category is independent of its construction code. Native tools
@@ -27,6 +30,7 @@ impl EmbeddedToolInput {
             (1, 5) => Some(EmbeddedToolInputKind::Path),
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
+            (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
             _ => None,
         }
     }
@@ -76,4 +80,11 @@ pub(super) fn numeric_given_layout(bytes: &[u8]) -> Result<(), String> {
     }
     crate::text_records::LabelAux::parse(&bytes[rs[2].data.clone()])?;
     Ok(())
+}
+
+/// Validate the scalar-Parameter placeholder retained by older registered
+/// tools. Native stores the same inert value/cache body as a generic numeric
+/// given; subtype 79 supplies the stricter binding category.
+pub(super) fn scalar_parameter_given_layout(bytes: &[u8]) -> Result<(), String> {
+    numeric_given_layout(bytes)
 }
