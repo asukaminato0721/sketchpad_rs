@@ -243,3 +243,14 @@ and a coordinate system to the newly complete logarithmic-graph tool. It
 created a referenced function and FunctionPlot, returned finite identity samples
 inside the chosen bounds, produced 18 plot segments, and survived exact
 encode/reparse. See [the focused analysis](tool_function_given_analysis.md).
+
+## Legacy generic values and distance givens
+
+Native reordered-input controls distinguish two older numeric encodings.
+Subtype51 and subtype33 both request a generic `匹配度量值`; subtype48 requests
+`匹配距离度量值`. Subtype51 therefore reuses the unit-specializing Numeric
+runtime category with a separate source-free Calculation validator. Subtype48
+exposes Length during prototype decoding and accepts only finite live distance
+values at runtime. The desktop picker applies the same unit gate to visible
+numeric captions. See
+[the focused analysis](tool_legacy_numeric_givens_analysis.md).

@@ -371,6 +371,7 @@ impl Editor {
                             | EmbeddedToolInputKind::Polygon
                             | EmbeddedToolInputKind::CoordinateSystem
                             | EmbeddedToolInputKind::Numeric
+                            | EmbeddedToolInputKind::Distance
                             | EmbeddedToolInputKind::Function
                             | EmbeddedToolInputKind::ScalarParameter),
                         ) => {
@@ -449,9 +450,14 @@ impl Editor {
                     .ok_or("Choose an available function caption")?
             } else if matches!(
                 input.kind(),
-                Some(EmbeddedToolInputKind::Numeric | EmbeddedToolInputKind::ScalarParameter)
+                Some(
+                    EmbeddedToolInputKind::Numeric
+                        | EmbeddedToolInputKind::Distance
+                        | EmbeddedToolInputKind::ScalarParameter
+                )
             ) {
                 let scalar_parameter = input.kind() == Some(EmbeddedToolInputKind::ScalarParameter);
+                let distance = input.kind() == Some(EmbeddedToolInputKind::Distance);
                 let overlays = self.overlay_rows();
                 self.doc
                     .objects
@@ -460,6 +466,7 @@ impl Editor {
                     .find(|object| {
                         self.doc.is_displayed(object.id)
                             && object.kind.numeric_unit().is_some()
+                            && (!distance || object.kind.is_distance_value())
                             && (!scalar_parameter
                                 || matches!(&object.kind, Kind::Parameter(group)
                                     if group.unit() == sketchpad_engine::table_records::NumericUnit::Scalar))

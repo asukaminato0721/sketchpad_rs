@@ -1179,7 +1179,14 @@ impl Document {
                     return Err("Tool input placeholder must not have dependencies".into());
                 }
                 if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
-                    super::tool_inputs::numeric_given_layout(&b[group_start..rs[i].data.end])?;
+                    let bytes = &b[group_start..rs[i].data.end];
+                    match input.native_subtype {
+                        33 => super::tool_inputs::numeric_given_layout(bytes)?,
+                        51 => super::tool_inputs::calculation_given_layout(bytes)?,
+                        _ => return Err("Unsupported numeric tool given subtype".into()),
+                    }
+                } else if input.kind() == Some(EmbeddedToolInputKind::Distance) {
+                    super::tool_inputs::distance_given_layout(&b[group_start..rs[i].data.end])?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::Function) {
                     super::tool_inputs::function_given_layout(&b[group_start..rs[i].data.end])?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::ScalarParameter) {
@@ -1212,6 +1219,7 @@ impl Document {
                         | EmbeddedToolInputKind::Polygon
                         | EmbeddedToolInputKind::CoordinateSystem
                         | EmbeddedToolInputKind::Numeric
+                        | EmbeddedToolInputKind::Distance
                         | EmbeddedToolInputKind::Function
                         | EmbeddedToolInputKind::ScalarParameter),
                     ) => {

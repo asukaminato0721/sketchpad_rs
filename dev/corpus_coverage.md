@@ -1,11 +1,12 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,569/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,570/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **330** unsupported slots, all in
-embedded-tool prototypes, and 30 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,026
-decoded, 330 undecoded. The current function custom-tool-given and
+are byte-exact, with zero failures. There are **299** unsupported slots, all in
+embedded-tool prototypes, and 29 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,057
+decoded, 299 undecoded. The current legacy generic-numeric and distance
+custom-tool-given, function custom-tool-given, and
 function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
@@ -2497,3 +2498,30 @@ views rise **40→47**, and all-kind-complete documents rise **1,562→1,569**.
 All 1,599 drawings remain complete, every original remains byte-exact, and no
 standalone test case was added. See [analysis](tool_function_given_analysis.md).
 Full scan: `/tmp/tool_function_given_coverage.log`.
+
+## Legacy generic-numeric and distance custom-tool givens
+
+Native gives class-11/subtype-51 and the already-supported subtype-33 the same
+`匹配度量值` (match Measurement Value) prompt; only their requested labels differ.
+Subtype 51 therefore shares the generic Numeric destination category while
+retaining its older source-free Calculation group validator. Its stored literal
+does not supply a prototype unit.
+
+Class-11/subtype-48 is distinct: Native prompts `匹配距离度量值 t[1]` (match
+Distance Measurement Value). The abstract placeholder has a known Length unit,
+and runtime plus desktop binding require a finite live distance value. Its
+source-free literal zero is inert and scalar, so validation temporarily
+normalizes only the header subtype while parsing the body; the original bytes
+and contextual Length category remain unchanged.
+
+The six subtype-51 inputs restore themselves and one code-71 descendant. The
+single subtype-48 input restores 24 slots: its root, two code-48 calculations,
+four code-16 objects, two code-95 plots, five code-29 and five code-26 objects,
+one code-24, two code-27, one code-35, and one code-8 object. Combined prototype
+coverage rises **5,026→5,057/5,356**, unsupported falls **330→299**, and
+all-kind-complete documents rise **1,569→1,570**. Complete isolated views remain
+47 because the recovered distance tool retains an independent structural-safety
+restriction. All drawings remain complete, all originals remain byte-exact,
+and no standalone test case was added. See
+[analysis](tool_legacy_numeric_givens_analysis.md). Full scan:
+`/tmp/tool_legacy_numeric_distance_given_coverage.log`.

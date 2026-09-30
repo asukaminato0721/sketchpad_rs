@@ -13,6 +13,8 @@ pub enum EmbeddedToolInputKind {
     CoordinateSystem,
     /// A generic numeric magnitude; its units are determined when bound.
     Numeric,
+    /// A distance-valued magnitude with Native's explicit length restriction.
+    Distance,
     /// A function definition or another supported function-valued object.
     Function,
     /// A scalar Parameter specifically, retaining Native's stricter input
@@ -38,6 +40,8 @@ impl EmbeddedToolInput {
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
+            (11, 48) => Some(EmbeddedToolInputKind::Distance),
+            (11, 51) => Some(EmbeddedToolInputKind::Numeric),
             (11, 57) => Some(EmbeddedToolInputKind::Function),
             (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
             _ => None,
@@ -89,6 +93,28 @@ pub(super) fn numeric_given_layout(bytes: &[u8]) -> Result<(), String> {
     }
     crate::text_records::LabelAux::parse(&bytes[rs[2].data.clone()])?;
     Ok(())
+}
+
+/// Validate the older source-free Calculation representation of a generic
+/// numeric given. Native presents subtype 51 with the same Measurement Value
+/// matching category as subtype 33, while retaining this distinct body.
+pub(super) fn calculation_given_layout(bytes: &[u8]) -> Result<(), String> {
+    crate::table_records::CalculationGroup::parse(bytes)
+        .map(|_| ())
+        .map_err(|error| format!("Unsupported calculation tool given: {error}"))
+}
+
+/// Validate the source-free literal body retained by a distance given. Its
+/// literal zero is intentionally unitless; subtype 48 carries the binding unit.
+pub(super) fn distance_given_layout(bytes: &[u8]) -> Result<(), String> {
+    if bytes.get(16..18) != Some(&48_u16.to_le_bytes()) {
+        return Err("Unsupported distance tool given subtype".into());
+    }
+    let mut normalized = bytes.to_vec();
+    normalized[16..18].copy_from_slice(&51_u16.to_le_bytes());
+    crate::table_records::CalculationGroup::parse(&normalized)
+        .map(|_| ())
+        .map_err(|error| format!("Unsupported distance tool given: {error}"))
 }
 
 /// Validate the scalar-Parameter placeholder retained by older registered

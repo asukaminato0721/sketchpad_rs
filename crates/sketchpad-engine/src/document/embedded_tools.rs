@@ -409,6 +409,15 @@ impl Document {
                 Some(EmbeddedToolInputKind::Numeric) => {
                     return Err("This tool input requires an available numeric value".into());
                 }
+                Some(EmbeddedToolInputKind::Distance)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Distance)
+                    ) && actual.kind.is_distance_value()
+                        && self.numeric_value(destination).is_some_and(f64::is_finite) => {}
+                Some(EmbeddedToolInputKind::Distance) => {
+                    return Err("This tool input requires an available distance value".into());
+                }
                 Some(EmbeddedToolInputKind::Function)
                     if matches!(
                         expected.kind,
