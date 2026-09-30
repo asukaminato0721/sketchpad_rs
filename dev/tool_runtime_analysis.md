@@ -264,3 +264,12 @@ prototype root, validates the exact inert Parameter-placeholder family, and
 accepts only a live degree-valued `Parameter` in both engine and desktop
 binding. The source tool remains structurally partial for unrelated reasons.
 See [the focused analysis](tool_angle_parameter_given_analysis.md).
+
+## Legacy Curve given
+
+A same-size Native input-order control moves the sole subtype8 given ahead of
+its point input. Native requests `匹配曲线 c[1]` and marks an ordinary circle,
+arc, full line, and finite segment as eligible. The port therefore reuses its
+polymorphic `Path` matching and point-placement runtime. The prototype's later
+generic curve intersection remains separately unsupported. See
+[the focused analysis](tool_curve_given_analysis.md).

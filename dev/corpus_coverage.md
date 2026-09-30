@@ -2,10 +2,10 @@
 
 Latest snapshot, 2026-09-30: **1,570/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **297** unsupported slots, all in
+are byte-exact, with zero failures. There are **295** unsupported slots, all in
 embedded-tool prototypes, and 29 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,059
-decoded, 297 undecoded. The current angle-Parameter, legacy generic-numeric and distance
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,061
+decoded, 295 undecoded. The current legacy Curve, angle-Parameter, legacy generic-numeric and distance
 custom-tool-given, function custom-tool-given, and
 function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
@@ -2548,3 +2548,24 @@ slots. Prototype coverage rises **5,057→5,059/5,356** and unsupported falls
 All drawings remain complete, all originals remain byte-exact, and no standalone
 test case was added. See [analysis](tool_angle_parameter_given_analysis.md).
 Full scan: `/tmp/tool_angle_parameter_given_coverage.log`.
+
+## Legacy Curve custom-tool given
+
+The sole class-1/subtype-8 given belongs to `直尺画线工具` in
+`圆弧展平（修改）.gsp`. A same-size temporary copy changed only its two-input
+`04b4` order from `[2,1]` to `[1,2]`. Native then displayed
+`1. 匹配曲线 c[1]` (match Curve `c[1]`). Independent hover controls marked an
+ordinary circle, arc, full line, and finite segment as eligible.
+
+Subtype 8 therefore shares the port's polymorphic `Path` destination family
+while retaining its distinct native tag and placeholder bytes. The typed root
+makes one source-free code-15 point-on-path child reachable. Its later generic
+curve intersection remains unsupported rather than being forced into the
+port's fixed line-circle intersection variants.
+
+Prototype coverage rises **5,059→5,061/5,356** and unsupported falls
+**297→295**. Complete documents and isolated views remain 1,570 and 47/56
+because the prototype retains that intersection gap. All drawings remain
+complete, all originals remain byte-exact, and no standalone test case was
+added. See [analysis](tool_curve_given_analysis.md). Full scan:
+`/tmp/tool_curve_given_coverage.log`.

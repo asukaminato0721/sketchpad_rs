@@ -39,6 +39,7 @@ impl EmbeddedToolInput {
         match (self.native_class, self.native_subtype) {
             (1, 4) => Some(EmbeddedToolInputKind::Point),
             (1, 5) => Some(EmbeddedToolInputKind::Path),
+            (1, 8) => Some(EmbeddedToolInputKind::Path),
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
