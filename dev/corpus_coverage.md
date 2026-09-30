@@ -1,12 +1,13 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,593/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,599/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **27** unsupported slots, all in
-embedded-tool prototypes, and 6 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,329
-decoded, 27 undecoded. Isolated decoding produces 78 complete and 25 partial
-tool views. The current tool-prototype numeric-color, mapped-picture and
+are byte-exact, with zero failures. All **285,703** object slots are decoded;
+there are no unsupported object kinds. Embedded tools contain 5,356 decoded
+slots across 103 definitions. Isolated decoding produces 86 complete and 17
+structurally partial tool views. The current tool-prototype generic numeric
+dilation, sampled path-point, literal generic-path, polymorphic color-path and
+path-intersection, angular-parameter locus, numeric-color, mapped-picture and
 direct-numeric-depth, numeric mapped-seed, path-value, numeric-coordinate,
 mapped-element and nested-mapping,
 named referenced-caption, polymorphic-polygon tool, external-placeholder mapped-iteration,
@@ -2816,3 +2817,27 @@ layout boundary, which remains pending rather than accepting unverified
 geometry. No standalone test case was added. See
 [analysis](tool_numeric_mapping_analysis.md). Full scan:
 `/tmp/tool_numeric_mapping_path_values_coverage.log`.
+
+## Complete embedded-tool prototype decoding
+
+The final prototype pass specializes five abstract tool-input families without
+weakening ordinary drawing validation: generic Numeric dilation ratios,
+point-on-path sampled mappings, literal points and colorized output on a generic
+Path, an angular Parameter-driven locus, and a polymorphic line/Path
+intersection. Invocation replaces every placeholder with an ordinary typed
+object before save validation.
+
+The pass restores the final 27 slots. Prototype coverage rises
+**5,329→5,356/5,356**, unsupported object slots fall **27→0**, fully decoded
+documents rise **1,593→1,599/1,599**, and complete isolated tool views rise
+**78→86/103**. All 280,347 drawing slots remain decoded, all 285,703 total
+object slots are recognized, and all originals remain byte-exact.
+
+Two real invocations reopen and re-encode exactly. Native Sketchpad renders
+the 3D-point and circle-ruler outputs and preserves their respective SHA-256
+values `7789d4f890b65ffba6bef452ff93fc84d153a845fca561500fc70c73e3e65606`
+and `8e3a0b8f7459c64a2227ac96f04f8ffc4f611e19bb060d6bff07757adba362c4`
+on Ctrl+S. Broader compass and surface-color invocation remains stopped at
+separate unverified caption-font metrics. No standalone test was added or
+removed. See [analysis](tool_prototype_completion_analysis.md). Full scan:
+`/tmp/tool_prototype_complete_coverage.log`.

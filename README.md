@@ -281,6 +281,10 @@ Measure > Equation also accepts parallel/perpendicular infinite lines and coordi
 files for byte-preserving saves and reports object decoding and partial-view
 counts, with unsupported object counts grouped by native code. Passing byte
 preservation alone does not establish editing support or command parity.
+The current 1,599-file corpus scan decodes all 285,703 object slots, including
+all 5,356 embedded-tool prototype slots, and round-trips every original
+byte-exactly. This is an import-coverage result; structurally partial documents
+and incomplete commands remain tracked in [COMMAND_PARITY.md](COMMAND_PARITY.md).
 
 Loci retain defined samples when their targets become undefined at some
 positions. Point curves break at missing samples; object families omit those

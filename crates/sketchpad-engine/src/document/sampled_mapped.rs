@@ -1,6 +1,6 @@
 //! Intrinsic sampled application of an ordinary stored dependency graph.
 //! Ordinary stored sampled substitutions; no tool authoring or invocation.
-use super::iteration::supported_mapped_point_iteration;
+use super::iteration::{supported_mapped_point_iteration, supported_tool_mapped_point_iteration};
 use super::kind::{is_arc_kind, is_point_kind};
 use super::{Document, Kind, LineMode, LocusStroke, Object, Point};
 use crate::style_records::VisualStyle;
@@ -86,6 +86,15 @@ impl SampledMappedDefinition {
             .then_some(d)
     }
     pub(super) fn supported(&self, objects: &[Object], page: usize, before: usize) -> bool {
+        self.supported_impl(objects, page, before, false)
+    }
+    fn supported_impl(
+        &self,
+        objects: &[Object],
+        page: usize,
+        before: usize,
+        allow_tool_points: bool,
+    ) -> bool {
         if self.native_references().iter().any(|&i| {
             objects
                 .get(i.saturating_sub(1))
@@ -95,14 +104,11 @@ impl SampledMappedDefinition {
         }
         if !is_point_kind(&objects[self.seed - 1].kind)
             || !is_point_kind(&objects[self.output - 1].kind)
-            || matches!(
-                objects[self.seed - 1].kind,
-                Kind::ToolInput(_) | Kind::ToolPointOnPath(_)
-            )
-            || matches!(
-                objects[self.output - 1].kind,
-                Kind::ToolInput(_) | Kind::ToolPointOnPath(_)
-            )
+            || matches!(objects[self.seed - 1].kind, Kind::ToolInput(_))
+            || !allow_tool_points && matches!(objects[self.seed - 1].kind, Kind::ToolPointOnPath(_))
+            || matches!(objects[self.output - 1].kind, Kind::ToolInput(_))
+            || !allow_tool_points
+                && matches!(objects[self.output - 1].kind, Kind::ToolPointOnPath(_))
         {
             return false;
         }
@@ -130,12 +136,21 @@ impl SampledMappedDefinition {
         let path_ok = closure.is_some_and(|closure| flag == (4 | (closure << 16)))
             && u32::from_le_bytes(self.native_range[32..36].try_into().unwrap()) <= 1;
         path_ok
-            && supported_mapped_point_iteration(
-                objects,
-                &[self.seed],
-                &[vec![self.output]],
-                &self.carried,
-            )
+            && if allow_tool_points {
+                supported_tool_mapped_point_iteration(
+                    objects,
+                    &[self.seed],
+                    &[vec![self.output]],
+                    &self.carried,
+                )
+            } else {
+                supported_mapped_point_iteration(
+                    objects,
+                    &[self.seed],
+                    &[vec![self.output]],
+                    &self.carried,
+                )
+            }
     }
 }
 pub(super) fn decode_sampled_mapped(
@@ -155,8 +170,11 @@ pub(super) fn decode_sampled_mapped(
         return None;
     }
     let definition = SampledMappedDefinition::from_native(refs, range)?;
+    let allow_tool_points = objects
+        .iter()
+        .any(|object| matches!(object.kind, Kind::ToolInput(_) | Kind::ToolPointOnPath(_)));
     definition
-        .supported(objects, page, before)
+        .supported_impl(objects, page, before, allow_tool_points)
         .then_some(definition)
 }
 enum PathGeometry {

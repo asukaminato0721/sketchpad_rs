@@ -116,6 +116,21 @@ impl ColorizedDefinition {
     pub fn element(&self) -> ElementType {
         self.element
     }
+    pub(super) fn specialize_element(mut self, element: ElementType) -> Result<Self, String> {
+        if !matches!(
+            element,
+            ElementType::Segment
+                | ElementType::Ray
+                | ElementType::Line
+                | ElementType::Circle
+                | ElementType::Arc
+                | ElementType::Polygon
+        ) {
+            return Err("Tool path has an unsupported colorized element type".into());
+        }
+        self.element = element;
+        Ok(self)
+    }
     pub fn binding(&self) -> &ColorBinding {
         &self.binding
     }
@@ -165,14 +180,23 @@ impl ColorizedDefinition {
         objects: &[Object],
         page: usize,
         id: usize,
-        allow_tool_numeric: bool,
+        tool_prototype: bool,
     ) -> bool {
         let get = |parent: usize| {
             objects
                 .get(parent.checked_sub(1)?)
                 .filter(|o| parent < id && o.id == parent && o.page == page && !o.deleted)
         };
-        get(self.source).is_some_and(|o| geometry_element(&o.kind) == Some(self.element))
+        get(self.source).is_some_and(|o| {
+            geometry_element(&o.kind) == Some(self.element)
+                || tool_prototype
+                    && self.element == ElementType::Point
+                    && matches!(
+                        o.kind,
+                        Kind::ToolPointOnPath(_)
+                            | Kind::ToolInput(super::EmbeddedToolInputKind::Path)
+                    )
+        })
             // Native normalizes any live numeric quantity against the stored
             // range, including compound units such as inverse area.
             && self
@@ -182,7 +206,7 @@ impl ColorizedDefinition {
                 .all(|parent| {
                     get(*parent).is_some_and(|o| {
                         o.kind.numeric_unit().is_some()
-                            || allow_tool_numeric
+                            || tool_prototype
                                 && matches!(
                                     o.kind,
                                     Kind::ToolInput(super::EmbeddedToolInputKind::Numeric)
@@ -262,11 +286,25 @@ pub(super) fn decode_colorized(
         ),
         _ => return None,
     };
-    let element = geometry_element(&objects.get(source.checked_sub(1)?)?.kind)?;
     let class = u16::from_le_bytes(header[6..8].try_into().ok()?);
     let subtype = u16::from_le_bytes(header[8..10].try_into().ok()?);
+    let source_kind = &objects.get(source.checked_sub(1)?)?.kind;
+    let polymorphic_tool_path = tool_prototype
+        && matches!(
+            source_kind,
+            Kind::ToolInput(super::EmbeddedToolInputKind::Path)
+        )
+        && (class, subtype) == (1, 6);
+    // The stored generic Path header has no concrete element category. Point is
+    // an isolated-prototype sentinel; invocation replaces it before validation.
+    let element = geometry_element(source_kind).or_else(|| {
+        (tool_prototype
+            && ((matches!(source_kind, Kind::ToolPointOnPath(_)) && (class, subtype) == (1, 4))
+                || polymorphic_tool_path))
+            .then_some(ElementType::Point)
+    })?;
     let matches_header = match element {
-        ElementType::Point => (class, subtype) == (1, 4),
+        ElementType::Point => (class, subtype) == (1, 4) || polymorphic_tool_path,
         ElementType::Segment => (class, subtype) == (2, 14),
         ElementType::Ray => (class, subtype) == (2, 13),
         ElementType::Line => (class, subtype) == (2, 12),

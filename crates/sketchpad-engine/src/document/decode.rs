@@ -1912,7 +1912,12 @@ impl Document {
                                             *path,
                                             page,
                                             objects.len() + 1,
-                                        ))
+                                        )
+                                        || !tool_inputs.is_empty()
+                                            && matches!(
+                                                o.kind,
+                                                Kind::ToolInput(EmbeddedToolInputKind::Path)
+                                            ))
                             }) => {
                         Kind::PathLiteralPoint(*path, literal_axis_value.unwrap().1)
                     }
@@ -2480,7 +2485,13 @@ impl Document {
                             .is_some_and(|object| matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Path))
                                 || straight_kind_mode(&object.kind).is_some()
                                 || object.kind.is_circle() || is_arc_kind(&object.kind)
-                                || object.kind.is_polygon()) =>
+                                || object.kind.is_polygon()
+                                || super::curve_points::free_supported(
+                                    &objects,
+                                    *host,
+                                    page,
+                                    objects.len() + 1,
+                                )) =>
                     {
                         Kind::ToolPointOnPath(*host)
                     }
@@ -2790,7 +2801,14 @@ impl Document {
                     }
                     (33, None, [source, center, angle])
                         if objects.get(center.saturating_sub(1)).is_some_and(|o| is_point_kind(&o.kind))
-                            && objects.get(angle.saturating_sub(1)).is_some_and(|o| o.kind.numeric_unit() == Some(NumericUnit::Scalar)) => {
+                            && objects.get(angle.saturating_sub(1)).is_some_and(|o| {
+                                o.kind.numeric_unit() == Some(NumericUnit::Scalar)
+                                    || !tool_inputs.is_empty()
+                                        && matches!(
+                                            o.kind,
+                                            Kind::ToolInput(EmbeddedToolInputKind::Numeric)
+                                        )
+                            }) => {
                         match (objects.get(source.saturating_sub(1)).map(|o| &o.kind), &h[8..10]) {
                             (Some(kind), [4, 0]) if is_point_kind(kind) && h[6..8] == [1, 0] => Kind::CalculatedRatioScaledPoint(*source, *center, *angle),
                             // Native preserves the stored mapped point identity through
@@ -2919,6 +2937,24 @@ impl Document {
                     (6, _, [a, b]) => Kind::Parallel(*a, *b),
                     (7, _, [a, b, c]) => Kind::Bisector(*a, *b, *c),
                     (9, _, [a, b]) => Kind::Intersection(*a, *b),
+                    (11, None, [a, b])
+                        if !tool_inputs.is_empty()
+                            && h.len() == 28
+                            && h[6..10] == [1, 0, 45, 0]
+                            && point.is_none()
+                            && constraint_payload.is_none()
+                            && objects
+                                .get(a.saturating_sub(1))
+                                .is_some_and(|object| is_straight_kind(&object.kind))
+                            && objects.get(b.saturating_sub(1)).is_some_and(|object| {
+                                matches!(
+                                    object.kind,
+                                    Kind::ToolInput(EmbeddedToolInputKind::Path)
+                                )
+                            }) =>
+                    {
+                        Kind::LineCircleIntersection(*a, *b, 1)
+                    }
                     (98, None, _) if curve_constraint_count == 1 => super::curve_intersection::decode(&objects, page, objects.len() + 1, h, &refs, constraint_payload.as_ref().map(|(p, _)| p.as_slice())).unwrap_or(Kind::Unsupported(code)),
                     (93, None, _) => super::boundary_intersection::decode(&objects, page, objects.len() + 1, h, &refs, constraint_payload.as_ref().map(|(p, _)| p.as_slice())).unwrap_or(Kind::Unsupported(code)),
                     (11, _, [a, b])

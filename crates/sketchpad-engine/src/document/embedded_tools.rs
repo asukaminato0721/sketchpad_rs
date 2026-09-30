@@ -527,6 +527,18 @@ impl Document {
                             definition.element() == super::transform_model::ElementType::Polygon
                         })
             });
+            let polymorphic_colorized_path = polymorphic_header
+                .as_ref()
+                .is_some_and(|header| header[6..10] == [1, 0, 6, 0])
+                && matches!(&object.kind, Kind::Colorized(definition)
+                    if matches!(tool.objects[definition.source() - 1].kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Path)));
+            let polymorphic_path_intersection = polymorphic_header
+                .as_ref()
+                .is_some_and(|header| header[..2] == [11, 0] && header[6..10] == [1, 0, 45, 0])
+                && matches!(object.kind, Kind::LineCircleIntersection(_, path, 1)
+                    if matches!(tool.objects[path - 1].kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Path)));
             materialized.kind = match object.kind.remap_checked(&ids)? {
                 Kind::Transformed(definition) if polymorphic_preimage_transform => {
                     let source = candidate
@@ -548,6 +560,33 @@ impl Document {
                         definition.transform().clone(),
                         definition.wire_flavor(),
                     )?)
+                }
+                Kind::Colorized(definition) if polymorphic_colorized_path => {
+                    let source = candidate
+                        .objects
+                        .get(definition.source().saturating_sub(1))
+                        .ok_or("Tool colorized path source is unavailable")?;
+                    let element = super::colorized::geometry_element(&source.kind)
+                        .ok_or("Tool path has an unsupported colorized geometry type")?;
+                    Kind::Colorized(definition.specialize_element(element)?)
+                }
+                Kind::LineCircleIntersection(straight, path, branch)
+                    if polymorphic_path_intersection =>
+                {
+                    let path_kind = &candidate
+                        .objects
+                        .get(path.saturating_sub(1))
+                        .ok_or("Tool intersection path is unavailable")?
+                        .kind;
+                    if super::kind::is_straight_kind(path_kind) {
+                        Kind::Intersection(straight, path)
+                    } else if path_kind.is_circle() || super::kind::is_arc_kind(path_kind) {
+                        Kind::LineCircleIntersection(straight, path, branch)
+                    } else {
+                        return Err(
+                            "Tool intersection requires a straight, circle, or arc path".into()
+                        );
+                    }
                 }
                 Kind::ParameterCalculation(_, mut group) => {
                     group.set_anchor(candidate.next_tool_numeric_anchor()?)?;
@@ -614,6 +653,15 @@ impl Document {
                                 parameter.floor() as usize,
                                 parameter.fract(),
                             )
+                        }
+                        None if super::curve_points::free_supported(
+                            &candidate.objects,
+                            host,
+                            candidate.active_page,
+                            candidate.objects.len() + 1,
+                        ) =>
+                        {
+                            Kind::PointOnCurve(host, fraction)
                         }
                         _ => return Err("Tool point requires a supported path".into()),
                     }

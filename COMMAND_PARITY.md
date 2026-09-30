@@ -881,3 +881,21 @@ complete, but invoking its complete output graph still stops at the existing
 unverified formula-caption layout for `trunc(...)`; that command-parity item
 remains pending. No standalone test was added. See
 [analysis](dev/tool_numeric_mapping_analysis.md).
+
+## Complete corpus decoding for embedded-tool prototypes
+
+Every object in all 103 embedded-tool definitions now has a typed decoder. The
+last 27 slots cover generic Numeric dilation ratios, sampled point-on-path
+seeds, literal and colorized generic Paths, angle-Parameter loci, points on
+those loci, and a polymorphic line/Path intersection. All placeholders are
+specialized to ordinary typed objects during invocation; unsupported binding
+shapes fail transactionally.
+
+The 3D-point and circle-ruler tools both materialize real drawings, reopen
+exactly, and render/save byte-identically in Sketchpad 5. Corpus coverage is
+5,356/5,356 prototype slots and 285,703/285,703 total object slots, with all
+1,599 originals byte-exact. This closes corpus object decoding, not overall
+command parity: 17 isolated tool views remain structurally partial, and some
+otherwise complete tool invocations still stop at unverified caption-font
+metrics. No standalone test was added or removed. See
+[analysis](dev/tool_prototype_completion_analysis.md).

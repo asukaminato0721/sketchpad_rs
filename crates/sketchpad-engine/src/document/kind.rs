@@ -1348,6 +1348,9 @@ pub(super) fn parameter_locus_driver_profile(
             },
             true,
         ),
+        Kind::ToolInput(EmbeddedToolInputKind::AngleParameter) => {
+            (NumericUnit::Degrees, 0x0001_0000, true)
+        }
         _ => return None,
     };
     let scale = match unit {
