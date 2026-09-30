@@ -185,6 +185,12 @@ Length, distance, perimeter, circumference, angle, circle and polygon area, arc 
 | Choose Tool Folder | Partial: opens the platform folder picker, atomically installs a path-sorted catalog of readable top-level `.gsp` documents, reports skipped unreadable files, and preserves the catalog across New/Open without creating drawing history. Cancel and load errors preserve the previous catalog. The choice is session-only; Native restart persistence and example-document generation remain pending |
 | Forget Tool Folder | Partial: clears the session catalog and cancels an active folder-tool binding without altering already materialized geometry or drawing history. Native preference cleanup across restarts remains pending |
 
+Strict embedded-tool mapped elements and nested mapped iterations can use
+tool-bound path points as their substitution endpoints and invariant numeric
+inputs as frozen predecessors. A representative rolling-ellipse invocation
+opens, renders, and saves byte-identically in Sketchpad 5. See
+[mapped-element evidence](dev/tool_mapped_element_placeholders_analysis.md).
+
 ## Tool and document workflows
 
 | Workflow | Status |

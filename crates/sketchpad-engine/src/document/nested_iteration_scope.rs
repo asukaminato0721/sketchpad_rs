@@ -11,6 +11,7 @@ pub(super) fn captured_structures(
     seeds: &[usize],
     branches: &[Vec<usize>],
     carried: &[usize],
+    allow_tool_placeholders: bool,
 ) -> Option<BTreeSet<usize>> {
     let get = |id: usize| {
         objects
@@ -20,6 +21,15 @@ pub(super) fn captured_structures(
     let mut pending: Vec<_> = branches.iter().flatten().chain(carried).copied().collect();
     let mut visited = BTreeSet::new();
     let mut structures = BTreeSet::new();
+    let supported_mapping = |seeds: &[usize], branches: &[Vec<usize>], carried: &[usize]| {
+        if allow_tool_placeholders {
+            super::iteration::supported_tool_mapped_point_iteration(
+                objects, seeds, branches, carried,
+            )
+        } else {
+            super::iteration::supported_mapped_point_iteration(objects, seeds, branches, carried)
+        }
+    };
     while let Some(id) = pending.pop() {
         if !visited.insert(id) {
             continue;
@@ -48,12 +58,7 @@ pub(super) fn captured_structures(
                 else {
                     return None;
                 };
-                if !super::iteration::supported_mapped_point_iteration(
-                    objects,
-                    local_seeds,
-                    local_branches,
-                    local_carried,
-                ) {
+                if !supported_mapping(local_seeds, local_branches, local_carried) {
                     return None;
                 }
                 if carried.contains(&root) {
@@ -88,12 +93,7 @@ pub(super) fn captured_structures(
                 && local_carried.contains(&source)
                 && get(source)
                     .is_some_and(|object| super::iteration::mapped_binding_kind(&object.kind))
-                && super::iteration::supported_mapped_point_iteration(
-                    objects,
-                    local_seeds,
-                    local_branches,
-                    local_carried,
-                ))
+                && supported_mapping(local_seeds, local_branches, local_carried))
             {
                 return None;
             }

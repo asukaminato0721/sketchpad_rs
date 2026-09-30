@@ -279,6 +279,25 @@ pub(super) fn supported_mapped_point_iteration(
     branches: &[Vec<usize>],
     carried: &[usize],
 ) -> bool {
+    supported_mapped_point_iteration_impl(objects, seeds, branches, carried, false)
+}
+
+pub(super) fn supported_tool_mapped_point_iteration(
+    objects: &[Object],
+    seeds: &[usize],
+    branches: &[Vec<usize>],
+    carried: &[usize],
+) -> bool {
+    supported_mapped_point_iteration_impl(objects, seeds, branches, carried, true)
+}
+
+fn supported_mapped_point_iteration_impl(
+    objects: &[Object],
+    seeds: &[usize],
+    branches: &[Vec<usize>],
+    carried: &[usize],
+    allow_tool_placeholders: bool,
+) -> bool {
     let Some(page) = seeds
         .first()
         .and_then(|id| id.checked_sub(1))
@@ -340,9 +359,14 @@ pub(super) fn supported_mapped_point_iteration(
     }) {
         return false;
     }
-    let Some(captured_structures) =
-        super::nested_iteration_scope::captured_structures(objects, page, seeds, branches, carried)
-    else {
+    let Some(captured_structures) = super::nested_iteration_scope::captured_structures(
+        objects,
+        page,
+        seeds,
+        branches,
+        carried,
+        allow_tool_placeholders,
+    ) else {
         return false;
     };
     let branch_ids = branches.iter().flatten().copied().collect::<BTreeSet<_>>();
@@ -367,15 +391,25 @@ pub(super) fn supported_mapped_point_iteration(
         if seeds.contains(&id) {
             continue;
         }
+        // A custom-tool code-101 mapping may use declared path-point
+        // placeholders as its preimage and image. Invocation materializes
+        // both as ordinary constrained points before validating the result.
+        if allow_tool_placeholders
+            && branch_ids.contains(&id)
+            && matches!(object.kind, Kind::ToolPointOnPath(_))
+        {
+            pending.extend(object.construction_dependencies());
+            continue;
+        }
         // Tool placeholders outside the substituted construction are frozen at
         // invocation time. They may feed the carried DAG, but may not themselves
         // be a seed, branch, or carried output.
         if !carried.contains(&id)
             && !branch_ids.contains(&id)
-            && matches!(
+            && (matches!(
                 object.kind,
                 Kind::ToolInput(EmbeddedToolInputKind::Polygon) | Kind::ToolPointOnPath(_)
-            )
+            ) || allow_tool_placeholders && matches!(object.kind, Kind::ToolInput(_)))
         {
             pending.extend(object.construction_dependencies());
             continue;

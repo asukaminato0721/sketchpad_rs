@@ -1,6 +1,8 @@
 //! Stored single-application dependency mappings. These are ordinary live
 //! constructions; tool authoring and invocation have separate semantics.
-use super::iteration::{MappedValue, supported_mapped_point_iteration};
+use super::iteration::{
+    MappedValue, supported_mapped_point_iteration, supported_tool_mapped_point_iteration,
+};
 use super::kind::is_point_kind;
 use super::transform_model::ElementType;
 use super::{Document, Kind, Object, Point};
@@ -71,6 +73,16 @@ impl MappedElementDefinition {
         }
     }
     pub(super) fn supported(&self, objects: &[Object], page: usize, object_id: usize) -> bool {
+        self.supported_internal(objects, page, object_id, false)
+    }
+
+    fn supported_internal(
+        &self,
+        objects: &[Object],
+        page: usize,
+        object_id: usize,
+        allow_tool_path_points: bool,
+    ) -> bool {
         if self.native_references().iter().any(|id| {
             objects.get(id.saturating_sub(1)).is_none_or(|o| {
                 *id == 0 || *id >= object_id || o.id != *id || o.page != page || o.deleted
@@ -80,22 +92,33 @@ impl MappedElementDefinition {
         }
         let point = |id: usize| {
             is_point_kind(&objects[id - 1].kind)
-                && !matches!(
-                    objects[id - 1].kind,
-                    Kind::ToolInput(_) | Kind::ToolPointOnPath(_)
-                )
+                && (allow_tool_path_points
+                    && matches!(objects[id - 1].kind, Kind::ToolPointOnPath(_))
+                    || !matches!(
+                        objects[id - 1].kind,
+                        Kind::ToolInput(_) | Kind::ToolPointOnPath(_)
+                    ))
         };
         // Native code101 point roles are independently proved. Numeric locus
         // packets (code97) are not single-point applications.
         point(self.output)
             && point(self.seed)
             && point(self.replacement)
-            && supported_mapped_point_iteration(
-                objects,
-                &[self.seed],
-                &[vec![self.replacement]],
-                &self.carried,
-            )
+            && if allow_tool_path_points {
+                supported_tool_mapped_point_iteration(
+                    objects,
+                    &[self.seed],
+                    &[vec![self.replacement]],
+                    &self.carried,
+                )
+            } else {
+                supported_mapped_point_iteration(
+                    objects,
+                    &[self.seed],
+                    &[vec![self.replacement]],
+                    &self.carried,
+                )
+            }
     }
 }
 
@@ -106,6 +129,7 @@ pub(super) fn decode_mapped_element(
     header: &[u8],
     refs: &[usize],
     constraint: Option<&[u8]>,
+    tool_prototype: bool,
 ) -> Option<MappedElementDefinition> {
     if header.len() != 28
         || header[..2] != [101, 0]
@@ -124,7 +148,7 @@ pub(super) fn decode_mapped_element(
     )
     .ok()?;
     definition
-        .supported(objects, page, object_id)
+        .supported_internal(objects, page, object_id, tool_prototype)
         .then_some(definition)
 }
 

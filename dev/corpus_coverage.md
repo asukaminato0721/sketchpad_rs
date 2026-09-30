@@ -1,12 +1,13 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,576/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,585/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **244** unsupported slots, all in
-embedded-tool prototypes, and 23 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,112
-decoded, 244 undecoded. Isolated decoding produces 52 complete and 51 partial
-tool views. The current polymorphic-polygon tool, external-placeholder mapped-iteration,
+are byte-exact, with zero failures. There are **105** unsupported slots, all in
+embedded-tool prototypes, and 14 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,251
+decoded, 105 undecoded. Isolated decoding produces 71 complete and 32 partial
+tool views. The current tool-prototype mapped-element and nested-mapping,
+named referenced-caption, polymorphic-polygon tool, external-placeholder mapped-iteration,
 embedded attached-picture, final
 geometric-given, distance-Parameter,
 polymorphic Preimage, legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
@@ -2742,3 +2743,27 @@ Sketchpad 5 under Xvfb/Wine; Ctrl+S preserves SHA-256
 No standalone test case was added. See
 [analysis](tool_named_referenced_caption_analysis.md). Full scan:
 `/tmp/locus_named_caption_final_coverage.log`.
+
+## Tool-prototype mapped elements and nested mappings
+
+Strict tool-prototype decoding now recognizes code-101 mappings whose seed and
+replacement are declared path-point placeholders. Declared numeric tool inputs
+outside the substitution are frozen predecessors, and the same contextual rule
+is propagated through nested captured code-89 mappings. Ordinary drawing
+validation remains unchanged. Code-101 point names and fonts are retained, and
+the writer emits them in Native's reference-before-label order. The observed
+normal Times New Roman size-24 caption uses a 19-pixel row step.
+
+The pass restores all seven code-101 roots and 37 dependent prototype slots.
+Prototype coverage rises **5,207→5,251/5,356**, unsupported falls **149→105**,
+fully decoded documents rise **1,581→1,585/1,599**, complete isolated tools
+rise **67→71/103**, and partial source views fall **769→765**. All drawings
+remain complete and all 1,599 originals remain byte-exact.
+
+A representative invocation creates 35 outputs and 41 total objects, reopens
+non-partially, and re-encodes exactly. Sketchpad 5 under Xvfb/Wine renders the
+result; Ctrl+S preserves SHA-256
+`09394130b5c28571480ac0e33663f1fb7fca2bfc759c186931bbebf149ecf562`.
+No standalone test case was added. See
+[analysis](tool_mapped_element_placeholders_analysis.md). Final scan:
+`/tmp/tool_mapped_element_final_coverage.log`.

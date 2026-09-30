@@ -23,7 +23,7 @@ use super::embedded_tools::{document_record_indices, document_records};
 use super::iteration::{
     mapped_binding_kind, supported_branch_polygon_mapping, supported_iteration_values,
     supported_mapped_point_iteration, supported_point_iteration_mapping,
-    supported_point_parameter_iteration,
+    supported_point_parameter_iteration, supported_tool_mapped_point_iteration,
 };
 use super::kind::{
     is_arc_kind, is_coordinate_unit_kind, is_literal_plot_path_kind, is_locus_polygon_kind,
@@ -542,6 +542,7 @@ impl Document {
                             | 88
                             | 93
                             | 98
+                            | 101
                             | 109
                             | 110
                             | 119
@@ -1065,7 +1066,12 @@ impl Document {
                     .copied()
                     .filter(|id| seen.insert(*id))
                     .collect::<Vec<_>>();
-                if !supported_mapped_point_iteration(&objects, &seeds, &branches, &carried) {
+                let supported = if tool_inputs.is_empty() {
+                    supported_mapped_point_iteration(&objects, &seeds, &branches, &carried)
+                } else {
+                    supported_tool_mapped_point_iteration(&objects, &seeds, &branches, &carried)
+                };
+                if !supported {
                     return None;
                 }
                 let depth = if code == 89 {
@@ -1531,6 +1537,7 @@ impl Document {
                 constraint_payload
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
+                !tool_inputs.is_empty(),
             ) {
                 Kind::MappedElement(definition)
             } else if let Some(definition) = super::transform_decode::decode_native_transform(

@@ -538,6 +538,14 @@ impl Document {
             {
                 return Ok(21);
             }
+            if font.family == "Times New Roman"
+                && font.size_code == 24
+                && !font.bold
+                && !font.italic
+                && !font.underline
+            {
+                return Ok(19);
+            }
             if font.family == "黑体"
                 && font.size_code == 16
                 && font.bold
@@ -639,6 +647,14 @@ impl Document {
             && !font.underline
         {
             return Ok(21);
+        }
+        if font.family == "Times New Roman"
+            && font.size_code == 24
+            && !font.bold
+            && !font.italic
+            && !font.underline
+        {
+            return Ok(19);
         }
         if font.family == "黑体"
             && font.size_code == 16

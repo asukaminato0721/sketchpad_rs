@@ -716,16 +716,16 @@ impl Document {
                     crate::style_records::set_visual_style(&mut h, style)?;
                 }
                 put_record(&mut added, 0x07d0, &h);
-                if let Some(label) = &o.label {
-                    added
-                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
-                }
                 let ids = definition.native_references();
                 let mut refs = (ids.len() as u32).to_le_bytes().to_vec();
                 for id in ids {
                     refs.extend_from_slice(&(id as u32).to_le_bytes());
                 }
                 put_record(&mut added, 0x07d2, &refs);
+                if let Some(label) = &o.label {
+                    added
+                        .extend_from_slice(&crate::text_records::encode_point_label_records(label));
+                }
                 put_record(&mut added, 0x07d7, &[]);
                 continue;
             }
