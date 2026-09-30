@@ -1711,6 +1711,7 @@ impl Document {
                 .iter()
                 .take_while(|record| record.kind != 0x07d7)
                 .collect::<Vec<_>>();
+            let header = &rs[start];
             let rich = group
                 .iter()
                 .find(|record| record.kind == 0x08fc)
@@ -1719,6 +1720,23 @@ impl Document {
                 .iter()
                 .find(|record| record.kind == 0x0898)
                 .ok_or("Missing free-text box")?;
+            if bytes[header.data.clone()] == crate::text_object::LEGACY_TEXT_HEADER
+                && object
+                    .rich_text_override
+                    .as_ref()
+                    .is_some_and(|template| !template.is_legacy_gbk())
+            {
+                let mut replacement = Vec::new();
+                put_record(
+                    &mut replacement,
+                    0x07d0,
+                    &crate::text_object::modern_text_header(
+                        object.visible,
+                        object.presentation_suppressed,
+                    ),
+                );
+                edits.push((header.start, header.data.end, replacement));
+            }
             let (old_text, old_rect) = crate::text_object::decode_plain_text(
                 &bytes[rich.data.clone()],
                 &bytes[bbox.data.clone()],

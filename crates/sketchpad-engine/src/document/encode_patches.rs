@@ -712,6 +712,7 @@ impl Document {
                 continue;
             }
             if let Kind::PlainText { text, rect } = &object.kind {
+                let header = &group[0];
                 let rich = group
                     .iter()
                     .find(|r| r.kind == 0x08fc)
@@ -720,6 +721,23 @@ impl Document {
                     .iter()
                     .find(|r| r.kind == 0x0898)
                     .ok_or("Missing free-text box")?;
+                if bytes[header.data.clone()] == text_object::LEGACY_TEXT_HEADER
+                    && object
+                        .rich_text_override
+                        .as_ref()
+                        .is_some_and(|template| !template.is_legacy_gbk())
+                {
+                    let mut replacement = Vec::new();
+                    put_record(
+                        &mut replacement,
+                        0x07d0,
+                        &text_object::modern_text_header(
+                            object.visible,
+                            object.presentation_suppressed,
+                        ),
+                    );
+                    edits.push((header.start, header.data.end, replacement));
+                }
                 let (old_text, old_rect) = text_object::decode_plain_text(
                     &bytes[rich.data.clone()],
                     &bytes[bbox.data.clone()],

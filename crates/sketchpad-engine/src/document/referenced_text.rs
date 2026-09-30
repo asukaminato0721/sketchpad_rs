@@ -146,6 +146,14 @@ pub struct ReferencedText {
 
 impl ReferencedText {
     pub fn from_rich(rich: &[u8], reference_count: usize) -> Result<Self, String> {
+        Self::from_rich_with_legacy_gbk(rich, reference_count, false)
+    }
+
+    pub(crate) fn from_rich_with_legacy_gbk(
+        rich: &[u8],
+        reference_count: usize,
+        force_legacy_gbk: bool,
+    ) -> Result<Self, String> {
         if rich.len() < 20 || rich[..4] != [0xfc, 8, 0, 0] || rich[8..12] != [4, 0, 0, 0] {
             return Err("Unsupported referenced rich-text header".into());
         }
@@ -158,7 +166,11 @@ impl ReferencedText {
         {
             return Err("Invalid referenced rich-text length or terminator".into());
         }
-        let nodes = Parser::parse(&rich[18..18 + markup_length], reference_count)?;
+        let nodes = Parser::parse(
+            &rich[18..18 + markup_length],
+            reference_count,
+            force_legacy_gbk,
+        )?;
         Ok(Self {
             rich: rich.to_vec(),
             nodes,
@@ -509,12 +521,16 @@ struct Parser<'a> {
     legacy_gbk: bool,
 }
 impl<'a> Parser<'a> {
-    fn parse(bytes: &'a [u8], reference_count: usize) -> Result<Vec<ReferencedNode>, String> {
+    fn parse(
+        bytes: &'a [u8],
+        reference_count: usize,
+        force_legacy_gbk: bool,
+    ) -> Result<Vec<ReferencedNode>, String> {
         let mut parser = Self {
             bytes,
             at: 0,
             reference_count,
-            legacy_gbk: std::str::from_utf8(bytes).is_err(),
+            legacy_gbk: force_legacy_gbk || std::str::from_utf8(bytes).is_err(),
         };
         let nodes = parser.sequence(false, false, 0, false)?;
         if nodes.is_empty() || parser.at != bytes.len() {

@@ -3,6 +3,17 @@ use super::referenced_text::{ReferenceRole, ReferencedRun, ReferencedText};
 use super::{Document, Kind, Object};
 use crate::text_object::{RichTextRun, TextRect};
 
+const LEGACY_GBK_CAPTION_HEADER: [u8; 16] = [73, 0, 0, 0, 0, 0, 0, 0, 59, 0, 1, 0, 255, 0, 0, 110];
+
+fn modern_header(visible: bool, presentation_suppressed: bool) -> [u8; 28] {
+    let mut header = [
+        73, 0, 0, 0, 0, 0, 0, 0, 59, 0, 33, 1, 0, 0, 1, 0, 255, 255, 81, 92, 193, 189, 240, 255, 0,
+        0, 0, 0,
+    ];
+    header[2] = u8::from(!visible) | (u8::from(presentation_suppressed) << 1);
+    header
+}
+
 fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) -> bool {
     if role == ReferenceRole::SignedValue {
         return object.kind.numeric_unit().is_some();
@@ -75,12 +86,14 @@ fn supported_source(objects: &[Object], object: &Object, role: ReferenceRole) ->
                 | Kind::Colorized(..)
                 | Kind::FunctionPlot(..)
                 | Kind::GraphAxis(..)
+                | Kind::Image { .. }
                 | Kind::Line(..)
                 | Kind::Locus(..)
                 | Kind::PointNumericLabel(..)
                 | Kind::PointReferencedText { .. }
                 | Kind::Polygon(..)
                 | Kind::Ray(..)
+                | Kind::SampledImage(..)
                 | Kind::Segment(..)
                 | Kind::CoordinateMeasurement {
                     kind: crate::coordinate_measure_records::CoordinateMeasureKind::Coordinates,
@@ -139,7 +152,10 @@ pub(super) fn decode_group(
     font_count: usize,
     code: u16,
 ) -> Option<ReferencedText> {
-    if header.len() != 28 || header[..2] != code.to_le_bytes() || header[6..10] != [0, 0, 59, 0] {
+    let modern_header =
+        header.len() == 28 && header[..2] == code.to_le_bytes() && header[6..10] == [0, 0, 59, 0];
+    let legacy_header = code == 73 && header == LEGACY_GBK_CAPTION_HEADER;
+    if !modern_header && !legacy_header {
         return None;
     }
     let mut records = Vec::new();
@@ -330,6 +346,24 @@ impl Document {
             Kind::PointNumericLabel(..) | Kind::PointReferencedText { .. }
         ) {
             return self.point_numeric_label(source).map(|(_, text)| text);
+        }
+        if matches!(object.kind, Kind::Image { .. } | Kind::SampledImage(..)) {
+            // Pictures expose only their generated display name. Native stores
+            // that localized name in the reference cache (for example,
+            // "Picture [1]" or "图片 [1]").
+            return Some(cached.map(str::to_owned).unwrap_or_else(|| {
+                let ordinal = self
+                    .objects
+                    .iter()
+                    .take(source)
+                    .filter(|candidate| {
+                        !candidate.deleted
+                            && candidate.page == object.page
+                            && matches!(candidate.kind, Kind::Image { .. } | Kind::SampledImage(..))
+                    })
+                    .count();
+                format!("Picture [{ordinal}]")
+            }));
         }
         if let Some(label) = &object.label {
             return label.name_utf8().ok().map(str::to_owned);
@@ -639,11 +673,7 @@ fn subscript_number(value: usize) -> String {
 pub(super) fn encode_group(object: &Object, parents: &[u32], text: &ReferencedText) -> Vec<u8> {
     use super::records::put_record;
     // Native class zero/subtype59 referenced-caption header.
-    let mut header = [
-        73, 0, 0, 0, 0, 0, 0, 0, 59, 0, 33, 1, 0, 0, 1, 0, 255, 255, 81, 92, 193, 189, 240, 255, 0,
-        0, 0, 0,
-    ];
-    header[2] = u8::from(!object.visible) | (u8::from(object.presentation_suppressed) << 1);
+    let header = modern_header(object.visible, object.presentation_suppressed);
     let mut group = Vec::new();
     put_record(&mut group, 0x7d0, &header);
     let mut refs = (parents.len() as u32).to_le_bytes().to_vec();

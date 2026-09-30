@@ -397,6 +397,24 @@ impl Document {
         let font_family_count = document_records(&rs)
             .filter(|record| record.kind == 0x04b1)
             .count();
+        // Old Windows Chinese sketches use code page 936 for every short-header
+        // free-text object. Detect the document cohort from an unambiguously
+        // non-UTF-8 member so byte pairs that are coincidentally valid UTF-8
+        // (for example GBK `CA B1`, "时") use the same encoding.
+        let legacy_gbk_text = rs.iter().enumerate().any(|(index, record)| {
+            document_indices.contains(&index)
+                && record.kind == 0x07d0
+                && b[record.data.clone()] == text_object::LEGACY_TEXT_HEADER
+                && rs
+                    .get(index + 1..)
+                    .into_iter()
+                    .flatten()
+                    .take_while(|record| record.kind != 0x07d7)
+                    .find(|record| record.kind == 0x08fc)
+                    .is_some_and(|rich| {
+                        text_object::rich_text_requires_legacy_gbk(&b[rich.data.clone()])
+                    })
+        });
         let mut objects: Vec<Object> = Vec::new();
         let total_pages = document_records(&rs)
             .filter(|record| record.kind == 0x3e8)
@@ -466,6 +484,7 @@ impl Document {
             let mut locus_range: Option<Vec<u8>> = None;
             let mut iteration_definition: Option<Vec<u8>> = None;
             let mut label: Option<LabelAux> = None;
+            let mut rich_text_override = None;
             let mut angle_marker_style = None;
             let angle_marker_label =
                 h.len() == 28 && matches!(code, 113..=116) && h[6..10] == [18, 0, 95, 0];
@@ -2152,8 +2171,23 @@ impl Document {
                     (0, Some(p), _) if rich_text.is_none() && text_box.is_none() => Kind::Free(p),
                     (0, None, []) if rich_text.is_some() && text_box.is_some()
                         && text_style => {
-                        match text_object::decode_rich_text(rich_text.as_ref().unwrap(), text_box.as_ref().unwrap()) {
-                            Ok((text, rect, runs)) if runs.iter().flatten().all(|run| run.style.family_index.is_none_or(|index| usize::from(index) < font_family_count)) => Kind::PlainText { text, rect },
+                        let force_legacy_gbk = legacy_gbk_text
+                            && h == text_object::LEGACY_TEXT_HEADER;
+                        match text_object::decode_rich_text_with_legacy_gbk(
+                            rich_text.as_ref().unwrap(),
+                            text_box.as_ref().unwrap(),
+                            force_legacy_gbk,
+                        ) {
+                            Ok((text, rect, runs)) if runs.iter().flatten().all(|run| run.style.family_index.is_none_or(|index| usize::from(index) < font_family_count)) => {
+                                if force_legacy_gbk {
+                                    rich_text_override = text_object::RichTextTemplate::from_parts_with_legacy_gbk(
+                                        rich_text.as_ref().unwrap(),
+                                        text_box.as_ref().unwrap(),
+                                        true,
+                                    ).ok();
+                                }
+                                Kind::PlainText { text, rect }
+                            },
                             _ => Kind::Unsupported(code),
                         }
                     }
@@ -2968,7 +3002,7 @@ impl Document {
                         || matches!(h[6..10], [13, 0, 68, 0] | [13, 0, 69, 0] | [5, 0, 16, 0])))
                 .then(|| i32::from_le_bytes(h[20..24].try_into().unwrap())),
                 text_style_override: None,
-                rich_text_override: None,
+                rich_text_override,
                 function_anchor,
                 function_name,
                 measurement_precision,

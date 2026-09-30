@@ -299,6 +299,12 @@ their 1–128 limit. This restores the native 179-step protractor and the
 800-step Collatz construction; see
 [the high-depth iteration analysis](dev/high_depth_mapped_iteration_analysis.md).
 
+Referenced captions can use independent and sampled pictures as live Value
+sources, retaining Native's localized generated picture name. The legacy
+Chinese short-header caption profile is decoded with its GBK text cohort, so
+mixed calculation/text captions such as the clock read `4时19分41秒`. See
+[the referenced-caption completion analysis](dev/referenced_caption_completion_analysis.md).
+
 Imported code-26 custom polar translations treat their angle slot as a
 contextual degree magnitude. This includes native calculations reported as
 Scalar, matching the shared transform model's existing numeric-operand rule;

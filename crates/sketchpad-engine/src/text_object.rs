@@ -9,6 +9,8 @@ const OBJECT_HEADER: [u8; 28] = [
     0, 0,
 ];
 
+pub(crate) const LEGACY_TEXT_HEADER: [u8; 16] = [0, 0, 4, 0, 0, 0, 0, 0, 19, 0, 1, 0, 0, 0, 0, 0];
+
 /// Native symbol-font tokens, shared by literal and live captions.
 pub(crate) fn markup_symbol(code: usize) -> Option<&'static str> {
     Some(match code {
@@ -51,6 +53,15 @@ pub(crate) fn decode_markup_literal(bytes: &[u8], legacy_gbk: bool) -> Option<St
     } else {
         std::str::from_utf8(bytes).map(str::to_owned).ok()
     }
+}
+
+pub(crate) fn rich_text_requires_legacy_gbk(rich: &[u8]) -> bool {
+    if rich.len() < 20 || rich[..4] != [0xfc, 8, 0, 0] {
+        return false;
+    }
+    let count = u16::from_le_bytes([rich[16], rich[17]]) as usize;
+    rich.get(18..18 + count)
+        .is_some_and(|markup| std::str::from_utf8(markup).is_err())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,20 +111,34 @@ pub struct RichTextRun {
 pub struct RichTextTemplate {
     rich: Vec<u8>,
     bbox: [u8; 8],
+    legacy_gbk: bool,
 }
 
 impl RichTextTemplate {
     pub fn from_parts(rich: &[u8], bbox: &[u8]) -> Result<Self, String> {
-        decode_rich_text(rich, bbox)?;
+        Self::from_parts_with_legacy_gbk(rich, bbox, false)
+    }
+
+    pub(crate) fn from_parts_with_legacy_gbk(
+        rich: &[u8],
+        bbox: &[u8],
+        legacy_gbk: bool,
+    ) -> Result<Self, String> {
+        decode_rich_text_with_legacy_gbk(rich, bbox, legacy_gbk)?;
         Ok(Self {
             rich: rich.to_vec(),
             bbox: bbox.try_into().unwrap(),
+            legacy_gbk,
         })
     }
 
     pub fn math_nodes(&self) -> Option<Vec<crate::document::referenced_text::ReferencedNode>> {
-        let text =
-            crate::document::referenced_text::ReferencedText::from_rich(&self.rich, 0).ok()?;
+        let text = crate::document::referenced_text::ReferencedText::from_rich_with_legacy_gbk(
+            &self.rich,
+            0,
+            self.legacy_gbk,
+        )
+        .ok()?;
         text.nodes()
             .iter()
             .any(crate::document::referenced_text::ReferencedNode::has_math_layout)
@@ -121,14 +146,25 @@ impl RichTextTemplate {
     }
 
     pub fn decode(&self) -> Result<(String, TextRect, Vec<Vec<RichTextRun>>), String> {
-        decode_rich_text(&self.rich, &self.bbox)
+        decode_rich_text_with_legacy_gbk(&self.rich, &self.bbox, self.legacy_gbk)
+    }
+
+    pub(crate) fn is_legacy_gbk(&self) -> bool {
+        self.legacy_gbk
     }
 
     pub fn encode_parts(&self, text: &str, rect: TextRect) -> Result<(Vec<u8>, [u8; 8]), String> {
-        encode_from_template(&self.rich, &self.bbox, text, rect)
+        encode_from_template_with_legacy_gbk(&self.rich, &self.bbox, text, rect, self.legacy_gbk)
     }
 
     pub fn encode_group(&self, text: &str, rect: TextRect) -> Result<Vec<u8>, String> {
+        if self.legacy_gbk {
+            // A copied/new object receives the modern 28-byte header, so write
+            // its decoded runs as UTF-8 rather than carrying legacy code-page
+            // bytes into a header that no longer identifies that cohort.
+            let (_, _, runs) = self.decode()?;
+            return encode_rich_runs(&runs, rect)?.encode_group(text, rect);
+        }
         let (rich, bbox) = self.encode_parts(text, rect)?;
         let mut group = Vec::new();
         append_record(&mut group, 0x07d0, &OBJECT_HEADER)?;
@@ -138,6 +174,12 @@ impl RichTextTemplate {
         append_record(&mut group, 0x07d7, &[])?;
         Ok(group)
     }
+}
+
+pub(crate) fn modern_text_header(visible: bool, presentation_suppressed: bool) -> [u8; 28] {
+    let mut header = OBJECT_HEADER;
+    header[2] = u8::from(!visible) | (u8::from(presentation_suppressed) << 1);
+    header
 }
 
 pub fn encode_rich_runs(
@@ -600,6 +642,14 @@ pub fn decode_rich_text(
     rich: &[u8],
     bbox: &[u8],
 ) -> Result<(String, TextRect, Vec<Vec<RichTextRun>>), String> {
+    decode_rich_text_with_legacy_gbk(rich, bbox, false)
+}
+
+pub(crate) fn decode_rich_text_with_legacy_gbk(
+    rich: &[u8],
+    bbox: &[u8],
+    force_legacy_gbk: bool,
+) -> Result<(String, TextRect, Vec<Vec<RichTextRun>>), String> {
     if rich.len() < 20
         || u32::from_le_bytes(rich[..4].try_into().unwrap()) != 0x08fc
         || u32::from_le_bytes(rich[8..12].try_into().unwrap()) != 4
@@ -621,7 +671,7 @@ pub fn decode_rich_text(
         markup,
         pos: 0,
         depth: 0,
-        legacy_gbk: std::str::from_utf8(markup).is_err(),
+        legacy_gbk: force_legacy_gbk || std::str::from_utf8(markup).is_err(),
     };
     let lines = match parser.sequence(true, RichRunStyle::default()) {
         Ok(lines) if parser.pos == markup.len() => lines,
@@ -680,7 +730,17 @@ pub fn encode_from_template(
     text: &str,
     rect: TextRect,
 ) -> Result<(Vec<u8>, [u8; 8]), String> {
-    let (old_text, _, runs) = decode_rich_text(rich, bbox)?;
+    encode_from_template_with_legacy_gbk(rich, bbox, text, rect, false)
+}
+
+fn encode_from_template_with_legacy_gbk(
+    rich: &[u8],
+    bbox: &[u8],
+    text: &str,
+    rect: TextRect,
+    legacy_gbk: bool,
+) -> Result<(Vec<u8>, [u8; 8]), String> {
+    let (old_text, _, runs) = decode_rich_text_with_legacy_gbk(rich, bbox, legacy_gbk)?;
     rect.validate()?;
     let mut result = if old_text == normalize_line_breaks(text) {
         rich.to_vec()

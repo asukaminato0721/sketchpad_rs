@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,553/1,599** documents have all object kinds
-decoded; **1,592** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **587** unsupported slots (10 drawing
-slots and 577 prototype slots), and 46 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,555/1,599** documents have all object kinds
+decoded; **1,594** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **583** unsupported slots (6 drawing
+slots and 577 prototype slots), and 44 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -14,9 +14,9 @@ collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
 transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
-plot, scalar-angle custom-translation, and high-depth mapped-iteration
-recoveries are summarized at the end; the older detailed snapshots remain for
-comparison.
+plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
+referenced-caption recoveries are summarized at the end; the older detailed
+snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -2269,3 +2269,32 @@ partial views fall **792->790**. Embedded-tool coverage remains
 test case was added. See
 [analysis](high_depth_mapped_iteration_analysis.md). Full scan:
 `/tmp/high_depth_iteration_coverage_full.log`.
+
+## Final drawing referenced captions
+
+Three modern code-73 captions use independent or sampled pictures as Value
+sources. Pictures have no separate editable label; Native stores their
+localized generated name in the reference cache. The live evaluator now uses
+that cache and has a page-local `Picture [n]` fallback for API-authored bare
+references. No other cached source family is promoted to live semantics.
+
+The final legacy caption uses the exact observed 16-byte class-0/subtype-59
+header. Its markup parser already supported GBK, but one referenced free-text
+literal (`CA B1`, `时`) is also valid UTF-8 and was therefore ambiguous in
+isolation. Short-header free text now shares GBK mode when another member of
+the same document unambiguously establishes the old Windows Chinese cohort.
+The original bytes remain in the rich-text template for unchanged and dirty
+saves.
+
+These changes restore four drawing code-73 slots in two documents. Unsupported
+falls **587->583**, complete documents/drawings rise
+**1,553/1,592->1,555/1,594**, unsupported documents fall **46->44**, and
+partial views fall **790->789**. Embedded-tool coverage remains
+**4,779/5,356**, and all **1,599** originals remain byte-exact. Sketchpad 5
+under Xvfb/Wine opened and saved both originals unchanged with SHA-256 values
+`cd793b1118c29f81e811fcadfc83022cc9d40b9bd53aad92ca7d23669e19c0ac`
+and
+`c95adfc4606abb897b28b4cb2f6393f7318cd59005cbf0b1cb8a0ff4f7c4993d`.
+No standalone test case was added. See
+[analysis](referenced_caption_completion_analysis.md). Full scan:
+`/tmp/referenced_caption_coverage_full.log`.

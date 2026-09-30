@@ -113,6 +113,10 @@ impl Document {
                 .iter()
                 .flatten()
                 .any(|run| run.style != text_object::RichRunStyle::default())
+                || object
+                    .rich_text_override
+                    .as_ref()
+                    .is_some_and(text_object::RichTextTemplate::is_legacy_gbk)
             {
                 Some(text_object::remap_rich_text(&runs, text, rect)?)
             } else {
