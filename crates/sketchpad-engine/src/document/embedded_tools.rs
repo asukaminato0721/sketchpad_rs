@@ -236,6 +236,25 @@ impl Document {
         if local_id != summary.object_codes.len() || fonts.is_empty() {
             return Err("Invalid embedded tool canvas".into());
         }
+        // Picture resource IDs are document-global even when the picture group
+        // belongs to an embedded prototype. Preserve the source ordering in the
+        // synthetic canvas so its local picture groups resolve the same IDs.
+        let has_picture = section
+            .iter()
+            .filter(|record| record.kind == 0x07d0)
+            .any(|record| {
+                self.original[record.data.clone()]
+                    .get(6..10)
+                    .is_some_and(|header| header == [16, 0, 78, 0])
+            });
+        let picture_resources = if has_picture {
+            document_records(&entries)
+                .filter(|record| record.kind == 0x0514)
+                .map(|record| self.original[record.data.clone()].to_vec())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let blank = Document::new();
         let baseline = records(&blank.original)?;
         let mut bytes = b"GSP4".to_vec();
@@ -256,6 +275,12 @@ impl Document {
                 }
                 0x03e9 => {
                     bytes.extend_from_slice(&body);
+                    put_record(&mut bytes, record.kind, payload);
+                }
+                0x03ef => {
+                    for resource in &picture_resources {
+                        put_record(&mut bytes, 0x0514, resource);
+                    }
                     put_record(&mut bytes, record.kind, payload);
                 }
                 _ => put_record(&mut bytes, record.kind, payload),

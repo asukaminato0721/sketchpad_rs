@@ -16,6 +16,13 @@ categories stay unsupported. Unplaced code15 outputs decode as
 `ToolPointOnPath` only in an isolated tool canvas; saving an unbound prototype
 as an ordinary drawing is rejected even when the prototype is unchanged.
 
+Picture resources remain document-global even when their construction groups
+belong to a tool prototype. Isolated decoding copies an enclosing document's
+ordered resource payloads into its synthetic canvas whenever the prototype has
+a picture header, allowing existing bounded picture decoding to retain resource
+IDs without inventing a separate namespace. See
+[picture-resource analysis](tool_picture_resources_analysis.md).
+
 Native-created segment and circle tools use the same path category. Independent
 invocation and byte-identical reopens establish that it also accepts rays,
 lines, arcs, and polygons. Polygon interior clicks produce boundary points.

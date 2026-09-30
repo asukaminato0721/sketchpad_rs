@@ -2,11 +2,12 @@
 
 Latest snapshot, 2026-09-30: **1,559/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **490** unsupported slots, all in
+are byte-exact, with zero failures. There are **443** unsupported slots, all in
 embedded-tool prototypes, and 40 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 4,866
-decoded, 490 undecoded. The current scalar-Parameter custom-tool-given recovery
-plus circular-segment and endpoint arc-length
+objects. Embedded tools contain 5,356 slots across 103 definitions: 4,913
+decoded, 443 undecoded. The current tool-picture-resource extraction and
+scalar-Parameter custom-tool-given recoveries plus circular-segment and endpoint
+arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
 legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
@@ -2381,3 +2382,28 @@ The 1,599 drawing documents remain drawing-complete, all 1,599 original files
 round-trip byte-exactly, partial views remain 785, and no standalone test case
 was added. See [analysis](tool_scalar_parameter_given_analysis.md). Full scan:
 `/tmp/subtype79_coverage_all.log`.
+
+## Embedded-tool picture resources
+
+Native stores PNG resources in the document-wide resource section even when a
+picture construction belongs to an embedded tool prototype. The isolated-tool
+decoder previously copied the prototype groups into a synthetic document but
+omitted those global resources, leaving otherwise supported code-99 attached
+pictures unresolved. Picture-bearing prototypes now receive the source resource
+records in their original order, preserving the resource IDs referenced by
+their local picture groups.
+
+This restores four direct code-99 pictures and 43 dependent objects in
+`100以内两位数加一位数小棒图.gsp`: prototype coverage rises
+**4,866→4,913/5,356** and unsupported slots fall **490→443**. The recovered
+descendants include six code-16 constructions, twelve code-24 constructions,
+seven code-33 values, six code-52 objects, five code-55 objects, three code-30
+objects, and four mapped/binding objects. Eight code-99 prototype slots remain
+behind independent unsupported prerequisites. Isolated-view completeness stays
+36 complete/67 partial because the affected 149-object tool still has other
+gaps.
+
+All 1,599 drawings remain drawing-complete, all original files remain byte-exact,
+and no standalone test case was added. See
+[analysis](tool_picture_resources_analysis.md). Full scan:
+`/tmp/tool_picture_resources_coverage.log`.
