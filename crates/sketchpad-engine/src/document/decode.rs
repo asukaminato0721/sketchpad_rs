@@ -1207,6 +1207,7 @@ impl Document {
                     Some(
                         category @ (EmbeddedToolInputKind::Path
                         | EmbeddedToolInputKind::Segment
+                        | EmbeddedToolInputKind::Polygon
                         | EmbeddedToolInputKind::Numeric
                         | EmbeddedToolInputKind::ScalarParameter),
                     ) => {

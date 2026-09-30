@@ -58,7 +58,7 @@ No complete prototype containing a subtype-5, 6, 8, 15, or 39 given was found. T
 
 ## Contextual representation boundary
 
-The `EmbeddedToolInput` descriptor retains raw local ID/class/subtype. Current independently established categories are Point `(1,4)`, Path `(1,5)`, finite Segment `(1,14)`, generic Numeric `(11,33)`, and scalar Parameter `(11,79)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Other proved categories become typed `Kind::ToolInput` roots without invented cached values or geometry; unknown categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization; function and other subtype meanings remain unimplemented pending independent proofs.
+The `EmbeddedToolInput` descriptor retains raw local ID/class/subtype. Current independently established categories are Point `(1,4)`, Path `(1,5)`, finite Segment `(1,14)`, Polygon `(1,15)`, generic Numeric `(11,33)`, and scalar Parameter `(11,79)`. A private contextual decoder receives the declared-input map while ordinary `Document::from_bytes` has no such context. Point givens remain neutral Free points for compatibility. Other proved categories become typed `Kind::ToolInput` roots without invented cached values or geometry; unknown categories become unsupported before fallback decoding. Known input groups retain their strictly bounded native placeholder record family and contextual labels. A prototype-only `Kind::ToolPointOnPath(host)` represents the parameter-free native operation without inventing a saved fraction. It has a real host dependency and cannot be encoded as an ordinary drawing construction. The root owns destination matching and concrete invocation materialization; function and other subtype meanings remain unimplemented pending independent proofs.
 
 The reproducible scratch audit is `/tmp/tool_given_audit.rs` linked to the settled library; `/tmp/tool_given_audit.tsv` records all 103 tools and 515 headers, `/tmp/tool_given_audit_full.tsv` includes presentation/descriptor bytes, and `/tmp/tool_given_consumers.tsv` records raw dependent reference payloads. These scratch files are not retained fixtures or Native writer proofs.
 
@@ -83,3 +83,11 @@ inert numeric-given layout, including unusable cache-like step/domain bytes, but
 destination matching accepts only a live scalar Parameter. This recovers 87
 prototype slots while both source tools remain partial. See
 [the focused analysis](tool_scalar_parameter_given_analysis.md).
+
+## Polygon follow-up
+
+Native independently prompts to match polygon `P[1]` for class1/subtype15, then
+accepts an interior click on an arbitrary-sided polygon. The contextual input is
+therefore a Polygon rather than a Path or point placeholder. It exposes the
+polygon family to dependent decoding but no vertex list or fixed subtype before
+binding. See [the focused analysis](tool_polygon_given_analysis.md).

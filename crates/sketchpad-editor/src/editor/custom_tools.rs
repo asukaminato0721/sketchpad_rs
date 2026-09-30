@@ -368,6 +368,7 @@ impl Editor {
                         Some(
                             kind @ (EmbeddedToolInputKind::Path
                             | EmbeddedToolInputKind::Segment
+                            | EmbeddedToolInputKind::Polygon
                             | EmbeddedToolInputKind::Numeric
                             | EmbeddedToolInputKind::ScalarParameter),
                         ) => {
@@ -423,6 +424,10 @@ impl Editor {
                     return Ok(None);
                 };
                 id
+            } else if input.kind() == Some(EmbeddedToolInputKind::Polygon) {
+                self.hit(viewport, at)
+                    .filter(|id| self.doc.objects[*id - 1].kind.is_polygon())
+                    .ok_or("Choose an available polygon")?
             } else if matches!(
                 input.kind(),
                 Some(EmbeddedToolInputKind::Numeric | EmbeddedToolInputKind::ScalarParameter)

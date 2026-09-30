@@ -7,6 +7,8 @@ pub enum EmbeddedToolInputKind {
     /// A path placeholder shared by native segment and circle controls.
     Path,
     Segment,
+    /// A polygon of arbitrary supported vertex count.
+    Polygon,
     /// A generic numeric magnitude; its units are determined when bound.
     Numeric,
     /// A scalar Parameter specifically, retaining Native's stricter input
@@ -29,6 +31,7 @@ impl EmbeddedToolInput {
             (1, 4) => Some(EmbeddedToolInputKind::Point),
             (1, 5) => Some(EmbeddedToolInputKind::Path),
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
+            (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
             (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
             _ => None,

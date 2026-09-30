@@ -168,8 +168,10 @@ impl Kind {
         straight_kind_mode(self) == Some(LineMode::Line)
     }
     pub fn is_polygon(&self) -> bool {
-        matches!(self, Kind::Polygon(_))
-            || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Polygon)
+        matches!(
+            self,
+            Kind::Polygon(_) | Kind::ToolInput(EmbeddedToolInputKind::Polygon)
+        ) || matches!(self, Kind::Colorized(d) if d.element() == ElementType::Polygon)
             || self
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Polygon)

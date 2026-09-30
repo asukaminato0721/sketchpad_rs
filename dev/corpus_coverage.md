@@ -2,11 +2,11 @@
 
 Latest snapshot, 2026-09-30: **1,559/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **443** unsupported slots, all in
+are byte-exact, with zero failures. There are **420** unsupported slots, all in
 embedded-tool prototypes, and 40 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 4,913
-decoded, 443 undecoded. The current tool-picture-resource extraction and
-scalar-Parameter custom-tool-given recoveries plus circular-segment and endpoint
+objects. Embedded tools contain 5,356 slots across 103 definitions: 4,936
+decoded, 420 undecoded. The current polygon and scalar-Parameter custom-tool-given
+recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
 arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
 legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
@@ -2407,3 +2407,26 @@ All 1,599 drawings remain drawing-complete, all original files remain byte-exact
 and no standalone test case was added. See
 [analysis](tool_picture_resources_analysis.md). Full scan:
 `/tmp/tool_picture_resources_coverage.log`.
+
+## Polygon custom-tool given
+
+The sole class-1/subtype-15 given is now an abstract `Polygon` tool input rather
+than an unsupported code-zero object. Under Native Xvfb, selecting
+`凸多边形在直线上的滚动（李章博）` displayed `1. 匹配多边形 P[1]`; clicking inside
+the source polygon advanced to its point input, and clicking a vertex created
+the magenta rolling construction. Saving grew the copied file from 35,946 to
+51,334 bytes.
+
+The abstract input satisfies polygon-family predicates but exposes no invented
+vertices or fixed vertex count. Runtime and desktop matching accept supported
+polygon objects, including an interior click, while the prototype's remaining
+unsupported constructions keep invocation behind the normal partial-view gate.
+This restores **23** prototype slots: one input, its perimeter, eight code-95
+plots, seven code-48 values, three code-21 objects, two code-94 objects, and one
+code-24 object. Prototype coverage rises **4,913→4,936/5,356** and unsupported
+falls **443→420**.
+
+All 1,599 drawings remain drawing-complete, all original files remain byte-exact,
+and no standalone test case was added. See
+[analysis](tool_polygon_given_analysis.md). Full scan:
+`/tmp/tool_polygon_given_coverage.log`.

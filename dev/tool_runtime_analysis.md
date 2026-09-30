@@ -16,6 +16,12 @@ categories stay unsupported. Unplaced code15 outputs decode as
 `ToolPointOnPath` only in an isolated tool canvas; saving an unbound prototype
 as an ordinary drawing is rejected even when the prototype is unchanged.
 
+Polygon `(1,15)` is a separate abstract category established by a Native match
+prompt and successful interior-click invocation. It deliberately has no vertex
+count until bound to a supported destination polygon. Its only corpus prototype
+remains partial, so port-side materialization is not claimed. See
+[polygon-given evidence](tool_polygon_given_analysis.md).
+
 Picture resources remain document-global even when their construction groups
 belong to a tool prototype. Isolated decoding copies an enclosing document's
 ordered resource payloads into its synthetic canvas whenever the prototype has

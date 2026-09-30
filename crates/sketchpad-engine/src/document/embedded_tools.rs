@@ -385,6 +385,14 @@ impl Document {
                 Some(EmbeddedToolInputKind::Segment) => {
                     return Err("This tool input requires an available finite segment".into());
                 }
+                Some(EmbeddedToolInputKind::Polygon)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Polygon)
+                    ) && actual.kind.is_polygon() => {}
+                Some(EmbeddedToolInputKind::Polygon) => {
+                    return Err("This tool input requires an available polygon".into());
+                }
                 Some(EmbeddedToolInputKind::Numeric)
                     if matches!(
                         expected.kind,
