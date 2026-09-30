@@ -1028,16 +1028,33 @@ impl Document {
                 continue;
             }
             if let Kind::Image { png, placement } = &o.kind {
-                let ImagePlacement::Independent(transform) = placement else {
-                    return Err("Adding an attached picture is not supported".into());
+                let (mut group, resource) = match placement {
+                    ImagePlacement::Independent(transform) => {
+                        let picture = ImageFile::independent_from_png(png, *transform)?;
+                        (
+                            picture.picture_group().to_vec(),
+                            picture.resource_record().to_vec(),
+                        )
+                    }
+                    ImagePlacement::Parallelogram {
+                        top_left,
+                        bottom_right,
+                        bottom_left,
+                    } => ImageFile::parallelogram_from_png(
+                        png,
+                        u32::try_from(*top_left).map_err(|_| "Picture reference is too large")?,
+                        u32::try_from(*bottom_right)
+                            .map_err(|_| "Picture reference is too large")?,
+                        u32::try_from(*bottom_left)
+                            .map_err(|_| "Picture reference is too large")?,
+                    )?,
+                    _ => return Err("Adding this attached picture is not supported".into()),
                 };
-                let picture = ImageFile::independent_from_png(png, *transform)?;
-                let mut group = picture.picture_group().to_vec();
                 if !o.visible {
                     group[10] |= 1;
                 }
                 added.extend_from_slice(&group);
-                picture_resource = Some(picture.resource_record().to_vec());
+                picture_resource = Some(resource);
                 continue;
             }
             if let Kind::PlainText { text, rect } = &o.kind {

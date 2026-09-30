@@ -514,6 +514,14 @@ impl Document {
         measurement: bool,
     ) -> Result<i32, String> {
         if let Some(font) = &object.text_style_override {
+            if font.family == "Times New Roman"
+                && font.size_code == 16
+                && !font.bold
+                && !font.italic
+                && !font.underline
+            {
+                return Ok(21);
+            }
             if font.family == "Tahoma"
                 && font.size_code == 18
                 && !font.bold
@@ -530,15 +538,21 @@ impl Document {
             {
                 return Ok(34);
             }
-            return Err("Tool placement needs a verified numeric caption font layout".into());
+            return Err(format!(
+                "Tool placement needs a verified numeric caption font layout for object {}: {font:?}",
+                object.id
+            ));
         }
         let rs = super::records::records(&self.original)?;
         let styles = super::embedded_tools::document_records(&rs)
             .filter(|record| record.kind == 0x04b3)
             .collect::<Vec<_>>();
-        let style = styles
-            .get(index)
-            .ok_or("Missing numeric caption font style")?;
+        let style = styles.get(index).ok_or_else(|| {
+            format!(
+                "Missing numeric caption font style {index} for object {}",
+                object.id
+            )
+        })?;
         let payload = &self.original[style.data.clone()];
         let family_index = payload
             .get(..2)
@@ -586,7 +600,18 @@ impl Document {
         {
             return Ok(34);
         }
-        Err("Tool placement needs a verified numeric caption font layout".into())
+        if font.family == "Times New Roman"
+            && font.size_code == 16
+            && !font.bold
+            && !font.italic
+            && !font.underline
+        {
+            return Ok(21);
+        }
+        Err(format!(
+            "Tool placement needs a verified numeric caption font layout for object {}: {font:?}",
+            object.id
+        ))
     }
 
     /// Place a new calculation below the existing measurements and numeric captions.
@@ -1069,6 +1094,7 @@ fn numeric_measurement_caption_shape(
     match kind {
         Kind::SegmentLength(_)
         | Kind::PointDistance(_, _)
+        | Kind::NumericAlias { .. }
         | Kind::AngleMeasurement(_, _, _)
         | Kind::SlopeMeasurement(_, _)
         | Kind::CircleRadius(_)

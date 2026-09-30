@@ -1,11 +1,12 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,572/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,575/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **286** unsupported slots, all in
-embedded-tool prototypes, and 27 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,070
-decoded, 286 undecoded. The current final geometric-given, distance-Parameter,
+are byte-exact, with zero failures. There are **283** unsupported slots, all in
+embedded-tool prototypes, and 24 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,073
+decoded, 283 undecoded. The current embedded attached-picture, final
+geometric-given, distance-Parameter,
 polymorphic Preimage, legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
 function custom-tool-given, and function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
@@ -2659,3 +2660,30 @@ complete-document and isolated-view counts remain **1,572/1,599** and 49 of
 standalone test case was added. See
 [analysis](tool_final_geometric_givens_analysis.md). Full scan:
 `/tmp/tool_final_given_coverage.txt`.
+
+## Attached pictures in embedded-tool invocation
+
+The final object in three otherwise decoded 69-object prototypes is the same
+code-100 class-16/subtype-78 picture, attached to three constructed points and
+backed by the prototype's document-wide PNG resource. The exact hidden `[1]`
+metadata record is shared with the established code-99 attached-picture family.
+The decoder now treats both forms consistently and distinguishes a structurally
+understood read-only resource from an unsupported record.
+
+Invocation may consequently materialize the immutable prototype. The bounded
+writer emits the proved three-point parallelogram group and one PNG resource;
+other attached placements and multiple writable pictures remain guarded.
+Numeric outputs retain their prototype caption fonts, including the observed
+normal Times New Roman size-16 21-pixel row step and flat `NumericAlias`
+caption. A 39-input invocation creates all 30 outputs and reparses exactly.
+
+The 8,596-byte port-authored result visibly opens and renders in Sketchpad 5
+under Xvfb/Wine. Ctrl+S preserves SHA-256
+`a811318060ca4b96b496b34845f02e3a7fda2d05d51d95fdb61e56ad4500e063`.
+The three roots raise prototype coverage **5,070→5,073/5,356**, lower
+unsupported slots **286→283**, and raise fully decoded documents
+**1,572→1,575/1,599**. Complete isolated views remain 49 because the source
+resources intentionally remain read-only. All drawings remain complete, all
+originals remain byte-exact, and no standalone test case was added. See
+[analysis](tool_attached_picture_analysis.md). Full scan:
+`/tmp/tool_code100_coverage.txt`.

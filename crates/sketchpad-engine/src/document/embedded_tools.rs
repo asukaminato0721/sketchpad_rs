@@ -337,7 +337,7 @@ impl Document {
         if inputs.len() != local_inputs.len() || inputs.is_empty() {
             return Err("Select the tool's ordered inputs".into());
         }
-        if tool.partial_view || !tool.safe_structure {
+        if !tool.safe_structure || (tool.partial_view && !tool.image_read_only) {
             return Err("Tool prototype contains unsupported records or constructions".into());
         }
         if tool.objects.iter().any(|object| {
@@ -502,6 +502,8 @@ impl Document {
                     italic: false,
                     underline: false,
                 })
+            } else if object.kind.numeric_unit().is_some() {
+                tool.text_font_state(object.id)
             } else {
                 None
             };

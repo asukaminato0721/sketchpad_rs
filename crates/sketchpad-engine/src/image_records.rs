@@ -1,7 +1,8 @@
 //! Lossless helpers for the observed GSP4 embedded picture layout.
 //!
 //! Imported pictures can be independent or attached to one, two, or three
-//! points. Only the single independent form is structurally writable.
+//! points. Writing is bounded to a single independent picture or the proved
+//! three-point form emitted while materializing an embedded tool.
 
 use std::ops::Range;
 
@@ -12,6 +13,14 @@ const IMAGE_TRANSFORM: u32 = 0x08a8;
 const IMAGE_RESOURCE: u32 = 0x1f44;
 const OBJECT_END: u32 = 0x07d7;
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+pub(crate) const INTERNAL_IMAGE_LABEL: [u8; 28] = [
+    6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81, 92, 97, 65, 3, 0, 91, 49, 93,
+    0,
+];
+const PARALLELOGRAM_HEADER: [u8; 28] = [
+    100, 0, 0, 0, 0, 0, 16, 0, 78, 0, 33, 1, 255, 0, 0, 0, 255, 255, 81, 92, 63, 0, 0, 0, 0, 0, 0,
+    0,
+];
 
 #[derive(Clone, Debug)]
 struct Record {
@@ -253,13 +262,9 @@ pub fn imported_attached_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyAttac
                 size_index + 2
             }
             Some(0x07d5)
-                if code == 99
+                if matches!(code, 99 | 100)
                     && auxiliary.is_some_and(|record| {
-                        bytes[record.payload.clone()]
-                            == [
-                                6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81,
-                                92, 97, 65, 3, 0, 91, 49, 93, 0,
-                            ]
+                        bytes[record.payload.clone()] == INTERNAL_IMAGE_LABEL
                     }) =>
             {
                 size_index + 2
@@ -407,6 +412,17 @@ pub fn imported_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyImage>, String
 
 fn u32_at(data: &[u8], start: usize) -> u32 {
     u32::from_le_bytes(data[start..start + 4].try_into().unwrap())
+}
+
+fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) -> Result<(), String> {
+    let payload_len = u32::try_from(payload.len()).map_err(|_| "GSP record is too large")?;
+    out.extend_from_slice(&payload_len.to_le_bytes());
+    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(payload);
+    if !payload.len().is_multiple_of(2) {
+        out.push(0);
+    }
+    Ok(())
 }
 
 fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
@@ -629,6 +645,46 @@ impl ImageFile {
         picture.replace_png(png)?;
         picture.set_transform(transform)?;
         Ok(picture)
+    }
+
+    pub fn parallelogram_from_png(
+        png: &[u8],
+        top_left: u32,
+        bottom_right: u32,
+        bottom_left: u32,
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+        if [top_left, bottom_right, bottom_left].contains(&0) {
+            return Err("Picture attachment references must be positive".into());
+        }
+        let dimensions = png_dimensions(png)?;
+        let mut group = Vec::new();
+        put_record(&mut group, OBJECT_HEADER, &PARALLELOGRAM_HEADER)?;
+        let mut references = 3_u32.to_le_bytes().to_vec();
+        for id in [top_left, bottom_right, bottom_left] {
+            references.extend_from_slice(&id.to_le_bytes());
+        }
+        put_record(&mut group, 0x07d2, &references)?;
+        let mut size = Vec::with_capacity(16);
+        for value in [dimensions.0, dimensions.1, dimensions.0, dimensions.1] {
+            size.extend_from_slice(&value.to_le_bytes());
+        }
+        put_record(&mut group, IMAGE_SIZE, &size)?;
+        put_record(&mut group, 0x07d5, &INTERNAL_IMAGE_LABEL)?;
+        put_record(&mut group, IMAGE_RESOURCE, &0_u16.to_le_bytes())?;
+        put_record(&mut group, OBJECT_END, &[])?;
+
+        let resource_payload_len = png
+            .len()
+            .checked_add(8)
+            .filter(|&len| u32::try_from(len).is_ok())
+            .ok_or("Picture resource is too large")?;
+        let mut resource_payload = Vec::with_capacity(resource_payload_len);
+        resource_payload.extend_from_slice(&dimensions.0.to_le_bytes());
+        resource_payload.extend_from_slice(&dimensions.1.to_le_bytes());
+        resource_payload.extend_from_slice(png);
+        let mut resource = Vec::new();
+        put_record(&mut resource, RESOURCE, &resource_payload)?;
+        Ok((group, resource))
     }
 
     pub fn crops(&self) -> &[CroppedPicture] {

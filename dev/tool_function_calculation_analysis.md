@@ -41,8 +41,11 @@ that slot's magnitude unit and independently validates the function argument,
 returning the scalar function result. A non-function object in that role is
 rejected transactionally.
 
-The three prototypes remain partial because of their unrelated final code-100
-objects, so this checkpoint makes no claim of complete invocation for them.
+At this checkpoint the three prototypes remained partial because of their
+unrelated final code-100 objects. The later
+[attached-picture checkpoint](tool_attached_picture_analysis.md) decodes and
+materializes those final objects, completing invocation of all 69 prototype
+objects while retaining the isolated PNG resources as read-only.
 
 ## Measured recovery
 

@@ -210,5 +210,7 @@ Unsupported slots fall 3,735→3,730, all-kind-complete documents rise
 1,167→1,170, drawing-complete documents rise 1,196→1,199, and all 1,599
 originals remain byte-exact. The compiled audit finds no remaining unsupported
 class-16/code-99 picture profile on a drawing page. Twelve code-99 embedded-tool
-prototype slots remain outside this admission. Fresh attachment authoring and
-resource-table mutation remain guarded.
+prototype slots remain outside this admission. General fresh attachment
+authoring and resource-table mutation remain guarded; the later
+[embedded-tool checkpoint](tool_attached_picture_analysis.md) adds only its
+proved single code-100 output form.

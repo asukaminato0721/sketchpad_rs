@@ -380,6 +380,10 @@ impl Document {
         } else {
             BTreeMap::new()
         };
+        let recognized_picture_resources = image_file.is_some()
+            || !cropped_images.is_empty()
+            || !imported_images.is_empty()
+            || !attached_images.is_empty();
         let image_read_only =
             has_picture_resource && !image_file.as_ref().is_some_and(ImageFile::can_edit);
         let baseline_records = records(include_bytes!("../../../../assets/point_template.gsp"))?;
@@ -446,7 +450,7 @@ impl Document {
             if rs[i].kind != 0x7d0 {
                 if !safe_outside.contains(&rs[i].kind)
                     && !title_offsets.contains(&rs[i].start)
-                    && !(rs[i].kind == 0x0514 && !image_read_only)
+                    && !(rs[i].kind == 0x0514 && recognized_picture_resources)
                 {
                     safe = false;
                 }
@@ -544,7 +548,7 @@ impl Document {
             // presentations.
             let geometric_label =
                 arc_label || labeled_shape && matches!(h[6..8], [1, 0] | [2, 0] | [3, 0]);
-            let image_internal_label = code == 99 && h[6..10] == [16, 0, 78, 0];
+            let image_internal_label = matches!(code, 99 | 100) && h[6..10] == [16, 0, 78, 0];
             let numeric_label = matches!(
                 code,
                 36 | 37
@@ -600,10 +604,7 @@ impl Document {
                 }
                 match r.kind {
                     0x07d5 if image_internal_label => {
-                        if d != [
-                            6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81, 92,
-                            97, 65, 3, 0, 91, 49, 93, 0,
-                        ] {
+                        if d != crate::image_records::INTERNAL_IMAGE_LABEL {
                             safe = false;
                         }
                     }
@@ -3150,7 +3151,7 @@ impl Document {
             path,
             selected: BTreeSet::new(),
             dirty: false,
-            partial_view: !safe,
+            partial_view: !safe || image_read_only,
             active_page,
             page_count: page_count.max(1),
             snap_points: if snap_points.is_empty() {

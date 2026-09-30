@@ -122,7 +122,7 @@ impl Document {
             .count()
             > 1
         {
-            return Err("Only one independent picture can be written".into());
+            return Err("Only one picture can be written".into());
         }
         for (i, o) in self.objects.iter().enumerate() {
             if o.id != i + 1 {
@@ -1726,7 +1726,7 @@ impl Document {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        if reparsed.partial_view && self.safe_structure
+        if (reparsed.partial_view && self.safe_structure && !reparsed.image_read_only)
             || reparsed.snap_points != self.snap_points
             || reparsed.grid_dotted != self.grid_dotted
             || reparsed.grid_form != self.grid_form
