@@ -899,3 +899,21 @@ command parity: 17 isolated tool views remain structurally partial, and some
 otherwise complete tool invocations still stop at unverified caption-font
 metrics. No standalone test was added or removed. See
 [analysis](dev/tool_prototype_completion_analysis.md).
+
+## Embedded-tool structural markers and locus labels
+
+Native tool prototypes may attach an empty `0x232e` metadata record to an
+otherwise ordinary typed object, and parameter-locus prototypes may carry the
+same valid internal label/style pair as geometric loci. Both forms are now
+accepted only while decoding an isolated tool prototype; the marker is not
+materialized into an invoked drawing, and ordinary drawing validation remains
+unchanged.
+
+This makes nine more tools structurally invokable, raising complete isolated
+tool views from 86 to 95 and reducing partial views from 17 to 8. The recovered
+3D solid-edge tool creates ten outputs in a 14-object drawing; the result
+reopens fully, re-encodes exactly, visibly renders in Sketchpad 5, and remains
+byte-identical after Ctrl+S. The other eight partial tools all contain image
+resource tables and remain read-only pending a resource-copying contract. No
+standalone test was added or removed. See
+[analysis](dev/tool_prototype_structure_analysis.md).

@@ -4,8 +4,9 @@ Latest snapshot, 2026-09-30: **1,599/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
 are byte-exact, with zero failures. All **285,703** object slots are decoded;
 there are no unsupported object kinds. Embedded tools contain 5,356 decoded
-slots across 103 definitions. Isolated decoding produces 86 complete and 17
-structurally partial tool views. The current tool-prototype generic numeric
+slots across 103 definitions. Isolated decoding produces 95 complete and 8
+structurally partial tool views; every remaining partial tool contains image
+resources. The current tool-prototype generic numeric
 dilation, sampled path-point, literal generic-path, polymorphic color-path and
 path-intersection, angular-parameter locus, numeric-color, mapped-picture and
 direct-numeric-depth, numeric mapped-seed, path-value, numeric-coordinate,
@@ -2841,3 +2842,28 @@ on Ctrl+S. Broader compass and surface-color invocation remains stopped at
 separate unverified caption-font metrics. No standalone test was added or
 removed. See [analysis](tool_prototype_completion_analysis.md). Full scan:
 `/tmp/tool_prototype_complete_coverage.log`.
+
+## Embedded-tool structural markers and parameter-locus labels
+
+Nine fully decoded prototypes were still read-only only because their object
+groups contained an empty native `0x232e` marker or a parameter-locus internal
+label/style pair. The importer now recognizes those records only in isolated
+tool context. The marker carries no payload and is not emitted into the invoked
+drawing; ordinary document admission is unchanged.
+
+Complete isolated tool views rise **86→95/103** and structurally partial views
+fall **17→8**. The remaining eight are the three duplicated π-spiral tools,
+the `12T` tool, three number/shape iteration tools, and the base-ten rods tool;
+all contain image resource tables that are intentionally read-only. Corpus
+object coverage remains **285,703/285,703**, prototype coverage remains
+**5,356/5,356**, and all **1,599/1,599** originals remain byte-exact.
+
+The recovered `6.多面体棱虚实线` tool materializes ten outputs into a
+14-object, 3,420-byte drawing. The drawing reopens non-partially and re-encodes
+exactly. Native Sketchpad visibly renders it and preserves SHA-256
+`db86b5026f00c78ab4987ba9a925cd4ad0f2d6745f289bcc273340596081d5c9`
+after Ctrl+S. Other recovered tools that contain captions now reach their
+separate verified-layout guards instead of failing structural admission. No
+standalone test was added or removed. See
+[analysis](tool_prototype_structure_analysis.md). Full scan:
+`/tmp/tool_structure_markers_coverage.log`.

@@ -285,6 +285,8 @@ The current 1,599-file corpus scan decodes all 285,703 object slots, including
 all 5,356 embedded-tool prototype slots, and round-trips every original
 byte-exactly. This is an import-coverage result; structurally partial documents
 and incomplete commands remain tracked in [COMMAND_PARITY.md](COMMAND_PARITY.md).
+Of the 103 isolated embedded-tool views, 95 are now structurally complete; the
+remaining eight contain read-only image resource tables.
 
 Loci retain defined samples when their targets become undefined at some
 positions. Point curves break at missing samples; object families omit those

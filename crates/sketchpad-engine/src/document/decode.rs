@@ -562,8 +562,9 @@ impl Document {
             let image_internal_label = matches!(code, 99 | 100) && h[6..10] == [16, 0, 78, 0];
             let internal_iteration_label = (matches!(code, 76 | 89) && h[6..10] == [14, 0, 64, 0])
                 || (code == 77 && h[6..10] == [15, 0, 65, 0]);
-            let locus_internal_label =
-                code == 35 && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 43, 0]);
+            let locus_internal_label = (code == 35
+                && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 43, 0]))
+                || (!tool_inputs.is_empty() && code == 97 && h[6..10] == [6, 0, 42, 0]);
             let referenced_caption = matches!(code, 73 | 90) && h[6..10] == [0, 0, 59, 0];
             let numeric_label = matches!(
                 code,
@@ -921,6 +922,10 @@ impl Document {
                         && d[4..] == [0, 0, 0, 0, 254, 254, 254, 0])
                     && !(code == 121 && r.kind == 0x090f && d.len() == 16)
                     && !(code == 121 && r.kind == 0x232e && d.is_empty())
+                    // Native custom-tool prototypes attach this empty inert
+                    // marker to several otherwise ordinary typed objects. It
+                    // is not materialized into the invoked drawing.
+                    && !(!tool_inputs.is_empty() && r.kind == 0x232e && d.is_empty())
                 {
                     safe = false;
                 }
