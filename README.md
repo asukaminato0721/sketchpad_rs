@@ -297,7 +297,16 @@ settings and the legacy clock variant with its short header and code-page-936
 label. Point rates remain separately bounded, and contradictory settings stay
 opaque. See [the compatibility analysis](dev/legacy_animation_settings_analysis.md).
 
-Imported loci also retain native sparse or parallel-branch dependency captures and can apply an explicit stored path transiently to a free base driver when that path is independent of the driver. Filled-region locus targets share the disk, sector, circular-segment, and polygon sampler; point-output sampled objects can serve as bounded outer curve targets. The measured corpus effects and strict admission rules are recorded in [the locus analysis](dev/locus_midpoint_analysis.md).
+Imported loci also retain native sparse or parallel-branch dependency captures
+and can apply an explicit stored path transiently to an existing point when
+that path is independent of the point's saved construction. This includes
+constrained, transformed, path-value, iteration-alias, and colorized points;
+ordinary loci whose driver already uses their stored path retain the original
+ordering rules. Filled-region locus targets share the disk, sector,
+circular-segment, and polygon sampler; point-output sampled objects can serve
+as bounded outer curve targets. The measured corpus effects and strict
+admission rules are recorded in [the original locus analysis](dev/locus_midpoint_analysis.md)
+and [the explicit-path follow-up](dev/transient_locus_drivers_analysis.md).
 
 Imported live captions understand the remaining observed native symbol-font
 tokens, signed numeric terms, overbars/arrows/arcs, vertically centered groups,

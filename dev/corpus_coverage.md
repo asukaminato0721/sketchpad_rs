@@ -1,19 +1,20 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-29: **1,401/1,599** documents have all object kinds
-decoded; **1,436** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **1,822** unsupported slots (1,224
-drawing slots and 598 prototype slots), and 198 documents still contain
-unsupported objects. Embedded tools contain 5,356 slots across 103 definitions:
-4,758 decoded, 598 undecoded. The current circular-segment and endpoint arc-length
+Latest snapshot, 2026-09-30: **1,540/1,599** documents have all object kinds
+decoded; **1,579** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **666** unsupported slots (89 drawing
+slots and 577 prototype slots), and 59 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
+decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
 legacy polar-coordinate, circular-segment transform, and axis-rotation recoveries
 plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
-general Plot Value, duplicate-carried, and nested-capture mapped-iteration recoveries
-are summarized at the end; the older detailed
+general Plot Value, duplicate-carried, and nested-capture mapped-iteration
+recoveries plus transient explicit-path locus-driver recovery are summarized at
+the end; the older detailed
 snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
@@ -2164,3 +2165,23 @@ The port editor also toggled real playback under Xvfb with an ALSA null device.
 Only the two contradictory Animation packets remain among drawing code 62. No
 standalone test case was added. See [analysis](sound_buttons_analysis.md). Full
 scan: `/tmp/sound_button_coverage.log`.
+
+## Transient explicit-path locus drivers
+
+Native code-35 loci can temporarily place an existing point on the locus
+record's explicit path even when that point's saved construction uses a
+different path or is transformed, calculated, aliased, or colorized. Import now
+distinguishes that form from an ordinary locus whose driver is already stored
+on its path. The transient path must remain independent of the driver, must be
+supported by the existing path sampler, and is applied only inside the locus
+evaluation scope.
+
+Sixteen drawing loci and 28 drawing descendants are restored; 13 embedded-tool
+loci also decode. Unsupported falls **723->666**, complete documents/drawings
+rise **1,523/1,565->1,540/1,579**, unsupported documents fall **76->59**, and
+partial views fall **795->792**. Embedded-tool coverage rises
+**4,766/5,356->4,779/5,356**. All **1,599** originals remain byte-exact. Three
+representative originals—including a nested locus and a colorized-circle
+target—opened and saved unchanged in Sketchpad 5 under Xvfb/Wine. No standalone
+test case was added. See [analysis](transient_locus_drivers_analysis.md). Full
+scan: `/tmp/transient_locus_coverage_final.log`.

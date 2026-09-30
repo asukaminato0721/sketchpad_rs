@@ -209,9 +209,34 @@ fn compatible_shortened_segment_host(objects: &[Object], path: usize, host: usiz
         || (host_a == source_a && is_inner(host_b, source_a, source_b))
 }
 
+/// Whether the driver's saved construction already uses the locus record's
+/// path. Native loci may instead name another independent path and temporarily
+/// place an existing point on it only while sampling the locus.
+pub(super) fn locus_driver_uses_stored_path(
+    objects: &[Object],
+    driver: usize,
+    path: usize,
+) -> bool {
+    let Some(moving) = objects.get(driver.saturating_sub(1)) else {
+        return false;
+    };
+    match moving.kind {
+        Kind::PointOnSegment(host, _) => compatible_shortened_segment_host(objects, path, host),
+        Kind::PointOnRay(host, _)
+        | Kind::PointOnLine(host, _)
+        | Kind::PointOnCircle(host, ..)
+        | Kind::PointOnArc(host, _)
+        | Kind::PointOnCurve(host, _)
+        | Kind::PointOnPolygon(host, ..)
+        | Kind::PointOnSector(host, _)
+        | Kind::PointOnCircularSegment(host, _) => host == path,
+        _ => false,
+    }
+}
+
 /// Resolve a locus driver against its explicit native path. Some native loci
-/// retain a free base point here; the locus record itself supplies the path
-/// constraint used only while evaluating the sweep.
+/// retain a point's independent saved construction here; the locus record
+/// supplies a different path constraint only while evaluating the sweep.
 pub(super) fn locus_driver_range_info_for_path(
     objects: &[Object],
     driver: usize,
@@ -219,6 +244,7 @@ pub(super) fn locus_driver_range_info_for_path(
 ) -> Option<(f64, u32)> {
     let moving = objects.get(driver.checked_sub(1)?)?;
     let host = objects.get(path.checked_sub(1)?)?;
+    let uses_stored_path = locus_driver_uses_stored_path(objects, driver, path);
     let straight = locus_driver_straight_mode(objects, path);
     let inferred = || {
         if let Some(mode) = straight {
@@ -288,10 +314,10 @@ pub(super) fn locus_driver_range_info_for_path(
         {
             Some((1., locus_curve_flags(objects, path)?))
         }
-        Kind::Free(_) => inferred(),
+        _ if is_point_kind(&moving.kind) && !uses_stored_path => inferred(),
         _ => None,
     };
-    let valid_order = if matches!(moving.kind, Kind::Free(_)) {
+    let valid_order = if !uses_stored_path {
         path != driver
     } else {
         path < driver
@@ -320,7 +346,9 @@ pub(super) fn locus_driver_range_matches(
     let straight = match objects[driver - 1].kind {
         Kind::PointOnRay(host, _) if host == path => Some(LineMode::Ray),
         Kind::PointOnLine(host, _) if host == path => Some(LineMode::Line),
-        Kind::Free(_) => locus_driver_straight_mode(objects, path),
+        _ if !locus_driver_uses_stored_path(objects, driver, path) => {
+            locus_driver_straight_mode(objects, path)
+        }
         _ => None,
     };
     match straight {
@@ -487,10 +515,11 @@ impl Document {
         let steps = subdivisions.clamp(2, 1000).min(samples as usize);
         let external = self.locus_external_inputs(refs);
         let mut sample = self.clone();
-        let mut nested_curve = matches!(
-            self.objects.get(driver.checked_sub(1)?)?.kind,
-            Kind::PointOnCurve(host, _) if host == path
-        )
+        let moving = self.objects.get(driver.checked_sub(1)?)?;
+        let transient_driver = !locus_driver_uses_stored_path(&self.objects, driver, path);
+        let mut nested_curve = (matches!(moving.kind, Kind::PointOnCurve(host, _) if host == path)
+            || transient_driver
+                && super::curve_points::free_supported(&self.objects, path, moving.page, driver))
         .then(|| super::point_curve::PointCurve::new(self, path))
         .flatten();
         if let Some(external) = &external {
@@ -571,7 +600,9 @@ impl Document {
             Kind::PointOnPolygon(host, ..) if *host == path => {
                 self.locus_polygon_driver_kind_at(path, parameter)
             }
-            Kind::Free(_) => {
+            _ if is_point_kind(kind)
+                && !locus_driver_uses_stored_path(&self.objects, driver, path) =>
+            {
                 locus_driver_range_info_for_path(&self.objects, driver, path)?;
                 match locus_driver_straight_mode(&self.objects, path) {
                     Some(LineMode::Segment) => Some(Kind::PointOnSegment(path, parameter)),

@@ -1588,10 +1588,11 @@ fn expected_locus_refs_for_path(
     }
     super::locus::locus_driver_range_info_for_path(objects, driver, path)?;
     let host = objects.get(path.checked_sub(1)?)?;
-    if path >= target || host.deleted || host.page != moving.page {
+    let transient_driver = !super::locus::locus_driver_uses_stored_path(objects, driver, path);
+    if (!transient_driver && path >= target) || host.deleted || host.page != moving.page {
         return None;
     }
-    if matches!(moving.kind, Kind::Free(_))
+    if transient_driver
         && ancestry(objects, driver, path, moving.page, &mut Default::default()).is_some()
     {
         return None;
