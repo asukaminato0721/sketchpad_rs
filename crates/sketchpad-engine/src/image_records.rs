@@ -1,8 +1,8 @@
 //! Lossless helpers for the observed GSP4 embedded picture layout.
 //!
 //! Imported pictures can be independent or attached to one, two, or three
-//! points. Writing is bounded to a single independent picture or the proved
-//! three-point form emitted while materializing an embedded tool.
+//! points. Writing covers a single independent picture and the proved point
+//! and three-point forms emitted while materializing embedded tools.
 
 use std::ops::Range;
 
@@ -27,6 +27,9 @@ pub(crate) fn internal_image_label(payload: &[u8]) -> bool {
 const PARALLELOGRAM_HEADER: [u8; 28] = [
     100, 0, 0, 0, 0, 0, 16, 0, 78, 0, 33, 1, 255, 0, 0, 0, 255, 255, 81, 92, 63, 0, 0, 0, 0, 0, 0,
     0,
+];
+const POINT_HEADER: [u8; 28] = [
+    99, 0, 0, 0, 0, 0, 16, 0, 78, 0, 33, 1, 255, 0, 0, 0, 255, 255, 81, 92, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 #[derive(Clone, Debug)]
@@ -432,6 +435,21 @@ fn put_record(out: &mut Vec<u8>, kind: u32, payload: &[u8]) -> Result<(), String
     Ok(())
 }
 
+fn picture_resource(png: &[u8], dimensions: (u32, u32)) -> Result<Vec<u8>, String> {
+    let payload_len = png
+        .len()
+        .checked_add(8)
+        .filter(|&len| u32::try_from(len).is_ok())
+        .ok_or("Picture resource is too large")?;
+    let mut payload = Vec::with_capacity(payload_len);
+    payload.extend_from_slice(&dimensions.0.to_le_bytes());
+    payload.extend_from_slice(&dimensions.1.to_le_bytes());
+    payload.extend_from_slice(png);
+    let mut resource = Vec::new();
+    put_record(&mut resource, RESOURCE, &payload)?;
+    Ok(resource)
+}
+
 fn records(bytes: &[u8]) -> Result<Vec<Record>, String> {
     if bytes.get(..4) != Some(b"GSP4") {
         return Err("Expected a GSP4 document".into());
@@ -680,18 +698,61 @@ impl ImageFile {
         put_record(&mut group, IMAGE_RESOURCE, &0_u16.to_le_bytes())?;
         put_record(&mut group, OBJECT_END, &[])?;
 
-        let resource_payload_len = png
-            .len()
-            .checked_add(8)
-            .filter(|&len| u32::try_from(len).is_ok())
-            .ok_or("Picture resource is too large")?;
-        let mut resource_payload = Vec::with_capacity(resource_payload_len);
-        resource_payload.extend_from_slice(&dimensions.0.to_le_bytes());
-        resource_payload.extend_from_slice(&dimensions.1.to_le_bytes());
-        resource_payload.extend_from_slice(png);
-        let mut resource = Vec::new();
-        put_record(&mut resource, RESOURCE, &resource_payload)?;
-        Ok((group, resource))
+        Ok((group, picture_resource(png, dimensions)?))
+    }
+
+    pub fn point_from_png(
+        png: &[u8],
+        anchor: u32,
+        relative: [f64; 6],
+        resource_id: u16,
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+        if anchor == 0 || relative.iter().any(|value| !value.is_finite()) {
+            return Err("Invalid point-attached picture placement".into());
+        }
+        let dimensions = png_dimensions(png)?;
+        let [a, b, x, c, d, y] = relative;
+        let scale_x = a.hypot(c);
+        let scale_y = b.hypot(d);
+        if scale_x <= 0. || scale_y <= 0. {
+            return Err("Point-attached picture scale must be positive".into());
+        }
+        let sin = -c / scale_x;
+        let cos = a / scale_x;
+        let expected = [
+            scale_y * sin,
+            scale_y * cos,
+            -a * f64::from(dimensions.0) / 2. - b * f64::from(dimensions.1) / 2.,
+            -c * f64::from(dimensions.0) / 2. - d * f64::from(dimensions.1) / 2.,
+        ];
+        let observed = [b, d, x, y];
+        if observed
+            .iter()
+            .zip(expected)
+            .any(|(observed, expected)| (observed - expected).abs() > 1e-9)
+        {
+            return Err("Point-attached picture affine transform is unsupported".into());
+        }
+
+        let mut group = Vec::new();
+        put_record(&mut group, OBJECT_HEADER, &POINT_HEADER)?;
+        let mut references = 1_u32.to_le_bytes().to_vec();
+        references.extend_from_slice(&anchor.to_le_bytes());
+        put_record(&mut group, 0x07d2, &references)?;
+        let mut operation = 99_u32.to_le_bytes().to_vec();
+        for value in [scale_x, scale_y, sin.atan2(cos)] {
+            operation.extend_from_slice(&value.to_le_bytes());
+        }
+        put_record(&mut group, 0x07d3, &operation)?;
+        let mut size = Vec::with_capacity(16);
+        for value in [dimensions.0, dimensions.1, dimensions.0, dimensions.1] {
+            size.extend_from_slice(&value.to_le_bytes());
+        }
+        put_record(&mut group, IMAGE_SIZE, &size)?;
+        put_record(&mut group, 0x07d5, &INTERNAL_IMAGE_LABEL)?;
+        put_record(&mut group, IMAGE_RESOURCE, &resource_id.to_le_bytes())?;
+        put_record(&mut group, OBJECT_END, &[])?;
+        Ok((group, picture_resource(png, dimensions)?))
     }
 
     pub fn crops(&self) -> &[CroppedPicture] {

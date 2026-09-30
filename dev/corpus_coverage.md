@@ -2867,3 +2867,25 @@ separate verified-layout guards instead of failing structural admission. No
 standalone test was added or removed. See
 [analysis](tool_prototype_structure_analysis.md). Full scan:
 `/tmp/tool_structure_markers_coverage.log`.
+
+## Suppressed captions and picture-bearing tool execution
+
+Native wall-tool output proves that a presentation-suppressed numeric object
+and the following visible calculation reuse the same caption anchor. Applying
+that rule to every numeric kind removes false Impact, Tahoma, and Times font
+guards without adding guessed metrics. Structurally valid transformed points
+may also remain temporarily undefined when used by later segments, matching the
+existing Native transform save policy.
+
+The wall and rolling tools now create 34 and 74 outputs respectively and
+round-trip exactly. Polymorphic colorized Path outputs receive their specialized
+polygon drawing order and normalized default style; the surface-color control
+creates 12 outputs and round-trips exactly. The picture-iteration control
+creates 59 outputs, including two distinct point-attached PNG resources, in a
+60-object, 9,486-byte file. Native Sketchpad renders the pattern under
+Xvfb/Wine and preserves SHA-256
+`e8222056418d906715948403ae19631c31cb0eb161aaf779ca207a3b3620efc3`
+on Ctrl+S. Existing multi-picture documents remain structurally read-only; the
+writer admits only new point attachments with verified affine form and bounded
+sequential resource IDs. No standalone test was added or removed. See
+[analysis](tool_prototype_structure_analysis.md).

@@ -115,14 +115,24 @@ impl Document {
         {
             return Err("Removing a picture resource is not yet supported".into());
         }
-        if self
+        let pictures = self
             .objects
             .iter()
             .filter(|o| matches!(o.kind, Kind::Image { .. }))
-            .count()
-            > 1
+            .collect::<Vec<_>>();
+        if pictures.len() > 1
+            && pictures.iter().any(|object| {
+                object.id <= self.source_count
+                    || !matches!(
+                        object.kind,
+                        Kind::Image {
+                            placement: ImagePlacement::Point { .. },
+                            ..
+                        }
+                    )
+            })
         {
-            return Err("Only one picture can be written".into());
+            return Err("Only new point-attached pictures can share a resource table".into());
         }
         for (i, o) in self.objects.iter().enumerate() {
             if o.id != i + 1 {
@@ -1475,6 +1485,14 @@ impl Document {
                                 Kind::PathLiteralPoint(path, value) => self.undefined_native_path_plot(path, value),
                                 Kind::PointOnArc(path, _) => self.objects.get(path.saturating_sub(1)).is_some_and(|host| host.page == point.page)
                                     && (self.undefined_three_point_arc(path) || self.undefined_center_arc(path) || self.undefined_arc_on_circle(path)),
+                                Kind::Transformed(ref definition)
+                                    if definition.element()
+                                        == super::transform_model::ElementType::Point =>
+                                {
+                                    super::transform_validation::definition_supported(
+                                        self, definition,
+                                    )
+                                }
                                 _ => false,
                             })
                     })
@@ -1755,35 +1773,66 @@ impl Document {
             || !ignore_active_page_frame
                 && reparsed.active_coordinate_system()
                     != self.active_coordinate_system().map(|id| ids[id])
-            || reparsed.objects.len() != survivors.len()
-            || reparsed
-                .objects
-                .iter()
-                .zip(survivors.iter().zip(&expected_kinds))
-                .any(|(saved, (current, expected_kind))| {
-                    saved.id != ids[current.id]
-                        || saved.page != current.page
-                        || saved.kind != *expected_kind
-                        || saved.visible != current.visible
-                        || saved.presentation_suppressed != current.presentation_suppressed
-                        || saved.label != current.label
-                        || saved.visual_style != current.visual_style
-                        || saved.angle_marker_style != current.angle_marker_style
-                        || saved.interior_order != current.interior_order
-                        || saved.midpoint_host != current.midpoint_host.map(|host| ids[host])
-                        || current.locus_interval.is_some()
-                            && saved.locus_interval != current.locus_interval
-                        || current.function_anchor.is_some()
-                            && saved.function_anchor != current.function_anchor
-                        || current.function_name.is_some()
-                            && saved.function_name != current.function_name
-                        || current.measurement_anchor.is_some()
-                            && saved.measurement_anchor != current.measurement_anchor
-                        || current.measurement_precision.is_some()
-                            && saved.measurement_precision != current.measurement_precision
-                })
         {
-            return Err("Serialized sketch does not preserve the edited objects".into());
+            return Err("Serialized sketch does not preserve document metadata".into());
+        }
+        if reparsed.objects.len() != survivors.len() {
+            return Err("Serialized sketch does not preserve the object count".into());
+        }
+        for (saved, (current, expected_kind)) in reparsed
+            .objects
+            .iter()
+            .zip(survivors.iter().zip(&expected_kinds))
+        {
+            let field = if saved.id != ids[current.id] {
+                Some("ID")
+            } else if saved.page != current.page {
+                Some("page")
+            } else if saved.kind != *expected_kind {
+                Some("kind")
+            } else if saved.visible != current.visible {
+                Some("visibility")
+            } else if saved.presentation_suppressed != current.presentation_suppressed {
+                Some("presentation suppression")
+            } else if saved.label != current.label {
+                Some("label")
+            } else if saved.visual_style != current.visual_style {
+                Some("visual style")
+            } else if saved.angle_marker_style != current.angle_marker_style {
+                Some("angle marker style")
+            } else if saved.interior_order != current.interior_order {
+                Some("drawing order")
+            } else if saved.midpoint_host != current.midpoint_host.map(|host| ids[host]) {
+                Some("midpoint host")
+            } else if current.locus_interval.is_some()
+                && saved.locus_interval != current.locus_interval
+            {
+                Some("locus interval")
+            } else if current.function_anchor.is_some()
+                && saved.function_anchor != current.function_anchor
+            {
+                Some("function anchor")
+            } else if current.function_name.is_some()
+                && saved.function_name != current.function_name
+            {
+                Some("function name")
+            } else if current.measurement_anchor.is_some()
+                && saved.measurement_anchor != current.measurement_anchor
+            {
+                Some("measurement anchor")
+            } else if current.measurement_precision.is_some()
+                && saved.measurement_precision != current.measurement_precision
+            {
+                Some("measurement precision")
+            } else {
+                None
+            };
+            if let Some(field) = field {
+                return Err(format!(
+                    "Serialized sketch changes object {} {field}",
+                    current.id
+                ));
+            }
         }
         Ok(())
     }

@@ -689,22 +689,30 @@ impl Document {
                 });
                 materialized.visual_style = crate::style_records::visual_style(&header);
                 if element == super::transform_model::ElementType::Polygon {
-                    let previous_order = candidate
-                        .objects
-                        .iter()
-                        .filter(|object| !object.deleted && object.page == candidate.active_page)
-                        .filter_map(|object| object.interior_order)
-                        .max();
-                    materialized.interior_order = Some(match previous_order {
-                        Some(order) => order
-                            .checked_add(1)
-                            .ok_or("Polygon drawing order overflow")?,
-                        None => 1,
-                    });
                     // Native drops point/straight labels when the polymorphic
                     // result specializes to an interior object.
                     materialized.label = None;
                 }
+            }
+            if materialized.kind.is_polygon()
+                && (polymorphic_polygon_transform || polymorphic_colorized_path)
+            {
+                let previous_order = candidate
+                    .objects
+                    .iter()
+                    .filter(|object| !object.deleted && object.page == candidate.active_page)
+                    .filter_map(|object| object.interior_order)
+                    .max();
+                materialized.interior_order = Some(match previous_order {
+                    Some(order) => order
+                        .checked_add(1)
+                        .ok_or("Polygon drawing order overflow")?,
+                    None => 1,
+                });
+            }
+            if polymorphic_colorized_path && let Kind::Colorized(definition) = &materialized.kind {
+                let header = candidate.colorized_object_header(&materialized, definition)?;
+                materialized.visual_style = crate::style_records::visual_style(&header);
             }
             materialized.midpoint_host = if let Kind::SegmentMidpoint(host) = object.kind {
                 matches!(materialized.kind, Kind::Midpoint(..)).then_some(ids[host])

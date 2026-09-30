@@ -314,8 +314,27 @@ impl Document {
             })
             .max_by_key(|object| object.id)
             .ok_or("No numeric caption precedes the tool output")?;
-        // Native auxiliary formulas with header flag 2 have no caption box.
-        // The next tool output reuses their anchor instead of advancing a row.
+        // Native auxiliary numeric objects with header flag 2 have no caption
+        // box. The next tool output reuses their anchor instead of advancing a
+        // row, regardless of the numeric object's concrete kind.
+        if object.presentation_suppressed {
+            return match &object.kind {
+                Kind::Parameter(group) => Ok(group.anchor()),
+                Kind::Calculation(group) => Ok(group.anchor()),
+                Kind::ParameterCalculation(_, group) => Ok(group.anchor()),
+                Kind::MeasuredCalculation(_, group) => Ok(group.anchor()),
+                Kind::LengthPairCalculation(_, _, group) => Ok(group.anchor()),
+                Kind::SegmentRatio(..) | Kind::PointRatio(..) => object
+                    .measurement_anchor
+                    .ok_or_else(|| "Missing ratio caption anchor".into()),
+                kind if numeric_measurement_caption_shape(kind).is_some() => object
+                    .measurement_anchor
+                    .ok_or_else(|| "Missing measurement caption anchor".into()),
+                _ => Err("Suppressed numeric caption has no anchor".into()),
+            };
+        }
+        // Some auxiliary formulas carry the equivalent suppression in their
+        // group payload rather than the object header.
         if let Kind::ParameterCalculation(_, group) = &object.kind
             && group.caption_suppressed()
         {

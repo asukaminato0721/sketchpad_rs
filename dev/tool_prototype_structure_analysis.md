@@ -36,8 +36,21 @@ without a partial view and re-encodes exactly. Native Sketchpad visibly renders
 the points and constructed edge, and Ctrl+S preserves SHA-256
 `db86b5026f00c78ab4987ba9a925cd4ad0f2d6745f289bcc273340596081d5c9`.
 
-The recovered rolling and wall tools proceed through structural invocation and
-then stop at their separate existing caption-placement guards (Tahoma size 72
-and Impact size 16). Those guards remain intact; this pass does not guess font
-metrics. No standalone test case was added or removed. Full corpus scan:
+Follow-up Native inspection showed that the rolling and wall failures were not
+missing font metrics: their preceding numeric objects have presentation flag 2
+and occupy no caption row. Reusing those suppressed anchors lets the wall tool
+create 34 outputs and the rolling tool create 74 outputs; both save, reopen,
+and re-encode exactly. The same rule removes the false caption boundary from
+the surface-color and picture-iteration tools.
+
+Polymorphic colorized paths now receive the polygon drawing order and
+type-specific default style that Native writes after specialization. The
+surface-color tool creates 12 outputs and round-trips exactly. The image tool
+creates 59 outputs, including two point-attached pictures backed by distinct,
+sequential resources. Native Sketchpad visibly renders the resulting pattern
+and Ctrl+S preserves SHA-256
+`e8222056418d906715948403ae19631c31cb0eb161aaf779ca207a3b3620efc3`.
+Arbitrary imported multi-picture editing remains read-only; the new writer is
+limited to newly materialized point attachments with strict affine validation.
+No standalone test case was added or removed. Full corpus scan:
 `/tmp/tool_structure_markers_coverage.log`.

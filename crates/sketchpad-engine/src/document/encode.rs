@@ -653,7 +653,7 @@ impl Document {
             .map(|r| r.start)
             .unwrap_or(trailer);
         let mut added = Vec::new();
-        let mut picture_resource: Option<Vec<u8>> = None;
+        let mut picture_resources = Vec::new();
         let mut measurement_row = self
             .objects
             .iter()
@@ -1028,6 +1028,8 @@ impl Document {
                 continue;
             }
             if let Kind::Image { png, placement } = &o.kind {
+                let resource_id = u16::try_from(picture_resources.len())
+                    .map_err(|_| "Too many picture resources")?;
                 let (mut group, resource) = match placement {
                     ImagePlacement::Independent(transform) => {
                         let picture = ImageFile::independent_from_png(png, *transform)?;
@@ -1036,6 +1038,12 @@ impl Document {
                             picture.resource_record().to_vec(),
                         )
                     }
+                    ImagePlacement::Point { anchor, relative } => ImageFile::point_from_png(
+                        png,
+                        u32::try_from(*anchor).map_err(|_| "Picture reference is too large")?,
+                        *relative,
+                        resource_id,
+                    )?,
                     ImagePlacement::Parallelogram {
                         top_left,
                         bottom_right,
@@ -1054,7 +1062,7 @@ impl Document {
                     group[10] |= 1;
                 }
                 added.extend_from_slice(&group);
-                picture_resource = Some(resource);
+                picture_resources.push(resource);
                 continue;
             }
             if let Kind::PlainText { text, rect } = &o.kind {
@@ -2299,13 +2307,16 @@ impl Document {
         }
         let mut out = self.patch_marked_coordinate_link(out)?;
         records(&out)?;
-        if let Some(resource) = picture_resource {
+        if !picture_resources.is_empty() {
             let resource_at = records(&out)?
                 .iter()
                 .find(|record| record.kind == 0x03ef)
                 .ok_or("Missing picture resource section")?
                 .start;
-            out.splice(resource_at..resource_at, resource);
+            out.splice(
+                resource_at..resource_at,
+                picture_resources.into_iter().flatten(),
+            );
         }
         let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
             self.patch_visual_styles(self.patch_trace_flags(self.patch_split_points(
