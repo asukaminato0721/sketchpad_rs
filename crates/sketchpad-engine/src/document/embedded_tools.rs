@@ -385,6 +385,16 @@ impl Document {
                 Some(EmbeddedToolInputKind::Segment) => {
                     return Err("This tool input requires an available finite segment".into());
                 }
+                Some(EmbeddedToolInputKind::SegmentDistance)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::SegmentDistance)
+                    ) && self
+                        .line_points(destination)
+                        .is_some_and(|(_, _, mode)| mode == LineMode::Segment) => {}
+                Some(EmbeddedToolInputKind::SegmentDistance) => {
+                    return Err("This tool input requires a finite segment as its distance".into());
+                }
                 Some(EmbeddedToolInputKind::Polygon)
                     if matches!(
                         expected.kind,

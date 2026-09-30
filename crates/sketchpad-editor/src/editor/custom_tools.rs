@@ -368,6 +368,7 @@ impl Editor {
                         Some(
                             kind @ (EmbeddedToolInputKind::Path
                             | EmbeddedToolInputKind::Segment
+                            | EmbeddedToolInputKind::SegmentDistance
                             | EmbeddedToolInputKind::Polygon
                             | EmbeddedToolInputKind::CoordinateSystem
                             | EmbeddedToolInputKind::Numeric
@@ -419,12 +420,21 @@ impl Editor {
             let input = self.custom_tool_inputs(source)?[self.custom_tool_inputs.len()];
             let id = if matches!(
                 input.kind(),
-                Some(EmbeddedToolInputKind::Path | EmbeddedToolInputKind::Segment)
+                Some(
+                    EmbeddedToolInputKind::Path
+                        | EmbeddedToolInputKind::Segment
+                        | EmbeddedToolInputKind::SegmentDistance
+                )
             ) {
                 let Some(id) = self.custom_tool_path_click(
                     viewport,
                     at,
-                    input.kind() == Some(EmbeddedToolInputKind::Segment),
+                    matches!(
+                        input.kind(),
+                        Some(
+                            EmbeddedToolInputKind::Segment | EmbeddedToolInputKind::SegmentDistance
+                        )
+                    ),
                 )?
                 else {
                     return Ok(None);

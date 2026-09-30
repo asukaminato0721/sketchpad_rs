@@ -2,11 +2,11 @@
 
 Latest snapshot, 2026-09-30: **1,572/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **288** unsupported slots, all in
+are byte-exact, with zero failures. There are **286** unsupported slots, all in
 embedded-tool prototypes, and 27 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,068
-decoded, 288 undecoded. The current distance-Parameter, polymorphic Preimage,
-legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,070
+decoded, 286 undecoded. The current final geometric-given, distance-Parameter,
+polymorphic Preimage, legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
 function custom-tool-given, and function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
@@ -2629,3 +2629,33 @@ of 103. All drawings remain complete, all 1,599 originals remain byte-exact,
 and no standalone test case was added. See
 [analysis](tool_distance_parameter_given_analysis.md). Full scan:
 `/tmp/subtype80_runtime_coverage.txt`.
+
+## Final code-zero custom-tool given categories
+
+The last two unknown code-zero roots are class-1/subtypes 6 and 60. Native
+Script View for `7.多面体表面(逆时向)着色` in `颗粒坐标系(3D).gsp` labels both
+subtype-6 `面P[1]` and the already-supported subtype-5 `j` as `路径对象` (Path
+Object). Subtype 6 consequently shares the polymorphic `Path` category while
+retaining its exact native header.
+
+Native Script View for `三维空间中的点2` in `也做正n棱锥表面展开.gsp` labels
+subtype-60 `r` as `距离` (Distance). After the preceding point input is matched,
+clicking the displayed `OA` distance caption does not advance the tool, while
+clicking its finite segment matches `r`, automatically matches the last numeric
+input, and begins constructing the result. The prototype uses `r` solely as the
+radius source of `CircleBySegment`.
+
+Subtype 60 is therefore represented as `SegmentDistance`: it binds a finite
+segment but exposes Length magnitude semantics to dependent constructions. It
+remains distinct from subtype-14 Segment geometry and subtype-48 numeric
+Distance Measurement Values. Runtime validation and the desktop picker require
+a finite segment, and the abstract prototype root satisfies the existing
+distance-source predicate without acquiring segment geometry.
+
+The two roots raise prototype coverage **5,068→5,070/5,356** and lower
+unsupported slots **288→286**. No dependent slot changes classification, so
+complete-document and isolated-view counts remain **1,572/1,599** and 49 of
+103. All drawings remain complete, all originals remain byte-exact, and no
+standalone test case was added. See
+[analysis](tool_final_geometric_givens_analysis.md). Full scan:
+`/tmp/tool_final_given_coverage.txt`.

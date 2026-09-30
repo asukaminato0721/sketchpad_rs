@@ -1245,6 +1245,7 @@ impl Document {
                     Some(
                         category @ (EmbeddedToolInputKind::Path
                         | EmbeddedToolInputKind::Segment
+                        | EmbeddedToolInputKind::SegmentDistance
                         | EmbeddedToolInputKind::Polygon
                         | EmbeddedToolInputKind::CoordinateSystem
                         | EmbeddedToolInputKind::Numeric

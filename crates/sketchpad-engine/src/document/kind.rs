@@ -72,6 +72,7 @@ impl Kind {
             Kind::ToolInput(EmbeddedToolInputKind::DistanceParameter) => Some(NumericUnit::Length),
             Kind::ToolInput(EmbeddedToolInputKind::AngleParameter) => Some(NumericUnit::Degrees),
             Kind::ToolInput(EmbeddedToolInputKind::Distance) => Some(NumericUnit::Length),
+            Kind::ToolInput(EmbeddedToolInputKind::SegmentDistance) => Some(NumericUnit::Length),
             Kind::AngleMeasurement(_, _, _)
             | Kind::AngleMarker(_, _, _, _)
             | Kind::SignedAngleValue(_, _, _)

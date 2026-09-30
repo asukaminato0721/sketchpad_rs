@@ -4,9 +4,12 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmbeddedToolInputKind {
     Point,
-    /// A path placeholder shared by native segment and circle controls.
+    /// A polymorphic path placeholder shared by several native tags.
     Path,
     Segment,
+    /// A distance supplied by a finite segment. Native exposes only its
+    /// magnitude to dependent constructions, rather than segment geometry.
+    SegmentDistance,
     /// A polygon of arbitrary supported vertex count.
     Polygon,
     /// The active Cartesian or polar coordinate system used by graph objects.
@@ -45,10 +48,12 @@ impl EmbeddedToolInput {
         match (self.native_class, self.native_subtype) {
             (1, 4) => Some(EmbeddedToolInputKind::Point),
             (1, 5) => Some(EmbeddedToolInputKind::Path),
+            (1, 6) => Some(EmbeddedToolInputKind::Path),
             (1, 8) => Some(EmbeddedToolInputKind::Path),
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
+            (1, 60) => Some(EmbeddedToolInputKind::SegmentDistance),
             (1, 92) => Some(EmbeddedToolInputKind::Preimage),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
             (11, 48) => Some(EmbeddedToolInputKind::Distance),
