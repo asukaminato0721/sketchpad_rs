@@ -13,6 +13,8 @@ pub enum EmbeddedToolInputKind {
     CoordinateSystem,
     /// A generic numeric magnitude; its units are determined when bound.
     Numeric,
+    /// A function definition or another supported function-valued object.
+    Function,
     /// A scalar Parameter specifically, retaining Native's stricter input
     /// category instead of accepting every scalar-valued construction.
     ScalarParameter,
@@ -36,6 +38,7 @@ impl EmbeddedToolInput {
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
             (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
+            (11, 57) => Some(EmbeddedToolInputKind::Function),
             (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
             _ => None,
         }
@@ -93,4 +96,23 @@ pub(super) fn numeric_given_layout(bytes: &[u8]) -> Result<(), String> {
 /// given; subtype 79 supplies the stricter binding category.
 pub(super) fn scalar_parameter_given_layout(bytes: &[u8]) -> Result<(), String> {
     numeric_given_layout(bytes)
+}
+
+/// Validate the inert expression/cache body used by a native Function given.
+/// Subtype 57, rather than that body, supplies the binding category.
+pub(super) fn function_given_layout(bytes: &[u8]) -> Result<(), String> {
+    let framed = [b"GSP4".as_slice(), bytes].concat();
+    let bytes = framed.as_slice();
+    let rs = super::records::records(bytes)?;
+    if rs.iter().map(|record| record.kind).collect::<Vec<_>>()
+        != [0x07d0, 0x0907, 0x07d5, 0x07d8, 0x08a3, 0x07d7]
+        || bytes[rs[3].data.clone()] != [0, 0]
+        || rs[4].data.len() != 8
+        || !rs[5].data.is_empty()
+    {
+        return Err("Unsupported function tool given records".into());
+    }
+    crate::function_records::decode_simple_expression(&bytes[rs[1].data.clone()])?;
+    crate::text_records::LabelAux::parse(&bytes[rs[2].data.clone()])?;
+    Ok(())
 }

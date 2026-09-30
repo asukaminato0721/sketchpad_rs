@@ -371,6 +371,7 @@ impl Editor {
                             | EmbeddedToolInputKind::Polygon
                             | EmbeddedToolInputKind::CoordinateSystem
                             | EmbeddedToolInputKind::Numeric
+                            | EmbeddedToolInputKind::Function
                             | EmbeddedToolInputKind::ScalarParameter),
                         ) => {
                             matches!(object.kind, Kind::ToolInput(actual) if actual == kind)
@@ -432,6 +433,20 @@ impl Editor {
             } else if input.kind() == Some(EmbeddedToolInputKind::CoordinateSystem) {
                 self.hit_grid(viewport, at)
                     .ok_or("Choose an available coordinate system")?
+            } else if input.kind() == Some(EmbeddedToolInputKind::Function) {
+                let overlays = self.overlay_rows();
+                overlays
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(row, (id, text))| {
+                        self.doc.objects[*id - 1].kind.is_function()
+                            && self
+                                .overlay_row_rect(viewport, *row, *id, text)
+                                .contains(at)
+                    })
+                    .map(|(_, (id, _))| *id)
+                    .ok_or("Choose an available function caption")?
             } else if matches!(
                 input.kind(),
                 Some(EmbeddedToolInputKind::Numeric | EmbeddedToolInputKind::ScalarParameter)

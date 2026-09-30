@@ -1180,6 +1180,8 @@ impl Document {
                 }
                 if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
                     super::tool_inputs::numeric_given_layout(&b[group_start..rs[i].data.end])?;
+                } else if input.kind() == Some(EmbeddedToolInputKind::Function) {
+                    super::tool_inputs::function_given_layout(&b[group_start..rs[i].data.end])?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::ScalarParameter) {
                     super::tool_inputs::scalar_parameter_given_layout(
                         &b[group_start..rs[i].data.end],
@@ -1210,6 +1212,7 @@ impl Document {
                         | EmbeddedToolInputKind::Polygon
                         | EmbeddedToolInputKind::CoordinateSystem
                         | EmbeddedToolInputKind::Numeric
+                        | EmbeddedToolInputKind::Function
                         | EmbeddedToolInputKind::ScalarParameter),
                     ) => {
                         point_offset = None;

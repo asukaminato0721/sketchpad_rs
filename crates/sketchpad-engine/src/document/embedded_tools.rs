@@ -409,6 +409,14 @@ impl Document {
                 Some(EmbeddedToolInputKind::Numeric) => {
                     return Err("This tool input requires an available numeric value".into());
                 }
+                Some(EmbeddedToolInputKind::Function)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::Function)
+                    ) && actual.kind.is_function() => {}
+                Some(EmbeddedToolInputKind::Function) => {
+                    return Err("This tool input requires an available function".into());
+                }
                 Some(EmbeddedToolInputKind::ScalarParameter)
                     if matches!(
                         expected.kind,

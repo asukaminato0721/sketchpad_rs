@@ -1,11 +1,12 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,562/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,569/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **352** unsupported slots, all in
-embedded-tool prototypes, and 37 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,004
-decoded, 352 undecoded. The current function-source tool-calculation,
+are byte-exact, with zero failures. There are **330** unsupported slots, all in
+embedded-tool prototypes, and 30 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,026
+decoded, 330 undecoded. The current function custom-tool-given and
+function-source tool-calculation,
 coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
 arc-length
@@ -2471,3 +2472,28 @@ objects, so complete-view and all-kind-document counts do not change. All 1,599
 drawings remain complete, every original remains byte-exact, and no standalone
 test case was added. See [analysis](tool_function_calculation_analysis.md). Full
 scan: `/tmp/tool_function_calculation_coverage.log`.
+
+## Function custom-tool given
+
+The eight class-11/subtype-57 givens now decode as abstract Function inputs.
+Native independently identifies the category: choosing the representative
+`新f(x)的图象工具` displays `1. 匹配函数 h`. Each placeholder retains the exact
+six-record class-11 family, including a validated source-free function
+expression, label, style, and text bounds; its stored expression is not used as
+the destination function.
+
+Referenced-function source validation now admits generic Numeric placeholders
+only for expression-declared Numeric roles and the new Function placeholder only
+for Function roles. Runtime binding requires a supported active-page function,
+and desktop binding uses the function caption. A representative newly complete
+tool invoked with an identity function, four Parameters, and a coordinate system
+created a live referenced function and plot, evaluated finite samples, produced
+18 plot segments, and encoded/reparsed exactly.
+
+This restores **22** prototype slots: eight inputs, two code-48 calculations,
+six code-71 referenced functions, and six code-72 plots. Prototype coverage
+rises **5,004→5,026/5,356**, unsupported falls **352→330**, complete isolated
+views rise **40→47**, and all-kind-complete documents rise **1,562→1,569**.
+All 1,599 drawings remain complete, every original remains byte-exact, and no
+standalone test case was added. See [analysis](tool_function_given_analysis.md).
+Full scan: `/tmp/tool_function_given_coverage.log`.

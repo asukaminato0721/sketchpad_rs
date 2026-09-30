@@ -20,6 +20,7 @@ impl Kind {
                 | Self::ReferencedFunction(_, _)
                 | Self::DerivativeFunction(_, _)
                 | Self::DataFunction { .. }
+                | Self::ToolInput(EmbeddedToolInputKind::Function)
         )
     }
 

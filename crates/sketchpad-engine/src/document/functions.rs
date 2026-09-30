@@ -1,4 +1,4 @@
-use super::{Document, Kind, Object, Point};
+use super::{Document, EmbeddedToolInputKind, Kind, Object, Point};
 use crate::function_records::{FunctionPlotMode, SimpleFunction};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
@@ -21,9 +21,16 @@ pub(super) fn function_sources_valid(
         !object.deleted
             && object.page == page
             && match role {
-                Some(Numeric) => object.kind.numeric_unit().is_some(),
+                Some(Numeric) => {
+                    object.kind.numeric_unit().is_some()
+                        || matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric))
+                }
                 Some(Function) => object.kind.is_function(),
-                None => object.kind.numeric_unit().is_some() || object.kind.is_function(),
+                None => {
+                    object.kind.numeric_unit().is_some()
+                        || object.kind.is_function()
+                        || matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric))
+                }
             }
     })
 }

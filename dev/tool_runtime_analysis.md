@@ -227,3 +227,19 @@ retain their existing unit and placeholder checks. The source order, count, and
 native expression bytes remain exact. These tools still contain an unrelated
 unsupported final object, so runtime execution is not claimed. See
 [the focused analysis](tool_function_calculation_analysis.md).
+
+## Function givens
+
+Native explicitly prompts `1. 匹配函数 h` for the class11/subtype57 given in
+`新f(x)的图象工具`. The contextual placeholder now satisfies function source
+roles without supplying an invented expression or value. Invocation requires a
+real active-page function, and the desktop picker restricts the click to its
+visible function caption. Generic Numeric placeholders remain admissible only
+for the referenced expression's Numeric roles until invocation supplies their
+concrete units and values.
+
+A headless invocation bound an identity function, four live scalar Parameters,
+and a coordinate system to the newly complete logarithmic-graph tool. It
+created a referenced function and FunctionPlot, returned finite identity samples
+inside the chosen bounds, produced 18 plot segments, and survived exact
+encode/reparse. See [the focused analysis](tool_function_given_analysis.md).
