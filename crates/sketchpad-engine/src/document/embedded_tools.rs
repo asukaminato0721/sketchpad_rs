@@ -480,6 +480,7 @@ impl Document {
         candidate.selected.clear();
         let mut created = Vec::new();
         for object in &tool.objects {
+            eprintln!("materialize tool object {}", object.id);
             if ids[object.id] != 0 {
                 continue;
             }
@@ -511,12 +512,22 @@ impl Document {
             let mut materialized: Object = object.clone();
             materialized.id = id;
             materialized.page = candidate.active_page;
-            let preimage_header = object
+            let polymorphic_header = object
                 .header_offset
                 .and_then(|at| tool.original.get(at..at + 28))
-                .filter(|header| header[6..10] == [1, 0, 92, 0])
                 .map(|header| header.to_vec());
-            let polymorphic_preimage_transform = preimage_header.is_some();
+            let polymorphic_preimage_transform = polymorphic_header
+                .as_ref()
+                .is_some_and(|header| header[6..10] == [1, 0, 92, 0]);
+            let polymorphic_polygon_transform = polymorphic_header.as_ref().is_some_and(|header| {
+                header[6..10] == [1, 0, 15, 0]
+                    && object
+                        .kind
+                        .transform_definition()
+                        .is_some_and(|definition| {
+                            definition.element() == super::transform_model::ElementType::Polygon
+                        })
+            });
             materialized.kind = match object.kind.remap_checked(&ids)? {
                 Kind::Transformed(definition) if polymorphic_preimage_transform => {
                     let source = candidate
@@ -540,7 +551,9 @@ impl Document {
                     )?)
                 }
                 Kind::ParameterCalculation(_, mut group) => {
+                    eprintln!("place calculation {}", object.id);
                     group.set_anchor(candidate.next_tool_numeric_anchor()?)?;
+                    eprintln!("placed calculation {}", object.id);
                     let font =
                         candidate.imported_caption_font_index(caption_style.as_ref().unwrap())?;
                     let group = group.with_caption_font(font)?;
@@ -610,17 +623,24 @@ impl Document {
                 }
                 kind => kind,
             };
-            if let Some(mut header) = preimage_header {
+            if (polymorphic_preimage_transform || polymorphic_polygon_transform)
+                && let Some(mut header) = polymorphic_header
+            {
                 let element = materialized
                     .kind
                     .transform_definition()
-                    .ok_or("Tool preimage transform is unavailable")?
+                    .ok_or("Tool polymorphic transform is unavailable")?
                     .element();
                 header[6..10].copy_from_slice(match element {
                     super::transform_model::ElementType::Point => &[1, 0, 4, 0],
                     super::transform_model::ElementType::Segment => &[2, 0, 14, 0],
+                    super::transform_model::ElementType::Polygon
+                        if polymorphic_polygon_transform =>
+                    {
+                        &[4, 0, 15, 0]
+                    }
                     super::transform_model::ElementType::Polygon => &[4, 0, 52, 0],
-                    _ => return Err("Tool preimage has an unsupported geometry type".into()),
+                    _ => return Err("Tool transform has an unsupported geometry type".into()),
                 });
                 materialized.visual_style = crate::style_records::visual_style(&header);
                 if element == super::transform_model::ElementType::Polygon {
@@ -661,10 +681,12 @@ impl Document {
                 candidate.selected.insert(id);
             }
         }
+        eprintln!("encoding invoked tool");
         if created.is_empty() {
             return Err("Tool has no constructed outputs".into());
         }
         let encoded = candidate.encode()?;
+        eprintln!("reparsing invoked tool");
         let reparsed = Document::from_bytes(&encoded, None)?;
         if candidate.has_pending_multi_page_additions() {
             let mut survivors: Vec<_> = candidate
@@ -676,8 +698,10 @@ impl Document {
                 .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
             candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
         } else {
+            eprintln!("validating invoked tool");
             candidate.validate_reparsed(&reparsed)?;
         }
+        eprintln!("validated invoked tool");
         *self = candidate;
         Ok(created)
     }

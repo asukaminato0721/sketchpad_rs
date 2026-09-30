@@ -19,6 +19,9 @@ pub(super) struct DecodeContext {
     /// An isolated subtype-92 tool transform uses Point only as an unbound
     /// stand-in; invocation specializes it to the bound preimage element.
     pub polymorphic_preimage: bool,
+    /// An isolated subtype-15 polygon input and its transforms retain the
+    /// placeholder header until invocation supplies the concrete polygon.
+    pub polymorphic_polygon: bool,
 }
 
 fn marked_angle_distance(payload: &[u8]) -> Option<(f64, f64)> {
@@ -105,7 +108,12 @@ pub(super) fn decode_native_transform(
         ElementType::Circle => source_kind.is_circle(),
         ElementType::Disk => source_kind.is_circle_interior(),
         ElementType::Polygon => {
-            source_kind.is_polygon()
+            (source_kind.is_polygon()
+                || context.polymorphic_polygon
+                    && matches!(
+                        source_kind,
+                        super::Kind::ToolInput(super::EmbeddedToolInputKind::Polygon)
+                    ))
                 && (polygon_vertex_count(objects, source).and_then(polygon_subtype)
                     == Some(u16::from_le_bytes([header[8], header[9]]))
                     || (header[8..10] == [15, 0] && context.source_is_generic_polygon))

@@ -153,6 +153,16 @@ pub(super) fn cartesian_distance_scale(
         .then_some(scale)
 }
 
+fn mapped_iteration_internal_label(payload: &[u8]) -> bool {
+    let Ok(label) = LabelAux::parse(payload) else {
+        return false;
+    };
+    payload.len() == 28
+        && label
+            .name_utf8()
+            .is_ok_and(|name| matches!(name.as_bytes(), [b'[', b'1'..=b'9', b']']))
+}
+
 /// Structural saves may retain complete registered tool canvases unchanged.
 /// Their local object IDs and opaque auxiliary records are never drawing IDs.
 pub(super) fn registered_tool_structure_safe(bytes: &[u8], entries: &[super::Record]) -> bool {
@@ -549,6 +559,8 @@ impl Document {
             let geometric_label =
                 arc_label || labeled_shape && matches!(h[6..8], [1, 0] | [2, 0] | [3, 0]);
             let image_internal_label = matches!(code, 99 | 100) && h[6..10] == [16, 0, 78, 0];
+            let internal_iteration_label = (matches!(code, 76 | 89) && h[6..10] == [14, 0, 64, 0])
+                || (code == 77 && h[6..10] == [15, 0, 65, 0]);
             let numeric_label = matches!(
                 code,
                 36 | 37
@@ -605,6 +617,11 @@ impl Document {
                 match r.kind {
                     0x07d5 if image_internal_label => {
                         if d != crate::image_records::INTERNAL_IMAGE_LABEL {
+                            safe = false;
+                        }
+                    }
+                    0x07d5 if internal_iteration_label => {
+                        if !mapped_iteration_internal_label(d) {
                             safe = false;
                         }
                     }
@@ -827,6 +844,7 @@ impl Document {
                     && !((labeled_shape || arc_label || numeric_label || angle_marker_label)
                         && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(image_internal_label && r.kind == 0x07d5)
+                    && !(internal_iteration_label && r.kind == 0x07d5)
                     && !(matches!(
                         code,
                         36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 46 | 47 | 120
@@ -1185,9 +1203,26 @@ impl Document {
                             .header_offset
                             .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[1, 0, 92, 0]))
                     });
+            let polymorphic_polygon_transform = !tool_inputs.is_empty()
+                && matches!(code, 16 | 29)
+                && h.len() == 28
+                && h[6..10] == [1, 0, 15, 0]
+                && constraint_payload.is_none()
+                && refs.len() == 3
+                && refs
+                    .first()
+                    .and_then(|id| objects.get(id.saturating_sub(1)))
+                    .is_some_and(|object| {
+                        matches!(object.kind, Kind::ToolInput(EmbeddedToolInputKind::Polygon))
+                            || object
+                                .header_offset
+                                .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[1, 0, 15, 0]))
+                    });
             let mut transform_header = h.to_vec();
             if polymorphic_preimage_transform {
                 transform_header[6..10].copy_from_slice(&[1, 0, 4, 0]);
+            } else if polymorphic_polygon_transform {
+                transform_header[6..10].copy_from_slice(&[4, 0, 15, 0]);
             }
             let kind = if let Some(input) = tool_input {
                 if !refs.is_empty()
@@ -1509,7 +1544,11 @@ impl Document {
                         .first()
                         .and_then(|source| objects.get(source.saturating_sub(1)))
                         .and_then(|source| source.header_offset)
-                        .is_some_and(|at| b.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])),
+                        .is_some_and(|at| {
+                            b.get(at + 6..at + 10) == Some(&[4, 0, 15, 0])
+                                || polymorphic_polygon_transform
+                                    && b.get(at + 6..at + 10) == Some(&[1, 0, 15, 0])
+                        }),
                     legacy_angle_rotation_layout: code == 119
                         && matches!(
                             rs.iter()
@@ -1529,6 +1568,7 @@ impl Document {
                                 ]
                         ),
                     polymorphic_preimage: polymorphic_preimage_transform,
+                    polymorphic_polygon: polymorphic_polygon_transform,
                 },
             ) {
                 if definition.element() == super::transform_model::ElementType::Image {

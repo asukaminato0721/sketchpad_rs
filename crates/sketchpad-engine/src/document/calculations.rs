@@ -522,6 +522,14 @@ impl Document {
             {
                 return Ok(21);
             }
+            if font.family == "黑体"
+                && font.size_code == 16
+                && font.bold
+                && !font.italic
+                && !font.underline
+            {
+                return Ok(21);
+            }
             if font.family == "Tahoma"
                 && font.size_code == 18
                 && !font.bold
@@ -603,6 +611,14 @@ impl Document {
         if font.family == "Times New Roman"
             && font.size_code == 16
             && !font.bold
+            && !font.italic
+            && !font.underline
+        {
+            return Ok(21);
+        }
+        if font.family == "黑体"
+            && font.size_code == 16
+            && font.bold
             && !font.italic
             && !font.underline
         {
