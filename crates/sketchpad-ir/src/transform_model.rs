@@ -257,6 +257,7 @@ pub enum NativeTransformFlavor {
     FixedVertical,
     MarkedCartesian,
     FixedPolar,
+    PointAngleFixedPolar,
     MarkedAnglePolar,
     MarkedPolar,
     PointAngleMarkedPolar,
@@ -279,6 +280,7 @@ impl NativeTransformFlavor {
             Self::FixedVertical => 19,
             Self::MarkedCartesian => 20,
             Self::FixedPolar => 21,
+            Self::PointAngleFixedPolar => 22,
             Self::MarkedAnglePolar => 23,
             Self::MarkedPolar => 24,
             Self::PointAngleMarkedPolar => 25,
@@ -396,6 +398,13 @@ impl TransformDefinition {
                 }),
                 F::MarkedAnglePolar,
             ) => object(a, NumericUnit::Degrees) && literal(d, NumericUnit::Length),
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: N::DirectedAngle { .. },
+                    distance: d,
+                }),
+                F::PointAngleFixedPolar,
+            ) => matches!(element, ElementType::Point) && literal(d, NumericUnit::Length),
             (
                 Transform::Translate(DisplacementExpr::Polar {
                     angle: a,
@@ -596,7 +605,7 @@ impl TransformDefinition {
                         },
                     ..
                 }),
-                F::MarkedAnglePolar,
+                F::MarkedAnglePolar | F::PointAngleFixedPolar,
             ) => vec![item(R::PolarUnitsToPixels, *u), item(R::PolarMagnitude, *d)],
             (
                 Transform::Dilate {

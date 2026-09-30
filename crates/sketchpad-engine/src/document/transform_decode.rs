@@ -217,6 +217,21 @@ pub(super) fn decode_native_transform(
                 F::FixedPolar,
             )
         }
+        (22, [_, first, vertex, last]) if [*first, *vertex, *last].into_iter().all(point) => {
+            let p = payload(28)?;
+            let (scale, magnitude) = marked_angle_distance(p)?;
+            (
+                Transform::Translate(DisplacementExpr::Polar {
+                    angle: NumericExpr::DirectedAngle {
+                        first: *first,
+                        vertex: *vertex,
+                        last: *last,
+                    },
+                    distance: literal(magnitude, NumericUnit::Length, scale),
+                }),
+                F::PointAngleFixedPolar,
+            )
+        }
         (23, [_, angle]) if numeric(*angle, NumericUnit::Degrees) => {
             let p = payload(28)?;
             let (scale, magnitude) = marked_angle_distance(p)?;

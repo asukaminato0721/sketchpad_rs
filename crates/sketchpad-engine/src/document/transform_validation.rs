@@ -170,7 +170,10 @@ pub(super) fn validate_transform(
     if is_new
         && matches!(
             flavor,
-            F::PointAngleMarkedPolar | F::DualMarkedPolar | F::SegmentRatioDilation
+            F::PointAngleFixedPolar
+                | F::PointAngleMarkedPolar
+                | F::DualMarkedPolar
+                | F::SegmentRatioDilation
         )
     {
         return Err(invalid());

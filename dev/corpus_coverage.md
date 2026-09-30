@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,555/1,599** documents have all object kinds
-decoded; **1,594** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **583** unsupported slots (6 drawing
-slots and 577 prototype slots), and 44 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,556/1,599** documents have all object kinds
+decoded; **1,596** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **580** unsupported slots (3 drawing
+slots and 577 prototype slots), and 43 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -15,7 +15,8 @@ plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
 transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
 plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
-referenced-caption recoveries are summarized at the end; the older detailed
+referenced-caption plus point-angle fixed-polar recoveries are summarized at
+the end; the older detailed
 snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
@@ -2298,3 +2299,22 @@ and
 No standalone test case was added. See
 [analysis](referenced_caption_completion_analysis.md). Full scan:
 `/tmp/referenced_caption_coverage_full.log`.
+
+## Point-angle fixed polar translation
+
+The two drawing code-22 Point transforms use four references—source, first,
+vertex, and last—and an exact 28-byte literal-distance packet. Import now maps
+that wire form to the shared polar translation evaluator with a live directed
+angle and literal Length. Admission requires every referenced object to be an
+earlier same-page Point, plus the observed packet code, length, unit tag,
+finite values, positive scale, and zero tail. Fresh construction and clipboard
+reconstruction remain guarded.
+
+The two roots also restore one dependent code-16 vector point. Unsupported
+falls **583→580**, complete documents/drawings rise
+**1,555/1,594→1,556/1,596**, unsupported documents fall **44→43**, and partial
+views fall **789→788**. Embedded-tool coverage remains **4,779/5,356**, and all
+**1,599** originals remain byte-exact. Both untouched originals visibly open
+and save unchanged in Sketchpad 5 under Xvfb/Wine. No standalone test case was
+added. See [analysis](point_angle_fixed_polar_analysis.md). Full scan:
+`/tmp/code22_coverage_all_tests.log`.

@@ -47,6 +47,7 @@ pub(super) fn encode_group(
         F::Vector
             | F::MarkedAnglePolar
             | F::MarkedPolar
+            | F::PointAngleFixedPolar
             | F::PointAngleMarkedPolar
             | F::PointAngleRotation
             | F::FixedRotation
@@ -129,11 +130,11 @@ fn literal_payload(definition: &TransformDefinition) -> Result<Option<Vec<u8>>, 
             .ok_or("Missing native transform literal")
     };
     let payload = match definition.wire_flavor() {
-        F::MarkedAnglePolar => {
+        F::MarkedAnglePolar | F::PointAngleFixedPolar => {
             let units = value(R::PolarUnitsToPixels)?;
             let magnitude = value(R::PolarMagnitude)?;
             let mut payload = vec![0; 28];
-            payload[..4].copy_from_slice(&23_u32.to_le_bytes());
+            payload[..4].copy_from_slice(&u32::from(definition.wire_flavor().code()).to_le_bytes());
             payload[4..12].copy_from_slice(&(units * magnitude).to_le_bytes());
             payload[12..20].copy_from_slice(&magnitude.to_le_bytes());
             payload[20..24]
