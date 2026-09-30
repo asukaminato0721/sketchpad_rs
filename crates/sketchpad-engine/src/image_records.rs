@@ -17,6 +17,13 @@ pub(crate) const INTERNAL_IMAGE_LABEL: [u8; 28] = [
     6, 0, 0, 0, 0, 0, 8, 0, 5, 0, 0, 0, 0, 0, 152, 110, 18, 193, 81, 92, 97, 65, 3, 0, 91, 49, 93,
     0,
 ];
+
+pub(crate) fn internal_image_label(payload: &[u8]) -> bool {
+    payload.len() == INTERNAL_IMAGE_LABEL.len()
+        && payload[..25] == INTERNAL_IMAGE_LABEL[..25]
+        && matches!(payload[25], b'1'..=b'7')
+        && payload[26..] == INTERNAL_IMAGE_LABEL[26..]
+}
 const PARALLELOGRAM_HEADER: [u8; 28] = [
     100, 0, 0, 0, 0, 0, 16, 0, 78, 0, 33, 1, 255, 0, 0, 0, 255, 255, 81, 92, 63, 0, 0, 0, 0, 0, 0,
     0,
@@ -264,7 +271,7 @@ pub fn imported_attached_image_catalog(bytes: &[u8]) -> Result<Vec<ReadOnlyAttac
             Some(0x07d5)
                 if matches!(code, 99 | 100)
                     && auxiliary.is_some_and(|record| {
-                        bytes[record.payload.clone()] == INTERNAL_IMAGE_LABEL
+                        internal_image_label(&bytes[record.payload.clone()])
                     }) =>
             {
                 size_index + 2

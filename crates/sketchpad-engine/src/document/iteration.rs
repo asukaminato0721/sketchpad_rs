@@ -391,13 +391,10 @@ fn supported_mapped_point_iteration_impl(
         if seeds.contains(&id) {
             continue;
         }
-        // A custom-tool code-101 mapping may use declared path-point
-        // placeholders as its preimage and image. Invocation materializes
-        // both as ordinary constrained points before validating the result.
-        if allow_tool_placeholders
-            && branch_ids.contains(&id)
-            && matches!(object.kind, Kind::ToolPointOnPath(_))
-        {
+        // Invocation materializes a tool path point as an ordinary constrained
+        // point. It can therefore participate in the mapped DAG as a seed,
+        // branch image, or carried construction with its host dependency.
+        if allow_tool_placeholders && matches!(object.kind, Kind::ToolPointOnPath(_)) {
             pending.extend(object.construction_dependencies());
             continue;
         }

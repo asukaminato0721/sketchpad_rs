@@ -157,6 +157,16 @@ impl ColorizedDefinition {
         }
     }
     pub(super) fn supported(&self, objects: &[Object], page: usize, id: usize) -> bool {
+        self.supported_internal(objects, page, id, false)
+    }
+
+    fn supported_internal(
+        &self,
+        objects: &[Object],
+        page: usize,
+        id: usize,
+        allow_tool_numeric: bool,
+    ) -> bool {
         let get = |parent: usize| {
             objects
                 .get(parent.checked_sub(1)?)
@@ -169,7 +179,16 @@ impl ColorizedDefinition {
                 .binding
                 .native_operands()
                 .iter()
-                .all(|parent| get(*parent).is_some_and(|o| o.kind.numeric_unit().is_some()))
+                .all(|parent| {
+                    get(*parent).is_some_and(|o| {
+                        o.kind.numeric_unit().is_some()
+                            || allow_tool_numeric
+                                && matches!(
+                                    o.kind,
+                                    Kind::ToolInput(super::EmbeddedToolInputKind::Numeric)
+                                )
+                    })
+                })
     }
 }
 
@@ -209,6 +228,7 @@ pub(super) fn decode_colorized(
     header: &[u8],
     refs: &[usize],
     payload: Option<&[u8]>,
+    tool_prototype: bool,
 ) -> Option<ColorizedDefinition> {
     if header.len() != 28 || header[..2] != [75, 0] {
         return None;
@@ -277,7 +297,7 @@ pub(super) fn decode_colorized(
     )
     .ok()?;
     definition
-        .supported(objects, page, id)
+        .supported_internal(objects, page, id, tool_prototype)
         .then_some(definition)
 }
 

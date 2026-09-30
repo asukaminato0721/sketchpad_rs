@@ -1,12 +1,13 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,585/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,591/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **105** unsupported slots, all in
-embedded-tool prototypes, and 14 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,251
-decoded, 105 undecoded. Isolated decoding produces 71 complete and 32 partial
-tool views. The current tool-prototype mapped-element and nested-mapping,
+are byte-exact, with zero failures. There are **66** unsupported slots, all in
+embedded-tool prototypes, and 8 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,290
+decoded, 66 undecoded. Isolated decoding produces 75 complete and 28 partial
+tool views. The current tool-prototype numeric-color, mapped-picture and
+direct-numeric-depth, mapped-element and nested-mapping,
 named referenced-caption, polymorphic-polygon tool, external-placeholder mapped-iteration,
 embedded attached-picture, final
 geometric-given, distance-Parameter,
@@ -2767,3 +2768,25 @@ result; Ctrl+S preserves SHA-256
 No standalone test case was added. See
 [analysis](tool_mapped_element_placeholders_analysis.md). Final scan:
 `/tmp/tool_mapped_element_final_coverage.log`.
+
+## Numeric tool colors, direct iteration depths, and indexed pictures
+
+Isolated tool decoding now treats a declared generic Numeric input as a valid
+code-75 color operand and a valid direct code-89 iteration depth. Invocation
+still binds it to an actual finite numeric object before ordinary validation.
+Tool path points can participate anywhere in the mapped DAG because invocation
+materializes them as constrained points.
+
+The code-99/code-100 hidden picture-label parser now recognizes the complete
+corpus-observed 28-byte family `[1]` through `[7]`; every other byte and all
+existing resource, dimension, attachment, and scale checks remain strict. This
+restores eight pictures and their dependent mapped roots and bindings.
+
+Together the changes raise prototype coverage **5,251→5,290/5,356**, lower
+unsupported slots **105→66**, raise fully decoded documents
+**1,585→1,591/1,599**, and raise complete isolated tool views **71→75/103**.
+All drawings remain complete and all 1,599 originals remain byte-exact. Two
+colorized tool invocations reopen and re-encode exactly; Sketchpad 5 under
+Xvfb/Wine opens and saves both byte-identically. No standalone test case was
+added. See [analysis](tool_numeric_color_iteration_analysis.md). Full scan:
+`/tmp/tool_colorized_picture_iteration_coverage.log`.

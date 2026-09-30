@@ -532,7 +532,6 @@ impl Document {
         if let Some(font) = &object.text_style_override {
             if font.family == "Times New Roman"
                 && font.size_code == 16
-                && !font.bold
                 && !font.italic
                 && !font.underline
             {
@@ -642,7 +641,6 @@ impl Document {
         }
         if font.family == "Times New Roman"
             && font.size_code == 16
-            && !font.bold
             && !font.italic
             && !font.underline
         {

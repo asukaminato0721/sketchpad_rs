@@ -620,7 +620,7 @@ impl Document {
                 }
                 match r.kind {
                     0x07d5 if image_internal_label => {
-                        if d != crate::image_records::INTERNAL_IMAGE_LABEL {
+                        if !crate::image_records::internal_image_label(d) {
                             safe = false;
                         }
                     }
@@ -1076,10 +1076,11 @@ impl Document {
                 }
                 let depth = if code == 89 {
                     let id = refs[0];
-                    if !objects
-                        .get(id.checked_sub(1)?)
-                        .is_some_and(|o| o.kind.is_iteration_depth_value())
-                    {
+                    if !objects.get(id.checked_sub(1)?).is_some_and(|o| {
+                        o.kind.is_iteration_depth_value()
+                            || !tool_inputs.is_empty()
+                                && matches!(o.kind, Kind::ToolInput(EmbeddedToolInputKind::Numeric))
+                    }) {
                         return None;
                     }
                     IterationDepth::Value(id)
@@ -1502,6 +1503,7 @@ impl Document {
                 constraint_payload
                     .as_ref()
                     .map(|(payload, _)| payload.as_slice()),
+                !tool_inputs.is_empty(),
             )
             .filter(|definition| {
                 if definition.element() == super::transform_model::ElementType::Polygon

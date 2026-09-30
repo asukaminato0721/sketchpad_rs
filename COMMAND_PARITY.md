@@ -850,3 +850,19 @@ originals remain byte-exact. Native and port controls agree on the 3/9/18/30/45
 pipe piles, and Native preserves the 5,682-byte source exactly. No standalone
 test was added. See
 [analysis](dev/mapped_iteration_nested_capture_analysis.md).
+
+## Numeric placeholders and mapped pictures in custom tools
+
+Imported tool scripts can now use a declared generic Numeric input directly as
+a color operand or mapped-iteration depth. Tool path points are valid mapped
+seeds, branch images, and carried constructions after invocation specializes
+them to ordinary constrained points. The strict attached-picture importer also
+recognizes Native's observed indexed hidden labels `[1]` through `[7]`, which
+restores four picture-carrying mapped iterations and their bindings.
+
+The corpus gains 39 decoded prototype slots and six fully decoded documents;
+all 1,599 originals remain byte-exact. Two colorized runtime controls create 99
+and 106 outputs, reopen exactly, and save byte-identically in Sketchpad 5 under
+Xvfb/Wine. Multi-picture writing and unverified 36-point numeric-caption layouts
+remain pending. No standalone test was added. See
+[analysis](dev/tool_numeric_color_iteration_analysis.md).
