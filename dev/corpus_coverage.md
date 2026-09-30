@@ -2,10 +2,11 @@
 
 Latest snapshot, 2026-09-30: **1,575/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **283** unsupported slots, all in
+are byte-exact, with zero failures. There are **246** unsupported slots, all in
 embedded-tool prototypes, and 24 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,073
-decoded, 283 undecoded. The current embedded attached-picture, final
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,110
+decoded, 246 undecoded. The current external-placeholder mapped-iteration,
+embedded attached-picture, final
 geometric-given, distance-Parameter,
 polymorphic Preimage, legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
 function custom-tool-given, and function-source tool-calculation,
@@ -24,6 +25,18 @@ plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
 referenced-caption, point-angle fixed-polar, sampled-curve direction-arrow, and
 final Animation-edge recoveries are summarized at the end; the older detailed
 snapshots remain for comparison.
+
+The external-placeholder mapped-iteration pass distinguishes tool placeholders
+used as invariant predecessors from placeholders that participate in the
+substitution. A polygon tool input and a tool point on a path are admitted only
+when neither is a seed, branch, nor carried output. Invocation first
+materializes both placeholders, after which the existing mapped evaluator
+freezes their values at the external boundary. This restores three code-76 and
+three code-89 iteration descriptors plus 31 dependent prototype objects:
+unsupported falls **283→246** and decoded prototype slots rise
+**5,073→5,110**. Document and isolated-tool completeness are unchanged because
+the affected prototypes retain unrelated unsupported objects. All 1,599 source
+files remain byte-exact. See `tool_mapped_placeholder_analysis.md`.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical

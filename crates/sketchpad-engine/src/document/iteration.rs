@@ -7,7 +7,7 @@ use super::transform_model::{
     DisplacementExpr, ElementType, NativeTransformFlavor, NumericExpr, Transform,
     TransformDefinition,
 };
-use super::{Document, IterationDepth, Kind, Object, Point};
+use super::{Document, EmbeddedToolInputKind, IterationDepth, Kind, Object, Point};
 use crate::style_records;
 use crate::style_records::RgbColor;
 use crate::table_records::NumericUnit;
@@ -345,6 +345,7 @@ pub(super) fn supported_mapped_point_iteration(
     else {
         return false;
     };
+    let branch_ids = branches.iter().flatten().copied().collect::<BTreeSet<_>>();
     let mut pending: Vec<_> = branches.iter().flatten().chain(carried).copied().collect();
     let mut seen = BTreeSet::new();
     while let Some(id) = pending.pop() {
@@ -364,6 +365,19 @@ pub(super) fn supported_mapped_point_iteration(
         // Substitution replaces this construction's value, so its original
         // predecessors do not participate in subsequent generations.
         if seeds.contains(&id) {
+            continue;
+        }
+        // Tool placeholders outside the substituted construction are frozen at
+        // invocation time. They may feed the carried DAG, but may not themselves
+        // be a seed, branch, or carried output.
+        if !carried.contains(&id)
+            && !branch_ids.contains(&id)
+            && matches!(
+                object.kind,
+                Kind::ToolInput(EmbeddedToolInputKind::Polygon) | Kind::ToolPointOnPath(_)
+            )
+        {
+            pending.extend(object.construction_dependencies());
             continue;
         }
         if let Some(definition) = object.kind.transform_definition() {
