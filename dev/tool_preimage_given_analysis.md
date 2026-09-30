@@ -28,12 +28,22 @@ only the independently observed Point, finite Segment, and Polygon source
 families, then replaces the stand-in with the bound source's concrete element
 type before insertion. Ordinary drawing decoding is unchanged.
 
-All 13 objects in the affected prototype now decode. A direct invocation probe
-for Point, Segment, and Polygon inputs currently stops transactionally before
-these transforms are emitted because the same tool first reaches the separate
-legacy numeric-caption writer error, `Numeric caption expression layout needs a
-native control`. The transform specialization is therefore implemented, but
-end-to-end execution of this particular tool is not claimed.
+All 13 objects in the affected prototype now decode. Native invocation on page
+4 matched an existing point, created a point on the finite segment for the
+second point input, matched the polygon and `n`, and emitted nine outputs. The
+41,750-byte result has SHA-256
+`f5d262480440b1e29b809aed41cd25619fea53d27d2315de41c0f89cc514078d`.
+Its two auxiliary formulas carry caption-suppression flag 2 and share anchor
+`(4,183)` with the following visible formula; Native does not lay out their
+hidden `trunc(t/m)` caption. The three polygon results receive drawing orders 2,
+3, and 4, retain the prototype color/opacity, and drop the point-only labels.
+
+The port now applies those same materialization rules. Direct Point, finite
+Segment, and Polygon invocation probes each create all nine outputs, serialize,
+and reparse with the expected concrete transform element. A 3,664-byte
+port-authored Polygon result opened and saved byte-identically in Sketchpad 5
+under Xvfb/Wine (SHA-256
+`fd9b22793493c0479842ad5b50a0d8737731bc1dade118d44f439123c346f942`).
 
 The full corpus remains 1,599/1,599 byte-exact and drawing-complete. Embedded
 tool coverage rises from 5,062 to 5,065 of 5,356 slots; unsupported prototype

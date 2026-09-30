@@ -2585,9 +2585,12 @@ dependent code-16/code-33/code-16 records have ordinary three-object reference
 lists `[3,4,10]`, `[11,10,7]`, and `[12,4,2]`; their subtype-92 headers carry
 the polymorphic result type. They decode through a prototype-only Point
 stand-in and specialize to the bound Point, finite Segment, or Polygon element
-type during invocation. The tool still encounters an independent legacy
-numeric-caption writer guard before those transforms are emitted, so a complete
-invocation is not yet claimed.
+type during invocation. Native invocation proves that the two suppressed
+auxiliary formulas reuse the next visible formula's anchor and that Polygon
+specialization assigns fresh drawing orders while dropping point-only labels.
+The port now completes and reparses all nine outputs for Point, Segment, and
+Polygon bindings. A port-authored Polygon result opens and saves byte-identically
+in Sketchpad 5 under Xvfb/Wine.
 
 The three recovered descendants raise prototype coverage
 **5,062→5,065/5,356** and lower unsupported slots **294→291**. Fully decoded
@@ -2595,4 +2598,4 @@ documents rise **1,570→1,571**, and complete isolated views rise from 47 to 48
 of 103. All drawings remain complete, all 1,599 originals remain byte-exact,
 and no standalone test case was added. See
 [analysis](tool_preimage_given_analysis.md). Full scan:
-`/tmp/subtype92_transform_coverage.txt`.
+`/tmp/subtype92_runtime_coverage.txt`.

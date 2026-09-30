@@ -147,7 +147,8 @@ next input, the source polygon highlights as eligible, and numeric Parameters do
 not. The port consequently retains a distinct polymorphic `Preimage` category.
 Its generic code-16/code-33 descendants now decode with their original subtype
 92 header retained, and invocation specializes their internal transform element
-to the bound Point, finite Segment, or Polygon. The affected tool still reaches
-an independent legacy numeric-caption writer guard before emitting these
-transforms, so end-to-end invocation is not yet claimed. See
+to the bound Point, finite Segment, or Polygon. Native and port invocation now
+both complete all nine outputs: hidden auxiliary formulas reuse their caption
+anchor, and Polygon results receive concrete style, drawing order, and
+label-free presentation. See
 [the focused analysis](tool_preimage_given_analysis.md).

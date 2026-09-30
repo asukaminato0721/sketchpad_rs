@@ -490,9 +490,12 @@ impl Document {
             let mut materialized: Object = object.clone();
             materialized.id = id;
             materialized.page = candidate.active_page;
-            let polymorphic_preimage_transform = object
+            let preimage_header = object
                 .header_offset
-                .is_some_and(|at| tool.original.get(at + 6..at + 10) == Some(&[1, 0, 92, 0]));
+                .and_then(|at| tool.original.get(at..at + 28))
+                .filter(|header| header[6..10] == [1, 0, 92, 0])
+                .map(|header| header.to_vec());
+            let polymorphic_preimage_transform = preimage_header.is_some();
             materialized.kind = match object.kind.remap_checked(&ids)? {
                 Kind::Transformed(definition) if polymorphic_preimage_transform => {
                     let source = candidate
@@ -586,6 +589,37 @@ impl Document {
                 }
                 kind => kind,
             };
+            if let Some(mut header) = preimage_header {
+                let element = materialized
+                    .kind
+                    .transform_definition()
+                    .ok_or("Tool preimage transform is unavailable")?
+                    .element();
+                header[6..10].copy_from_slice(match element {
+                    super::transform_model::ElementType::Point => &[1, 0, 4, 0],
+                    super::transform_model::ElementType::Segment => &[2, 0, 14, 0],
+                    super::transform_model::ElementType::Polygon => &[4, 0, 52, 0],
+                    _ => return Err("Tool preimage has an unsupported geometry type".into()),
+                });
+                materialized.visual_style = crate::style_records::visual_style(&header);
+                if element == super::transform_model::ElementType::Polygon {
+                    let previous_order = candidate
+                        .objects
+                        .iter()
+                        .filter(|object| !object.deleted && object.page == candidate.active_page)
+                        .filter_map(|object| object.interior_order)
+                        .max();
+                    materialized.interior_order = Some(match previous_order {
+                        Some(order) => order
+                            .checked_add(1)
+                            .ok_or("Polygon drawing order overflow")?,
+                        None => 1,
+                    });
+                    // Native drops point/straight labels when the polymorphic
+                    // result specializes to an interior object.
+                    materialized.label = None;
+                }
+            }
             materialized.midpoint_host = if let Kind::SegmentMidpoint(host) = object.kind {
                 matches!(materialized.kind, Kind::Midpoint(..)).then_some(ids[host])
             } else {

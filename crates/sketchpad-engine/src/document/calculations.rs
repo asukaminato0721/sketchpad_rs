@@ -304,6 +304,13 @@ impl Document {
             })
             .max_by_key(|object| object.id)
             .ok_or("No numeric caption precedes the tool output")?;
+        // Native auxiliary formulas with header flag 2 have no caption box.
+        // The next tool output reuses their anchor instead of advancing a row.
+        if let Kind::ParameterCalculation(_, group) = &object.kind
+            && group.caption_suppressed()
+        {
+            return Ok(group.anchor());
+        }
         let (anchor, step) = match &object.kind {
             Kind::Parameter(group) => (group.anchor(), cached_numeric_caption_step(group.bbox())?),
             Kind::Calculation(group) => {
