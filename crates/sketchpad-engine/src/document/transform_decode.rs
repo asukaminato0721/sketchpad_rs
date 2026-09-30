@@ -144,7 +144,9 @@ pub(super) fn decode_native_transform(
         (26, [_, angle, marked_distance])
             if context.custom_polar_translation
                 && constraint.is_none()
-                && numeric(*angle, NumericUnit::Degrees)
+                // Native custom-transform formulas may expose contextual
+                // degree magnitudes as Scalar calculations.
+                && quantity(*angle)
                 && distance(*marked_distance) =>
         {
             (

@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,545/1,599** documents have all object kinds
-decoded; **1,584** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **640** unsupported slots (63 drawing
-slots and 577 prototype slots), and 54 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,551/1,599** documents have all object kinds
+decoded; **1,590** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **604** unsupported slots (27 drawing
+slots and 577 prototype slots), and 48 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -13,9 +13,9 @@ sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
-transient explicit-path locus-driver, mapped FunctionPlot binding, and high-rate
-plot recoveries are summarized at the end; the older detailed
-snapshots remain for comparison.
+transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
+plot, and scalar-angle custom-translation recoveries are summarized at the end;
+the older detailed snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
 to any finite native rotation with positive finite horizontal and vertical
@@ -2211,3 +2211,31 @@ under Xvfb/Wine. No standalone test case was added. See
 [analysis](function_plot_completion_analysis.md). Full scans:
 `/tmp/mapped_function_binding_coverage.log` and
 `/tmp/high_rate_function_coverage.log`.
+
+## Contextual scalar angles in custom polar translations
+
+Native code-26 custom polar translations use operation-context units: the
+second reference supplies a degree magnitude and the third supplies a signed
+centimeter magnitude. Six final drawing roots use calculations whose stored
+result category is Scalar in those slots. The shared transform model and
+evaluator already apply that contextual contract, but the importer still
+required the angle source itself to be categorized as Degrees. It now accepts
+the same supported numeric quantity family used by numeric rotation and
+dilation while retaining the exact three-reference/no-payload record guard.
+The recovered colorized involute also exposed a presentation loss in direct
+`SampledMapped` curves. Their styled path now evaluates the carried color at
+each sample instead of flattening the entire spectrum to the object's fallback
+stroke color; selection and picking continue to use the same sampled geometry.
+
+The six roots restore 30 dependent drawing objects: eight code-35 loci, six
+code-16 transforms, six code-101 sampled transformations, two code-77 bindings,
+two code-30 transforms, two code-98 intersections, and one each of code 75, 89,
+90, and 102. Unsupported falls **640->604**, complete documents/drawings rise
+**1,545/1,584->1,551/1,590**, and unsupported documents fall **54->48**;
+partial views remain **792**. Embedded-tool coverage remains **4,779/5,356**,
+and all **1,599** originals remain byte-exact. Three representative originals
+visibly rendered and saved unchanged in Sketchpad 5 under Xvfb/Wine; a port SVG
+reproduces the native green-to-blue-to-violet involute spectrum. No standalone
+test case was added. See
+[analysis](scalar_angle_polar_translation_analysis.md). Full scan:
+`/tmp/scalar_angle_code26_coverage_final.log`.

@@ -1480,6 +1480,7 @@ fn svg_page_with_layout(
         if let Some(strokes) = doc
             .locus_styled_strokes(o.id, 384)
             .or_else(|| doc.mapped_collection_strokes(o.id, 384))
+            .or_else(|| doc.sampled_mapped_styled_strokes(o.id, 384))
         {
             for sample in strokes {
                 if let Some((a, b)) = clipped_line(
@@ -2757,6 +2758,7 @@ impl GeometryRenderer {
             if let Some(strokes) = doc
                 .locus_styled_strokes(o.id, 384)
                 .or_else(|| doc.mapped_collection_strokes(o.id, 384))
+                .or_else(|| doc.sampled_mapped_styled_strokes(o.id, 384))
             {
                 mesh.locus_strokes(vp, &strokes, is_selected.then_some(selected));
             } else if let Some(surfaces) = doc

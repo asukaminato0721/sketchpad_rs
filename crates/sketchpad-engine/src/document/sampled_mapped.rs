@@ -2,7 +2,8 @@
 //! Ordinary stored sampled substitutions; no tool authoring or invocation.
 use super::iteration::supported_mapped_point_iteration;
 use super::kind::{is_arc_kind, is_point_kind};
-use super::{Document, Kind, LineMode, Object, Point};
+use super::{Document, Kind, LineMode, LocusStroke, Object, Point};
+use crate::style_records::VisualStyle;
 use std::collections::BTreeSet;
 #[derive(Clone, Debug, PartialEq)]
 pub struct SampledMappedDefinition {
@@ -402,6 +403,55 @@ impl Document {
             slots
                 .windows(2)
                 .filter_map(|p| Some((p[0]?, p[1]?, super::LineMode::Segment)))
+                .collect(),
+        )
+    }
+
+    /// A sampled colorized point keeps its live spectrum color at every step.
+    /// The saved sampled object's line style still controls width and pattern.
+    pub fn sampled_mapped_styled_strokes(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusStroke>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::SampledMapped(d) = &object.kind else {
+            return None;
+        };
+        if object.deleted
+            || !matches!(
+                self.objects.get(d.output.checked_sub(1)?)?.kind,
+                Kind::Colorized(_)
+            )
+        {
+            return None;
+        }
+        let VisualStyle::Stroke { line, .. } = self.effective_visual_style(id)? else {
+            return None;
+        };
+        let n = subdivisions
+            .clamp(2, 4096)
+            .min(d.samples().saturating_sub(1) as usize);
+        let mut curve = self.sampled_mapped_evaluator(id)?;
+        let slots = (0..=n)
+            .map(|index| {
+                let point = curve.at(index as f64 / n as f64)?;
+                let color = curve.sample.colorized_color(d.output)?;
+                Some((point, color))
+            })
+            .collect::<Vec<_>>();
+        Some(
+            slots
+                .windows(2)
+                .filter_map(|pair| {
+                    let ((start, _), (end, color)) = (pair[0]?, pair[1]?);
+                    Some(LocusStroke {
+                        start,
+                        end,
+                        mode: LineMode::Segment,
+                        style: VisualStyle::Stroke { line, color },
+                    })
+                })
                 .collect(),
         )
     }

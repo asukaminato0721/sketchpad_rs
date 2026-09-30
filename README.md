@@ -292,6 +292,14 @@ Mapped iterations can present a carried function plot as its own styled binding,
 reevaluating the function and coordinate frame in every mapped scope. Native and
 port evidence is recorded in [the function-plot completion analysis](dev/function_plot_completion_analysis.md).
 
+Imported code-26 custom polar translations treat their angle slot as a
+contextual degree magnitude. This includes native calculations reported as
+Scalar, matching the shared transform model's existing numeric-operand rule;
+their distance slot continues to interpret Length or Scalar values as signed
+centimeters. Sampled mappings of colorized outputs retain each evaluated
+spectrum color in canvas and SVG strokes. See
+[the scalar-angle analysis](dev/scalar_angle_polar_translation_analysis.md).
+
 Native sampled custom transformations of pictures retain their source pixels
 and validated point-mapping construction. Bounded textured meshes drive canvas
 rendering, picking, and triangulated SVG export while preserving native picture
@@ -505,7 +513,7 @@ points later consumed by sampled mappings. Native Xvfb/Wine checks cover free,
 nested, trace-linked, and Segment examples; all tested saves are byte-exact.
 This restores 95 slots, lowering unsupported objects to 2,046 and raising
 complete documents/drawings to 1,369/1,404. Scalar-operand and embedded-tool
-variants remain deliberately opaque.
+variants were kept separate at that checkpoint.
 
 Plot Value points now accept every decoded numeric quantity and retain its unit
 for presentation while using the displayed magnitude on axes and geometric
