@@ -201,6 +201,7 @@ pub(super) fn mapped_binding_kind(kind: &Kind) -> bool {
             | Kind::Locus(..)
             | Kind::ParameterLocus(..)
             | Kind::SampledMapped(..)
+            | Kind::FunctionPlot(..)
     ) || (matches!(kind, Kind::PointReferencedText { .. }) && mapped_reference_value(kind))
         || is_point_kind(kind)
         || is_straight_kind(kind)

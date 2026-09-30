@@ -2918,6 +2918,7 @@ impl Document {
                         || super::locus::is_point_locus(&objects, &o.kind)
                         || super::locus::is_mapped_polygon_locus(&objects, &o.kind)
                         || matches!(o.kind, Kind::SampledMapped(..))
+                        || matches!(o.kind, Kind::FunctionPlot(..))
                 })
             {
                 style_records::iteration_binding_visual_style(

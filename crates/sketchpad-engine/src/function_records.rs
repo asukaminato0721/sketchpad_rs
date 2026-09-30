@@ -860,6 +860,13 @@ impl FunctionPlotMode {
     }
 }
 
+/// Native descriptors may retain six-digit sample counts. Evaluation callers
+/// impose their own bounded resolution, so the stored count only needs to
+/// describe a usable interval.
+pub(crate) fn plot_sample_count_supported(samples: u32) -> bool {
+    samples >= 2
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Record {
     kind: u32,
@@ -1176,7 +1183,7 @@ pub fn decode_minimal_plot(bytes: &[u8]) -> Result<FunctionPlot, String> {
         if !x_min.is_finite()
             || !x_max.is_finite()
             || x_min >= x_max
-            || !(2..=4096).contains(&samples)
+            || !plot_sample_count_supported(samples)
         {
             return Err("Invalid function plot range".into());
         }
@@ -1224,7 +1231,10 @@ pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32, FunctionPlotMode
     let x_min = f64::from_le_bytes(data[0..8].try_into().unwrap());
     let x_max = f64::from_le_bytes(data[8..16].try_into().unwrap());
     let samples = u32_at(data, 16);
-    if !x_min.is_finite() || !x_max.is_finite() || x_min >= x_max || !(2..=4096).contains(&samples)
+    if !x_min.is_finite()
+        || !x_max.is_finite()
+        || x_min >= x_max
+        || !plot_sample_count_supported(samples)
     {
         return Err("Invalid function plot range".into());
     }
@@ -1238,7 +1248,7 @@ pub fn decode_parametric_range(data: &[u8], polar: bool) -> Result<(f64, f64, u3
     let min = f64::from_le_bytes(data[0..8].try_into().unwrap());
     let max = f64::from_le_bytes(data[8..16].try_into().unwrap());
     let samples = u32_at(data, 16);
-    if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+    if !min.is_finite() || !max.is_finite() || min >= max || !plot_sample_count_supported(samples) {
         return Err("Invalid parametric plot range".into());
     }
     Ok((min, max, samples))
@@ -1260,7 +1270,7 @@ pub fn encode_parametric_plot_group(
         || !min.is_finite()
         || !max.is_finite()
         || min >= max
-        || !(2..=4096).contains(&samples)
+        || !plot_sample_count_supported(samples)
     {
         return Err("Invalid parametric plot".into());
     }
@@ -1493,7 +1503,7 @@ pub fn encode_plot_group_with_range(
     samples: u32,
     mode: FunctionPlotMode,
 ) -> Result<Vec<u8>, String> {
-    if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+    if !min.is_finite() || !max.is_finite() || min >= max || !plot_sample_count_supported(samples) {
         return Err("Invalid function plot range".into());
     }
     let group = encode_plot_group(expression, definition_id, frame_id)?;

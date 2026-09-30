@@ -286,6 +286,12 @@ Disk and sector transforms use the shared affine evaluator and editor commands. 
 
 Geometric-driver loci reuse shared affine/Colorized Segment, Ray and Line targets and generic finite Segment hosts. Evaluated samples carry their own pen/color to SVG, canvas and picking. Current evidence and supported boundaries are recorded in [the implementation notes](dev/locus_generic_straights63_implementation.md); corpus decoding does not establish complete command parity.
 
+Function plots retain native six-digit sample counts while canvas, SVG, picking,
+and point-curve evaluation continue to use bounded caller-selected resolutions.
+Mapped iterations can present a carried function plot as its own styled binding,
+reevaluating the function and coordinate frame in every mapped scope. Native and
+port evidence is recorded in [the function-plot completion analysis](dev/function_plot_completion_analysis.md).
+
 Native sampled custom transformations of pictures retain their source pixels
 and validated point-mapping construction. Bounded textured meshes drive canvas
 rendering, picking, and triangulated SVG export while preserving native picture

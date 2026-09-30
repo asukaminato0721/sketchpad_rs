@@ -365,7 +365,11 @@ impl Document {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot edit a plot in this sketch".into());
         }
-        if !min.is_finite() || !max.is_finite() || min >= max || !(2..=4096).contains(&samples) {
+        if !min.is_finite()
+            || !max.is_finite()
+            || min >= max
+            || !crate::function_records::plot_sample_count_supported(samples)
+        {
             return Err("Invalid plot range or sample count".into());
         }
         let object = self

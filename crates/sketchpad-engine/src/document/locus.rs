@@ -680,7 +680,8 @@ impl Document {
         let stroke_locus = is_mapped_stroke_locus(&self.objects, source_kind);
         let point_locus = is_point_locus(&self.objects, source_kind);
         let sampled = matches!(source_kind, Kind::SampledMapped(..));
-        if object.deleted || (!stroke_locus && !point_locus && !sampled) {
+        let function_plot = matches!(source_kind, Kind::FunctionPlot(..));
+        if object.deleted || (!stroke_locus && !point_locus && !sampled && !function_plot) {
             return None;
         }
         let style = self.effective_visual_style(id)?;
@@ -688,6 +689,19 @@ impl Document {
             self.mapped_scoped_outputs(source, iteration, false, |sample, source| {
                 if stroke_locus || point_locus {
                     sample.locus_styled_strokes_with_style(source, subdivisions, style)
+                } else if function_plot {
+                    Some(
+                        sample
+                            .function_plot_segments(source, subdivisions)?
+                            .into_iter()
+                            .map(|(start, end)| LocusStroke {
+                                start,
+                                end,
+                                mode: LineMode::Segment,
+                                style,
+                            })
+                            .collect(),
+                    )
                 } else {
                     Some(
                         sample

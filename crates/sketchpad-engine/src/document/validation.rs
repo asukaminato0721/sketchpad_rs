@@ -1040,7 +1040,7 @@ impl Document {
                     || !min.is_finite()
                     || !max.is_finite()
                     || min >= max
-                    || !(2..=4096).contains(&samples))
+                    || !crate::function_records::plot_sample_count_supported(samples))
             {
                 return Err(format!("Invalid function plot {}", o.id));
             }
@@ -1053,7 +1053,7 @@ impl Document {
                     || !min.is_finite()
                     || !max.is_finite()
                     || min >= max
-                    || !(2..=4096).contains(&samples))
+                    || !crate::function_records::plot_sample_count_supported(samples))
             {
                 return Err(format!("Invalid parametric plot {}", o.id));
             }

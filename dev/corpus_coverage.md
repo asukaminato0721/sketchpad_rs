@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,540/1,599** documents have all object kinds
-decoded; **1,579** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **666** unsupported slots (89 drawing
-slots and 577 prototype slots), and 59 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,545/1,599** documents have all object kinds
+decoded; **1,584** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **640** unsupported slots (63 drawing
+slots and 577 prototype slots), and 54 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -12,9 +12,9 @@ plus literal locus-point, degree-coordinate, legacy coordinate-readout,
 sampled-path point-value, anchored referenced-label, mapped ParameterLocus
 collection, mapped action-capture, and mapped iteration-value-table recoveries
 plus general native snapshot-table, labeled/traced custom polar-translation,
-general Plot Value, duplicate-carried, and nested-capture mapped-iteration
-recoveries plus transient explicit-path locus-driver recovery are summarized at
-the end; the older detailed
+general Plot Value, duplicate-carried, nested-capture mapped-iteration,
+transient explicit-path locus-driver, mapped FunctionPlot binding, and high-rate
+plot recoveries are summarized at the end; the older detailed
 snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
@@ -2185,3 +2185,29 @@ representative originals—including a nested locus and a colorized-circle
 target—opened and saved unchanged in Sketchpad 5 under Xvfb/Wine. No standalone
 test case was added. See [analysis](transient_locus_drivers_analysis.md). Full
 scan: `/tmp/transient_locus_coverage_final.log`.
+
+## Mapped and high-rate function plots
+
+Three native code-77 bindings present an already-carried `FunctionPlot` as a
+visible mapped result. They now use the same scoped iteration evaluator as
+mapped locus and sampled-curve collections, while retaining the binding's own
+stroke color, width, visibility, and selection behavior. The shared result
+feeds canvas, SVG, and picking without a second mapping implementation.
+
+Two code-72 plots retain native sample counts of 200,000 and 250,000. Stored
+plot descriptors, validation, editing, copying, and writing now accept the full
+`u32` count range above one; actual evaluation remains bounded by each caller
+and never allocates from the stored count directly. These two roots restore five
+code-98 intersections, four code-65 coordinate measurements, eight code-48
+calculations, and four code-69 plotted points.
+
+Together the two changes restore 26 drawing slots. Unsupported falls
+**666->640**, complete documents/drawings rise
+**1,540/1,579->1,545/1,584**, and unsupported documents fall **59->54**;
+partial views remain **792**. Embedded-tool coverage remains
+**4,779/5,356**, and all **1,599** originals remain byte-exact. Five
+representative originals opened, rendered, and saved unchanged in Sketchpad 5
+under Xvfb/Wine. No standalone test case was added. See
+[analysis](function_plot_completion_analysis.md). Full scans:
+`/tmp/mapped_function_binding_coverage.log` and
+`/tmp/high_rate_function_coverage.log`.
