@@ -224,11 +224,12 @@ impl Document {
                         || !(0.0..=1.0).contains(parameter)
                         || *host == 0
                         || *host >= o.id
-                        || !self.objects.get(*host - 1).is_some_and(|parent| {
-                            !parent.deleted
-                                && parent.page == o.page
-                                && super::kind::is_segment_kind(&parent.kind)
-                        })
+                        || !super::segment_marker::arrow_host_supported(
+                            &self.objects,
+                            *host,
+                            o.page,
+                            o.id,
+                        )
                     {
                         return Err(format!("Invalid segment arrow {}", o.id));
                     }

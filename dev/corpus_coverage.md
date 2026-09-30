@@ -1,9 +1,9 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,556/1,599** documents have all object kinds
-decoded; **1,596** have all drawing kinds decoded. All **1,599** round trips are
-byte-exact, with zero failures. There are **580** unsupported slots (3 drawing
-slots and 577 prototype slots), and 43 documents still contain unsupported
+Latest snapshot, 2026-09-30: **1,557/1,599** documents have all object kinds
+decoded; **1,597** have all drawing kinds decoded. All **1,599** round trips are
+byte-exact, with zero failures. There are **579** unsupported slots (2 drawing
+slots and 577 prototype slots), and 42 documents still contain unsupported
 objects. Embedded tools contain 5,356 slots across 103 definitions: 4,779
 decoded, 577 undecoded. The current circular-segment and endpoint arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -15,8 +15,8 @@ plus general native snapshot-table, labeled/traced custom polar-translation,
 general Plot Value, duplicate-carried, nested-capture mapped-iteration,
 transient explicit-path locus-driver, mapped FunctionPlot binding, high-rate
 plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
-referenced-caption plus point-angle fixed-polar recoveries are summarized at
-the end; the older detailed
+referenced-caption, point-angle fixed-polar, and sampled-curve direction-arrow
+recoveries are summarized at the end; the older detailed
 snapshots remain for comparison.
 
 The point-attached-picture pass extends strict code-99 import from zero rotation
@@ -2318,3 +2318,22 @@ views fall **789→788**. Embedded-tool coverage remains **4,779/5,356**, and al
 and save unchanged in Sketchpad 5 under Xvfb/Wine. No standalone test case was
 added. See [analysis](point_angle_fixed_polar_analysis.md). Full scan:
 `/tmp/code22_coverage_all_tests.log`.
+
+## Sampled-curve direction arrow
+
+The last drawing code-121 record uses the already proved direction-arrow packet
+with a `SampledMapped` point curve as its host. Import requires that exact
+earlier same-page curve family; congruence ticks remain Segment-only. Rendering
+evaluates the stored normalized parameter and derives a bounded local tangent,
+including a one-sided endpoint difference, before applying the established
+ten-unit arrow geometry. The writer stays Segment-only because Native rejected
+a generated copied curve-arrow graph.
+
+This restores one drawing slot. Unsupported falls **580→579**, complete
+documents/drawings rise **1,556/1,596→1,557/1,597**, unsupported documents fall
+**43→42**, and partial views fall **788→787**. Embedded-tool coverage remains
+**4,779/5,356**, and all **1,599** originals remain byte-exact. The untouched
+original visibly renders and saves unchanged in Sketchpad 5 under Xvfb/Wine.
+No standalone test case was added. See
+[analysis](sampled_curve_arrow_analysis.md). Full scan:
+`/tmp/code121_coverage_all_tests.log`.

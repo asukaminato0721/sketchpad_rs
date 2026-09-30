@@ -1112,9 +1112,16 @@ impl Document {
                 let [host] = refs.as_slice() else {
                     return None;
                 };
-                if !objects.get(host.checked_sub(1)?).is_some_and(|object| {
+                let segment_host = objects.get(host.checked_sub(1)?).is_some_and(|object| {
                     !object.deleted && object.page == page && is_segment_kind(&object.kind)
-                }) {
+                });
+                let arrow_host = super::segment_marker::arrow_host_supported(
+                    &objects,
+                    *host,
+                    page,
+                    objects.len() + 1,
+                );
+                if !segment_host && !arrow_host {
                     return None;
                 }
                 let group = rs
@@ -1147,7 +1154,7 @@ impl Document {
                     return None;
                 }
                 match (u32_at(payload, 8), u32_at(payload, 12)) {
-                    (count @ 1..=3, 1) => Some(Kind::SegmentMarker {
+                    (count @ 1..=3, 1) if segment_host => Some(Kind::SegmentMarker {
                         host: *host,
                         parameter,
                         count: count as u16,

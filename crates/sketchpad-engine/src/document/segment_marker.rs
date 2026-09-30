@@ -1,5 +1,25 @@
 //! Presentation geometry for native segment congruence and direction marks.
-use super::{Document, Kind, LineMode, Point};
+use super::kind::is_segment_kind;
+use super::{Document, Kind, LineMode, Object, Point};
+
+pub(super) fn arrow_host_supported(
+    objects: &[Object],
+    host: usize,
+    page: usize,
+    before: usize,
+) -> bool {
+    host < before
+        && host
+            .checked_sub(1)
+            .and_then(|index| objects.get(index))
+            .is_some_and(|object| {
+                !object.deleted
+                    && object.page == page
+                    && (is_segment_kind(&object.kind)
+                        || matches!(object.kind, Kind::SampledMapped(_))
+                            && super::curve_points::supported(objects, host, page, before))
+            })
+}
 
 impl Document {
     /// Native ticks are fourteen units long and adjacent ticks are spaced six
@@ -26,26 +46,13 @@ impl Document {
         if !parameter.is_finite() {
             return None;
         }
-        let (start, end, LineMode::Segment) = self.line_points(host)? else {
-            return None;
-        };
-        let dx = end.x - start.x;
-        let dy = end.y - start.y;
-        let length = dx.hypot(dy);
-        if !length.is_finite() || length <= 1e-9 {
-            return None;
-        }
-        let tangent = Point {
-            x: dx / length,
-            y: dy / length,
+        let (center, tangent) = match marker {
+            Ok(_) => self.segment_marker_frame(host, parameter)?,
+            Err(_) => self.direction_arrow_frame(host, parameter)?,
         };
         let normal = Point {
             x: -tangent.y,
             y: tangent.x,
-        };
-        let center = Point {
-            x: start.x + dx * parameter,
-            y: start.y + dy * parameter,
         };
         match marker {
             Ok(count) => Some(
@@ -93,5 +100,66 @@ impl Document {
                 ])
             }
         }
+    }
+
+    fn segment_marker_frame(&self, host: usize, parameter: f64) -> Option<(Point, Point)> {
+        let (start, end, LineMode::Segment) = self.line_points(host)? else {
+            return None;
+        };
+        let dx = end.x - start.x;
+        let dy = end.y - start.y;
+        let length = dx.hypot(dy);
+        if !length.is_finite() || length <= 1e-9 {
+            return None;
+        }
+        Some((
+            Point {
+                x: start.x + dx * parameter,
+                y: start.y + dy * parameter,
+            },
+            Point {
+                x: dx / length,
+                y: dy / length,
+            },
+        ))
+    }
+
+    fn direction_arrow_frame(&self, host: usize, parameter: f64) -> Option<(Point, Point)> {
+        if let Some(frame) = self.segment_marker_frame(host, parameter) {
+            return Some(frame);
+        }
+        if !matches!(
+            self.objects.get(host.checked_sub(1)?)?.kind,
+            Kind::SampledMapped(_)
+        ) {
+            return None;
+        }
+        let mut curve = super::point_curve::PointCurve::new(self, host)?;
+        let center = curve.at_literal(parameter)?;
+        let step = 1. / curve.intervals.max(64) as f64;
+        for radius in 1..=8 {
+            let offset = step * f64::from(radius);
+            let first = (parameter - offset).max(0.);
+            let last = (parameter + offset).min(1.);
+            if first == last {
+                continue;
+            }
+            let (Some(start), Some(end)) = (curve.at_literal(first), curve.at_literal(last)) else {
+                continue;
+            };
+            let dx = end.x - start.x;
+            let dy = end.y - start.y;
+            let length = dx.hypot(dy);
+            if length.is_finite() && length > 1e-9 {
+                return Some((
+                    center,
+                    Point {
+                        x: dx / length,
+                        y: dy / length,
+                    },
+                ));
+            }
+        }
+        None
     }
 }

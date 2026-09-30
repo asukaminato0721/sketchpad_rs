@@ -400,14 +400,14 @@ native buttons. Together the two passes lower unsupported slots from 3,027 to
 2,989, raise complete documents to 1,262 and complete drawings to 1,292, and
 lower partial views to 869. All 1,599 originals remain byte-exact.
 
-Native code-121 segment congruence and direction markers now import, render,
-pick, copy, and save on supported original or transformed segments. One-, two-,
-and three-tick marks use native fixed dimensions; forward and reverse arrows use
-the stored host direction. Both forms were verified against Sketchpad 5 under
-Xvfb/Wine. The strict segment-host profiles restore 27 drawing slots, lowering
-unsupported slots to 2,962, raising complete documents to 1,268 and complete
-drawings to 1,298, and lowering partial views to 867. The observed sampled-curve
-arrow remains unsupported; all 1,599 originals remain byte-exact.
+Native code-121 segment congruence and direction markers import, render, pick,
+copy, and save on supported original or transformed segments. One-, two-, and
+three-tick marks use native fixed dimensions; forward and reverse arrows use
+the stored host direction. The final imported direction-arrow profile also
+follows a supported sampled point curve and uses its evaluated local tangent;
+that curve-host form remains import-only. All forms were verified against
+Sketchpad 5 under Xvfb/Wine. See
+[the sampled-curve evidence](dev/sampled_curve_arrow_analysis.md).
 
 Legacy code-119 angle rotations now share the live numeric-rotation model for
 strict point, segment, and analytic-arc groups. The seven admitted roots retain
