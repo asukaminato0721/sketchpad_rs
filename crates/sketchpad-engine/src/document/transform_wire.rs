@@ -17,6 +17,7 @@ pub(super) struct TransformWirePresentation<'a> {
     pub label: Option<&'a LabelAux>,
     pub polygon: Option<PolygonWire>,
     pub region_order: Option<i32>,
+    pub visual_style: Option<crate::style_records::VisualStyle>,
 }
 
 pub(super) fn encode_group(
@@ -95,6 +96,9 @@ pub(super) fn encode_group(
     }
     if !presentation.visible {
         h[2] = 1;
+    }
+    if let Some(style) = presentation.visual_style {
+        crate::style_records::set_visual_style(&mut h, style)?;
     }
     let mut group = Vec::new();
     put_record(&mut group, 0x07d0, &h);
@@ -274,6 +278,7 @@ mod tests {
                     vector_locus_target: true,
                 }),
                 region_order: None,
+                visual_style: None,
             },
         )
         .unwrap();

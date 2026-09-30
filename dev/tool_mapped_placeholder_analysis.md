@@ -45,6 +45,8 @@ matching the evaluator's existing invariant-input behavior.
 - dependent slots restored: seven code 77, ten code 48, three code 88, six
   code 95, three code 21, and one each of codes 41 and 94.
 
-All drawing kinds remain decoded in every corpus document. The all-kind
-document count remains 1,575 and complete isolated tools remain 49 because the
-affected prototypes still contain unrelated unsupported constructions.
+All drawing kinds remain decoded in every corpus document. At this checkpoint
+the all-kind document count remained 1,575 and complete isolated tools remained
+49 because the affected prototypes still contained unrelated unsupported
+constructions. The subsequent polymorphic-polygon pass completes the rolling
+polygon prototype; see `tool_polymorphic_polygon_analysis.md`.

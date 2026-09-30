@@ -162,7 +162,7 @@ fn is_polygon_header(payload: &[u8]) -> bool {
         || (matches!(
             code,
             75 | 16 | 17 | 18 | 19 | 20 | 21 | 24 | 27 | 28 | 29 | 30 | 32 | 33 | 34
-        ) && ((subtype >= 52 && payload[6..8] == [4, 0])
+        ) && (((subtype >= 52 || subtype == 15) && payload[6..8] == [4, 0])
             || (payload.len() == 28
                 && matches!(
                     payload[6..10],

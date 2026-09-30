@@ -480,7 +480,6 @@ impl Document {
         candidate.selected.clear();
         let mut created = Vec::new();
         for object in &tool.objects {
-            eprintln!("materialize tool object {}", object.id);
             if ids[object.id] != 0 {
                 continue;
             }
@@ -551,9 +550,7 @@ impl Document {
                     )?)
                 }
                 Kind::ParameterCalculation(_, mut group) => {
-                    eprintln!("place calculation {}", object.id);
                     group.set_anchor(candidate.next_tool_numeric_anchor()?)?;
-                    eprintln!("placed calculation {}", object.id);
                     let font =
                         candidate.imported_caption_font_index(caption_style.as_ref().unwrap())?;
                     let group = group.with_caption_font(font)?;
@@ -681,12 +678,10 @@ impl Document {
                 candidate.selected.insert(id);
             }
         }
-        eprintln!("encoding invoked tool");
         if created.is_empty() {
             return Err("Tool has no constructed outputs".into());
         }
         let encoded = candidate.encode()?;
-        eprintln!("reparsing invoked tool");
         let reparsed = Document::from_bytes(&encoded, None)?;
         if candidate.has_pending_multi_page_additions() {
             let mut survivors: Vec<_> = candidate
@@ -698,10 +693,8 @@ impl Document {
                 .sort_by_key(|object| (object.page, object.id > candidate.source_count, object.id));
             candidate.validate_reparsed_in_order(&reparsed, survivors, true)?;
         } else {
-            eprintln!("validating invoked tool");
             candidate.validate_reparsed(&reparsed)?;
         }
-        eprintln!("validated invoked tool");
         *self = candidate;
         Ok(created)
     }

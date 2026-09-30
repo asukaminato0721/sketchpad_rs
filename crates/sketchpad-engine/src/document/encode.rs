@@ -2034,6 +2034,7 @@ impl Document {
                         } else {
                             None
                         },
+                        visual_style: o.visual_style,
                     },
                 )?;
                 if o.presentation_suppressed {

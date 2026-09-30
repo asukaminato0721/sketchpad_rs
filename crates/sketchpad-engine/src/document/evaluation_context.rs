@@ -255,20 +255,28 @@ impl Document {
         context.frames.retain(|id, _| frozen.contains(id));
     }
 
-    /// Materialize a topologically ordered numeric DAG for the current seeds.
+    /// Materialize a topologically ordered carried DAG for the current seeds.
+    /// Point values are cached alongside numbers because numeric constructions
+    /// can repeatedly ask for the same deeply nested iteration endpoint.
     /// Cached undefined values are retained as such for the rest of this state.
-    pub(super) fn cache_evaluation_numbers(&mut self, ids: &[usize]) -> Option<()> {
+    pub(super) fn cache_evaluation_values(&mut self, ids: &[usize]) -> Option<()> {
         self.evaluation_context.as_ref()?;
         for &id in ids {
-            if self.evaluation_numeric(id).is_some() {
-                continue;
-            }
             let object = self.objects.get(id.checked_sub(1)?)?;
-            if object.deleted || object.kind.numeric_unit().is_none() {
+            if object.deleted {
                 continue;
             }
-            let value = self.numeric_value(id);
-            self.evaluation_context.as_mut()?.numbers.insert(id, value);
+            let point = is_point_kind(&object.kind) && self.evaluation_point(id).is_none();
+            let number =
+                object.kind.numeric_unit().is_some() && self.evaluation_numeric(id).is_none();
+            if point {
+                let value = self.position(id);
+                self.evaluation_context.as_mut()?.points.insert(id, value);
+            }
+            if number {
+                let value = self.numeric_value(id);
+                self.evaluation_context.as_mut()?.numbers.insert(id, value);
+            }
         }
         Some(())
     }

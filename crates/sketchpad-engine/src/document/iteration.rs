@@ -1268,15 +1268,15 @@ impl Document {
         let mut level = vec![initial];
         let mut sample = self.clone();
         let external = self.mapped_external_inputs(seeds, branches, carried)?;
-        let mut numeric_order = branches
+        let mut evaluation_order = branches
             .iter()
             .flatten()
             .chain(carried)
             .copied()
             .filter(|id| !seeds.contains(id))
             .collect::<Vec<_>>();
-        numeric_order.sort_unstable();
-        numeric_order.dedup();
+        evaluation_order.sort_unstable();
+        evaluation_order.dedup();
         if retain_parent {
             sample.freeze_scoped_evaluation_inputs(self, &external)?;
             sample.inherit_evaluation_seeds(self)?;
@@ -1301,7 +1301,7 @@ impl Document {
                 for (id, value) in seeds.iter().zip(state) {
                     value.substitute(&mut sample, *id)?;
                 }
-                sample.cache_evaluation_numbers(&numeric_order)?;
+                sample.cache_evaluation_values(&evaluation_order)?;
                 for branch in branches {
                     let mapped: Vec<_> = branch
                         .iter()
@@ -1329,7 +1329,7 @@ impl Document {
                     for (id, value) in seeds.iter().zip(state) {
                         value.substitute(&mut sample, *id)?;
                     }
-                    sample.cache_evaluation_numbers(&numeric_order)?;
+                    sample.cache_evaluation_values(&evaluation_order)?;
                     // Keep terminal undefinedness. The ordinary image reader
                     // filters each undefined image while preserving valid levels.
                     result.push((step + 1, evaluate(&sample, source)));

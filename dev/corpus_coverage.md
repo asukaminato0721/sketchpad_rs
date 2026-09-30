@@ -1,11 +1,12 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,575/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,576/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **246** unsupported slots, all in
-embedded-tool prototypes, and 24 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 5,110
-decoded, 246 undecoded. The current external-placeholder mapped-iteration,
+are byte-exact, with zero failures. There are **244** unsupported slots, all in
+embedded-tool prototypes, and 23 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 5,112
+decoded, 244 undecoded. Isolated decoding produces 52 complete and 51 partial
+tool views. The current polymorphic-polygon tool, external-placeholder mapped-iteration,
 embedded attached-picture, final
 geometric-given, distance-Parameter,
 polymorphic Preimage, legacy Curve, angle-Parameter, legacy generic-numeric and distance custom-tool-given,
@@ -25,6 +26,22 @@ plot, scalar-angle custom-translation, high-depth mapped-iteration, and final
 referenced-caption, point-angle fixed-polar, sampled-curve direction-arrow, and
 final Animation-edge recoveries are summarized at the end; the older detailed
 snapshots remain for comparison.
+
+The polymorphic-polygon tool pass completes the 120-object rolling-polygon
+prototype. Strict class-4/subtype-15 code-16 and code-29 transforms may treat a
+raw subtype-15 polygon tool input or transformed polygon as their source; the
+ordinary typed transform model remains unchanged. Exact 28-byte internal
+iteration labels `[1]` through `[9]` on codes 76, 77, and 89 are treated as
+metadata rather than editable labels. Invocation specializes the polygon
+header and style, preserves region ordering, and uses the observed bold
+16-point `黑体` caption metric. Carried point values are cached while replaying
+deep mappings so repeated endpoint calculations share a state-local result.
+The pass restores two prototype roots and makes three isolated tools complete:
+decoded slots rise **5,110→5,112**, unsupported falls **246→244**, all-kind
+complete documents rise **1,575→1,576**, and isolated complete tools rise
+**49→52**. A real invocation creates 118 outputs, reopens non-partially, and
+round-trips exactly; Sketchpad 5 under Wine renders it and Ctrl+S preserves the
+file SHA-256. See `tool_polymorphic_polygon_analysis.md`.
 
 The external-placeholder mapped-iteration pass distinguishes tool placeholders
 used as invariant predecessors from placeholders that participate in the
