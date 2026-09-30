@@ -176,6 +176,12 @@ impl Kind {
                 .transform_definition()
                 .is_some_and(|definition| definition.element() == ElementType::Polygon)
     }
+    pub fn is_coordinate_system(&self) -> bool {
+        matches!(
+            self,
+            Kind::CoordinateSystem(_, _) | Kind::ToolInput(EmbeddedToolInputKind::CoordinateSystem)
+        )
+    }
     pub fn is_measurement(&self) -> bool {
         matches!(
             self,

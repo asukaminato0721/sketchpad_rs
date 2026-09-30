@@ -9,6 +9,8 @@ pub enum EmbeddedToolInputKind {
     Segment,
     /// A polygon of arbitrary supported vertex count.
     Polygon,
+    /// The active Cartesian or polar coordinate system used by graph objects.
+    CoordinateSystem,
     /// A generic numeric magnitude; its units are determined when bound.
     Numeric,
     /// A scalar Parameter specifically, retaining Native's stricter input
@@ -32,6 +34,7 @@ impl EmbeddedToolInput {
             (1, 5) => Some(EmbeddedToolInputKind::Path),
             (1, 14) => Some(EmbeddedToolInputKind::Segment),
             (1, 15) => Some(EmbeddedToolInputKind::Polygon),
+            (1, 39) => Some(EmbeddedToolInputKind::CoordinateSystem),
             (11, 33) => Some(EmbeddedToolInputKind::Numeric),
             (11, 79) => Some(EmbeddedToolInputKind::ScalarParameter),
             _ => None,

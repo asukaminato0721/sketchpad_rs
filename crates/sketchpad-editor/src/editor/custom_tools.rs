@@ -369,6 +369,7 @@ impl Editor {
                             kind @ (EmbeddedToolInputKind::Path
                             | EmbeddedToolInputKind::Segment
                             | EmbeddedToolInputKind::Polygon
+                            | EmbeddedToolInputKind::CoordinateSystem
                             | EmbeddedToolInputKind::Numeric
                             | EmbeddedToolInputKind::ScalarParameter),
                         ) => {
@@ -428,6 +429,9 @@ impl Editor {
                 self.hit(viewport, at)
                     .filter(|id| self.doc.objects[*id - 1].kind.is_polygon())
                     .ok_or("Choose an available polygon")?
+            } else if input.kind() == Some(EmbeddedToolInputKind::CoordinateSystem) {
+                self.hit_grid(viewport, at)
+                    .ok_or("Choose an available coordinate system")?
             } else if matches!(
                 input.kind(),
                 Some(EmbeddedToolInputKind::Numeric | EmbeddedToolInputKind::ScalarParameter)

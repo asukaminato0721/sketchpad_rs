@@ -1,11 +1,11 @@
 # Corpus decoding coverage
 
-Latest snapshot, 2026-09-30: **1,559/1,599** documents have all object kinds
+Latest snapshot, 2026-09-30: **1,562/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
-are byte-exact, with zero failures. There are **420** unsupported slots, all in
-embedded-tool prototypes, and 40 documents still contain unsupported
-objects. Embedded tools contain 5,356 slots across 103 definitions: 4,936
-decoded, 420 undecoded. The current polygon and scalar-Parameter custom-tool-given
+are byte-exact, with zero failures. There are **394** unsupported slots, all in
+embedded-tool prototypes, and 37 documents still contain unsupported
+objects. Embedded tools contain 5,356 slots across 103 definitions: 4,962
+decoded, 394 undecoded. The current coordinate-system, polygon, and scalar-Parameter custom-tool-given
 recoveries plus tool-picture-resource extraction, circular-segment, and endpoint
 arc-length
 measurement, transformed-point Animation, segment-marker, legacy-angle-rotation,
@@ -2430,3 +2430,24 @@ All 1,599 drawings remain drawing-complete, all original files remain byte-exact
 and no standalone test case was added. See
 [analysis](tool_polygon_given_analysis.md). Full scan:
 `/tmp/tool_polygon_given_coverage.log`.
+
+## Coordinate-system custom-tool given
+
+The ten class-1/subtype-39 tool givens now decode as abstract coordinate-system
+inputs. Native coordinate systems use the same subtype 39 under their ordinary
+class-8/code-61 construction header, and every supported prototype consumer
+uses the given in a coordinate-frame role. The placeholder satisfies only that
+predicate; axes, origin, scale, and cached `0899` values remain unavailable.
+Runtime binding accepts an actual active-page coordinate system, and desktop
+click binding uses grid hit testing.
+
+This restores **26** prototype slots: ten inputs, five code-65 and four code-66
+coordinate measurements, six code-48 calculations, and one code-69 numeric
+point. Prototype coverage rises **4,936→4,962/5,356**, unsupported falls
+**420→394**, complete isolated views rise **36→40**, and all-kind-complete
+documents rise **1,559→1,562**. The newly complete prototypes still hit the
+separate guarded coordinate-measurement caption-placement rule during actual
+materialization. All 1,599 drawings remain complete, all original files remain
+byte-exact, and no standalone test case was added. See
+[analysis](tool_coordinate_system_given_analysis.md). Full scan:
+`/tmp/tool_coordinate_system_given_coverage.log`.

@@ -393,6 +393,14 @@ impl Document {
                 Some(EmbeddedToolInputKind::Polygon) => {
                     return Err("This tool input requires an available polygon".into());
                 }
+                Some(EmbeddedToolInputKind::CoordinateSystem)
+                    if matches!(
+                        expected.kind,
+                        Kind::ToolInput(EmbeddedToolInputKind::CoordinateSystem)
+                    ) && matches!(actual.kind, Kind::CoordinateSystem(_, _)) => {}
+                Some(EmbeddedToolInputKind::CoordinateSystem) => {
+                    return Err("This tool input requires an available coordinate system".into());
+                }
                 Some(EmbeddedToolInputKind::Numeric)
                     if matches!(
                         expected.kind,

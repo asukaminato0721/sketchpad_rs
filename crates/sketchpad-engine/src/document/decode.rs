@@ -1208,6 +1208,7 @@ impl Document {
                         category @ (EmbeddedToolInputKind::Path
                         | EmbeddedToolInputKind::Segment
                         | EmbeddedToolInputKind::Polygon
+                        | EmbeddedToolInputKind::CoordinateSystem
                         | EmbeddedToolInputKind::Numeric
                         | EmbeddedToolInputKind::ScalarParameter),
                     ) => {
@@ -1341,9 +1342,9 @@ impl Document {
                         if objects
                             .get(line.saturating_sub(1))
                             .is_some_and(|o| is_straight_kind(&o.kind))
-                            && objects.get(coordinates.saturating_sub(1)).is_some_and(|o| {
-                                matches!(o.kind, Kind::CoordinateSystem(_, _))
-                            }) =>
+                            && objects
+                                .get(coordinates.saturating_sub(1))
+                                .is_some_and(|o| o.kind.is_coordinate_system()) =>
                     {
                         Kind::SlopeMeasurement(line, coordinates)
                     }
@@ -1807,7 +1808,7 @@ impl Document {
                     (code @ (69 | 70), None, [x, y, frame])
                         if h[6..10] == [1, 0, 56, 0]
                             && [x, y].iter().all(|&&id| objects.get(id.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.numeric_unit().is_some()))
-                            && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                            && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.is_coordinate_system()) => {
                         Kind::NumericCoordinatePoint(*x, *y, *frame, if code == 70 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian })
                     }
                     (112, None, [value, frame])
@@ -1816,7 +1817,7 @@ impl Document {
                                 o.page == page && o.kind.numeric_unit().is_some()
                             })
                             && objects.get(frame.saturating_sub(1)).is_some_and(|o| {
-                                o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))
+                                o.page == page && o.kind.is_coordinate_system()
                             })
                             && {
                                 let group = rs.iter().filter(|record| {
@@ -1832,7 +1833,7 @@ impl Document {
                         if plotted_point.as_ref().is_some_and(|plot| {
                             plot.coordinate_system == (*frame - page_base) as u32
                         })
-                        && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame.saturating_sub(1)).is_some_and(|o| o.page == page && o.kind.is_coordinate_system()) => {
                         let plot = plotted_point.unwrap();
                         Kind::PlottedPoint(*frame, plot.mode, plot.stored)
                     }
@@ -1842,24 +1843,24 @@ impl Document {
                     }
                     (50, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::LineEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.kind.is_line())
-                        && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(second - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         Kind::ValueEquation { kind: ValueEquationKind::LineEquation, first: *first, second: *second }
                     }
                     (51, _, [first, second]) if value_equation_group.as_ref().is_some_and(|group| group.kind == ValueEquationKind::CircleEquation && group.references == [(*first - page_base) as u32, (*second - page_base) as u32])
                         && objects.get(first.saturating_sub(1)).is_some_and(|o| o.kind.is_circle())
-                        && objects.get(second - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(second - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         Kind::ValueEquation { kind: ValueEquationKind::CircleEquation, first: *first, second: *second }
                     }
                     (49 | 65 | 66 | 124 | 125, _, [first, frame]) if coordinate_group.as_ref().is_some_and(|g| {
                         g.references == vec![(*first - page_base) as u32, (*frame - page_base) as u32]
                     }) && objects.get(first - 1).is_some_and(|o| is_point_kind(&o.kind))
-                        && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         Kind::CoordinateMeasurement { kind: coordinate_group.as_ref().unwrap().kind, first: *first, second: None, frame: *frame }
                     }
                     (86, _, [first, second, frame]) if coordinate_group.as_ref().is_some_and(|g| {
                         g.references == vec![(*first - page_base) as u32, (*second - page_base) as u32, (*frame - page_base) as u32]
                     }) && [first, second].iter().all(|&&id| objects.get(id - 1).is_some_and(|o| is_point_kind(&o.kind)))
-                        && objects.get(frame - 1).is_some_and(|o| matches!(o.kind, Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         Kind::CoordinateMeasurement { kind: CoordinateMeasureKind::CoordinateDistance, first: *first, second: Some(*second), frame: *frame }
                     }
                     (0, None, []) if is_image => {
@@ -2024,7 +2025,7 @@ impl Document {
                     }
                     (72, None, [definition, frame]) if function_range.is_some()
                         && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
-                        && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
                             Ok((min,max,samples,mode)) => Kind::FunctionPlot(*definition,*frame,min,max,samples,mode),
                             Err(_) => Kind::Unsupported(code),
@@ -2042,7 +2043,7 @@ impl Document {
                         && *x > 0 && *y > 0 && *frame > 0 && x != y
                         && matches!(objects.get(x - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(y - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
-                        && matches!(objects.get(frame - 1).map(|o| &o.kind), Some(Kind::CoordinateSystem(_, _))) => {
+                        && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
                         match function_records::decode_parametric_range(function_range.as_ref().unwrap(), code == 127) {
                             Ok((min,max,samples)) => Kind::ParametricPlot(*x,*y,*frame,min,max,samples,if code == 127 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian }),
                             Err(_) => Kind::Unsupported(code),
