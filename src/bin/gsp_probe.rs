@@ -1167,6 +1167,14 @@ fn replay(path: &str) -> Result<(), String> {
                     let id = document.add_hide_show_button_for_targets(&targets)?;
                     println!("line {}: hide_show_button -> object {id}", index + 1);
                 }
+                "sound_button" => {
+                    let functions = rest
+                        .split_whitespace()
+                        .map(|part| part.parse().map_err(|_| "invalid Sound function ID"))
+                        .collect::<Result<Vec<usize>, &str>>()?;
+                    let id = document.add_sound_button_for_functions(&functions)?;
+                    println!("line {}: sound_button -> object {id}", index + 1);
+                }
                 "animation_button" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     if parts.is_empty() || parts.len() > 4 {

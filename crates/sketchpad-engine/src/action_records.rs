@@ -304,6 +304,11 @@ pub struct AnimationButtonGroup {
     records: ActionRecords,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SoundButtonGroup {
+    records: ActionRecords,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovementSpeed {
     Slow,
@@ -1809,6 +1814,130 @@ impl AnimationButtonGroup {
             label,
             include_bytes!("../../../assets/action_animation_group.bin"),
             true,
+        )
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_records(&self.records.records)
+    }
+}
+
+impl SoundButtonGroup {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let records = ActionRecords::parse(bytes, false)?;
+        let group = Self { records };
+        group.validate()?;
+        Ok(group)
+    }
+
+    pub fn from_original_template_targets(
+        targets: &[u32],
+        label: &str,
+        anchor: (i16, i16),
+    ) -> Result<Self, String> {
+        let mut records = ActionRecords::parse(
+            include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
+            false,
+        )?;
+        records.record_mut(ACTION_PAYLOAD).payload[12..20].fill(0);
+        records.record_mut(ACTION_PAYLOAD).payload[12..14].copy_from_slice(&8_u16.to_le_bytes());
+        let mut group = Self { records };
+        group.set_targets(targets)?;
+        group.records.set_label(
+            label,
+            include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
+            true,
+        )?;
+        group.set_screen_anchor(anchor);
+        group.validate()?;
+        Ok(group)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        let header = &self.records.record(OBJECT_HEADER).payload;
+        if header.len() != 28 || u16_at(header, 0) != 62 {
+            return Err("Sound button needs a 28-byte object code 62 header".into());
+        }
+        let refs = &self.records.record(OBJECT_REFS).payload;
+        let count = refs
+            .len()
+            .checked_sub(4)
+            .filter(|length| length.is_multiple_of(4))
+            .map(|length| length / 4);
+        let Some(count @ 1..=2) = count else {
+            return Err("Sound button needs one or two nonzero function targets".into());
+        };
+        if u32_at(refs, 0) as usize != count || self.target_ids().contains(&0) {
+            return Err("Sound button needs one or two nonzero function targets".into());
+        }
+        let action = &self.records.record(ACTION_PAYLOAD).payload;
+        if action.len() != 24
+            || u32_at(action, 0) != ACTION_PAYLOAD
+            || u32_at(action, 4) != 24
+            || u32_at(action, 8) != 12
+            || u16_at(action, 12) != 8
+            || action[14..20] != [0; 6]
+        {
+            return Err("Unsupported Sound button action".into());
+        }
+        if self.records.record(BUTTON_AUX).payload.len() != 2
+            || !self.records.record(OBJECT_END).payload.is_empty()
+        {
+            return Err("Sound button has invalid auxiliary or terminator record".into());
+        }
+        Ok(())
+    }
+
+    pub fn target_ids(&self) -> Vec<u32> {
+        self.records.record(OBJECT_REFS).payload[4..]
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
+    pub fn set_targets(&mut self, targets: &[u32]) -> Result<(), String> {
+        if !(1..=2).contains(&targets.len()) || targets.contains(&0) {
+            return Err("Sound button needs one or two nonzero function targets".into());
+        }
+        let count = u32::try_from(targets.len()).map_err(|_| "Too many Sound targets")?;
+        let payload = &mut self.records.record_mut(OBJECT_REFS).payload;
+        payload.clear();
+        payload.extend_from_slice(&count.to_le_bytes());
+        for target in targets {
+            payload.extend_from_slice(&target.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    pub fn screen_anchor(&self) -> (i16, i16) {
+        let payload = &self.records.record(ACTION_PAYLOAD).payload;
+        (
+            i16::from_le_bytes(payload[20..22].try_into().unwrap()),
+            i16::from_le_bytes(payload[22..24].try_into().unwrap()),
+        )
+    }
+
+    pub fn set_screen_anchor(&mut self, anchor: (i16, i16)) {
+        self.records.record_mut(ACTION_PAYLOAD).payload[20..22]
+            .copy_from_slice(&anchor.0.to_le_bytes());
+        self.records.record_mut(ACTION_PAYLOAD).payload[22..24]
+            .copy_from_slice(&anchor.1.to_le_bytes());
+    }
+
+    pub fn label_utf8(&self) -> Result<&str, String> {
+        std::str::from_utf8(self.records.label_bytes())
+            .map_err(|_| "Sound button label is not UTF-8".into())
+    }
+
+    pub fn set_label(&mut self, label: &str) -> Result<(), String> {
+        self.records.set_label(
+            label,
+            include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
+            false,
         )
     }
 

@@ -21,6 +21,7 @@
             libxcursor
             libxi
             libxrandr
+            alsa-lib
           ];
         in
         {
@@ -28,8 +29,11 @@
             packages = with pkgs; [
               cargo
               rustc
+              clippy
+              rustfmt
               pkg-config
               fontconfig
+              alsa-lib
             ];
 
             shellHook = ''

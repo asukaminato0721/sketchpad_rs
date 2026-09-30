@@ -37,7 +37,7 @@ use super::{
 };
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
-    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
+    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup, SoundButtonGroup,
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
 use crate::graph::{GraphObject, GridForm};
@@ -879,6 +879,7 @@ impl Document {
                 action_bytes.and_then(|bytes| HideShowButtonGroup::parse(bytes).ok());
             let animation_group =
                 action_bytes.and_then(|bytes| AnimationButtonGroup::parse(bytes).ok());
+            let sound_group = action_bytes.and_then(|bytes| SoundButtonGroup::parse(bytes).ok());
             let movement_group =
                 action_bytes.and_then(|bytes| MovementButtonGroup::parse(bytes).ok());
             let scroll_group = action_bytes.and_then(|bytes| ScrollButtonGroup::parse(bytes).ok());
@@ -904,6 +905,7 @@ impl Document {
             if code == 62
                 && action_group.is_none()
                 && animation_group.is_none()
+                && sound_group.is_none()
                 && movement_group.is_none()
                 && scroll_group.is_none()
                 && presentation_group.is_none()
@@ -2060,6 +2062,20 @@ impl Document {
                                 label,
                                 anchor: group.screen_anchor(),
                                 settings: group.settings_list().unwrap(),
+                            },
+                            Err(_) => Kind::Unsupported(code),
+                        }
+                    }
+                    (62, _, functions) if sound_group.as_ref().is_some_and(|group| {
+                        group.target_ids() == functions.iter().map(|target| (*target - page_base) as u32).collect::<Vec<_>>()
+                            && functions.iter().all(|&function| objects.get(function.saturating_sub(1)).is_some_and(|object| object.kind.is_function()))
+                    }) => {
+                        let group = sound_group.as_ref().unwrap();
+                        match group.label_utf8() {
+                            Ok(label) => Kind::SoundButton {
+                                functions: functions.to_vec(),
+                                label: label.to_owned(),
+                                anchor: group.screen_anchor(),
                             },
                             Err(_) => Kind::Unsupported(code),
                         }

@@ -42,6 +42,7 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
         | Kind::DataTable(..)
         | Kind::IterationValues(..) => "Table",
         Kind::AnimationButton { .. }
+        | Kind::SoundButton { .. }
         | Kind::HideShowButton { .. }
         | Kind::MovementButton { .. }
         | Kind::ScrollButton { .. }

@@ -12,5 +12,6 @@ egui-winit = "0.36.2"
 image.workspace = true
 pollster = "0.4"
 rfd = "0.17.2"
+rodio = { version = "0.22.2", default-features = false, features = ["playback"] }
 wgpu = "30.0.1"
 winit = "0.30.13"

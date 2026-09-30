@@ -61,6 +61,7 @@ impl Editor {
         match self.doc.clear_selected() {
             Ok(removed) if removed.is_empty() => self.status = "Select objects to clear".into(),
             Ok(removed) => {
+                self.stop_all_sounds();
                 self.selection_order.clear();
                 self.status = format!("Cleared {} object(s), including dependents", removed.len());
             }
@@ -90,6 +91,7 @@ impl Editor {
         };
         match self.doc.clear_selected() {
             Ok(removed) => {
+                self.stop_all_sounds();
                 self.clipboard = Some(clipboard);
                 self.selection_order.clear();
                 self.status = format!("Cut {} object(s)", removed.len());
@@ -155,6 +157,16 @@ impl Editor {
                     let targets = targets.clone();
                     let settings = settings.clone();
                     self.animate_button_targets(&targets, &settings);
+                    self.selection_order.clear();
+                    return;
+                }
+                if !multi
+                    && let Some(id) = hit
+                    && matches!(self.doc.objects[id - 1].kind, Kind::SoundButton { .. })
+                {
+                    if let Err(error) = self.activate_sound_button(id) {
+                        self.status = error;
+                    }
                     self.selection_order.clear();
                     return;
                 }

@@ -791,6 +791,22 @@ impl Document {
                         .map_err(|error| format!("Invalid Animation button {}: {error}", o.id))?;
                 }
             }
+            if let Kind::SoundButton {
+                functions, label, ..
+            } = &o.kind
+                && (self.page_count != 1
+                    || !(1..=2).contains(&functions.len())
+                    || functions.iter().enumerate().any(|(index, &function)| {
+                        function == 0
+                            || function >= o.id
+                            || functions[..index].contains(&function)
+                            || self.objects[function - 1].page != o.page
+                            || !self.objects[function - 1].kind.is_function()
+                    })
+                    || label.len() > u16::MAX as usize)
+            {
+                return Err(format!("Invalid Sound button {}", o.id));
+            }
             if let Kind::MovementButton { pairs, label, .. } = &o.kind
                 && (pairs.is_empty()
                     || label.len() > u16::MAX as usize

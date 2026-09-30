@@ -36,6 +36,7 @@ impl Document {
                     object.kind,
                     Kind::HideShowButton { .. }
                         | Kind::AnimationButton { .. }
+                        | Kind::SoundButton { .. }
                         | Kind::MovementButton { .. }
                         | Kind::ScrollButton { .. }
                         | Kind::PresentationButton { .. }
@@ -62,6 +63,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }
@@ -131,6 +133,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }
@@ -300,6 +303,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }
@@ -368,6 +372,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }
@@ -535,6 +540,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }
@@ -633,6 +639,56 @@ impl Document {
     ) -> Result<usize, String> {
         self.add_animation_button_for_targets_with_settings_and_label(targets_and_settings, None)
     }
+
+    pub fn can_add_sound_button_for_functions(&self, functions: &[usize]) -> Result<(), String> {
+        let multi_page_append = self.page_count > 1
+            && !self
+                .objects
+                .iter()
+                .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+            && self
+                .objects
+                .iter()
+                .skip(self.source_count)
+                .all(|object| is_multi_page_addition_kind(&object.kind));
+        if !(1..=2).contains(&functions.len())
+            || !multi_page_append && (self.partial_view || self.page_count != 1)
+        {
+            return Err("A Sound button needs one or two functions on this page".into());
+        }
+        for (index, &function) in functions.iter().enumerate() {
+            let object = self
+                .objects
+                .get(function.checked_sub(1).ok_or("Invalid Sound function")?)
+                .ok_or("Invalid Sound function")?;
+            if functions[..index].contains(&function)
+                || object.deleted
+                || !object.visible
+                || object.page != self.active_page
+                || !object.kind.is_function()
+            {
+                return Err("A Sound button needs distinct visible functions on this page".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_sound_button_for_functions(&mut self, functions: &[usize]) -> Result<usize, String> {
+        self.can_add_sound_button_for_functions(functions)?;
+        let row = self
+            .objects
+            .iter()
+            .filter(|object| {
+                object.page == self.active_page && !object.deleted && object.kind.is_action_button()
+            })
+            .count();
+        let y = (5usize + row * 30).min(i16::MAX as usize) as i16;
+        Ok(self.add(Kind::SoundButton {
+            functions: functions.to_vec(),
+            label: "Play Sound".into(),
+            anchor: (10, y),
+        }))
+    }
     pub fn add_animation_button_for_targets_with_settings_and_label(
         &mut self,
         targets_and_settings: &[(usize, AnimationSettings)],
@@ -655,6 +711,7 @@ impl Document {
                         object.kind,
                         Kind::HideShowButton { .. }
                             | Kind::AnimationButton { .. }
+                            | Kind::SoundButton { .. }
                             | Kind::MovementButton { .. }
                             | Kind::ScrollButton { .. }
                             | Kind::PresentationButton { .. }

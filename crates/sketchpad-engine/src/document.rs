@@ -479,6 +479,11 @@ pub enum Kind {
         anchor: (i16, i16),
         settings: Vec<AnimationSettings>,
     },
+    SoundButton {
+        functions: Vec<usize>,
+        label: String,
+        anchor: (i16, i16),
+    },
     HideShowButton {
         targets: Vec<usize>,
         action: VisibilityAction,

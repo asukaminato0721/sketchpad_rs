@@ -24,6 +24,7 @@ mod properties;
 mod referenced_captions;
 mod runtime;
 mod selection;
+mod sound;
 mod transform_dialogs;
 mod transforms;
 mod ui;
@@ -273,6 +274,7 @@ struct Editor {
     animations: Vec<AnimationTrack>,
     movements: Vec<MovementTrack>,
     presentations: Vec<PresentationTrack>,
+    sounds: sound::SoundState,
     animation_speed: f64,
     animation_paused: bool,
     animation_last_tick: Instant,
@@ -398,6 +400,7 @@ impl Editor {
             animations: Vec::new(),
             movements: Vec::new(),
             presentations: Vec::new(),
+            sounds: sound::SoundState::default(),
             animation_speed: 1.,
             animation_paused: false,
             animation_last_tick: Instant::now(),

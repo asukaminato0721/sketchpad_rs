@@ -110,6 +110,7 @@ impl Editor {
                                         object.kind,
                                         Kind::HideShowButton { .. }
                                             | Kind::AnimationButton { .. }
+                                            | Kind::SoundButton { .. }
                                             | Kind::MovementButton { .. }
                                             | Kind::ScrollButton { .. }
                                             | Kind::PresentationButton { .. }
@@ -128,6 +129,36 @@ impl Editor {
                             .clicked()
                         {
                             match self.doc.add_hide_show_button_for_targets(&targets) {
+                                Ok(id) => self.select_only(id),
+                                Err(error) => self.status = error,
+                            }
+                            ui.close();
+                        }
+                        let sound_functions = self
+                            .selection_order
+                            .iter()
+                            .copied()
+                            .filter(|&id| {
+                                self.doc.objects.get(id - 1).is_some_and(|object| {
+                                    object.page == self.doc.active_page
+                                        && object.visible
+                                        && !object.deleted
+                                        && object.kind.is_function()
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if ui
+                            .add_enabled(
+                                sound_functions.len() == self.selection_order.len()
+                                    && self
+                                        .doc
+                                        .can_add_sound_button_for_functions(&sound_functions)
+                                        .is_ok(),
+                                egui::Button::new("Sound"),
+                            )
+                            .clicked()
+                        {
+                            match self.doc.add_sound_button_for_functions(&sound_functions) {
                                 Ok(id) => self.select_only(id),
                                 Err(error) => self.status = error,
                             }
@@ -356,6 +387,7 @@ impl Editor {
                         self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
+                        self.stop_all_sounds();
                         self.doc.undo();
                         self.reset_custom_tool_after_history();
                         self.image_textures.clear();
@@ -368,6 +400,7 @@ impl Editor {
                         self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
+                        self.stop_all_sounds();
                         self.doc.redo();
                         self.reset_custom_tool_after_history();
                         self.image_textures.clear();

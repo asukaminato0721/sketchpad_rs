@@ -183,6 +183,7 @@ fn mapped_value_construction(kind: &Kind) -> bool {
                     | Kind::Image { .. }
                     | Kind::HideShowButton { .. }
                     | Kind::AnimationButton { .. }
+                    | Kind::SoundButton { .. }
                     | Kind::MovementButton { .. }
                     | Kind::Locus(..)
                     | Kind::ParameterLocus(..)

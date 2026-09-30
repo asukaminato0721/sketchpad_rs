@@ -2145,3 +2145,22 @@ remain opaque rather than receiving invented semantics. The remaining 17
 code-62 objects are Sound buttons. No standalone test case was added. See
 [analysis](legacy_animation_settings_analysis.md). Full scan:
 `/tmp/animation_legacy_coverage.log`.
+
+## Sound action buttons
+
+All 17 corpus Sound roots now use a strict code-62/action-code-8 model. Each
+observed root targets one supported function; the model and editor also support
+the documented two-function stereo form. The desktop runtime evaluates the
+function argument as seconds at 44.1 kHz, clamps finite pressure samples, emits
+silence for undefined samples, and toggles each button's playback independently.
+
+Unsupported falls **741->723**, complete documents/drawings rise
+**1,514/1,555->1,523/1,565**, unsupported documents fall **85->76**, and partial
+views fall **800->795**. Embedded-tool coverage remains **4,766/5,356**, and all
+**1,599** originals remain byte-exact. A newly authored Sound button opened and
+saved unchanged in Sketchpad 5 with SHA-256
+`f74e8f0b2fa7a5bec0cfb8592a25bf6d09fe0e3c425d4e865550699731c64a00`.
+The port editor also toggled real playback under Xvfb with an ALSA null device.
+Only the two contradictory Animation packets remain among drawing code 62. No
+standalone test case was added. See [analysis](sound_buttons_analysis.md). Full
+scan: `/tmp/sound_button_coverage.log`.

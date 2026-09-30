@@ -122,6 +122,7 @@ impl Editor {
                         self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
+                        self.stop_all_sounds();
                         self.doc.active_page -= 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();
@@ -145,6 +146,7 @@ impl Editor {
                         self.clear_animation_tracks();
                         self.movements.clear();
                         self.presentations.clear();
+                        self.stop_all_sounds();
                         self.doc.active_page += 1;
                         self.doc.selected.clear();
                         self.selection_order.clear();

@@ -234,6 +234,7 @@ impl Kind {
             self,
             Kind::HideShowButton { .. }
                 | Kind::AnimationButton { .. }
+                | Kind::SoundButton { .. }
                 | Kind::MovementButton { .. }
                 | Kind::ScrollButton { .. }
                 | Kind::PresentationButton { .. }
@@ -304,6 +305,9 @@ impl Kind {
         }
         if let Kind::AnimationButton { targets, .. } = self {
             return targets.clone();
+        }
+        if let Kind::SoundButton { functions, .. } = self {
+            return functions.clone();
         }
         if let Kind::MovementButton { pairs, .. } = self {
             return pairs
@@ -516,6 +520,7 @@ impl Kind {
             Kind::RayIteration(_, _, _, _) => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
+            | Kind::SoundButton { .. }
             | Kind::MovementButton { .. }
             | Kind::ScrollButton { .. }
             | Kind::PresentationButton { .. } => unreachable!(),
@@ -634,6 +639,18 @@ impl Kind {
                 label: label.clone(),
                 anchor: *anchor,
                 settings: settings.clone(),
+            };
+        }
+        if let Kind::SoundButton {
+            functions,
+            label,
+            anchor,
+        } = self
+        {
+            return Kind::SoundButton {
+                functions: functions.iter().map(|&function| m(function)).collect(),
+                label: label.clone(),
+                anchor: *anchor,
             };
         }
         if let Kind::MovementButton {
@@ -994,6 +1011,7 @@ impl Kind {
             | Kind::MappedPointIteration { .. } => unreachable!(),
             Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
+            | Kind::SoundButton { .. }
             | Kind::MovementButton { .. }
             | Kind::ScrollButton { .. }
             | Kind::PresentationButton { .. } => unreachable!(),
@@ -1106,6 +1124,7 @@ pub(super) fn is_multi_page_addition_kind(kind: &Kind) -> bool {
             | Kind::SegmentArrow { .. }
             | Kind::HideShowButton { .. }
             | Kind::AnimationButton { .. }
+            | Kind::SoundButton { .. }
             | Kind::MovementButton { .. }
             | Kind::ScrollButton { .. }
             | Kind::PresentationButton { .. }

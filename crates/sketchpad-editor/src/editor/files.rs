@@ -342,6 +342,7 @@ impl Editor {
                     self.clear_animation_tracks();
                     self.movements.clear();
                     self.presentations.clear();
+                    self.stop_all_sounds();
                     self.animation_button_dialog = None;
                     self.movement_button_dialog = None;
                     self.scroll_button_dialog = None;

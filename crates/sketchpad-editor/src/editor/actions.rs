@@ -159,6 +159,7 @@ impl Editor {
         self.clear_animation_tracks();
         self.movements.clear();
         self.presentations.clear();
+        self.stop_all_sounds();
         self.doc.active_page = target_page;
         self.doc.selected.clear();
         self.selection_order.clear();
@@ -186,6 +187,7 @@ impl Editor {
                 .animations
                 .iter()
                 .any(|track| targets.contains(&track.id)),
+            Some(Kind::SoundButton { .. }) => self.sound_is_running(id),
             Some(Kind::MovementButton { .. }) => {
                 self.movements.iter().any(|track| track.button == id)
             }
@@ -210,6 +212,7 @@ impl Editor {
                 let targets = targets.clone();
                 self.retain_animation_tracks(|track| !targets.contains(&track.id));
             }
+            Some(Kind::SoundButton { .. }) => self.stop_sound_button(id),
             Some(Kind::MovementButton { .. }) => {
                 self.movements.retain(|track| track.button != id);
             }
@@ -271,6 +274,7 @@ impl Editor {
                 self.animate_button_targets(&targets, &settings);
                 Ok(())
             }
+            Kind::SoundButton { .. } => self.activate_sound_button(id),
             Kind::MovementButton { .. } => {
                 self.activate_movement_button(id);
                 Ok(())

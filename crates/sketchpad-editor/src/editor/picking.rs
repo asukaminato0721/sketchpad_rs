@@ -307,6 +307,7 @@ impl Editor {
             self.doc.is_displayed(object.id)
                 && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
                     | Kind::AnimationButton { label, anchor, .. }
+                    | Kind::SoundButton { label, anchor, .. }
                     | Kind::MovementButton { label, anchor, .. }
                     | Kind::ScrollButton { label, anchor, .. }
                     | Kind::PresentationButton { label, anchor, .. }

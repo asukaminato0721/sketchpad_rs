@@ -343,6 +343,7 @@ impl Document {
         match &object.kind {
             Kind::HideShowButton { label, .. }
             | Kind::AnimationButton { label, .. }
+            | Kind::SoundButton { label, .. }
             | Kind::MovementButton { label, .. }
             | Kind::ScrollButton { label, .. }
             | Kind::LinkUrlButton { label, .. }

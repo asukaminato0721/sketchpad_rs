@@ -7,7 +7,7 @@ use super::records::{header, page_title_slots, polygon_subtype, put_record, reco
 use super::{Document, Kind, LineMode, Object};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
-    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
+    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup, SoundButtonGroup,
 };
 use crate::style_records;
 use std::collections::BTreeSet;
@@ -1546,6 +1546,31 @@ impl Document {
                             &ids, label, *anchor,
                         )?;
                         group.set_settings_list(settings)?;
+                        group.set_hidden(!object.visible);
+                        groups.extend_from_slice(&group.encode());
+                    }
+                    Kind::SoundButton {
+                        functions,
+                        label,
+                        anchor,
+                    } => {
+                        if !(1..=2).contains(&functions.len())
+                            || functions.iter().any(|function| {
+                                self.objects
+                                    .get(function.saturating_sub(1))
+                                    .is_none_or(|parent| !parent.kind.is_function())
+                            })
+                        {
+                            return Err("Invalid Sound functions on this page".into());
+                        }
+                        let ids = functions
+                            .iter()
+                            .map(|&function| {
+                                self.multi_page_local_reference(page, object.id, function)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut group =
+                            SoundButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
                         group.set_hidden(!object.visible);
                         groups.extend_from_slice(&group.encode());
                     }

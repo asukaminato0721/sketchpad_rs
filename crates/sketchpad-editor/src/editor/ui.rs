@@ -18,10 +18,11 @@ impl Editor {
             }
         }
         if !root.ctx().egui_wants_keyboard_input() && self.pending_action.is_none() {
-            if root.input(|input| input.key_pressed(egui::Key::Escape))
-                && matches!(self.tool, super::Tool::Custom(_))
-            {
-                self.cancel_custom_tool();
+            if root.input(|input| input.key_pressed(egui::Key::Escape)) {
+                self.stop_all_sounds();
+                if matches!(self.tool, super::Tool::Custom(_)) {
+                    self.cancel_custom_tool();
+                }
             }
             if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::C)) {
                 self.copy_selected();

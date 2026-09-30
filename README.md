@@ -65,6 +65,10 @@ files in a folder for the current application session. Folder tools use the same
 selected-input and click-input workflows as document tools, while Forget Tool
 Folder removes only the catalog and leaves completed constructions intact.
 Display > Animate Objects runs a selected parameter over its stored domain or animates a supported point, including transformed points, points on polygon and sector boundaries, and supported point curves. A transformed point uses temporary motion state, so its construction is unchanged and Stop returns it to its constructed position. Selecting a construction such as a segment or circle animates its source points, even when those points are hidden. Edit > Action Buttons > Animation creates a clickable motion button for selected parameters and points, or for a selected segment, line, ray, circle, or polygon with up to seven vertices through its source points. Animation buttons for supported points and segment sources can also be created on existing multi-page sketches. Parameter buttons can use continuous or discrete changes with an editable rate, step, and domain. The Motion Controller pauses, resumes, changes speed, and stops Display animation.
+Edit > Action Buttons > Sound creates a mono button from one selected function
+or a stereo button from two selected functions. Clicking the button toggles
+playback; the function variable is time in seconds, and the first and second
+functions supply the left and right channels.
 Select a caption and highlight characters in the sidebar text field to apply Bold, Italic, Underline, Larger, Smaller, or a font family to that range. These mixed-format captions render in the editor and SVG, and survive word edits, move, and copy/paste. Text insertions inherit the neighboring style, and replaced text inherits the first replaced character's style.
 Display > Show Text Palette opens floating font-family, emphasis, and size controls
 for selected text, point labels, and numeric captions. Hiding or closing the
@@ -118,6 +122,12 @@ points, including on a supported existing multi-page page. The dialog sets
 direction, speed, and Once Only for each point. Clicking the button starts or
 stops their motion together.
 
+Edit > Action Buttons > Sound creates one button for one or two selected
+functions, including on a supported existing multi-page page. One function is
+played as mono; two functions supply left and right stereo channels. Clicking
+the button toggles playback, and Escape stops all active Sound buttons. See the
+[Sound-button evidence](dev/sound_buttons_analysis.md).
+
 Edit > Action Buttons > Movement takes a selected free point followed by a
 destination point, including on a supported existing multi-page page. Its
 dialog sets Slow, Medium, Fast, or Instant speed and whether to follow a moving
@@ -142,7 +152,7 @@ Hide/Show button on its destination page. The resulting Hide/Show state can be
 saved in a supported multi-page document. The destination button and Page Link
 can be created together before the first save.
 
-The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, live polygon-cropped pictures, Hide/Show, Animation for up to seven verified source points including mixed free, segment, and circle points, one-pair point Movement, one-point Scroll, Presentation, URL Link, and Page Link action buttons on supported multi-page documents, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
+The writer supports the constructions and measurements listed in [COMMAND_PARITY.md](COMMAND_PARITY.md), including polygons, signed point ratio, slope, Cartesian arithmetic and sine/cosine/tangent function plots, rectangular and polar parametric plots from two functions, editable plot domains and sample counts, a single t₁ point plotted in Cartesian or polar coordinates, live polygon-cropped pictures, Hide/Show, Animation for up to seven verified source points including mixed free, segment, and circle points, one- or two-function Sound, one-pair point Movement, one-point Scroll, Presentation, URL Link, and Page Link action buttons on supported multi-page documents, selected-object styling, and bounded parameter/table workflows. It can update coordinates, supported point constraints, visibility, and styles in place in existing documents, and remove selected objects with their dependents in supported single-page documents. Copy includes a selected object's construction parents; Paste duplicates them with a 20-unit offset. Transform > Mark Center and Mark Mirror let a later rotation, dilation, or reflection use one selected source object. It preserves unsupported source records byte for byte. Structural edits to a document with unsupported content are refused when saving. Saves write through a temporary file in the destination directory and rename it into place.
 
 Other Sketchpad features are incomplete. In particular, many transformations, graphing commands, multi-picture and attached-picture workflows, advanced table workflows, custom tools, action button variants, other import formats, and full multi-page editing are still pending. See [COMMAND_PARITY.md](COMMAND_PARITY.md) for the command inventory. This build is not ready as a Sketchpad 5 replacement.
 
