@@ -148,15 +148,19 @@ pub fn number_lines(kind: &Kind) -> Option<((i16, i16), Vec<String>)> {
     match kind {
         Kind::Parameter(group) => Some((
             group.anchor(),
-            vec![format!(
-                "{} = {}",
-                display_parameter_indices(&if group.display_mode() == 0 {
-                    group.literal_definition()
-                } else {
-                    group.name().to_owned()
-                }),
+            vec![if group.display_mode() == 1 {
                 group.value_text()
-            )],
+            } else {
+                format!(
+                    "{} = {}",
+                    display_parameter_indices(&if group.display_mode() == 0 {
+                        group.literal_definition()
+                    } else {
+                        group.name().to_owned()
+                    }),
+                    group.value_text()
+                )
+            }],
         )),
         Kind::Calculation(group) => Some((
             group.anchor(),
@@ -255,6 +259,9 @@ pub fn number_lines_for_object(doc: &Document, id: usize) -> Option<((i16, i16),
         return Some((object.measurement_anchor?, lines));
     }
     if let Kind::Parameter(group) = &object.kind {
+        if group.display_mode() == 1 {
+            return Some((group.anchor(), vec![group.value_text()]));
+        }
         let name = doc.parameter_display_name(id)?;
         let name = display_parameter_indices(&name);
         return Some((

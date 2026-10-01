@@ -669,6 +669,21 @@ impl ParameterGroup {
         )
     }
 
+    pub fn set_display_mode(&mut self, mode: u16) -> Result<(), String> {
+        if !matches!(mode, 0 | 1 | 3) {
+            return Err("Unsupported parameter display mode".into());
+        }
+        if mode == self.display_mode() {
+            return Ok(());
+        }
+        let rs = records(&self.bytes, 0)?;
+        let mut bytes = self.bytes.clone();
+        bytes[rs[1].payload + 26..rs[1].payload + 28].copy_from_slice(&mode.to_le_bytes());
+        Self::parse(&bytes)?;
+        self.bytes = bytes;
+        Ok(())
+    }
+
     /// A canonical numeric definition before display rounding. Its use as a
     /// native mode-zero caption is established for centimeter literals.
     pub fn literal_definition(&self) -> String {

@@ -15,6 +15,8 @@ impl Editor {
         let settings = group.animation_settings();
         self.parameter_value_draft = group.value().to_string();
         self.parameter_precision_draft = group.precision();
+        self.parameter_display_mode_draft = group.display_mode();
+        self.parameter_original_display_mode = group.display_mode() == 0;
         self.parameter_discrete_draft = settings.discrete;
         self.parameter_rate_units_draft = settings.rate_units.to_string();
         self.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
@@ -358,6 +360,34 @@ impl Editor {
                         });
                 });
                 ui.horizontal(|ui| {
+                    ui.label("Display");
+                    egui::ComboBox::from_id_salt("parameter_display_mode")
+                        .selected_text(match self.parameter_display_mode_draft {
+                            0 => "Original definition",
+                            1 => "Value only",
+                            _ => "Current name",
+                        })
+                        .show_ui(ui, |ui| {
+                            if self.parameter_original_display_mode {
+                                ui.selectable_value(
+                                    &mut self.parameter_display_mode_draft,
+                                    0,
+                                    "Original definition",
+                                );
+                            }
+                            ui.selectable_value(
+                                &mut self.parameter_display_mode_draft,
+                                1,
+                                "Value only",
+                            );
+                            ui.selectable_value(
+                                &mut self.parameter_display_mode_draft,
+                                3,
+                                "Current name",
+                            );
+                        });
+                });
+                ui.horizontal(|ui| {
                     ui.label("Change");
                     ui.radio_value(&mut self.parameter_discrete_draft, false, "Continuously");
                     ui.radio_value(&mut self.parameter_discrete_draft, true, "Discretely");
@@ -429,6 +459,7 @@ impl Editor {
                         id,
                         value,
                         self.parameter_precision_draft,
+                        self.parameter_display_mode_draft,
                         settings,
                     )
                 })();
