@@ -25,6 +25,44 @@
       packages = forAllSystems (system:
         let
           pkgs = packagesFor system;
+          # Keep test-only corpus changes out of production package rebuilds.
+          nativeTemplates = with pkgs.lib.fileset; unions [
+            ./tests/fixtures/coordinate_measure_base.gsp
+            ./tests/fixtures/coordinate_measure_menu257.gsp
+            ./tests/fixtures/coordinate_measure_menu274.gsp
+            ./tests/fixtures/coordinate_measure_menu291.gsp
+            ./tests/fixtures/coordinate_measure_menu308.gsp
+            ./tests/fixtures/function_base_frame.gsp
+            ./tests/fixtures/function_derivative_square_original.gsp
+            ./tests/fixtures/function_plot_identity.gsp
+            ./tests/fixtures/function_plot_square.gsp
+            ./tests/fixtures/function_reference_controls_native_created.gsp
+            ./tests/fixtures/image_original_cropped.gsp
+            ./tests/fixtures/image_port_tiny.gsp
+            ./tests/fixtures/numeric_parameter_table_all_unnamed_native_created.gsp
+            ./tests/fixtures/parameter_calculation_chain_native.gsp
+            ./tests/fixtures/parametric_polar_original.gsp
+            ./tests/fixtures/parametric_rectangular_original.gsp
+            ./tests/fixtures/plot_points_table_polar_original.gsp
+            ./tests/fixtures/plot_points_table_single_original.gsp
+            ./tests/fixtures/point_on_arc_value_native.gsp
+            ./tests/fixtures/point_on_circle_arc_value_native.gsp
+            ./tests/fixtures/table_calculate_2_plus_3.gsp
+            ./tests/fixtures/table_parameter_default.gsp
+            ./tests/fixtures/table_parameter_speed_original.gsp
+            ./tests/fixtures/table_parameter_tabulated.gsp
+            ./tests/fixtures/table_two_columns_original.gsp
+            ./tests/fixtures/table_two_parameters_original.gsp
+            ./tests/fixtures/text_object_generated_Hello.gsp
+            ./tests/fixtures/text_style_bold_off.gsp
+            ./tests/fixtures/text_style_font_cjk.gsp
+            ./tests/fixtures/text_style_italic_on.gsp
+            ./tests/fixtures/text_style_larger.gsp
+            ./tests/fixtures/text_style_underline_on.gsp
+            ./tests/fixtures/value_equation_circle_original.gsp
+            ./tests/fixtures/value_equation_line_original.gsp
+            ./tests/fixtures/value_equation_point_value_original.gsp
+          ];
           source = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
@@ -33,7 +71,7 @@
               ./src
               ./crates
               ./assets
-              ./tests/fixtures
+              nativeTemplates
             ];
           };
           commonPackage = {
