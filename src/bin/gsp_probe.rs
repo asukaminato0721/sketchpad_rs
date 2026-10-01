@@ -797,6 +797,19 @@ fn replay(path: &str) -> Result<(), String> {
                     };
                     document.set_axis_trigonometric(enabled)?;
                 }
+                "axis_labels" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, format] = parts.as_slice() else {
+                        return Err("expected axis_labels ID decimal|pi".into());
+                    };
+                    let id = id.parse().map_err(|_| "invalid axis object ID")?;
+                    let pi = match *format {
+                        "decimal" => false,
+                        "pi" => true,
+                        _ => return Err("expected axis_labels ID decimal|pi".into()),
+                    };
+                    document.set_axis_uses_pi_labels(id, pi)?;
+                }
                 "trace" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();
                     let [id, value] = parts.as_slice() else {

@@ -67,23 +67,23 @@ impl Document {
             }
             Kind::Free(_)
                 if matches!(self.objects.get(object.id).map(|o| &o.kind),
-                Some(Kind::DistanceAxis(origin, _, 1)) if *origin == object.id) =>
+                Some(Kind::DistanceAxis(origin, _, 1 | 0x1_0001)) if *origin == object.id) =>
             {
                 &distance[..68]
             }
             Kind::GraphHorizontalUnit(..) => &ordinary[68..148],
             Kind::GraphVerticalUnit(..) => &ordinary[268..348],
             Kind::GraphAxis(_, _, 1 | 0x1_0001) => &ordinary[148..268],
-            Kind::GraphAxis(_, unit, 0)
+            Kind::GraphAxis(_, unit, 0 | 0x1_0000)
                 if matches!(kind(unit), Some(Kind::DistanceVerticalUnit(..))) =>
             {
                 &distance[268..388]
             }
-            Kind::GraphAxis(_, _, 0) => &ordinary[348..468],
-            Kind::CircleAxis(_, 1) => &circle[..116],
-            Kind::CircleAxis(_, 0) => &circle[116..232],
-            Kind::DistanceAxis(_, _, 1) => &distance[68..188],
-            Kind::DistanceAxis(_, _, 0) => &rectangular[188..308],
+            Kind::GraphAxis(_, _, 0 | 0x1_0000) => &ordinary[348..468],
+            Kind::CircleAxis(_, 1 | 0x1_0001) => &circle[..116],
+            Kind::CircleAxis(_, 0 | 0x1_0000) => &circle[116..232],
+            Kind::DistanceAxis(_, _, 1 | 0x1_0001) => &distance[68..188],
+            Kind::DistanceAxis(_, _, 0 | 0x1_0000) => &rectangular[188..308],
             Kind::DistanceVerticalUnit(..) => &distance[188..268],
             Kind::CoordinateSystem(x_axis, y_axis) => match kind(x_axis) {
                 Some(Kind::CircleAxis(..)) => &circle[232..312],
@@ -134,9 +134,9 @@ impl Document {
             Kind::DistanceVerticalUnit(_, step, independent) => {
                 graph::set_distance_vertical_unit_form(&mut group, independent, step)?
             }
-            Kind::GraphAxis(_, _, axis @ (1 | 0x1_0001)) => {
-                graph::set_x_axis_trigonometric(&mut group, axis == 0x1_0001)?
-            }
+            Kind::GraphAxis(_, _, axis)
+            | Kind::CircleAxis(_, axis)
+            | Kind::DistanceAxis(_, _, axis) => graph::set_axis_format(&mut group, axis)?,
             _ => {}
         }
         if let Some(label) = &object.label {

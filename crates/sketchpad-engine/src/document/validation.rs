@@ -965,9 +965,9 @@ impl Document {
             }
             if matches!(o.kind, Kind::GraphHorizontalUnit(_, step) | Kind::GraphVerticalUnit(_, step) if !step.is_finite() || step <= 0.0)
                 || matches!(o.kind, Kind::DistanceVerticalUnit(_, step, _) if !step.is_finite() || step <= 0.0)
-                || matches!(o.kind, Kind::GraphAxis(_, _, axis) if !matches!(axis, 0 | 1 | 0x1_0001))
-                || matches!(o.kind, Kind::CircleAxis(_, axis) if !matches!(axis, 0 | 1))
-                || matches!(o.kind, Kind::DistanceAxis(_, _, axis) if !matches!(axis, 0 | 1))
+                || matches!(o.kind, Kind::GraphAxis(_, _, axis) if !matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001))
+                || matches!(o.kind, Kind::CircleAxis(_, axis) if !matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001))
+                || matches!(o.kind, Kind::DistanceAxis(_, _, axis) if !matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001))
             {
                 return Err(format!("Invalid graph object {}", o.id));
             }

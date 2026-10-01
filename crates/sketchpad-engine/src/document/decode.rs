@@ -1437,9 +1437,9 @@ impl Document {
                         x_axis,
                         step,
                         independent,
-                    } if objects
-                        .get(x_axis - 1)
-                        .is_some_and(|o| matches!(o.kind, Kind::DistanceAxis(_, _, 1))) =>
+                    } if objects.get(x_axis - 1).is_some_and(|o| {
+                        matches!(o.kind, Kind::DistanceAxis(_, _, 1 | 0x1_0001))
+                    }) =>
                     {
                         Kind::DistanceVerticalUnit(x_axis, step, independent)
                     }
@@ -1450,26 +1450,23 @@ impl Document {
                         dotted,
                     } if (objects.get(x_axis - 1).is_some_and(|o| {
                         matches!(o.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001))
-                    }) && objects
-                        .get(y_axis - 1)
-                        .is_some_and(|o| matches!(o.kind, Kind::GraphAxis(_, _, 0))))
-                        || matches!(
-                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
-                            (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::CircleAxis(a, 1), .. }, .. }),
-                             Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::CircleAxis(b, 0), .. }, .. })) if a == b
-                        )
-                        || matches!(
-                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
-                            (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(a, _, 1), .. }, .. }),
-                             Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(b, _, 0), .. }, .. })) if a == b
-                        )
-                        || matches!(
-                            (objects.get(x_axis - 1), objects.get(y_axis - 1)),
-                            (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(origin, _, 1), .. }, .. }),
-                             Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::GraphAxis(y_origin, unit, 0), .. }, .. }))
-                                if origin == y_origin && objects.get(unit - 1)
-                                    .is_some_and(|o| matches!(o.kind, Kind::DistanceVerticalUnit(host, _, _) if host == x_axis))
-                        ) =>
+                    }) && objects.get(y_axis - 1).is_some_and(|o| {
+                        matches!(o.kind, Kind::GraphAxis(_, _, 0 | 0x1_0000))
+                    })) || matches!(
+                        (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                        (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::CircleAxis(a, 1 | 0x1_0001), .. }, .. }),
+                         Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::CircleAxis(b, 0 | 0x1_0000), .. }, .. })) if a == b
+                    ) || matches!(
+                        (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                        (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(a, _, 1 | 0x1_0001), .. }, .. }),
+                         Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(b, _, 0 | 0x1_0000), .. }, .. })) if a == b
+                    ) || matches!(
+                        (objects.get(x_axis - 1), objects.get(y_axis - 1)),
+                        (Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::DistanceAxis(origin, _, 1 | 0x1_0001), .. }, .. }),
+                         Some(Object { node: sketchpad_ir::ObjectNode { kind: Kind::GraphAxis(y_origin, unit, 0 | 0x1_0000), .. }, .. }))
+                            if origin == y_origin && objects.get(unit - 1)
+                                .is_some_and(|o| matches!(o.kind, Kind::DistanceVerticalUnit(host, _, _) if host == x_axis))
+                    ) =>
                     {
                         grid_dotted[page] = dotted;
                         grid_form[page] = form;

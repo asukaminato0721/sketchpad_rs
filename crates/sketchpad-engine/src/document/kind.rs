@@ -145,7 +145,7 @@ impl Kind {
     /// files also rotate the ordinary x-axis, but do not establish that axes
     /// support the other affine transform opcodes.
     pub fn rotation_transform_straight_mode(&self) -> Option<LineMode> {
-        if matches!(self, Kind::GraphAxis(_, _, 1)) {
+        if matches!(self, Kind::GraphAxis(_, _, 1 | 0x1_0001)) {
             Some(LineMode::Line)
         } else {
             self.fixed_transform_straight_mode()
@@ -1190,9 +1190,9 @@ pub(super) fn is_straight_kind(kind: &Kind) -> bool {
 /// of its infinite-line geometry. Keep this wire identity out of point kinds.
 pub(super) fn straight_point_constraint_subtype(kind: &Kind) -> Option<u8> {
     match kind {
-        Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
-        | Kind::CircleAxis(_, 0 | 1)
-        | Kind::DistanceAxis(_, _, 0 | 1) => Some(38),
+        Kind::GraphAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001)
+        | Kind::CircleAxis(_, 0 | 1 | 0x1_0000 | 0x1_0001)
+        | Kind::DistanceAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001) => Some(38),
         _ => straight_kind_mode(kind).map(|mode| match mode {
             LineMode::Segment => 14,
             LineMode::Ray => 13,
@@ -1749,8 +1749,10 @@ pub(super) fn is_coordinate_unit_kind(kind: &Kind) -> bool {
 pub(super) fn plot_straight_mode(kind: &Kind) -> Option<LineMode> {
     match kind {
         Kind::ToolInput(_) => None,
-        Kind::GraphAxis(_, _, form) if !matches!(form, 0 | 1 | 0x1_0001) => None,
-        Kind::CircleAxis(_, form) | Kind::DistanceAxis(_, _, form) if !matches!(form, 0 | 1) => {
+        Kind::GraphAxis(_, _, form) if !matches!(form, 0 | 1 | 0x1_0000 | 0x1_0001) => None,
+        Kind::CircleAxis(_, form) | Kind::DistanceAxis(_, _, form)
+            if !matches!(form, 0 | 1 | 0x1_0000 | 0x1_0001) =>
+        {
             None
         }
         _ => straight_kind_mode(kind),

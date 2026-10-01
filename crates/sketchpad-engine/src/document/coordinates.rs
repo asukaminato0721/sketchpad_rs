@@ -37,29 +37,33 @@ impl Document {
                 self.objects.get(x_axis.checked_sub(1)?)?.kind.clone(),
                 self.objects.get(y_axis.checked_sub(1)?)?.kind.clone(),
             ) {
-                (Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001), Kind::GraphAxis(_, y_unit, 0)) => {
-                    [frame.id, x_axis, y_axis, origin, x_unit, y_unit]
-                        .contains(&id)
-                        .then_some(frame.id)
-                }
-                (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) if circle == other => {
+                (
+                    Kind::GraphAxis(origin, x_unit, 1 | 0x1_0001),
+                    Kind::GraphAxis(_, y_unit, 0 | 0x1_0000),
+                ) => [frame.id, x_axis, y_axis, origin, x_unit, y_unit]
+                    .contains(&id)
+                    .then_some(frame.id),
+                (Kind::CircleAxis(circle, 1 | 0x1_0001), Kind::CircleAxis(other, 0 | 0x1_0000))
+                    if circle == other =>
+                {
                     [frame.id, x_axis, y_axis, circle]
                         .contains(&id)
                         .then_some(frame.id)
                 }
-                (Kind::DistanceAxis(origin, distance, 1), Kind::DistanceAxis(other, second, 0))
-                    if origin == other =>
-                {
-                    [frame.id, x_axis, y_axis, origin, distance, second]
-                        .contains(&id)
-                        .then_some(frame.id)
-                }
-                (Kind::DistanceAxis(origin, distance, 1), Kind::GraphAxis(other, unit, 0))
-                    if origin == other
-                        && matches!(
-                            self.objects.get(unit.checked_sub(1)?)?.kind,
-                            Kind::DistanceVerticalUnit(host, _, _) if host == x_axis
-                        ) =>
+                (
+                    Kind::DistanceAxis(origin, distance, 1 | 0x1_0001),
+                    Kind::DistanceAxis(other, second, 0 | 0x1_0000),
+                ) if origin == other => [frame.id, x_axis, y_axis, origin, distance, second]
+                    .contains(&id)
+                    .then_some(frame.id),
+                (
+                    Kind::DistanceAxis(origin, distance, 1 | 0x1_0001),
+                    Kind::GraphAxis(other, unit, 0 | 0x1_0000),
+                ) if origin == other
+                    && matches!(
+                        self.objects.get(unit.checked_sub(1)?)?.kind,
+                        Kind::DistanceVerticalUnit(host, _, _) if host == x_axis
+                    ) =>
                 {
                     [frame.id, x_axis, y_axis, origin, distance, unit]
                         .contains(&id)
@@ -298,7 +302,7 @@ impl Document {
         };
         if matches!(
             self.objects.get(x_axis - 1).map(|object| &object.kind),
-            Some(Kind::CircleAxis(_, 1))
+            Some(Kind::CircleAxis(_, 1 | 0x1_0001))
         ) {
             if form == GridForm::Rectangular {
                 return Err("A unit circle cannot define a rectangular grid".into());
@@ -309,12 +313,12 @@ impl Document {
                 .insert(frame, (form, self.grid_dotted[self.active_page]));
             return Ok(());
         }
-        if let Some(Kind::DistanceAxis(_, distance, 1)) =
+        if let Some(Kind::DistanceAxis(_, distance, 1 | 0x1_0001)) =
             self.objects.get(x_axis - 1).map(|object| &object.kind)
         {
             let unit = match self.objects.get(y_axis - 1).map(|object| &object.kind) {
-                Some(Kind::DistanceAxis(_, _, 0)) if form != GridForm::Square => None,
-                Some(Kind::GraphAxis(_, unit, 0))
+                Some(Kind::DistanceAxis(_, _, 0 | 0x1_0000)) if form != GridForm::Square => None,
+                Some(Kind::GraphAxis(_, unit, 0 | 0x1_0000))
                     if matches!(
                         self.objects.get(unit.saturating_sub(1)).map(|object| &object.kind),
                         Some(Kind::DistanceVerticalUnit(host, _, _)) if *host == x_axis
@@ -350,7 +354,7 @@ impl Document {
                 .insert(frame, (form, self.grid_dotted[self.active_page]));
             return Ok(());
         }
-        let Some(Kind::GraphAxis(_, y_unit, 0)) = y_axis
+        let Some(Kind::GraphAxis(_, y_unit, 0 | 0x1_0000)) = y_axis
             .checked_sub(1)
             .and_then(|at| self.objects.get(at))
             .map(|object| &object.kind)
@@ -389,31 +393,65 @@ impl Document {
     }
     pub fn axis_trigonometric(&self) -> bool {
         self.active_x_axis(self.active_page)
-            .and_then(|id| self.objects.get(id.checked_sub(1)?))
-            .is_some_and(|object| matches!(object.kind, Kind::GraphAxis(_, _, 0x1_0001)))
+            .and_then(|id| self.axis_uses_pi_labels(id))
+            .unwrap_or(false)
     }
     pub fn set_axis_trigonometric(&mut self, enabled: bool) -> Result<(), String> {
         let x_axis = self
             .active_x_axis(self.active_page)
             .ok_or("No coordinate system")?;
-        let axis_index = x_axis.checked_sub(1).ok_or("Invalid horizontal axis")?;
-        let Kind::GraphAxis(origin, unit, axis) = self
-            .objects
-            .get(axis_index)
-            .ok_or("Invalid horizontal axis")?
-            .kind
-        else {
-            return Err("Invalid horizontal axis".into());
+        self.set_axis_uses_pi_labels(x_axis, enabled).map(|_| ())
+    }
+    pub fn axis_uses_pi_labels(&self, id: usize) -> Option<bool> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        (!object.deleted && object.page == self.active_page)
+            .then(|| match object.kind {
+                Kind::GraphAxis(_, _, axis)
+                | Kind::CircleAxis(_, axis)
+                | Kind::DistanceAxis(_, _, axis)
+                    if matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001) =>
+                {
+                    Some(axis & 0x1_0000 != 0)
+                }
+                _ => None,
+            })
+            .flatten()
+    }
+    pub fn set_axis_uses_pi_labels(&mut self, id: usize, enabled: bool) -> Result<bool, String> {
+        let index = id.checked_sub(1).ok_or("Invalid axis")?;
+        let object = self.objects.get(index).ok_or("Invalid axis")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Axis is not on the active page".into());
+        }
+        let next = match object.kind {
+            Kind::GraphAxis(origin, unit, axis) if matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001) => {
+                Kind::GraphAxis(
+                    origin,
+                    unit,
+                    (axis & 1) | if enabled { 0x1_0000 } else { 0 },
+                )
+            }
+            Kind::CircleAxis(circle, axis) if matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001) => {
+                Kind::CircleAxis(circle, (axis & 1) | if enabled { 0x1_0000 } else { 0 })
+            }
+            Kind::DistanceAxis(origin, distance, axis)
+                if matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001) =>
+            {
+                Kind::DistanceAxis(
+                    origin,
+                    distance,
+                    (axis & 1) | if enabled { 0x1_0000 } else { 0 },
+                )
+            }
+            _ => return Err("Object is not a supported coordinate axis".into()),
         };
-        if !matches!(axis, 1 | 0x1_0001) {
-            return Err("Unsupported horizontal axis".into());
+        if object.kind == next {
+            return Ok(false);
         }
-        if self.axis_trigonometric() != enabled {
-            self.checkpoint();
-            self.objects[axis_index].kind =
-                Kind::GraphAxis(origin, unit, if enabled { 0x1_0001 } else { 1 });
-        }
-        Ok(())
+        self.checkpoint();
+        self.objects[index].kind = next;
+        self.dirty = true;
+        Ok(true)
     }
     pub fn graph_frame(&self, id: usize) -> Option<CoordinateFrame> {
         if let Some(value) = self.evaluation_frame(id) {
@@ -427,12 +465,20 @@ impl Document {
             &self.objects.get(x_axis.checked_sub(1)?)?.kind,
             &self.objects.get(y_axis.checked_sub(1)?)?.kind,
         ) {
-            (Kind::GraphAxis(origin, _, 1 | 0x1_0001), Kind::GraphAxis(other, _, 0)) => {
+            (Kind::GraphAxis(origin, _, 1 | 0x1_0001), Kind::GraphAxis(other, _, 0 | 0x1_0000)) => {
                 origin == other
             }
-            (Kind::CircleAxis(circle, 1), Kind::CircleAxis(other, 0)) => circle == other,
-            (Kind::DistanceAxis(origin, _, 1), Kind::DistanceAxis(other, _, 0)) => origin == other,
-            (Kind::DistanceAxis(origin, _, 1), Kind::GraphAxis(other, unit, 0)) => {
+            (Kind::CircleAxis(circle, 1 | 0x1_0001), Kind::CircleAxis(other, 0 | 0x1_0000)) => {
+                circle == other
+            }
+            (
+                Kind::DistanceAxis(origin, _, 1 | 0x1_0001),
+                Kind::DistanceAxis(other, _, 0 | 0x1_0000),
+            ) => origin == other,
+            (
+                Kind::DistanceAxis(origin, _, 1 | 0x1_0001),
+                Kind::GraphAxis(other, unit, 0 | 0x1_0000),
+            ) => {
                 origin == other
                     && matches!(self.objects.get(unit.checked_sub(1)?)?.kind,
                     Kind::DistanceVerticalUnit(host, _, _) if host == x_axis)
@@ -507,7 +553,7 @@ impl Document {
                             && self.coordinate_geometry_undefined(horizontal.id)
                     })
             }
-            Kind::DistanceAxis(origin, distance, 0 | 1) => {
+            Kind::DistanceAxis(origin, distance, 0 | 1 | 0x1_0000 | 0x1_0001) => {
                 parent(origin).is_some_and(|o| is_point_kind(&o.kind))
                     && parent(distance).is_some_and(|o| is_coordinate_unit_kind(&o.kind))
                     && self.defining_distance_pixels(distance).is_none()
@@ -515,15 +561,16 @@ impl Document {
             Kind::DistanceVerticalUnit(axis, step, false) => {
                 step.is_finite()
                     && step > 0.
-                    && parent(axis).is_some_and(|o| matches!(o.kind, Kind::DistanceAxis(_, _, 1)))
+                    && parent(axis)
+                        .is_some_and(|o| matches!(o.kind, Kind::DistanceAxis(_, _, 1 | 0x1_0001)))
                     && self.coordinate_geometry_undefined(axis)
             }
-            Kind::GraphAxis(origin, unit, 0) => {
+            Kind::GraphAxis(origin, unit, 0 | 0x1_0000) => {
                 parent(origin).is_some_and(|o| is_point_kind(&o.kind))
                     && parent(unit).is_some_and(|o| match o.kind {
                         Kind::DistanceVerticalUnit(axis, _, false) => {
                             self.objects.get(axis.saturating_sub(1)).is_some_and(
-                                |o| matches!(o.kind, Kind::DistanceAxis(a, _, 1) if a == origin),
+                                |o| matches!(o.kind, Kind::DistanceAxis(a, _, 1 | 0x1_0001) if a == origin),
                             ) && self.coordinate_geometry_undefined(unit)
                         }
                         _ => false,
@@ -531,9 +578,9 @@ impl Document {
             }
             Kind::CoordinateSystem(x, y) => {
                 match (parent(x).map(|o| &o.kind), parent(y).map(|o| &o.kind)) {
-                    (Some(Kind::DistanceAxis(a, _, 1)), Some(Kind::DistanceAxis(b, _, 0))) if a == b =>
+                    (Some(Kind::DistanceAxis(a, _, 1 | 0x1_0001)), Some(Kind::DistanceAxis(b, _, 0 | 0x1_0000))) if a == b =>
                         self.coordinate_geometry_undefined(x) || self.coordinate_geometry_undefined(y),
-                    (Some(Kind::DistanceAxis(origin, _, 1)), Some(Kind::GraphAxis(other, unit, 0)))
+                    (Some(Kind::DistanceAxis(origin, _, 1 | 0x1_0001)), Some(Kind::GraphAxis(other, unit, 0 | 0x1_0000)))
                         if origin == other && self.objects.get(unit.saturating_sub(1)).is_some_and(|o|
                             matches!(o.kind, Kind::DistanceVerticalUnit(axis, _, false) if axis == x)) =>
                         self.coordinate_geometry_undefined(x),

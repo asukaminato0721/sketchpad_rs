@@ -204,7 +204,7 @@ impl Document {
                 .ok_or("Plotted value is outside the supported range".into());
         }
         let (start, end) = match object.kind {
-            Kind::GraphAxis(start, end, 0 | 1 | 0x1_0001)
+            Kind::GraphAxis(start, end, 0 | 1 | 0x1_0000 | 0x1_0001)
             | Kind::Segment(start, end)
             | Kind::Line(start, end)
             | Kind::Ray(start, end) => (start, end),

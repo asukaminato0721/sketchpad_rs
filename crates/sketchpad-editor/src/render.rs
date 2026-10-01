@@ -997,8 +997,8 @@ fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Ve
             .checked_sub(1)
             .and_then(|id| doc.objects.get(id))
             .map(|axis| &axis.kind);
-        let circle_defined = matches!(x_kind, Some(Kind::CircleAxis(_, 1)));
-        let distance_defined = matches!(x_kind, Some(Kind::DistanceAxis(_, _, 1)));
+        let circle_defined = matches!(x_kind, Some(Kind::CircleAxis(_, 1 | 0x1_0001)));
+        let distance_defined = matches!(x_kind, Some(Kind::DistanceAxis(_, _, 1 | 0x1_0001)));
         if !circle_defined && !distance_defined {
             continue;
         }
@@ -1066,7 +1066,11 @@ fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Ve
                 } else {
                     2 * x_divisions
                 };
-                if x_label_multiple > 0 && i % x_label_multiple == 0 && x_unit >= 30. {
+                if !doc.axis_uses_pi_labels(x_axis).unwrap_or(false)
+                    && x_label_multiple > 0
+                    && i % x_label_multiple == 0
+                    && x_unit >= 30.
+                {
                     let label_at = at + egui::vec2(0., 8.);
                     if vp.rect.contains(label_at) {
                         let value = i as f32 / x_divisions as f32;
@@ -1094,7 +1098,11 @@ fn defined_axis_annotations(doc: &Document, vp: &Viewport) -> (Vec<AxisTick>, Ve
                     at + egui::vec2(4., 0.),
                     selected_y,
                 ));
-                if y_divisions % 2 == 0 && i % (y_divisions / 2) == 0 && y_unit >= 80. {
+                if !doc.axis_uses_pi_labels(y_axis).unwrap_or(false)
+                    && y_divisions % 2 == 0
+                    && i % (y_divisions / 2) == 0
+                    && y_unit >= 80.
+                {
                     let label_at = at + egui::vec2(-8., 0.);
                     if vp.rect.contains(label_at) {
                         let value = i as f32 / y_divisions as f32;
@@ -1119,62 +1127,81 @@ pub fn defined_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, 
     defined_axis_annotations(doc, vp).1
 }
 
-pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String)> {
-    if !doc.axis_trigonometric() {
-        return Vec::new();
-    }
-    let Some(frame_id) = doc.active_coordinate_system() else {
-        return Vec::new();
-    };
-    let Kind::CoordinateSystem(x_axis, _) = doc.objects[frame_id - 1].kind else {
-        return Vec::new();
-    };
-    if !doc.is_displayed(x_axis) {
-        return Vec::new();
-    }
-    let Some(frame) = doc.graph_frame(frame_id) else {
-        return Vec::new();
-    };
-    let origin = vp.screen(Point {
-        x: frame.origin.x,
-        y: frame.origin.y,
-    });
-    let Some(next) = frame.world(std::f64::consts::PI, 0.) else {
-        return Vec::new();
-    };
-    let spacing = vp
-        .screen(Point {
-            x: next.x,
-            y: next.y,
-        })
-        .distance(origin);
-    if !spacing.is_finite() || spacing <= 0. {
-        return Vec::new();
-    }
-    let interval = (45. / spacing).ceil().max(1.) as i32;
+pub fn trigonometric_axis_labels(doc: &Document, vp: &Viewport) -> Vec<(Pos2, String, bool)> {
     let mut labels = Vec::new();
-    for multiple in -64_i32..=64 {
-        if multiple == 0 || multiple % interval != 0 {
-            continue;
-        }
-        let Some(at) = frame.world(multiple as f64 * std::f64::consts::PI, 0.) else {
+    for object in doc.objects.iter().filter(|object| {
+        matches!(object.kind, Kind::CoordinateSystem(_, _)) && doc.is_displayed(object.id)
+    }) {
+        let Kind::CoordinateSystem(x_axis, y_axis) = object.kind else {
             continue;
         };
-        let at = vp.screen(Point { x: at.x, y: at.y }) + egui::vec2(0., 8.);
-        if !vp.rect.contains(at) {
+        let Some(frame) = doc.graph_frame(object.id) else {
             continue;
-        }
-        let magnitude = multiple.abs();
-        let label = format!(
-            "{}{}π",
-            if multiple < 0 { "−" } else { "" },
-            if magnitude == 1 {
-                String::new()
-            } else {
-                magnitude.to_string()
+        };
+        let origin = vp.screen(Point {
+            x: frame.origin.x,
+            y: frame.origin.y,
+        });
+        for (axis, vertical) in [(x_axis, false), (y_axis, true)] {
+            if !doc.is_displayed(axis) || doc.axis_uses_pi_labels(axis) != Some(true) {
+                continue;
             }
-        );
-        labels.push((at, label));
+            let Some(next) = frame.world(
+                if vertical { 0. } else { std::f64::consts::PI },
+                if vertical { std::f64::consts::PI } else { 0. },
+            ) else {
+                continue;
+            };
+            let spacing = vp
+                .screen(Point {
+                    x: next.x,
+                    y: next.y,
+                })
+                .distance(origin);
+            if !spacing.is_finite() || spacing <= 0. {
+                continue;
+            }
+            let interval = (45. / spacing).ceil().max(1.) as i32;
+            for multiple in -64_i32..=64 {
+                if multiple == 0 || multiple % interval != 0 {
+                    continue;
+                }
+                let Some(at) = frame.world(
+                    if vertical {
+                        0.
+                    } else {
+                        multiple as f64 * std::f64::consts::PI
+                    },
+                    if vertical {
+                        multiple as f64 * std::f64::consts::PI
+                    } else {
+                        0.
+                    },
+                ) else {
+                    continue;
+                };
+                let at = vp.screen(Point { x: at.x, y: at.y })
+                    + if vertical {
+                        egui::vec2(-8., 0.)
+                    } else {
+                        egui::vec2(0., 8.)
+                    };
+                if !vp.rect.contains(at) {
+                    continue;
+                }
+                let magnitude = multiple.abs();
+                let label = format!(
+                    "{}{}π",
+                    if multiple < 0 { "−" } else { "" },
+                    if magnitude == 1 {
+                        String::new()
+                    } else {
+                        magnitude.to_string()
+                    }
+                );
+                labels.push((at, label, vertical));
+            }
+        }
     }
     labels
 }
@@ -2183,8 +2210,8 @@ fn svg_page_with_layout(
             writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
         }
     }
-    for (at, label) in trigonometric_axis_labels(doc, vp) {
-        writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y + 11.).unwrap();
+    for (at, label, vertical) in trigonometric_axis_labels(doc, vp) {
+        writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" dominant-baseline=\"{}\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y, if vertical { "end" } else { "middle" }, if vertical { "middle" } else { "hanging" }).unwrap();
     }
     for (at, label, vertical) in defined_axis_labels(doc, vp) {
         writeln!(svg, "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" dominant-baseline=\"{}\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#24303d\">{label}</text>", at.x, at.y, if vertical { "end" } else { "middle" }, if vertical { "middle" } else { "hanging" }).unwrap();

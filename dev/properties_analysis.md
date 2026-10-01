@@ -269,5 +269,23 @@ to five/final. Only `090a` offsets 4 and 16 changed. Native Properties selected
 control 1267, and Sketchpad 5 saved all 2,184 bytes unchanged with SHA-256
 `4f32a95725c8fd0f8813452ca3d5a3c634cfb70f74fbbe470691419cbc1124ac`.
 
-Labels on other geometry, sampled-object opacity, and Axis panels remain
-outside this increment.
+## Coordinate axes
+
+Native exposes an Axis panel on x and y axes with Decimal and fractions or
+multiples of π controls (IDs 1380 and 1381). The choice is per-axis: in the
+existing trigonometric fixture, x selects π while y remains Decimal. The low
+bit of the `0905` value retains direction and bit 16 selects π labels, yielding
+`0`, `1`, `0x00010000`, or `0x00010001`.
+
+The port exposes the same choice in Properties for ordinary, circle-defined,
+and distance-defined axes. Decode, geometry, constraints, clipboard, source
+patching, generated templates, canvas, and SVG all retain the format. Three
+public-API outputs exercised an ordinary y axis, both circle axes, and a
+distance x axis with its ordinary y partner. Sketchpad 5 displayed the expected
+π labels and saved every file byte-identically. Their SHA-256 values were
+`219175d991cd0358bce5809d9a7894569d4b35709adb301042bb70b3641adb64`,
+`fe16de9ca77d60f34f2e5f90fea1d5937146ed2b32de711ca33f1afca9946e44`, and
+`6f4b1ab31f87be02e8371f1c047c534cb9a26856d784e6631a8f8c2dc6a9d06e`.
+
+Labels on other geometry and sampled-object opacity remain outside this
+increment.

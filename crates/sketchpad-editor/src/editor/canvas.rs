@@ -629,10 +629,16 @@ impl Editor {
                         }
                     }
                 }
-                for (at, label) in crate::render::trigonometric_axis_labels(&self.doc, &vp) {
+                for (at, label, vertical) in
+                    crate::render::trigonometric_axis_labels(&self.doc, &vp)
+                {
                     ui.painter().text(
                         at,
-                        egui::Align2::CENTER_TOP,
+                        if vertical {
+                            egui::Align2::RIGHT_CENTER
+                        } else {
+                            egui::Align2::CENTER_TOP
+                        },
                         label,
                         egui::FontId::proportional(11.),
                         egui::Color32::from_rgb(36, 48, 61),

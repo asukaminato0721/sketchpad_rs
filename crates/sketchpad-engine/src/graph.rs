@@ -207,7 +207,7 @@ pub fn decode_graph_object(
         (58, [start, end]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
             let axis = u32_le(payload)?;
-            matches!(axis, 0 | 1 | 0x1_0001).then_some(GraphObject::Axis {
+            matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001).then_some(GraphObject::Axis {
                 start: *start,
                 end: *end,
                 axis,
@@ -216,7 +216,7 @@ pub fn decode_graph_object(
         (60, [circle]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
             let axis = u32_le(payload)?;
-            matches!(axis, 0 | 1).then_some(GraphObject::CircleAxis {
+            matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001).then_some(GraphObject::CircleAxis {
                 circle: *circle,
                 axis,
             })
@@ -224,7 +224,7 @@ pub fn decode_graph_object(
         (59, [origin, distance]) => {
             let payload = records.iter().find(|(kind, _)| *kind == 0x0905)?.1;
             let axis = u32_le(payload)?;
-            matches!(axis, 0 | 1).then_some(GraphObject::DistanceAxis {
+            matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001).then_some(GraphObject::DistanceAxis {
                 origin: *origin,
                 distance: *distance,
                 axis,
@@ -598,7 +598,10 @@ fn set_vertical_unit_code(group: &mut [u8], code: u16, step: f64) -> Result<(), 
         .ok_or("Incomplete vertical unit group".into())
 }
 
-pub fn set_x_axis_trigonometric(group: &mut [u8], trigonometric: bool) -> Result<(), String> {
+pub fn set_axis_format(group: &mut [u8], axis: u32) -> Result<(), String> {
+    if !matches!(axis, 0 | 1 | 0x1_0000 | 0x1_0001) {
+        return Err("Unsupported axis format".into());
+    }
     let mut offset = 0;
     while offset + 8 <= group.len() {
         let length = u32_le(&group[offset..offset + 4]).ok_or("Invalid graph record")? as usize;
@@ -609,15 +612,15 @@ pub fn set_x_axis_trigonometric(group: &mut [u8], trigonometric: bool) -> Result
             return Err("Invalid graph record length".into());
         }
         if kind == 0x0905 {
-            if length != 4 || !matches!(group[payload..end], [1, 0, 0, 0] | [1, 0, 1, 0]) {
-                return Err("Unsupported X-axis format".into());
+            if length != 4 {
+                return Err("Unsupported axis format".into());
             }
-            group[payload + 2] = u8::from(trigonometric);
+            group[payload..end].copy_from_slice(&axis.to_le_bytes());
             return Ok(());
         }
         offset = end + length % 2;
     }
-    Err("Missing X-axis format record".into())
+    Err("Missing axis format record".into())
 }
 
 /// Original-app slope group. The line and frame IDs must refer to objects on

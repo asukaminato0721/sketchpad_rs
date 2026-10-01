@@ -596,7 +596,8 @@ impl Document {
                 }
                 if matches!(
                     kind,
-                    Kind::CircleAxis(_, 0 | 1) | Kind::DistanceAxis(_, _, 0 | 1)
+                    Kind::CircleAxis(_, 0 | 1 | 0x1_0000 | 0x1_0001)
+                        | Kind::DistanceAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001)
                 ) {
                     let (start, end, _) = d.line_points(path)?;
                     let point = Point {
@@ -606,7 +607,7 @@ impl Document {
                     return (point.x.is_finite() && point.y.is_finite()).then_some(point);
                 }
                 let (start, end) = match kind {
-                    Kind::GraphAxis(a, b, 0 | 1 | 0x1_0001)
+                    Kind::GraphAxis(a, b, 0 | 1 | 0x1_0000 | 0x1_0001)
                     | Kind::Segment(a, b)
                     | Kind::Line(a, b)
                     | Kind::Ray(a, b) => (*a, *b),
@@ -683,7 +684,7 @@ impl Document {
                     })
                 }
                 Kind::DistanceVerticalUnit(x_axis, step, independent) => {
-                    let Kind::DistanceAxis(origin, distance, 1) =
+                    let Kind::DistanceAxis(origin, distance, 1 | 0x1_0001) =
                         d.objects.get(x_axis.checked_sub(1)?)?.kind
                     else {
                         return None;
@@ -1081,9 +1082,9 @@ impl Document {
                 }
                 Kind::Segment(a, b) => Some((d.position(a)?, d.position(b)?, LineMode::Segment)),
                 Kind::GraphAxis(a, b, _) => Some((d.position(a)?, d.position(b)?, LineMode::Line)),
-                Kind::CircleAxis(circle, axis @ (0 | 1)) => {
+                Kind::CircleAxis(circle, axis @ (0 | 1 | 0x1_0000 | 0x1_0001)) => {
                     let (center, radius) = d.circle_points(circle)?;
-                    let unit = if axis == 1 {
+                    let unit = if axis & 1 == 1 {
                         Point {
                             x: center.x + radius,
                             y: center.y,
@@ -1096,10 +1097,10 @@ impl Document {
                     };
                     Some((center, unit, LineMode::Line))
                 }
-                Kind::DistanceAxis(origin, distance, axis @ (0 | 1)) => {
+                Kind::DistanceAxis(origin, distance, axis @ (0 | 1 | 0x1_0000 | 0x1_0001)) => {
                     let center = d.position(origin)?;
                     let length = d.defining_distance_pixels(distance)?;
-                    let unit = if axis == 1 {
+                    let unit = if axis & 1 == 1 {
                         Point {
                             x: center.x + length,
                             y: center.y,
@@ -1426,7 +1427,7 @@ impl Document {
             }
             Some(Kind::DistanceVerticalUnit(x_axis, _, true)) => {
                 let x_axis = *x_axis;
-                let Some(Kind::DistanceAxis(origin, _, 1)) = x_axis
+                let Some(Kind::DistanceAxis(origin, _, 1 | 0x1_0001)) = x_axis
                     .checked_sub(1)
                     .and_then(|at| self.objects.get(at))
                     .map(|object| &object.kind)
@@ -1579,12 +1580,12 @@ impl Document {
         host: usize,
     ) -> Option<(Point, Point, LineMode)> {
         let (center, horizontal) = match &self.objects.get(host.checked_sub(1)?)?.kind {
-            Kind::GraphAxis(origin, _, axis @ (0 | 1 | 0x1_0001))
-            | Kind::DistanceAxis(origin, _, axis @ (0 | 1)) => {
-                (self.position(*origin)?, *axis != 0)
+            Kind::GraphAxis(origin, _, axis @ (0 | 1 | 0x1_0000 | 0x1_0001))
+            | Kind::DistanceAxis(origin, _, axis @ (0 | 1 | 0x1_0000 | 0x1_0001)) => {
+                (self.position(*origin)?, *axis & 1 != 0)
             }
-            Kind::CircleAxis(circle, axis @ (0 | 1)) => {
-                (self.circle_points(*circle)?.0, *axis != 0)
+            Kind::CircleAxis(circle, axis @ (0 | 1 | 0x1_0000 | 0x1_0001)) => {
+                (self.circle_points(*circle)?.0, *axis & 1 != 0)
             }
             _ => return self.line_points(host),
         };

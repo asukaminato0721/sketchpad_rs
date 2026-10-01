@@ -143,7 +143,7 @@ fn locus_driver_straight_mode(objects: &[Object], path: usize) -> Option<LineMod
     super::kind::locus_straight_source_mode(objects, path).or_else(|| {
         matches!(
             objects.get(path.checked_sub(1)?)?.kind,
-            Kind::GraphAxis(_, _, 0 | 1 | 0x1_0001)
+            Kind::GraphAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001)
         )
         .then_some(LineMode::Line)
     })

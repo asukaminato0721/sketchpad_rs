@@ -359,21 +359,32 @@ impl Document {
             .iter()
             .take(self.source_count)
             .filter(|object| {
-                !object.deleted && matches!(object.kind, Kind::GraphAxis(_, _, 1 | 0x1_0001))
+                !object.deleted
+                    && matches!(
+                        object.kind,
+                        Kind::GraphAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001)
+                            | Kind::CircleAxis(_, 0 | 1 | 0x1_0000 | 0x1_0001)
+                            | Kind::DistanceAxis(_, _, 0 | 1 | 0x1_0000 | 0x1_0001)
+                    )
             })
         {
-            let header = object.header_offset.ok_or("Missing X-axis header")?;
+            let header = object.header_offset.ok_or("Missing axis header")?;
             let start = rs
                 .iter()
                 .position(|record| record.kind == 0x7d0 && record.data.start == header)
-                .ok_or("Missing X-axis group")?;
+                .ok_or("Missing axis group")?;
             let format = rs[start + 1..]
                 .iter()
                 .take_while(|record| record.kind != 0x7d7)
                 .find(|record| record.kind == 0x0905 && record.data.len() == 4)
-                .ok_or("Missing X-axis format")?;
-            out[format.data.start + 2] =
-                u8::from(matches!(object.kind, Kind::GraphAxis(_, _, 0x1_0001)));
+                .ok_or("Missing axis format")?;
+            let axis = match object.kind {
+                Kind::GraphAxis(_, _, axis)
+                | Kind::CircleAxis(_, axis)
+                | Kind::DistanceAxis(_, _, axis) => axis,
+                _ => unreachable!(),
+            };
+            out[format.data.start..format.data.start + 4].copy_from_slice(&axis.to_le_bytes());
         }
         for object in self.objects.iter().take(self.source_count) {
             let Kind::PathLiteralPoint(_, value) = object.kind else {

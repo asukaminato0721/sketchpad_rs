@@ -157,7 +157,10 @@ impl Document {
             if frame.visible || frame.deleted || frame.page != object.page {
                 return false;
             }
-            if let (Some(Kind::CircleAxis(circle, 1)), Some(Kind::CircleAxis(other, 0))) = (
+            if let (
+                Some(Kind::CircleAxis(circle, 1 | 0x1_0001)),
+                Some(Kind::CircleAxis(other, 0 | 0x1_0000)),
+            ) = (
                 x_axis
                     .checked_sub(1)
                     .and_then(|at| self.objects.get(at))
@@ -170,7 +173,7 @@ impl Document {
             {
                 return [frame.id, x_axis, y_axis].contains(&id);
             }
-            if let Some(Kind::DistanceAxis(origin, _, 1)) = x_axis
+            if let Some(Kind::DistanceAxis(origin, _, 1 | 0x1_0001)) = x_axis
                 .checked_sub(1)
                 .and_then(|at| self.objects.get(at))
                 .map(|o| &o.kind)
@@ -180,7 +183,7 @@ impl Document {
                     .and_then(|at| self.objects.get(at))
                     .map(|o| &o.kind)
                 {
-                    Some(Kind::GraphAxis(_, unit, 0)) => Some(*unit),
+                    Some(Kind::GraphAxis(_, unit, 0 | 0x1_0000)) => Some(*unit),
                     _ => None,
                 };
                 return [
@@ -199,7 +202,7 @@ impl Document {
             else {
                 return false;
             };
-            let Some(Kind::GraphAxis(_, y_unit, 0)) = y_axis
+            let Some(Kind::GraphAxis(_, y_unit, 0 | 0x1_0000)) = y_axis
                 .checked_sub(1)
                 .and_then(|at| self.objects.get(at))
                 .map(|o| &o.kind)

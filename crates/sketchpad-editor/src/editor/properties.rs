@@ -13,6 +13,12 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
     if object.kind.is_point() {
         return "Point";
     }
+    if matches!(
+        object.kind,
+        Kind::GraphAxis(..) | Kind::CircleAxis(..) | Kind::DistanceAxis(..)
+    ) {
+        return "Axis";
+    }
     if let Some((_, _, mode)) = doc.line_points(id) {
         return match mode {
             LineMode::Segment => "Segment",
@@ -133,6 +139,9 @@ impl Editor {
                 }
                 self.properties_iteration_final_only_draft = final_only;
             }
+            if let Some(pi_labels) = self.doc.axis_uses_pi_labels(id) {
+                self.properties_axis_pi_labels_draft = pi_labels;
+            }
             if let Kind::HideShowButton {
                 action, options, ..
             } = &object.kind
@@ -232,6 +241,7 @@ impl Editor {
         let mut apply_label = false;
         let mut apply_opacity = false;
         let mut apply_iteration_properties = false;
+        let mut apply_axis_properties = false;
         let mut apply_hide_show_caption = false;
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
@@ -317,6 +327,22 @@ impl Editor {
                         "Show final iteration only",
                     );
                     apply_iteration_properties = ui.button("Apply Iteration Settings").clicked();
+                }
+                if self.doc.axis_uses_pi_labels(id).is_some() {
+                    ui.separator();
+                    ui.heading("Axis");
+                    ui.label("Label tick values using");
+                    ui.radio_value(
+                        &mut self.properties_axis_pi_labels_draft,
+                        false,
+                        "Decimal numbers",
+                    );
+                    ui.radio_value(
+                        &mut self.properties_axis_pi_labels_draft,
+                        true,
+                        "Fractions and multiples of π",
+                    );
+                    apply_axis_properties = ui.button("Apply Axis Settings").clicked();
                 }
                 if matches!(object.kind, Kind::HideShowButton { .. }) {
                     ui.separator();
@@ -542,6 +568,16 @@ impl Editor {
                 fixed_depth,
                 self.properties_iteration_final_only_draft,
             ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_axis_properties {
+            match self
+                .doc
+                .set_axis_uses_pi_labels(id, self.properties_axis_pi_labels_draft)
+            {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,

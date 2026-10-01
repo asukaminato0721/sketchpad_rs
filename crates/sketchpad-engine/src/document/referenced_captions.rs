@@ -531,7 +531,7 @@ impl Document {
                 Some(format!("y = {}(x)", self.function_symbol(*function)?))
             }
             Kind::GraphAxis(_, _, form) => match form {
-                0 => Some("y".into()),
+                0 | 0x1_0000 => Some("y".into()),
                 1 | 0x1_0001 => Some("x".into()),
                 _ => None,
             },
