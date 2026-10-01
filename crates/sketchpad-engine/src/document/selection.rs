@@ -429,6 +429,7 @@ impl Document {
                             .get(&id)
                             .map_or_else(|| object.kind.clone(), |point| Kind::Free(*point)),
                         visible: object.visible && !self.is_presentation_suppressed(id),
+                        arrow_selectable: object.arrow_selectable,
                         tracing: object.tracing,
                         midpoint_host: if frozen_points.contains_key(&id) {
                             None
@@ -475,6 +476,7 @@ impl Document {
             old_id,
             kind,
             visible,
+            arrow_selectable,
             tracing,
             midpoint_host,
             locus_interval,
@@ -569,6 +571,7 @@ impl Document {
             candidate.objects.push(Object {
                 node: sketchpad_ir::ObjectNode::new(id, candidate.active_page, remapped),
                 visible: *visible && !clipboard.hide_on_paste.contains(old_id),
+                arrow_selectable: *arrow_selectable,
                 presentation_suppressed: false,
                 tracing: *tracing,
                 deleted: false,
@@ -734,6 +737,33 @@ impl Document {
         }
         self.checkpoint();
         self.objects[id - 1].visible = visible;
+        Ok(true)
+    }
+    pub fn set_object_arrow_selectable(
+        &mut self,
+        id: usize,
+        arrow_selectable: bool,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit selection behavior in this sketch safely".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid object")?)
+            .ok_or("Invalid object")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Object is not on the active page".into());
+        }
+        if object.arrow_selectable == arrow_selectable {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.objects[id - 1].arrow_selectable = arrow_selectable;
+        let encoded = candidate.encode()?;
+        let reparsed = Self::from_bytes(&encoded, None)?;
+        candidate.validate_reparsed_document(&reparsed)?;
+        *self = candidate;
         Ok(true)
     }
     pub fn set_selected_tracing(&mut self, tracing: bool) -> Result<usize, String> {

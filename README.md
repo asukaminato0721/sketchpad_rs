@@ -30,8 +30,9 @@ When a sketch has multiple frames, the editor and SVG export draw each visible f
 The Number menu can create t₁ and t₂ parameters or multiple named ASCII parameters in a supported single-page sketch, and edit finite values with up to 32 native numeric tokens. Parameter captions support 0–5 decimal places and use scientific notation at magnitudes greater than one million; calculations retain the full value. Decimal edits increase display precision up to five places. Supported values can be tabulated into tables with snapshot row controls; tables remain limited to −99.99 through 99.99 with two decimal places. The default one-column t₁ table caches values from −99.99 to 99.99; fractional, negative, two-digit, and later-source snapshot files cross-opened in Sketchpad 5. The supported two-column table uses t₁ and t₂ values from −99.99 to 99.99 with up to 256 rows; generated five-row and mixed-width files opened and saved byte-identically in Sketchpad 5. Graph > Plot Table Data plots its Cartesian or polar rows, including distinct and fractional values.
 For a selected source-free calculation, function, or numeric parameter, Edit >
 Edit Definition opens the corresponding value or expression editor. Edit >
-Properties shows the selected object's saved label and hidden state, with links
-to inspect its direct parents and children. Point, straight-object, circle,
+Properties shows the selected object's saved label, hidden state, and whether
+the Arrow tool can select it, with links to inspect its direct parents and children.
+Point, straight-object, circle,
 base-arc, and transformed straight/circle/arc Properties can rename and show or
 hide their labels. The same controls cover live colorized straight, circle, and
 arc outputs; polygon-interior Properties can change opacity.

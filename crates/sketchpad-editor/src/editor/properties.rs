@@ -113,6 +113,7 @@ impl Editor {
             .filter(|name| !name.is_empty())
             .map(str::to_owned);
         let mut hidden = !object.visible;
+        let mut arrow_selectable = object.arrow_selectable;
         let parents = self.doc.dependencies_of(id).unwrap_or_default();
         let children = self
             .doc
@@ -139,6 +140,7 @@ impl Editor {
 
         let mut open = true;
         let mut visibility_changed = false;
+        let mut arrow_selectability_changed = false;
         let mut apply_label = false;
         let mut apply_opacity = false;
         let mut edit_parameter = false;
@@ -162,6 +164,9 @@ impl Editor {
                     });
                 ui.separator();
                 visibility_changed = ui.checkbox(&mut hidden, "Hidden").changed();
+                arrow_selectability_changed = ui
+                    .checkbox(&mut arrow_selectable, "Arrow selectable")
+                    .changed();
                 if matches!(object.kind, Kind::Parameter(_)) {
                     edit_parameter = ui.button("Parameter Settings…").clicked();
                 }
@@ -210,6 +215,13 @@ impl Editor {
 
         if visibility_changed {
             match self.doc.set_object_visibility(id, !hidden) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if arrow_selectability_changed {
+            match self.doc.set_object_arrow_selectable(id, arrow_selectable) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,

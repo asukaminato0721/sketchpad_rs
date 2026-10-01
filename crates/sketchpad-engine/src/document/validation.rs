@@ -1792,6 +1792,8 @@ impl Document {
                 Some("kind")
             } else if saved.visible != current.visible {
                 Some("visibility")
+            } else if saved.arrow_selectable != current.arrow_selectable {
+                Some("Arrow selectability")
             } else if saved.presentation_suppressed != current.presentation_suppressed {
                 Some("presentation suppression")
             } else if saved.label != current.label {

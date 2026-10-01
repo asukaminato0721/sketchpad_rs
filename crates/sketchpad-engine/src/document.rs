@@ -695,6 +695,8 @@ pub enum TextStyleCommand {
 pub struct Object {
     pub node: ObjectNode<Kind>,
     pub visible: bool,
+    /// Native omits Arrow-tool hit testing when an empty `0x232e` marker is present.
+    pub arrow_selectable: bool,
     /// Native flag 2 suppresses presentation independently of ordinary hide/show.
     pub presentation_suppressed: bool,
     pub tracing: bool,
@@ -727,6 +729,7 @@ struct ClipboardObject {
     old_id: usize,
     kind: Kind,
     visible: bool,
+    arrow_selectable: bool,
     tracing: bool,
     midpoint_host: Option<usize>,
     locus_interval: Option<[f64; 2]>,
@@ -1082,6 +1085,7 @@ impl Document {
             visual_style,
             interior_order,
             visible: true,
+            arrow_selectable: true,
             presentation_suppressed: false,
             tracing: false,
             deleted: false,

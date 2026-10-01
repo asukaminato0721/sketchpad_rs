@@ -5,6 +5,22 @@ lists a common Object panel, Label panels for labelable objects, and Opacity
 panels for translucent objects. The current port keeps the common identity,
 visibility, parent, and child controls and now adds two bounded editing panels.
 
+## Arrow-tool selection
+
+The common Object panel exposes Native's Arrow Selectable checkbox for every
+object. Native control ID 1159 stores the disabled state as an empty `232e`
+record immediately before the object's `07d7` terminator; the absence of that
+record means selectable. The decoder removes this common presentation record
+before handing an object group to its type-specific parser, and the writer adds
+or removes it transactionally without changing the object's semantic records.
+
+The Arrow tool omits disabled objects from click selection, drag initiation,
+and canvas double-click editing. Other tools and programmatic parent/child
+selection remain independent, and action buttons remain clickable. A
+port-authored disabled point opened with Native's checkbox clear and saved all
+1,844 bytes unchanged in Sketchpad 5, retaining SHA-256
+`dbb975633e2bb8be46d14e8b0122fbab54987e1961f92bdd1f75f52de7160056`.
+
 ## Geometric labels
 
 For a point, straight object, circle, base arc, or transformed straight, circle,

@@ -229,6 +229,7 @@ impl Editor {
                     }
                     return;
                 }
+                let hit = hit.filter(|id| self.doc.objects[*id - 1].arrow_selectable);
                 if !multi && (hit.is_some() || !self.preferences.double_click_deselection) {
                     self.doc.selected.clear();
                     self.selection_order.clear();

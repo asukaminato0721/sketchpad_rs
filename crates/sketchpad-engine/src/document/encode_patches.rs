@@ -6,6 +6,48 @@ use crate::plot_points_records::PlotPointsMode;
 use crate::{function_records, style_records, text_object, text_style_records};
 
 impl Document {
+    pub(super) fn patch_arrow_selectability(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let headers = document_record_indices(&rs)
+            .into_iter()
+            .filter(|&index| rs[index].kind == 0x07d0)
+            .collect::<Vec<_>>();
+        let mut objects = self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect::<Vec<_>>();
+        objects.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        if headers.len() != objects.len() {
+            return Err("Object group count mismatch while writing Arrow selectability".into());
+        }
+        let mut edits = Vec::new();
+        for (start, object) in headers.into_iter().zip(objects) {
+            let end = rs[start..]
+                .iter()
+                .position(|record| record.kind == 0x07d7)
+                .map(|offset| start + offset)
+                .ok_or("Object group has no terminator")?;
+            let marker = rs[start + 1..end]
+                .iter()
+                .find(|record| record.kind == 0x232e && record.data.is_empty());
+            match (object.arrow_selectable, marker) {
+                (true, Some(marker)) => edits.push((marker.start, marker.data.end, Vec::new())),
+                (false, None) => {
+                    let mut encoded = Vec::new();
+                    put_record(&mut encoded, 0x232e, &[]);
+                    edits.push((rs[end].start, rs[end].start, encoded));
+                }
+                _ => {}
+            }
+        }
+        edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));
+        for (start, end, replacement) in edits {
+            bytes.splice(start..end, replacement);
+        }
+        Ok(bytes)
+    }
+
     pub(super) fn patch_split_points(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
         let headers = document_record_indices(&rs)

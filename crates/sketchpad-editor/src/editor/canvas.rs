@@ -29,6 +29,7 @@ impl Editor {
                     && self.tool == Tool::Select
                     && let Some(p) = ui.input(|i| i.pointer.press_origin())
                     && let Some(id) = self.hit(&vp, p)
+                    && self.doc.objects[id - 1].arrow_selectable
                     && (self.doc.objects[id - 1].measurement_anchor.is_some()
                         || matches!(
                             self.doc.objects[id - 1].kind,
@@ -162,7 +163,10 @@ impl Editor {
                 if response.double_clicked()
                     && let Some(p) = response.interact_pointer_pos()
                 {
-                    if let Some(id) = self.hit(&vp, p) {
+                    let hit = self
+                        .hit(&vp, p)
+                        .filter(|id| self.doc.objects[*id - 1].arrow_selectable);
+                    if let Some(id) = hit {
                         match self.doc.objects[id - 1].kind {
                             Kind::FunctionDefinition(_)
                             | Kind::ReferencedFunction(_, _)

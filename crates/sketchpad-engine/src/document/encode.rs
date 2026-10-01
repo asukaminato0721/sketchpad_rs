@@ -115,7 +115,9 @@ impl Document {
         {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
-        let bytes = self.patch_mapped_iteration_image_levels(self.encode_core()?)?;
+        let bytes = self.patch_arrow_selectability(
+            self.patch_mapped_iteration_image_levels(self.encode_core()?)?,
+        )?;
         self.encode_page_names(self.patch_active_page(
             self.patch_measurement_precisions(self.patch_angle_marker_styles(bytes)?)?,
         )?)

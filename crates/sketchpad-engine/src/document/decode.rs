@@ -855,6 +855,7 @@ impl Document {
                     ));
                 }
                 if !matches!(r.kind, 0x899 | 0x7d2 | 0x7d3)
+                    && !(r.kind == 0x232e && d.is_empty())
                     && !(code == 0
                         && matches!(r.kind, 0x07d5 | 0x07d8 | 0x08fc | 0x0898 | 0x0906 | 0x08a2))
                     && !((matches!(code, 15 | 92) || (code == 71 && h[6..10] == [11, 0, 57, 0]))
@@ -936,7 +937,22 @@ impl Document {
             if i == rs.len() {
                 return Err("Unterminated object group".into());
             }
-            let action_bytes = (code == 62).then_some(&b[group_start..rs[i].data.end]);
+            let empty_arrow_marker = rs.iter().find(|record| {
+                record.start > group_start
+                    && record.start < rs[i].start
+                    && record.kind == 0x232e
+                    && record.data.is_empty()
+            });
+            let arrow_selectable = empty_arrow_marker.is_none();
+            let semantic_group_storage = empty_arrow_marker.map(|marker| {
+                let mut group = b[group_start..marker.start].to_vec();
+                group.extend_from_slice(&b[marker.data.end..rs[i].data.end]);
+                group
+            });
+            let semantic_group = semantic_group_storage
+                .as_deref()
+                .unwrap_or(&b[group_start..rs[i].data.end]);
+            let action_bytes = (code == 62).then_some(semantic_group);
             let action_group =
                 action_bytes.and_then(|bytes| HideShowButtonGroup::parse(bytes).ok());
             let animation_group =
@@ -948,10 +964,10 @@ impl Document {
             let presentation_group =
                 action_bytes.and_then(|bytes| PresentationButtonGroup::parse(bytes).ok());
             let link_url_group = (code == 0)
-                .then_some(&b[group_start..rs[i].data.end])
+                .then_some(semantic_group)
                 .and_then(|bytes| LinkUrlButtonGroup::parse(bytes).ok());
             let link_page_group = (code == 0)
-                .then_some(&b[group_start..rs[i].data.end])
+                .then_some(semantic_group)
                 .and_then(|bytes| LinkPageButtonGroup::parse(bytes).ok());
             if code == 0
                 && rs.iter().any(|record| {
@@ -975,35 +991,35 @@ impl Document {
                 safe = false;
             }
             let coordinate_group = matches!(code, 49 | 65 | 66 | 86 | 124 | 125)
-                .then(|| coordinate_measure_records::decode_group(&b[group_start..rs[i].data.end]))
+                .then(|| coordinate_measure_records::decode_group(semantic_group))
                 .transpose();
             if coordinate_group.is_err() {
                 safe = false;
             }
             let coordinate_group = coordinate_group.ok().flatten();
             let value_equation_group = matches!(code, 50 | 51 | 94)
-                .then(|| value_equation_records::decode_group(&b[group_start..rs[i].data.end]))
+                .then(|| value_equation_records::decode_group(semantic_group))
                 .transpose();
             if value_equation_group.is_err() {
                 safe = false;
             }
             let value_equation_group = value_equation_group.ok().flatten();
             let plotted_point = matches!(code, 67 | 68)
-                .then(|| plot_points_records::decode_group(&b[group_start..rs[i].data.end]))
+                .then(|| plot_points_records::decode_group(semantic_group))
                 .transpose();
             if plotted_point.is_err() {
                 safe = false;
             }
             let plotted_point = plotted_point.ok().flatten();
             let axis_value_refs = (code == 95)
-                .then(|| plot_axis_records::decode_group(&b[group_start..rs[i].data.end]))
+                .then(|| plot_axis_records::decode_group(semantic_group))
                 .transpose();
             if axis_value_refs.is_err() {
                 safe = false;
             }
             let axis_value_refs = axis_value_refs.ok().flatten();
             let literal_axis_value = (code == 123)
-                .then(|| plot_axis_records::decode_literal_group(&b[group_start..rs[i].data.end]))
+                .then(|| plot_axis_records::decode_literal_group(semantic_group))
                 .transpose();
             if literal_axis_value.is_err() {
                 safe = false;
@@ -1265,28 +1281,22 @@ impl Document {
                     return Err("Tool input placeholder must not have dependencies".into());
                 }
                 if input.kind() == Some(EmbeddedToolInputKind::Numeric) {
-                    let bytes = &b[group_start..rs[i].data.end];
+                    let bytes = semantic_group;
                     match input.native_subtype {
                         33 => super::tool_inputs::numeric_given_layout(bytes)?,
                         51 => super::tool_inputs::calculation_given_layout(bytes)?,
                         _ => return Err("Unsupported numeric tool given subtype".into()),
                     }
                 } else if input.kind() == Some(EmbeddedToolInputKind::Distance) {
-                    super::tool_inputs::distance_given_layout(&b[group_start..rs[i].data.end])?;
+                    super::tool_inputs::distance_given_layout(semantic_group)?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::Function) {
-                    super::tool_inputs::function_given_layout(&b[group_start..rs[i].data.end])?;
+                    super::tool_inputs::function_given_layout(semantic_group)?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::ScalarParameter) {
-                    super::tool_inputs::scalar_parameter_given_layout(
-                        &b[group_start..rs[i].data.end],
-                    )?;
+                    super::tool_inputs::scalar_parameter_given_layout(semantic_group)?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::DistanceParameter) {
-                    super::tool_inputs::distance_parameter_given_layout(
-                        &b[group_start..rs[i].data.end],
-                    )?;
+                    super::tool_inputs::distance_parameter_given_layout(semantic_group)?;
                 } else if input.kind() == Some(EmbeddedToolInputKind::AngleParameter) {
-                    super::tool_inputs::angle_parameter_given_layout(
-                        &b[group_start..rs[i].data.end],
-                    )?;
+                    super::tool_inputs::angle_parameter_given_layout(semantic_group)?;
                 } else if input.kind().is_some() {
                     let body: Vec<_> = rs
                         .iter()
@@ -1336,7 +1346,7 @@ impl Document {
             } else if !tool_inputs.is_empty() && code == 48 && h[6..10] == [11, 0, 33, 0] {
                 // An abstract tool calculation is typed only after binding. Its
                 // native expression and references remain exact in the template.
-                let mut normalized = b[group_start..rs[i].data.end].to_vec();
+                let mut normalized = semantic_group.to_vec();
                 normalized[16..18].copy_from_slice(&51_u16.to_le_bytes());
                 match ParameterCalculationGroup::parse(&normalized) {
                     Ok(group)
@@ -1475,7 +1485,7 @@ impl Document {
                 objects.len() + 1,
                 h,
                 &refs,
-                &b[group_start..rs[i].data.end],
+                semantic_group,
                 text_style_count,
             ) {
                 caption
@@ -1730,13 +1740,13 @@ impl Document {
                             values,
                         ) => Kind::IterationValues(*iteration,values.to_vec()),
                     (90,None,_) if super::point_numeric_labels::decode_numeric_label(
-                        &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).is_some() =>
+                        &objects,page,objects.len()+1,h,&refs,semantic_group,text_style_count).is_some() =>
                         super::point_numeric_labels::decode_numeric_label(
-                            &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).unwrap(),
+                            &objects,page,objects.len()+1,h,&refs,semantic_group,text_style_count).unwrap(),
                     (90,None,_) if super::point_numeric_labels::decode_referenced_label(
-                        &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).is_some() =>
+                        &objects,page,objects.len()+1,h,&refs,semantic_group,text_style_count).is_some() =>
                         super::point_numeric_labels::decode_referenced_label(
-                            &objects,page,objects.len()+1,h,&refs,&b[group_start..rs[i].data.end],text_style_count).unwrap(),
+                            &objects,page,objects.len()+1,h,&refs,semantic_group,text_style_count).unwrap(),
                     (89, None, [parameter, seed, image, carried, ray])
                         if *parameter > 0 && *seed > 0 && *image > 0 && *ray > 0
                             && h[6..10] == [14, 0, 64, 0]
@@ -2085,12 +2095,12 @@ impl Document {
                             page,
                             h,
                             &[*source, *frame],
-                            &b[group_start..rs[i].data.end],
+                            semantic_group,
                         )
                         .unwrap_or(Kind::Unsupported(code))
                     }
                     (0, None, []) if function_expression.is_some() && rich_text.is_none() && text_box.is_none() => {
-                        let group = &b[group_start..rs[i].data.end];
+                        let group = semantic_group;
                         if let Ok(parameter) = ParameterGroup::parse(group) {
                             let generated_name_valid = !parameter.name().is_empty()
                                 || parameter.display_mode() == 0
@@ -2117,26 +2127,26 @@ impl Document {
                     (48, None, [first, second]) if *first > 0 && *second > 0
                         && objects.get(first - 1).is_some_and(|o| o.kind.is_distance_value())
                         && objects.get(second - 1).is_some_and(|o| o.kind.is_distance_value()) => {
-                        match LengthPairCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
+                        match LengthPairCalculationGroup::parse(semantic_group) {
                             Ok(group) if group.sources() == [(*first-page_base) as u32, (*second-page_base) as u32] => Kind::LengthPairCalculation(*first, *second, group),
-                            _ => parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*first,*second], &objects, page_base).unwrap_or(Kind::Unsupported(code)),
+                            _ => parse_numeric_calculation(semantic_group, &[*first,*second], &objects, page_base).unwrap_or(Kind::Unsupported(code)),
                         }
                     }
-                    (48, None, sources) if sources.len() >= 2 => parse_numeric_calculation(&b[group_start..rs[i].data.end], sources, &objects, page_base).unwrap_or(Kind::Unsupported(code)),
+                    (48, None, sources) if sources.len() >= 2 => parse_numeric_calculation(semantic_group, sources, &objects, page_base).unwrap_or(Kind::Unsupported(code)),
                     (48, None, [source]) if *source > 0
                         && objects.get(source - 1).is_some_and(|object| object.kind.is_distance_value()) => {
-                        match MeasuredCalculationGroup::parse(&b[group_start..rs[i].data.end]) {
+                        match MeasuredCalculationGroup::parse(semantic_group) {
                             Ok(group) if group.source_id() as usize == source - page_base => Kind::MeasuredCalculation(*source, group),
-                            _ => parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code)),
+                            _ => parse_numeric_calculation(semantic_group, &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code)),
                         }
                     }
                     (48, None, [source]) if *source > 0
                         && objects.get(source - 1).is_some_and(|object| object.kind.numeric_unit().is_some()
                             || matches!(object.kind, Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _))) => {
-                        parse_numeric_calculation(&b[group_start..rs[i].data.end], &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code))
+                        parse_numeric_calculation(semantic_group, &[*source], &objects, page_base).unwrap_or(Kind::Unsupported(code))
                     }
                     (91, None, [source]) if source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| matches!(o.kind, Kind::Parameter(_))) => {
-                        match TableGroup::parse(&b[group_start..rs[i].data.end]) {
+                        match TableGroup::parse(semantic_group) {
                             Ok(table) if source.checked_sub(page_base) == Some(table.source_id() as usize)
                                 && source.checked_sub(1).and_then(|index| objects.get(index)).is_some_and(|o| match &o.kind {
                                     Kind::Parameter(parameter) if parameter.unit() == NumericUnit::Scalar => match table.named_label_value() {
@@ -2153,7 +2163,7 @@ impl Document {
                     }) && objects.get(second - 1).is_some_and(|o| {
                         o.page == page && matches!(&o.kind, Kind::Parameter(group) if group.name() == "t[1]" && group.unit() == NumericUnit::Scalar)
                     }) => {
-                        match TableGroup::parse_pair(&b[group_start..rs[i].data.end]) {
+                        match TableGroup::parse_pair(semantic_group) {
                             Ok(table) if table.pair_source_ids() == Some([
                                 (*first - page_base) as u32,
                                 (*second - page_base) as u32,
@@ -2168,7 +2178,7 @@ impl Document {
                                 && (object.kind.numeric_unit().is_some()
                                     || matches!(object.kind, Kind::ReferencedText { .. }))
                         })) => {
-                        match TableGroup::parse_general(&b[group_start..rs[i].data.end]) {
+                        match TableGroup::parse_general(semantic_group) {
                             Ok(table) if table.general_source_ids().as_deref()
                                 == Some(&sources.iter().map(|source| (*source - page_base) as u32).collect::<Vec<_>>()) => {
                                 Kind::DataTable(sources.to_vec(), table)
@@ -3190,6 +3200,7 @@ impl Document {
                 }),
                 node: sketchpad_ir::ObjectNode::new(objects.len() + 1, page, kind),
                 visible,
+                arrow_selectable,
                 presentation_suppressed: raw & 0x20000 != 0,
                 tracing: h[4] & 1 != 0,
                 deleted: false,
