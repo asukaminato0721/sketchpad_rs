@@ -1125,7 +1125,16 @@ impl Document {
                     .function_expression(definition)
                     .ok_or("Invalid function definition")?;
                 let mut group = function_records::encode_plot_group_with_range(
-                    expression, definition, frame, min, max, samples, mode,
+                    expression,
+                    definition,
+                    frame,
+                    function_records::PlotSettings {
+                        min,
+                        max,
+                        samples,
+                        presentation: o.plot_presentation.unwrap_or_default(),
+                    },
+                    mode,
                 )?;
                 if !o.visible {
                     group[10] |= 1;
@@ -1138,9 +1147,12 @@ impl Document {
                     x,
                     y,
                     frame,
-                    min,
-                    max,
-                    samples,
+                    function_records::PlotSettings {
+                        min,
+                        max,
+                        samples,
+                        presentation: o.plot_presentation.unwrap_or_default(),
+                    },
                     mode == PlotPointsMode::Polar,
                 )?;
                 if !o.visible {

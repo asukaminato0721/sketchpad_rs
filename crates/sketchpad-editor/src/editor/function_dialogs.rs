@@ -269,6 +269,22 @@ impl Editor {
                         egui::TextEdit::singleline(&mut self.plot_samples_draft).desired_width(70.),
                     );
                 });
+                if self.doc.plot_properties(plot).is_some() {
+                    ui.radio_value(
+                        &mut self.plot_presentation_draft.discrete,
+                        false,
+                        "Continuously",
+                    );
+                    ui.radio_value(
+                        &mut self.plot_presentation_draft.discrete,
+                        true,
+                        "Discretely",
+                    );
+                    ui.checkbox(
+                        &mut self.plot_presentation_draft.show_arrows_and_endpoints,
+                        "Show arrows and endpoints",
+                    );
+                }
                 ui.horizontal(|ui| {
                     apply = ui.button("Apply").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -294,7 +310,19 @@ impl Editor {
                         .trim()
                         .parse::<u32>()
                         .map_err(|_| "Invalid sample count")?;
-                    self.doc.set_plot_range(plot, min, max, samples)
+                    if self.doc.plot_properties(plot).is_some() {
+                        self.doc
+                            .set_plot_properties(
+                                plot,
+                                min,
+                                max,
+                                samples,
+                                self.plot_presentation_draft,
+                            )
+                            .map(|_| ())
+                    } else {
+                        self.doc.set_plot_range(plot, min, max, samples)
+                    }
                 })();
                 match result {
                     Ok(()) => {

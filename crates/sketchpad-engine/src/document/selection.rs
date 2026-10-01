@@ -434,6 +434,7 @@ impl Document {
                         visible: object.visible && !self.is_presentation_suppressed(id),
                         arrow_selectable: object.arrow_selectable,
                         iteration_final_only: object.iteration_final_only,
+                        plot_presentation: object.plot_presentation,
                         tracing: object.tracing,
                         midpoint_host: if frozen_points.contains_key(&id) {
                             None
@@ -482,6 +483,7 @@ impl Document {
             visible,
             arrow_selectable,
             iteration_final_only,
+            plot_presentation,
             tracing,
             midpoint_host,
             locus_interval,
@@ -579,6 +581,7 @@ impl Document {
                 arrow_selectable: *arrow_selectable,
                 presentation_suppressed: false,
                 iteration_final_only: *iteration_final_only,
+                plot_presentation: *plot_presentation,
                 tracing: *tracing,
                 deleted: false,
                 midpoint_host: midpoint_host.map(|host| ids[host]),

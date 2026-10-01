@@ -49,7 +49,7 @@ use sketchpad_engine::action_records::{
     VisibilityAction, VisibilityOptions,
 };
 use sketchpad_engine::document::{Clipboard, Document, Kind, Point, SampledImageDistortion};
-use sketchpad_engine::function_records::SimpleFunction;
+use sketchpad_engine::function_records::{PlotPresentation, SimpleFunction};
 use sketchpad_engine::plot_points_records::PlotPointsMode;
 use sketchpad_engine::table_records::ParameterAnimationSettings;
 use std::collections::HashMap;
@@ -359,6 +359,7 @@ struct Editor {
     plot_min_draft: String,
     plot_max_draft: String,
     plot_samples_draft: String,
+    plot_presentation_draft: PlotPresentation,
     parameter_value_dialog: Option<usize>,
     parameter_value_draft: String,
     parameter_precision_draft: usize,
@@ -386,6 +387,10 @@ struct Editor {
     properties_axis_pi_labels_draft: bool,
     properties_sampled_image_samples_draft: u32,
     properties_sampled_image_distortion_draft: SampledImageDistortion,
+    properties_plot_min_draft: String,
+    properties_plot_max_draft: String,
+    properties_plot_samples_draft: u32,
+    properties_plot_presentation_draft: PlotPresentation,
     properties_visibility_action_draft: VisibilityAction,
     properties_visibility_options_draft: VisibilityOptions,
     properties_animation_settings_draft: Vec<AnimationSettings>,
@@ -510,6 +515,7 @@ impl Editor {
             plot_min_draft: String::new(),
             plot_max_draft: String::new(),
             plot_samples_draft: String::new(),
+            plot_presentation_draft: PlotPresentation::default(),
             parameter_value_dialog: None,
             parameter_value_draft: "1".into(),
             parameter_precision_draft: 2,
@@ -537,6 +543,10 @@ impl Editor {
             properties_axis_pi_labels_draft: false,
             properties_sampled_image_samples_draft: 2_000,
             properties_sampled_image_distortion_draft: SampledImageDistortion::Most,
+            properties_plot_min_draft: String::new(),
+            properties_plot_max_draft: String::new(),
+            properties_plot_samples_draft: 750,
+            properties_plot_presentation_draft: PlotPresentation::default(),
             properties_visibility_action_draft: VisibilityAction::Hide,
             properties_visibility_options_draft: VisibilityOptions::default(),
             properties_animation_settings_draft: Vec::new(),

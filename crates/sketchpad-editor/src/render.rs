@@ -85,6 +85,47 @@ fn curve_screen_paths(vp: &Viewport, segments: &[(Point, Point, LineMode)]) -> V
     paths
 }
 
+fn plot_arrow_segments(doc: &Document, vp: &Viewport, id: usize) -> Vec<(Pos2, Pos2)> {
+    let Some(object) = doc.objects.get(id.saturating_sub(1)) else {
+        return Vec::new();
+    };
+    let Some(presentation) = object.plot_presentation else {
+        return Vec::new();
+    };
+    if presentation.discrete || !presentation.show_arrows_and_endpoints {
+        return Vec::new();
+    }
+    let Some(segments) = doc
+        .function_plot_segments(id, 384)
+        .or_else(|| doc.parametric_plot_segments(id, 384))
+    else {
+        return Vec::new();
+    };
+    let Some(&(first, after_first)) = segments.first() else {
+        return Vec::new();
+    };
+    let Some(&(before_last, last)) = segments.last() else {
+        return Vec::new();
+    };
+    let arrow = |tip: Point, inside: Point| {
+        let tip = vp.screen(tip);
+        let toward_inside = vp.screen(inside) - tip;
+        let length = toward_inside.length();
+        if length < 0.01 {
+            return None;
+        }
+        let direction = toward_inside / length;
+        let base = tip + direction * 7.;
+        let perpendicular = egui::vec2(-direction.y, direction.x) * 3.5;
+        Some([(tip, base + perpendicular), (tip, base - perpendicular)])
+    };
+    [arrow(first, after_first), arrow(last, before_last)]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect()
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -1564,6 +1605,22 @@ fn svg_page_with_layout(
                 )
                 .unwrap();
             }
+        } else if let Some(points) = doc.plot_sample_points(o.id, 384) {
+            if let Some(VisualStyle::Stroke { line, color }) = doc.effective_visual_style(o.id) {
+                let radius = line_width(line.width).max(1.5);
+                for point in points {
+                    let point = vp.screen(point);
+                    writeln!(
+                        svg,
+                        "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"none\"/>",
+                        point.x,
+                        point.y,
+                        radius,
+                        css_color(color)
+                    )
+                    .unwrap();
+                }
+            }
         } else if let Some(segments) = doc
             .function_plot_segments(o.id, 384)
             .or_else(|| doc.parametric_plot_segments(o.id, 384))
@@ -1605,6 +1662,18 @@ fn svg_page_with_layout(
                         .unwrap();
                     }
                 }
+            }
+            for (tip, wing) in plot_arrow_segments(doc, vp, o.id) {
+                writeln!(
+                    svg,
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{}/>",
+                    tip.x,
+                    tip.y,
+                    wing.x,
+                    wing.y,
+                    svg_stroke(doc.effective_visual_style(o.id))
+                )
+                .unwrap();
             }
         }
         if let Some((center, radius)) = doc.circle_points(o.id) {
@@ -2817,6 +2886,11 @@ impl GeometryRenderer {
                         .collect::<Vec<_>>();
                     mesh.polygon(&screen, fill);
                 }
+            } else if let Some(points) = doc.plot_sample_points(o.id, 384) {
+                let radius = line_width(stroke.width).max(1.5);
+                for point in points {
+                    mesh.disk(vp.screen(point), radius, col);
+                }
             } else if let Some(segments) = doc
                 .function_plot_segments(o.id, 384)
                 .or_else(|| doc.parametric_plot_segments(o.id, 384))
@@ -2853,6 +2927,9 @@ impl GeometryRenderer {
                             );
                         }
                     }
+                }
+                for (tip, wing) in plot_arrow_segments(doc, vp, o.id) {
+                    mesh.line(tip, wing, line_width(stroke.width), col);
                 }
             }
             match o.kind {

@@ -710,12 +710,19 @@ impl Document {
                     .find(|record| record.kind == 0x0902)
                     .ok_or("Missing saved plot range")?;
                 let original = &bytes[range.data.clone()];
-                if function_records::decode_plot_range(original)? != (min, max, samples, mode) {
+                let presentation = object
+                    .plot_presentation
+                    .ok_or("Function plot has no presentation settings")?;
+                if function_records::decode_plot_range(original)? != (min, max, samples, mode)
+                    || function_records::decode_plot_presentation(original)? != presentation
+                {
                     let mut payload = original.to_vec();
                     payload[..8].copy_from_slice(&min.to_le_bytes());
                     payload[8..16].copy_from_slice(&max.to_le_bytes());
                     payload[16..20].copy_from_slice(&samples.to_le_bytes());
                     payload[20..24].copy_from_slice(&mode.native_word().to_le_bytes());
+                    payload[24] = u8::from(presentation.discrete);
+                    payload[32] = u8::from(presentation.show_arrows_and_endpoints);
                     let mut replacement = Vec::new();
                     put_record(&mut replacement, 0x0902, &payload);
                     edits.push((
@@ -733,13 +740,19 @@ impl Document {
                     .find(|record| record.kind == 0x0902)
                     .ok_or("Missing saved plot range")?;
                 let original = &bytes[range.data.clone()];
+                let presentation = object
+                    .plot_presentation
+                    .ok_or("Parametric plot has no presentation settings")?;
                 if function_records::decode_parametric_range(original, polar)?
                     != (min, max, samples)
+                    || function_records::decode_plot_presentation(original)? != presentation
                 {
                     let mut payload = original.to_vec();
                     payload[..8].copy_from_slice(&min.to_le_bytes());
                     payload[8..16].copy_from_slice(&max.to_le_bytes());
                     payload[16..20].copy_from_slice(&samples.to_le_bytes());
+                    payload[24] = u8::from(presentation.discrete);
+                    payload[32] = u8::from(presentation.show_arrows_and_endpoints);
                     let mut replacement = Vec::new();
                     put_record(&mut replacement, 0x0902, &payload);
                     edits.push((

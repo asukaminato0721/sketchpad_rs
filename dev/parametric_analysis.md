@@ -18,8 +18,9 @@ The final object is code `126` for rectangular and `127` for polar. Its
 `0x07d2` dependencies are `[x-function ID, y-function ID, coordinate-system ID]`.
 The 40-byte `0x0902` payload stores two little-endian `f64` domain endpoints
 at offsets `0` and `8`, sample count `750` at offset `16`, and a mode word at
-offset `20`: `0x30000` rectangular or `0x30002` polar. The remaining bytes
-are retained from the native template. The polar example's endpoint agrees
+offset `20`: `0x30000` rectangular or `0x30002` polar. The low bytes at offsets
+`24` and `32` select continuous/discrete drawing and arrow/endpoint visibility;
+their upper bytes and the other words are retained from the native template. The polar example's endpoint agrees
 with `r=1, θ=1` radian; polar function output is therefore interpreted in
 radians by the current renderer.
 
@@ -44,5 +45,4 @@ opened and saved byte-identically in Sketchpad 5. The verified results are
 count. Smooth expressions no longer lose a segment at a turning point when
 the sample count is reduced; reciprocal and tangent pole gaps remain.
 
-Nonnumeric domain expressions, arrowhead properties, and other function types
-remain to be implemented.
+Nonnumeric domain expressions and other function types remain to be implemented.

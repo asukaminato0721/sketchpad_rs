@@ -850,6 +850,32 @@ pub enum FunctionPlotMode {
     Polar,
 }
 
+/// Presentation choices stored alongside a function or parametric plot's
+/// domain. These are independent of the coordinate interpretation in
+/// [`FunctionPlotMode`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlotPresentation {
+    pub discrete: bool,
+    pub show_arrows_and_endpoints: bool,
+}
+
+impl Default for PlotPresentation {
+    fn default() -> Self {
+        Self {
+            discrete: false,
+            show_arrows_and_endpoints: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlotSettings {
+    pub min: f64,
+    pub max: f64,
+    pub samples: u32,
+    pub presentation: PlotPresentation,
+}
+
 impl FunctionPlotMode {
     pub(crate) fn native_word(self) -> u32 {
         match self {
@@ -865,6 +891,13 @@ impl FunctionPlotMode {
 /// describe a usable interval.
 pub(crate) fn plot_sample_count_supported(samples: u32) -> bool {
     samples >= 2
+}
+
+pub const MIN_EDITABLE_PLOT_SAMPLES: u32 = 20;
+pub const MAX_EDITABLE_PLOT_SAMPLES: u32 = 250_000;
+
+pub(crate) fn editable_plot_sample_count_supported(samples: u32) -> bool {
+    (MIN_EDITABLE_PLOT_SAMPLES..=MAX_EDITABLE_PLOT_SAMPLES).contains(&samples)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1241,6 +1274,30 @@ pub fn decode_plot_range(data: &[u8]) -> Result<(f64, f64, u32, FunctionPlotMode
     Ok((x_min, x_max, samples, mode))
 }
 
+pub fn decode_plot_presentation(data: &[u8]) -> Result<PlotPresentation, String> {
+    if data.len() != 40 {
+        return Err("Unsupported plot descriptor".into());
+    }
+    let discrete = data[24];
+    let show_arrows_and_endpoints = data[32];
+    if discrete > 1 || show_arrows_and_endpoints > 1 {
+        return Err("Unsupported plot presentation".into());
+    }
+    Ok(PlotPresentation {
+        discrete: discrete != 0,
+        show_arrows_and_endpoints: show_arrows_and_endpoints != 0,
+    })
+}
+
+fn set_plot_presentation(data: &mut [u8], presentation: PlotPresentation) -> Result<(), String> {
+    if data.len() != 40 {
+        return Err("Unsupported plot descriptor".into());
+    }
+    data[24] = u8::from(presentation.discrete);
+    data[32] = u8::from(presentation.show_arrows_and_endpoints);
+    Ok(())
+}
+
 pub fn decode_parametric_range(data: &[u8], polar: bool) -> Result<(f64, f64, u32), String> {
     if data.len() != 40 || u32_at(data, 20) != if polar { 0x30002 } else { 0x30000 } {
         return Err("Unsupported parametric plot mode".into());
@@ -1258,11 +1315,15 @@ pub fn encode_parametric_plot_group(
     x_definition: usize,
     y_definition: usize,
     frame: usize,
-    min: f64,
-    max: f64,
-    samples: u32,
+    settings: PlotSettings,
     polar: bool,
 ) -> Result<Vec<u8>, String> {
+    let PlotSettings {
+        min,
+        max,
+        samples,
+        presentation,
+    } = settings;
     if x_definition == 0
         || y_definition == 0
         || frame == 0
@@ -1310,6 +1371,7 @@ pub fn encode_parametric_plot_group(
     group[offset..offset + 8].copy_from_slice(&min.to_le_bytes());
     group[offset + 8..offset + 16].copy_from_slice(&max.to_le_bytes());
     group[offset + 16..offset + 20].copy_from_slice(&samples.to_le_bytes());
+    set_plot_presentation(&mut group[offset..offset + 40], presentation)?;
     Ok(group)
 }
 
@@ -1498,11 +1560,15 @@ pub fn encode_plot_group_with_range(
     expression: &SimpleFunction,
     definition_id: usize,
     frame_id: usize,
-    min: f64,
-    max: f64,
-    samples: u32,
+    settings: PlotSettings,
     mode: FunctionPlotMode,
 ) -> Result<Vec<u8>, String> {
+    let PlotSettings {
+        min,
+        max,
+        samples,
+        presentation,
+    } = settings;
     if !min.is_finite() || !max.is_finite() || min >= max || !plot_sample_count_supported(samples) {
         return Err("Invalid function plot range".into());
     }
@@ -1520,6 +1586,10 @@ pub fn encode_plot_group_with_range(
         .copy_from_slice(&samples.to_le_bytes());
     bytes[range.payload_start + 20..range.payload_start + 24]
         .copy_from_slice(&mode.native_word().to_le_bytes());
+    set_plot_presentation(
+        &mut bytes[range.payload_start..range.payload_start + 40],
+        presentation,
+    )?;
     Ok(bytes[4..].to_vec())
 }
 

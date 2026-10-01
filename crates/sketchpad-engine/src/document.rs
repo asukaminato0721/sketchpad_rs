@@ -71,7 +71,7 @@ use crate::action_records::{
     VisibilityAction, VisibilityOptions,
 };
 use crate::coordinate_measure_records::CoordinateMeasureKind;
-use crate::function_records::{FunctionPlotMode, SimpleFunction};
+use crate::function_records::{FunctionPlotMode, PlotPresentation, SimpleFunction};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use crate::style_records::{
@@ -701,6 +701,8 @@ pub struct Object {
     pub presentation_suppressed: bool,
     /// Native `0x090a` display mode for an iteration controller.
     pub iteration_final_only: bool,
+    /// Native Plot-tab choices stored in a plot's `0x0902` descriptor.
+    pub plot_presentation: Option<PlotPresentation>,
     pub tracing: bool,
     pub deleted: bool,
     pub midpoint_host: Option<usize>,
@@ -733,6 +735,7 @@ struct ClipboardObject {
     visible: bool,
     arrow_selectable: bool,
     iteration_final_only: bool,
+    plot_presentation: Option<PlotPresentation>,
     tracing: bool,
     midpoint_host: Option<usize>,
     locus_interval: Option<[f64; 2]>,
@@ -1078,6 +1081,8 @@ impl Document {
                 ..
             }
         );
+        let plot_presentation = matches!(kind, Kind::FunctionPlot(..) | Kind::ParametricPlot(..))
+            .then_some(PlotPresentation::default());
         let interior_order = if matches!(
             kind,
             Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
@@ -1098,6 +1103,7 @@ impl Document {
             arrow_selectable: true,
             presentation_suppressed: false,
             iteration_final_only,
+            plot_presentation,
             tracing: false,
             deleted: false,
             midpoint_host,

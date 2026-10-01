@@ -2184,9 +2184,12 @@ impl Document {
                     (72, None, [definition, frame]) if function_range.is_some()
                         && matches!(objects.get(definition - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
-                        match function_records::decode_plot_range(function_range.as_ref().unwrap()) {
-                            Ok((min,max,samples,mode)) => Kind::FunctionPlot(*definition,*frame,min,max,samples,mode),
-                            Err(_) => Kind::Unsupported(code),
+                        match (
+                            function_records::decode_plot_range(function_range.as_ref().unwrap()),
+                            function_records::decode_plot_presentation(function_range.as_ref().unwrap()),
+                        ) {
+                            (Ok((min,max,samples,mode)), Ok(_)) => Kind::FunctionPlot(*definition,*frame,min,max,samples,mode),
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (78, None, sources) if !sources.is_empty() && function_expression.is_some()
@@ -2202,9 +2205,12 @@ impl Document {
                         && matches!(objects.get(x - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && matches!(objects.get(y - 1).map(|o| &o.kind), Some(Kind::FunctionDefinition(_) | Kind::ReferencedFunction(_, _) | Kind::DerivativeFunction(_, _)))
                         && objects.get(frame - 1).is_some_and(|o| o.kind.is_coordinate_system()) => {
-                        match function_records::decode_parametric_range(function_range.as_ref().unwrap(), code == 127) {
-                            Ok((min,max,samples)) => Kind::ParametricPlot(*x,*y,*frame,min,max,samples,if code == 127 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian }),
-                            Err(_) => Kind::Unsupported(code),
+                        match (
+                            function_records::decode_parametric_range(function_range.as_ref().unwrap(), code == 127),
+                            function_records::decode_plot_presentation(function_range.as_ref().unwrap()),
+                        ) {
+                            (Ok((min,max,samples)), Ok(_)) => Kind::ParametricPlot(*x,*y,*frame,min,max,samples,if code == 127 { PlotPointsMode::Polar } else { PlotPointsMode::Cartesian }),
+                            _ => Kind::Unsupported(code),
                         }
                     }
                     (62, _, targets) if !targets.is_empty() && action_group.as_ref().is_some_and(|group| {
@@ -3194,6 +3200,14 @@ impl Document {
             ) && iteration_definition
                 .as_ref()
                 .is_some_and(|definition| definition.get(4..6) == Some(&[1, 0]));
+            let plot_presentation =
+                if matches!(kind, Kind::FunctionPlot(..) | Kind::ParametricPlot(..)) {
+                    Some(function_records::decode_plot_presentation(
+                        function_range.as_deref().ok_or("Plot has no descriptor")?,
+                    )?)
+                } else {
+                    None
+                };
             objects.push(Object {
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 locus_interval: (matches!(kind, Kind::Locus(..))
@@ -3210,6 +3224,7 @@ impl Document {
                 arrow_selectable,
                 presentation_suppressed: raw & 0x20000 != 0,
                 iteration_final_only,
+                plot_presentation,
                 tracing: h[4] & 1 != 0,
                 deleted: false,
                 point_offset,

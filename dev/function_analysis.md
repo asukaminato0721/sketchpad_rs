@@ -34,7 +34,10 @@ also has `0x07d5` text, `0x07d8` style, and `0x08a3` label placement records.
 The code-72 plot has `0x07d2` references `[formula ID, coordinate-system ID]`
 and a 40-byte `0x0902` range record. In both original plots, the range is
 `[-5.265208333333335, 5.265208333333335]`, the count is 750 samples, and
-the low 16 bits of the mode word select Cartesian plotting. A trailing
+the low 16 bits of the mode word select Cartesian plotting. The low bytes at
+offsets 24 and 32 select continuous/discrete drawing and arrow/endpoint
+visibility while their opaque upper bytes are preserved. Native's editable count range is 20–250000.
+A trailing
 `0x2328` record names the last object (ID 8), while `0x232d` still names the
 coordinate system (ID 6).
 

@@ -482,37 +482,44 @@ impl Editor {
                             {
                                 return Some((o.id, 0.));
                             }
-                            let segments = self
-                                .doc
-                                .function_plot_segments(o.id, 256)
-                                .or_else(|| self.doc.parametric_plot_segments(o.id, 256))
-                                .map(|segments| {
-                                    segments
-                                        .into_iter()
-                                        .map(|(start, end)| (start, end, LineMode::Segment))
-                                        .collect::<Vec<_>>()
-                                })
-                                .or_else(|| self.doc.locus_strokes(o.id, 256))
-                                .or_else(|| self.doc.sampled_mapped_strokes(o.id, 256))?;
-                            segments
-                                .iter()
-                                .map(|(start, end, mode)| {
-                                    let a = v.screen(*start);
-                                    let b = v.screen(*end);
-                                    let ab = b - a;
-                                    let t = if ab.length_sq() < 1e-6 {
-                                        0.
-                                    } else {
-                                        let raw = (p - a).dot(ab) / ab.length_sq();
-                                        match mode {
-                                            LineMode::Segment => raw.clamp(0., 1.),
-                                            LineMode::Ray => raw.max(0.),
-                                            LineMode::Line => raw,
-                                        }
-                                    };
-                                    (p - (a + ab * t)).length()
-                                })
-                                .min_by(f32::total_cmp)?
+                            if let Some(points) = self.doc.plot_sample_points(o.id, 256) {
+                                points
+                                    .into_iter()
+                                    .map(|point| p.distance(v.screen(point)))
+                                    .min_by(f32::total_cmp)?
+                            } else {
+                                let segments = self
+                                    .doc
+                                    .function_plot_segments(o.id, 256)
+                                    .or_else(|| self.doc.parametric_plot_segments(o.id, 256))
+                                    .map(|segments| {
+                                        segments
+                                            .into_iter()
+                                            .map(|(start, end)| (start, end, LineMode::Segment))
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .or_else(|| self.doc.locus_strokes(o.id, 256))
+                                    .or_else(|| self.doc.sampled_mapped_strokes(o.id, 256))?;
+                                segments
+                                    .iter()
+                                    .map(|(start, end, mode)| {
+                                        let a = v.screen(*start);
+                                        let b = v.screen(*end);
+                                        let ab = b - a;
+                                        let t = if ab.length_sq() < 1e-6 {
+                                            0.
+                                        } else {
+                                            let raw = (p - a).dot(ab) / ab.length_sq();
+                                            match mode {
+                                                LineMode::Segment => raw.clamp(0., 1.),
+                                                LineMode::Ray => raw.max(0.),
+                                                LineMode::Line => raw,
+                                            }
+                                        };
+                                        (p - (a + ab * t)).length()
+                                    })
+                                    .min_by(f32::total_cmp)?
+                            }
                         }
                         _ => return None,
                     }

@@ -188,6 +188,11 @@ impl Editor {
                                     self.plot_min_draft = min.to_string();
                                     self.plot_max_draft = max.to_string();
                                     self.plot_samples_draft = samples.to_string();
+                                    if let Some((_, _, _, presentation)) =
+                                        self.doc.plot_properties(id)
+                                    {
+                                        self.plot_presentation_draft = presentation;
+                                    }
                                 }
                             }
                             _ => {}

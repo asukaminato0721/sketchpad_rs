@@ -1057,7 +1057,8 @@ impl Document {
                     || !min.is_finite()
                     || !max.is_finite()
                     || min >= max
-                    || !crate::function_records::plot_sample_count_supported(samples))
+                    || !crate::function_records::plot_sample_count_supported(samples)
+                    || o.plot_presentation.is_none())
             {
                 return Err(format!("Invalid function plot {}", o.id));
             }
@@ -1070,7 +1071,8 @@ impl Document {
                     || !min.is_finite()
                     || !max.is_finite()
                     || min >= max
-                    || !crate::function_records::plot_sample_count_supported(samples))
+                    || !crate::function_records::plot_sample_count_supported(samples)
+                    || o.plot_presentation.is_none())
             {
                 return Err(format!("Invalid parametric plot {}", o.id));
             }
@@ -1798,6 +1800,8 @@ impl Document {
                 Some("presentation suppression")
             } else if saved.iteration_final_only != current.iteration_final_only {
                 Some("iteration display mode")
+            } else if saved.plot_presentation != current.plot_presentation {
+                Some("plot presentation")
             } else if saved.label != current.label {
                 Some("label")
             } else if saved.visual_style != current.visual_style {

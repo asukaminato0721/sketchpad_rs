@@ -10,6 +10,7 @@ use sketchpad_rs::document::{
     Clipboard, Document, IterationDepth, Kind, Point, Record, SampledImageDistortion,
     TextStyleCommand, records,
 };
+use sketchpad_rs::function_records::PlotPresentation;
 use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
 #[cfg(feature = "desktop")]
@@ -1118,6 +1119,37 @@ fn replay(path: &str) -> Result<(), String> {
                     let samples = samples.parse::<u32>().map_err(|_| "invalid sample count")?;
                     document.set_plot_range(id, min, max, samples)?;
                     println!("line {}: set_plot_range -> object {id}", index + 1);
+                }
+                "plot_properties" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, min, max, samples, drawing, endpoints] = parts.as_slice() else {
+                        return Err("expected plot_properties ID MIN MAX SAMPLES continuous|discrete arrows|no_arrows".into());
+                    };
+                    let id = id.parse::<usize>().map_err(|_| "invalid plot ID")?;
+                    let min = min.parse::<f64>().map_err(|_| "invalid domain start")?;
+                    let max = max.parse::<f64>().map_err(|_| "invalid domain end")?;
+                    let samples = samples.parse::<u32>().map_err(|_| "invalid sample count")?;
+                    let discrete = match *drawing {
+                        "continuous" => false,
+                        "discrete" => true,
+                        _ => return Err("expected continuous or discrete drawing".into()),
+                    };
+                    let show_arrows_and_endpoints = match *endpoints {
+                        "arrows" => true,
+                        "no_arrows" => false,
+                        _ => return Err("expected arrows or no_arrows".into()),
+                    };
+                    document.set_plot_properties(
+                        id,
+                        min,
+                        max,
+                        samples,
+                        PlotPresentation {
+                            discrete,
+                            show_arrows_and_endpoints,
+                        },
+                    )?;
+                    println!("line {}: plot_properties -> object {id}", index + 1);
                 }
                 "plot_function_degrees" => {
                     let expression = sketchpad_rs::function_records::SimpleFunction::parse(rest)?;

@@ -10,6 +10,9 @@ use sketchpad_engine::document::{
     Document, IterationDepth, Kind, LineMode, Object, SampledImageDefinition,
     SampledImageDistortion,
 };
+use sketchpad_engine::function_records::{
+    FunctionPlotMode, MAX_EDITABLE_PLOT_SAMPLES, MIN_EDITABLE_PLOT_SAMPLES,
+};
 use sketchpad_engine::style_records::VisualStyle;
 
 fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str {
@@ -149,6 +152,12 @@ impl Editor {
                 self.properties_sampled_image_samples_draft = samples;
                 self.properties_sampled_image_distortion_draft = distortion;
             }
+            if let Some((min, max, samples, presentation)) = self.doc.plot_properties(id) {
+                self.properties_plot_min_draft = min.to_string();
+                self.properties_plot_max_draft = max.to_string();
+                self.properties_plot_samples_draft = samples;
+                self.properties_plot_presentation_draft = presentation;
+            }
             if let Kind::HideShowButton {
                 action, options, ..
             } = &object.kind
@@ -250,6 +259,7 @@ impl Editor {
         let mut apply_iteration_properties = false;
         let mut apply_axis_properties = false;
         let mut apply_sampled_image_properties = false;
+        let mut apply_plot_properties = false;
         let mut apply_hide_show_caption = false;
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
@@ -387,6 +397,52 @@ impl Editor {
                             }
                         });
                     apply_sampled_image_properties = ui.button("Apply Drawing Settings").clicked();
+                }
+                if self.doc.plot_properties(id).is_some() {
+                    let variable = match object.kind {
+                        Kind::FunctionPlot(.., FunctionPlotMode::YFromX) => "x",
+                        Kind::FunctionPlot(.., FunctionPlotMode::XFromY) => "y",
+                        Kind::FunctionPlot(.., FunctionPlotMode::Polar) => "θ",
+                        _ => "t",
+                    };
+                    ui.separator();
+                    ui.heading("Plot");
+                    ui.horizontal(|ui| {
+                        ui.label("Domain");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.properties_plot_min_draft)
+                                .desired_width(70.),
+                        );
+                        ui.label(format!("≤ {variable} ≤"));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.properties_plot_max_draft)
+                                .desired_width(70.),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Samples");
+                        ui.add(
+                            egui::DragValue::new(&mut self.properties_plot_samples_draft)
+                                .range(MIN_EDITABLE_PLOT_SAMPLES..=MAX_EDITABLE_PLOT_SAMPLES),
+                        );
+                    });
+                    ui.radio_value(
+                        &mut self.properties_plot_presentation_draft.discrete,
+                        false,
+                        "Continuously",
+                    );
+                    ui.radio_value(
+                        &mut self.properties_plot_presentation_draft.discrete,
+                        true,
+                        "Discretely",
+                    );
+                    ui.checkbox(
+                        &mut self
+                            .properties_plot_presentation_draft
+                            .show_arrows_and_endpoints,
+                        "Show arrows and endpoints",
+                    );
+                    apply_plot_properties = ui.button("Apply Plot Settings").clicked();
                 }
                 if matches!(object.kind, Kind::HideShowButton { .. }) {
                     ui.separator();
@@ -633,6 +689,32 @@ impl Editor {
                 self.properties_sampled_image_samples_draft,
                 self.properties_sampled_image_distortion_draft,
             ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_plot_properties {
+            let result = (|| -> Result<bool, String> {
+                let min = self
+                    .properties_plot_min_draft
+                    .trim()
+                    .parse()
+                    .map_err(|_| "Invalid domain start")?;
+                let max = self
+                    .properties_plot_max_draft
+                    .trim()
+                    .parse()
+                    .map_err(|_| "Invalid domain end")?;
+                self.doc.set_plot_properties(
+                    id,
+                    min,
+                    max,
+                    self.properties_plot_samples_draft,
+                    self.properties_plot_presentation_draft,
+                )
+            })();
+            match result {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,

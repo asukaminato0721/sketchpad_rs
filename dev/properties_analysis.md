@@ -137,9 +137,10 @@ displayed those exact settings in Sketchpad 5 and saved byte-identically,
 retaining SHA-256
 `d78a10eb91d5f0967ea4e52c0a9b77fcda1e28414e6f45880b1cdb110ce0967e`.
 
-Native probes also confirmed that ordinary pictures, tables, function plots,
-angle markers, and angle values have only the common Object panel; they do not
-represent missing specialized Properties panels.
+Native probes confirmed that ordinary pictures, tables, angle markers, and
+angle values have only the common Object panel; they do not represent missing
+specialized Properties panels. The earlier function-plot conclusion was caused
+by a probe click clearing the fixture's saved selection and is corrected below.
 
 ## Animation buttons
 
@@ -302,5 +303,31 @@ the opaque remainder of `0902`. A public edit of sampled picture 191 to 64/All
 displayed `64` and combo index 3 in Native Properties. Sketchpad 5 then saved
 all 73,316 bytes unchanged with SHA-256
 `dcc8251373174cb0bfff024dbe8d5b3195368ba5ea632f7d39a1119a508f4677`.
+
+## Function and parametric plots
+
+Both code-72 function plots and code-126/127 parametric plots expose Object,
+Label, and Plot tabs. Plot control 1075 is the sample count; Native validates
+the editable range as 20–250000. Controls 1073/1074 choose continuous or
+discrete drawing, 1159 toggles arrows and endpoints, and edits 1126/1127 hold
+the numeric domain.
+
+The 40-byte `0902` descriptor retains the domain at offsets 0 and 8, the sample
+count at 16, and the coordinate mode at 20. The low byte at offset 24 is zero
+for continuous and one for discrete drawing. The low byte at offset 32 is one
+when arrows/endpoints are shown and zero when hidden. Their upper bytes plus
+offsets 28 and 36 remain opaque and are preserved. The port decodes older sample counts leniently but
+uses Native's editable range for public changes.
+
+The shared Plot editor updates all five settings atomically. Discrete plots use
+individual sample points for canvas, SVG, and hit testing; continuous plots
+render endpoint arrowheads when enabled. A public function-plot edit to domain
+−4…4, 20 samples, Discrete, and hidden arrows/endpoints displayed those exact
+values in Native Properties. Sketchpad 5 then saved all 2,738 bytes unchanged
+with SHA-256
+`d2102c999e52e14b4b47378e5da7d8607006d4e9589110ee888b2ae056333d1b`.
+The same edit on a legacy plot with nonzero opaque upper bytes changed only the
+two low flag bytes; Native saved the 4,440-byte result unchanged with SHA-256
+`c6538c79e03b361d116f496fb5a47528d160ac436ab95b715b07e976889a29f6`.
 
 Labels on other geometry remain outside this increment.

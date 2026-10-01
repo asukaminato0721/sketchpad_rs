@@ -1,5 +1,5 @@
 use super::{Document, EmbeddedToolInputKind, Kind, Object, Point};
-use crate::function_records::{FunctionPlotMode, SimpleFunction};
+use crate::function_records::{FunctionPlotMode, PlotPresentation, SimpleFunction};
 use crate::graph::GridForm;
 use crate::plot_points_records::PlotPointsMode;
 use std::collections::BTreeMap;
@@ -369,6 +369,37 @@ impl Document {
         max: f64,
         samples: u32,
     ) -> Result<(), String> {
+        self.set_plot_properties_impl(plot, min, max, samples, None)
+            .map(|_| ())
+    }
+    pub fn plot_properties(&self, plot: usize) -> Option<(f64, f64, u32, PlotPresentation)> {
+        let (min, max, samples) = self.plot_range(plot)?;
+        let object = self.objects.get(plot.checked_sub(1)?)?;
+        match object.kind {
+            Kind::FunctionPlot(..) | Kind::ParametricPlot(..) => {
+                Some((min, max, samples, object.plot_presentation?))
+            }
+            _ => None,
+        }
+    }
+    pub fn set_plot_properties(
+        &mut self,
+        plot: usize,
+        min: f64,
+        max: f64,
+        samples: u32,
+        presentation: PlotPresentation,
+    ) -> Result<bool, String> {
+        self.set_plot_properties_impl(plot, min, max, samples, Some(presentation))
+    }
+    fn set_plot_properties_impl(
+        &mut self,
+        plot: usize,
+        min: f64,
+        max: f64,
+        samples: u32,
+        presentation: Option<PlotPresentation>,
+    ) -> Result<bool, String> {
         if self.partial_view || self.page_count != 1 {
             return Err("Cannot edit a plot in this sketch".into());
         }
@@ -388,14 +419,17 @@ impl Document {
         }
         // Avoid a radians/degrees round trip rewriting an untouched native
         // endpoint when the user confirms the existing range.
-        if self.plot_range(plot) == Some((min, max, samples)) {
-            return Ok(());
-        }
         let updated = match object.kind {
             Kind::FunctionPlot(definition, frame, _, _, _, mode) => {
+                if !crate::function_records::editable_plot_sample_count_supported(samples) {
+                    return Err("Plot sample count must be between 20 and 250000".into());
+                }
                 Kind::FunctionPlot(definition, frame, min, max, samples, mode)
             }
             Kind::ParametricPlot(x, y, frame, _, _, _, mode) => {
+                if !crate::function_records::editable_plot_sample_count_supported(samples) {
+                    return Err("Plot sample count must be between 20 and 250000".into());
+                }
                 Kind::ParametricPlot(x, y, frame, min, max, samples, mode)
             }
             Kind::ParameterLocus(ref refs, _, _, _) => {
@@ -406,12 +440,22 @@ impl Document {
             }
             _ => return Err("Select one function, parametric plot, or parameter locus".into()),
         };
-        if object.kind == updated {
-            return Ok(());
+        let updated_presentation =
+            if matches!(updated, Kind::FunctionPlot(..) | Kind::ParametricPlot(..)) {
+                Some(presentation.unwrap_or_else(|| object.plot_presentation.unwrap_or_default()))
+            } else {
+                if presentation.is_some() {
+                    return Err("Select one function or parametric plot".into());
+                }
+                None
+            };
+        if object.kind == updated && object.plot_presentation == updated_presentation {
+            return Ok(false);
         }
         self.checkpoint();
         self.objects[plot - 1].kind = updated;
-        Ok(())
+        self.objects[plot - 1].plot_presentation = updated_presentation;
+        Ok(true)
     }
     pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
         let Kind::FunctionPlot(definition, frame, min, max, samples, mode) =
@@ -433,6 +477,62 @@ impl Document {
                 Some(Point { x: p.x, y: p.y })
             })
             .collect()
+    }
+    /// Sample points used by Native's discrete Plot presentation.
+    pub fn plot_sample_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let presentation = object.plot_presentation?;
+        if !presentation.discrete {
+            return None;
+        }
+        match object.kind {
+            Kind::FunctionPlot(definition, frame, min, max, samples, mode) => {
+                self.function_expression(definition)?;
+                let frame = self.graph_frame(frame)?;
+                let count = count.min(samples as usize).clamp(2, 4096);
+                Some(
+                    (0..count)
+                        .filter_map(|index| {
+                            let parameter = min + (max - min) * (index as f64 / (count - 1) as f64);
+                            let value = self.function_value(definition, parameter)?;
+                            let (x, y) = function_plot_coordinates(mode, parameter, value);
+                            let point = frame.world(x, y)?;
+                            Some(Point {
+                                x: point.x,
+                                y: point.y,
+                            })
+                        })
+                        .collect(),
+                )
+            }
+            Kind::ParametricPlot(x_id, y_id, frame_id, min, max, samples, mode) => {
+                self.function_expression(x_id)?;
+                self.function_expression(y_id)?;
+                let frame = self.graph_frame(frame_id)?;
+                let count = count.min(samples as usize).clamp(2, 4096);
+                Some(
+                    (0..count)
+                        .filter_map(|index| {
+                            let parameter = min + (max - min) * (index as f64 / (count - 1) as f64);
+                            let first = self.function_value(x_id, parameter)?;
+                            let second = self.function_value(y_id, parameter)?;
+                            let (x, y) = match mode {
+                                PlotPointsMode::Cartesian => (first, second),
+                                PlotPointsMode::Polar => {
+                                    (first * second.cos(), first * second.sin())
+                                }
+                            };
+                            let point = frame.world(x, y)?;
+                            Some(Point {
+                                x: point.x,
+                                y: point.y,
+                            })
+                        })
+                        .collect(),
+                )
+            }
+            _ => None,
+        }
     }
     pub fn function_plot_segments(&self, id: usize, count: usize) -> Option<Vec<(Point, Point)>> {
         let Kind::FunctionPlot(definition, frame, min, max, samples, mode) =

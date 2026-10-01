@@ -52,6 +52,9 @@ image; parameter-driven counts remain live and are edited through their source.
 Axis Properties can independently choose decimal tick labels or fractions and
 multiples of π for x or y axes. Sampled transformed-picture Properties exposes
 Native's sample count and None, Some, Most, or All allowed-distortion choices.
+Function and parametric Plot Properties edit a 20–250000 sample count, numeric
+domain, continuous or discrete drawing, and arrow/endpoint visibility. Discrete
+plots render as individual samples; continuous plots retain endpoint arrows.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge
