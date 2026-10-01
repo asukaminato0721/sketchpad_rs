@@ -4,9 +4,8 @@ Latest snapshot, 2026-09-30: **1,599/1,599** documents have all object kinds
 decoded; **1,599/1,599** have all drawing kinds decoded. All **1,599** round trips
 are byte-exact, with zero failures. All **285,703** object slots are decoded;
 there are no unsupported object kinds. Embedded tools contain 5,356 decoded
-slots across 103 definitions. Isolated decoding produces 95 complete and 8
-structurally partial tool views; every remaining partial tool contains image
-resources. The current tool-prototype generic numeric
+slots across 103 definitions. Isolated decoding produces 96 complete and 7
+structurally partial tool views. The current tool-prototype generic numeric
 dilation, sampled path-point, literal generic-path, polymorphic color-path and
 path-intersection, angular-parameter locus, numeric-color, mapped-picture and
 direct-numeric-depth, numeric mapped-seed, path-value, numeric-coordinate,

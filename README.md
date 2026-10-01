@@ -34,6 +34,10 @@ shell also includes `xvfb-run` for unattended desktop smoke runs. To create the
 same demo as a portable `.gsp` file, run
 `nix run .#gsp-probe -- demo /tmp/sketchpad-demo.gsp`.
 
+To build the desktop app, launch that demo on an isolated X11 display, verify
+its window, and save a screenshot in one command, run
+`dev/native_smoke.sh --demo /tmp/sketchpad-demo-smoke`.
+
 For development, run the unoptimized binary with
 `nix develop -c cargo run --bin sketchpad_rs -- path/to/sketch.gsp`.
 

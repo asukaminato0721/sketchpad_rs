@@ -99,6 +99,8 @@
               fontconfig
               alsa-lib
               xvfb-run
+              xdotool
+              imagemagick
             ];
 
             shellHook = ''
