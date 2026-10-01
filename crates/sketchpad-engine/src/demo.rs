@@ -2,7 +2,7 @@
 
 use crate::document::{Document, Kind, Point};
 
-pub const GEOMETRY_STEPS: usize = 12;
+pub const GEOMETRY_STEPS: usize = 16;
 
 fn reopen(document: &Document) -> Result<Document, String> {
     // Start with no construction-time undo history. The first drag is then the
@@ -80,5 +80,28 @@ pub fn geometry_document(steps: usize) -> Result<Document, String> {
     }
 
     document.add_text("Drag A, B, or C", Point { x: 255., y: 100. })?;
+    if steps == 12 {
+        return reopen(&document);
+    }
+
+    let triangle = document.add(Kind::Polygon(vec![a, b, c]));
+    if steps == 13 {
+        return reopen(&document);
+    }
+
+    let perimeter = document.add(Kind::PolygonPerimeter(triangle));
+    document.move_measurement_caption(perimeter, (20, 50))?;
+    if steps == 14 {
+        return reopen(&document);
+    }
+
+    let area = document.add(Kind::PolygonArea(triangle));
+    document.move_measurement_caption(area, (20, 80))?;
+    if steps == 15 {
+        return reopen(&document);
+    }
+
+    let angle = document.add(Kind::AngleMeasurement(a, b, c));
+    document.move_measurement_caption(angle, (20, 110))?;
     reopen(&document)
 }

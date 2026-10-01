@@ -28,10 +28,10 @@ For a quick interactive demonstration, launch the built-in sample:
 nix run . -- --demo
 ```
 
-Drag points A, B, or C to see the live length, segment, midpoint, circle, line,
-ray, parallel, and perpendicular constructions update together. The development
-shell also includes `xvfb-run` for unattended desktop smoke runs. To create the
-same demo as a portable `.gsp` file, run
+Drag points A, B, or C to see the live segment, midpoint, circle, line, ray,
+parallel, perpendicular, filled triangle, length, perimeter, area, and angle
+update together. The development shell also includes `xvfb-run` for unattended
+desktop smoke runs. To create the same demo as a portable `.gsp` file, run
 `nix run .#gsp-probe -- demo /tmp/sketchpad-demo.gsp`.
 The same sample is available from **File → Open Built-in Demo**, so a normal
 desktop launch does not require a command line to begin the demonstration.
