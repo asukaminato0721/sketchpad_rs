@@ -340,33 +340,6 @@ impl Document {
                 }
                 out[start..end].copy_from_slice(&encoded);
             }
-            if let (Kind::LinkUrlButton { url, label, anchor }, Some(i)) =
-                (&o.kind, o.header_offset)
-            {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
-                    .ok_or("Missing saved Link URL button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved Link URL button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = LinkUrlButtonGroup::parse(&out[start..end])?;
-                group.set_url(url)?;
-                group.set_label(label)?;
-                group.set_screen_anchor(*anchor)?;
-                group.set_hidden(!o.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err(
-                        "Editing a saved Link URL button cannot change its byte length".into(),
-                    );
-                }
-                out[start..end].copy_from_slice(&encoded);
-            }
         }
         if !self.image_read_only
             && let Some(Kind::Image {

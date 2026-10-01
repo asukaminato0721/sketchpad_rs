@@ -754,6 +754,55 @@ impl Document {
             anchor: (10, y),
         }))
     }
+
+    pub fn set_link_url_button_properties(
+        &mut self,
+        id: usize,
+        url: &str,
+        label: &str,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit this action button safely".into());
+        }
+        if url.is_empty()
+            || url.len() > u16::MAX as usize
+            || label.len() > u16::MAX as usize
+            || url.as_bytes().contains(&0)
+            || label.as_bytes().contains(&0)
+        {
+            return Err("Link URL must be nonempty and URL/caption must fit native text".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        let (anchor, unchanged) = match &object.kind {
+            Kind::LinkUrlButton {
+                url: current_url,
+                label: current_label,
+                anchor,
+            } => (*anchor, current_url == url && current_label == label),
+            Kind::LinkPageButton { anchor, .. } => (*anchor, false),
+            _ => return Err("Object is not a Link button".into()),
+        };
+        if unchanged {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.objects[id - 1].kind = Kind::LinkUrlButton {
+            url: url.to_owned(),
+            label: label.to_owned(),
+            anchor,
+        };
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn has_pending_multi_page_additions(&self) -> bool {
         self.page_count > 1
             && self.objects.len() > self.source_count
@@ -827,6 +876,70 @@ impl Document {
             label: format!("Go to Page {}", target_page + 1),
             anchor: (10, y),
         }))
+    }
+
+    pub fn set_link_page_button_properties(
+        &mut self,
+        id: usize,
+        target_page: usize,
+        target_button_ordinal: Option<usize>,
+        label: &str,
+    ) -> Result<bool, String> {
+        if label.len() > u16::MAX as usize || label.as_bytes().contains(&0) {
+            return Err("Link caption must be valid native text".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        if self.page_count < 2 || target_page >= self.page_count || target_page == object.page {
+            return Err("A Page Link needs a different destination page".into());
+        }
+        let (anchor, current_destination, unchanged) = match &object.kind {
+            Kind::LinkPageButton {
+                target_page: current_page,
+                target_button_ordinal: current_ordinal,
+                label: current_label,
+                anchor,
+            } => (
+                *anchor,
+                Some((*current_page, *current_ordinal)),
+                *current_page == target_page
+                    && *current_ordinal == target_button_ordinal
+                    && current_label == label,
+            ),
+            Kind::LinkUrlButton { anchor, .. } => (*anchor, None, false),
+            _ => return Err("Object is not a Link button".into()),
+        };
+        let destination_buttons = self.link_destination_buttons(target_page);
+        let destination_unchanged =
+            current_destination == Some((target_page, target_button_ordinal));
+        if target_button_ordinal.is_some_and(|ordinal| {
+            ordinal == 0
+                || destination_buttons.get(ordinal - 1).is_none_or(|target| {
+                    !destination_unchanged
+                        && !matches!(self.objects[*target - 1].kind, Kind::HideShowButton { .. })
+                })
+        }) {
+            return Err("Page Link destination button is unavailable".into());
+        }
+        if unchanged {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        candidate.objects[id - 1].kind = Kind::LinkPageButton {
+            target_page,
+            target_button_ordinal,
+            label: label.to_owned(),
+            anchor,
+        };
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
     }
     pub fn animation_button_default_settings(&self, target: usize) -> Option<AnimationSettings> {
         let object = self.objects.get(target.checked_sub(1)?)?;

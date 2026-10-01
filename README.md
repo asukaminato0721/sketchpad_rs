@@ -43,7 +43,9 @@ timing fields. Movement button Properties can edit its caption, speed, and
 follow-moving versus initial-destination policy. Scroll button Properties can
 edit its caption and Upper Left versus Center placement. Presentation button
 Properties can edit its caption, execution mode, pre-actions, stop policy, and
-elapsed or pause time.
+elapsed or pause time. Link button Properties can edit its caption, URL, target
+page, and optional destination action, including URL/Page conversion in
+multi-page documents.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge

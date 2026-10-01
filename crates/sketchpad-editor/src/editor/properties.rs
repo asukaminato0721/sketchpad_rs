@@ -1,7 +1,8 @@
 use super::{
     Editor,
     action_dialogs::{
-        animation_settings_ui, movement_settings_ui, presentation_settings_ui, scroll_settings_ui,
+        animation_settings_ui, link_settings_ui, movement_settings_ui, presentation_settings_ui,
+        scroll_settings_ui,
     },
 };
 use sketchpad_engine::action_records::VisibilityAction;
@@ -101,7 +102,9 @@ impl Editor {
                 | Kind::AnimationButton { label, .. }
                 | Kind::MovementButton { label, .. }
                 | Kind::ScrollButton { label, .. }
-                | Kind::PresentationButton { label, .. } => label.clone(),
+                | Kind::PresentationButton { label, .. }
+                | Kind::LinkUrlButton { label, .. }
+                | Kind::LinkPageButton { label, .. } => label.clone(),
                 _ => object
                     .label
                     .as_ref()
@@ -137,6 +140,27 @@ impl Editor {
                 self.properties_presentation_mode_draft = *mode;
                 self.properties_presentation_options_draft = *options;
             }
+            match &object.kind {
+                Kind::LinkUrlButton { url, .. } => {
+                    self.properties_link_draft.use_page = false;
+                    self.properties_link_draft.target_page = (0..self.doc.page_count)
+                        .find(|page| *page != self.doc.active_page)
+                        .unwrap_or(0);
+                    self.properties_link_draft.target_button_ordinal = None;
+                    self.properties_link_draft.url.clone_from(url);
+                }
+                Kind::LinkPageButton {
+                    target_page,
+                    target_button_ordinal,
+                    ..
+                } => {
+                    self.properties_link_draft.use_page = true;
+                    self.properties_link_draft.target_page = *target_page;
+                    self.properties_link_draft.target_button_ordinal = *target_button_ordinal;
+                    self.properties_link_draft.url = "https://".into();
+                }
+                _ => {}
+            }
             self.properties_draft_for = Some(id);
         }
 
@@ -147,6 +171,8 @@ impl Editor {
             | Kind::MovementButton { label, .. }
             | Kind::ScrollButton { label, .. }
             | Kind::PresentationButton { label, .. }
+            | Kind::LinkUrlButton { label, .. }
+            | Kind::LinkPageButton { label, .. }
                 if !label.is_empty() =>
             {
                 Some(label.clone())
@@ -196,6 +222,7 @@ impl Editor {
         let mut apply_movement_properties = false;
         let mut apply_scroll_properties = false;
         let mut apply_presentation_properties = false;
+        let mut apply_link_properties = false;
         let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
@@ -366,6 +393,19 @@ impl Editor {
                     apply_presentation_properties =
                         ui.button("Apply Presentation Settings").clicked();
                 }
+                if matches!(
+                    object.kind,
+                    Kind::LinkUrlButton { .. } | Kind::LinkPageButton { .. }
+                ) {
+                    ui.separator();
+                    ui.heading("Link Button");
+                    link_settings_ui(&self.doc, ui, &mut self.properties_link_draft);
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    apply_link_properties = ui.button("Apply Link Settings").clicked();
+                }
                 ui.separator();
                 ui.label("Parents");
                 if parent_labels.is_empty() {
@@ -508,6 +548,27 @@ impl Editor {
                 self.properties_presentation_options_draft,
                 &self.properties_label_draft,
             ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_link_properties {
+            let result = if self.properties_link_draft.use_page {
+                self.doc.set_link_page_button_properties(
+                    id,
+                    self.properties_link_draft.target_page,
+                    self.properties_link_draft.target_button_ordinal,
+                    &self.properties_label_draft,
+                )
+            } else {
+                self.doc.set_link_url_button_properties(
+                    id,
+                    &self.properties_link_draft.url,
+                    &self.properties_label_draft,
+                )
+            };
+            match result {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,

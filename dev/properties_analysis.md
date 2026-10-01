@@ -204,6 +204,32 @@ sequential-only pause controls, and all three selected pre-actions. Sketchpad 5
 saved all 2,358 bytes unchanged, retaining SHA-256
 `7f410fea0545a270718043e201d7ace7eee101dabdb0dc337757ce1a478a9432`.
 
+## Link buttons
+
+Link action buttons expose Native Label and Link panels. Creation and
+Properties share URL/Page mode, URL text, destination page, and optional
+destination Hide/Show controls. Public document commands apply either complete
+target form and the caption atomically, including conversion between the URL
+and Page wire groups. The shared post-order action writer preserves same-kind
+native padding, reconstructs a group for cross-kind conversion, maintains page
+object indexes for conversions, and recalculates destination markers only when
+Page Link topology changes. Existing multi-page
+action buttons can now use all supported Properties editors without changing
+their target structure or anchor.
+
+A same-kind URL edit expanded both text fields to
+`https://example.net/verified` and `Open Verified Link`; Native displayed the
+new caption in URL mode and saved all 2,022 bytes unchanged with SHA-256
+`09b5d5cbfb8618dd811787917255de3dc9f4c047710fffcf59e69737eeb45696`.
+A separate multi-page URL-to-Page conversion displayed `Go to Verified Page`,
+Page 1, and no destination action, then saved all 3,262 bytes unchanged with
+SHA-256
+`05ce8353a6e48152e6c45d4cf40f843cb99683f0b5112554900f4bcbe665da6c`.
+The reverse conversion from a Page Link with a Hide/Show destination to URL
+also cleared the destination marker and saved all 3,606 bytes unchanged with
+SHA-256
+`93b5426e9f3535f787b50f3e753a05aa2affa2180d55e61202ec5d548d9f553d`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
 and settings for action families other than Hide/Show, Animation, Movement,
-Scroll, and Presentation remain outside this increment.
+Scroll, Presentation, and Link remain outside this increment.

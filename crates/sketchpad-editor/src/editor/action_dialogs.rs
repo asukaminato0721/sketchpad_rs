@@ -1,4 +1,4 @@
-use super::Editor;
+use super::{Editor, LinkButtonDraft};
 use sketchpad_engine::action_records::{
     AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions,
     PresentationStop, ScrollPlacement,
@@ -209,6 +209,68 @@ pub(super) fn presentation_settings_ui(
     }
 }
 
+pub(super) fn link_settings_ui(doc: &Document, ui: &mut egui::Ui, draft: &mut LinkButtonDraft) {
+    if doc.page_count > 1 {
+        ui.radio_value(&mut draft.use_page, true, "Page");
+        if draft.use_page {
+            egui::ComboBox::from_id_salt("link_target_page")
+                .selected_text(format!("Page {}", draft.target_page + 1))
+                .show_ui(ui, |ui| {
+                    for page in 0..doc.page_count {
+                        if page != doc.active_page
+                            && ui
+                                .selectable_value(
+                                    &mut draft.target_page,
+                                    page,
+                                    format!("Page {}", page + 1),
+                                )
+                                .clicked()
+                        {
+                            draft.target_button_ordinal = None;
+                        }
+                    }
+                });
+            let destination_buttons = doc.link_destination_buttons(draft.target_page);
+            if draft.target_button_ordinal.is_some()
+                || destination_buttons
+                    .iter()
+                    .any(|id| matches!(doc.objects[id - 1].kind, Kind::HideShowButton { .. }))
+            {
+                egui::ComboBox::from_id_salt("link_target_button")
+                    .selected_text(match draft.target_button_ordinal {
+                        Some(ordinal) => format!("Button {ordinal} on page"),
+                        None => "No button on page".into(),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut draft.target_button_ordinal,
+                            None,
+                            "No button on page",
+                        );
+                        for (index, id) in destination_buttons.iter().enumerate() {
+                            let label = match &doc.objects[id - 1].kind {
+                                Kind::HideShowButton { label, .. } => label.as_str(),
+                                _ => continue,
+                            };
+                            ui.selectable_value(
+                                &mut draft.target_button_ordinal,
+                                Some(index + 1),
+                                label,
+                            );
+                        }
+                    });
+            }
+        }
+        ui.radio_value(&mut draft.use_page, false, "URL");
+    } else {
+        draft.use_page = false;
+    }
+    if !draft.use_page {
+        ui.label("URL");
+        ui.text_edit_singleline(&mut draft.url);
+    }
+}
+
 impl Editor {
     pub(super) fn action_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if let Some(mut draft) = self.animation_button_dialog.clone() {
@@ -358,62 +420,7 @@ impl Editor {
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("link_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Link Button");
-                if self.doc.page_count > 1 {
-                    ui.radio_value(&mut draft.use_page, true, "Page");
-                    if draft.use_page {
-                        egui::ComboBox::from_id_salt("link_target_page")
-                            .selected_text(format!("Page {}", draft.target_page + 1))
-                            .show_ui(ui, |ui| {
-                                for page in 0..self.doc.page_count {
-                                    if page != self.doc.active_page
-                                        && ui
-                                            .selectable_value(
-                                                &mut draft.target_page,
-                                                page,
-                                                format!("Page {}", page + 1),
-                                            )
-                                            .clicked()
-                                    {
-                                        draft.target_button_ordinal = None;
-                                    }
-                                }
-                            });
-                        let destination_buttons =
-                            self.doc.link_destination_buttons(draft.target_page);
-                        if destination_buttons.iter().any(|id| {
-                            matches!(self.doc.objects[id - 1].kind, Kind::HideShowButton { .. })
-                        }) {
-                            egui::ComboBox::from_id_salt("link_target_button")
-                                .selected_text(match draft.target_button_ordinal {
-                                    Some(ordinal) => format!("Button {ordinal} on page"),
-                                    None => "No button on page".into(),
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut draft.target_button_ordinal,
-                                        None,
-                                        "No button on page",
-                                    );
-                                    for (index, id) in destination_buttons.iter().enumerate() {
-                                        let label = match &self.doc.objects[id - 1].kind {
-                                            Kind::HideShowButton { label, .. } => label.as_str(),
-                                            _ => continue,
-                                        };
-                                        ui.selectable_value(
-                                            &mut draft.target_button_ordinal,
-                                            Some(index + 1),
-                                            label,
-                                        );
-                                    }
-                                });
-                        }
-                    }
-                    ui.radio_value(&mut draft.use_page, false, "URL");
-                }
-                if !draft.use_page {
-                    ui.label("URL");
-                    ui.text_edit_singleline(&mut draft.url);
-                }
+                link_settings_ui(&self.doc, ui, &mut draft);
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();

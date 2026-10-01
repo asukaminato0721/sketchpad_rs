@@ -1998,19 +1998,76 @@ impl Document {
                 }
                 _ => {}
             }
-            if let (
-                Kind::HideShowButton {
-                    targets: old_targets,
-                    anchor: old_anchor,
-                    ..
-                },
-                Kind::HideShowButton {
-                    targets, anchor, ..
-                },
-            ) = (&saved.kind, &current.kind)
-                && old_targets == targets
-                && old_anchor == anchor
-            {
+            let compatible_action_edit = match (&saved.kind, &current.kind) {
+                (
+                    Kind::HideShowButton {
+                        targets: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::HideShowButton {
+                        targets: after,
+                        anchor: after_anchor,
+                        ..
+                    },
+                )
+                | (
+                    Kind::AnimationButton {
+                        targets: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::AnimationButton {
+                        targets: after,
+                        anchor: after_anchor,
+                        ..
+                    },
+                )
+                | (
+                    Kind::PresentationButton {
+                        targets: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::PresentationButton {
+                        targets: after,
+                        anchor: after_anchor,
+                        ..
+                    },
+                ) => before == after && before_anchor == after_anchor,
+                (
+                    Kind::MovementButton {
+                        pairs: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::MovementButton {
+                        pairs: after,
+                        anchor: after_anchor,
+                        ..
+                    },
+                ) => before == after && before_anchor == after_anchor,
+                (
+                    Kind::ScrollButton {
+                        target: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::ScrollButton {
+                        target: after,
+                        anchor: after_anchor,
+                        ..
+                    },
+                ) => before == after && before_anchor == after_anchor,
+                (
+                    Kind::LinkUrlButton { anchor: before, .. }
+                    | Kind::LinkPageButton { anchor: before, .. },
+                    Kind::LinkUrlButton { anchor: after, .. }
+                    | Kind::LinkPageButton { anchor: after, .. },
+                ) => before == after,
+                _ => false,
+            };
+            if compatible_action_edit {
                 expected.kind = current.kind.clone();
             }
             if expected != *current

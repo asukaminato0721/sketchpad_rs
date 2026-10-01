@@ -14,6 +14,30 @@ The three native URL fixtures import as editable with `partial_view=false` and p
 
 The native `sketchdoc://` click under Wine changed the visible sketch, but the capture did not identify the destination clearly enough to treat it as verified behavior. Other special URL schemes and direct native URL click comparison remain pending.
 
+## Properties editing
+
+The common Properties window exposes Native's Label and Link panels for URL
+and Page buttons. Creation and Properties reuse URL/Page mode, URL text,
+destination page, and optional destination Hide/Show controls. Two public
+document commands apply the complete target form and caption transactionally,
+including conversion between wire formats. The shared post-order writer retains
+same-kind padding and opaque fields, reconstructs cross-kind groups, maintains
+the page object index for conversions, and recalculates destination markers
+only when Page Link topology changes. It also enables the
+already-supported action Properties editors on existing multi-page documents
+when their structural targets and anchors stay fixed.
+
+A same-kind URL edit expanded the URL to `https://example.net/verified` and the
+caption to `Open Verified Link`. Native displayed URL mode and the new caption,
+then saved all 2,022 bytes unchanged with SHA-256
+`09b5d5cbfb8618dd811787917255de3dc9f4c047710fffcf59e69737eeb45696`.
+A multi-page URL-to-Page conversion displayed `Go to Verified Page`, Page 1,
+and no destination action, then saved all 3,262 bytes unchanged with SHA-256
+`05ce8353a6e48152e6c45d4cf40f843cb99683f0b5112554900f4bcbe665da6c`.
+The reverse conversion started from a Page Link targeting Hide/Show, cleared
+that destination marker, and saved all 3,606 bytes unchanged with SHA-256
+`93b5426e9f3535f787b50f3e753a05aa2affa2180d55e61202ec5d548d9f553d`.
+
 ## Page destinations
 
 `two_page_blank_native.gsp` has a free point on page 1 and an empty page 2. Native Sketchpad created `action_link_page_default_original.gsp` on page 2, targeting page 1, and `action_link_page_two_original.gsp` on page 1, targeting page 2. Both use object code 0 and the same six record kinds as URL Links. Their `0x0906` payload is 24 bytes with action code 5 at offset 12, a zero-based destination page index at offset 14, and zero at offset 16 when no button on the destination page is chosen. The native label is `链接` (Link). `assets/action_link_page_group.bin` preserves the 142-byte native group. The two files import losslessly, and clicking either in native Sketchpad navigated to the page indicated by the record.
