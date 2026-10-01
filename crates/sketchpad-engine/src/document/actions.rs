@@ -156,6 +156,28 @@ impl Document {
         id: usize,
         options: VisibilityOptions,
     ) -> Result<(), String> {
+        let action = match &self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?
+            .kind
+        {
+            Kind::HideShowButton { action, .. } => *action,
+            _ => return Err("Object is not a Hide/Show button".into()),
+        };
+        self.set_hide_show_button_action_and_options(id, action, options)?;
+        Ok(())
+    }
+
+    pub fn set_hide_show_button_action_and_options(
+        &mut self,
+        id: usize,
+        action: VisibilityAction,
+        options: VisibilityOptions,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit this action button safely".into());
+        }
         let object = self
             .objects
             .get(id.checked_sub(1).ok_or("Invalid button ID")?)
@@ -164,22 +186,43 @@ impl Document {
             return Err("Button is unavailable on this page".into());
         }
         let Kind::HideShowButton {
-            options: current, ..
+            action: current_action,
+            options: current_options,
+            ..
         } = &object.kind
         else {
             return Err("Object is not a Hide/Show button".into());
         };
-        if *current == options {
-            return Ok(());
+        if *current_action == action && *current_options == options {
+            return Ok(false);
         }
-        self.checkpoint();
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let next_label = candidate.generated_visibility_caption(
+            match &candidate.objects[id - 1].kind {
+                Kind::HideShowButton { targets, .. } => targets,
+                _ => unreachable!(),
+            },
+            action,
+        );
         if let Kind::HideShowButton {
-            options: current, ..
-        } = &mut self.objects[id - 1].kind
+            action: current_action,
+            options: current_options,
+            caption_flags,
+            label,
+            ..
+        } = &mut candidate.objects[id - 1].kind
         {
-            *current = options;
+            *current_action = action;
+            *current_options = options;
+            if caption_flags.is_some_and(|flags| flags as u16 != 7) {
+                *caption_flags = Some(caption_flags.unwrap_or(0) & 0xffff0000 | 4);
+                *label = next_label;
+            }
         }
-        Ok(())
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
     }
 
     /// Native format7 is a custom name; an explicitly empty caption omits the

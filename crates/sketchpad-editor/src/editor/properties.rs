@@ -1,4 +1,5 @@
 use super::Editor;
+use sketchpad_engine::action_records::VisibilityAction;
 use sketchpad_engine::document::{Document, Kind, LineMode, Object};
 use sketchpad_engine::style_records::VisualStyle;
 
@@ -90,28 +91,41 @@ impl Editor {
         }
 
         if self.properties_draft_for != Some(id) {
-            self.properties_label_draft = object
-                .label
-                .as_ref()
-                .and_then(|label| label.name_utf8().ok())
-                .unwrap_or_default()
-                .to_owned();
+            self.properties_label_draft = match &object.kind {
+                Kind::HideShowButton { label, .. } => label.clone(),
+                _ => object
+                    .label
+                    .as_ref()
+                    .and_then(|label| label.name_utf8().ok())
+                    .unwrap_or_default()
+                    .to_owned(),
+            };
             self.properties_label_visible_draft =
                 object.label.as_ref().is_some_and(|label| label.visible());
             self.properties_opacity_draft = match object.visual_style {
                 Some(VisualStyle::Polygon { opacity, .. }) => opacity,
                 _ => 32767,
             };
+            if let Kind::HideShowButton {
+                action, options, ..
+            } = &object.kind
+            {
+                self.properties_visibility_action_draft = *action;
+                self.properties_visibility_options_draft = *options;
+            }
             self.properties_draft_for = Some(id);
         }
 
         let description = object_description(&self.doc, id);
-        let saved_label = object
-            .label
-            .as_ref()
-            .and_then(|label| label.name_utf8().ok())
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned);
+        let saved_label = match &object.kind {
+            Kind::HideShowButton { label, .. } if !label.is_empty() => Some(label.clone()),
+            _ => object
+                .label
+                .as_ref()
+                .and_then(|label| label.name_utf8().ok())
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned),
+        };
         let mut hidden = !object.visible;
         let mut arrow_selectable = object.arrow_selectable;
         let parents = self.doc.dependencies_of(id).unwrap_or_default();
@@ -143,6 +157,9 @@ impl Editor {
         let mut arrow_selectability_changed = false;
         let mut apply_label = false;
         let mut apply_opacity = false;
+        let mut apply_hide_show_caption = false;
+        let mut reset_hide_show_caption = false;
+        let mut hide_show_settings_changed = false;
         let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
@@ -188,6 +205,58 @@ impl Editor {
                             .custom_formatter(|value, _| format!("{:.0}%", value * 100. / 65535.)),
                     );
                     apply_opacity = ui.button("Apply Opacity").clicked();
+                }
+                if matches!(object.kind, Kind::HideShowButton { .. }) {
+                    ui.separator();
+                    ui.heading("Hide/Show Button");
+                    let mut mode = if self.properties_visibility_options_draft.alternates() {
+                        2
+                    } else if self.properties_visibility_action_draft == VisibilityAction::Show {
+                        0
+                    } else {
+                        1
+                    };
+                    let before = mode;
+                    ui.radio_value(&mut mode, 0, "Always show objects");
+                    ui.radio_value(&mut mode, 1, "Always hide objects");
+                    ui.radio_value(&mut mode, 2, "Toggle hide/show");
+                    if mode != before {
+                        if mode < 2 {
+                            self.properties_visibility_action_draft = if mode == 0 {
+                                VisibilityAction::Show
+                            } else {
+                                VisibilityAction::Hide
+                            };
+                        }
+                        self.properties_visibility_options_draft = self
+                            .properties_visibility_options_draft
+                            .with_alternates(mode == 2);
+                        hide_show_settings_changed = true;
+                    }
+                    let mut fade = self.properties_visibility_options_draft.fade();
+                    let mut select = self.properties_visibility_options_draft.select_after_show();
+                    if ui.checkbox(&mut fade, "Use fade effect").changed() {
+                        self.properties_visibility_options_draft =
+                            self.properties_visibility_options_draft.with_fade(fade);
+                        hide_show_settings_changed = true;
+                    }
+                    if ui
+                        .checkbox(&mut select, "Select objects after showing")
+                        .changed()
+                    {
+                        self.properties_visibility_options_draft = self
+                            .properties_visibility_options_draft
+                            .with_select_after_show(select);
+                        hide_show_settings_changed = true;
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    ui.horizontal(|ui| {
+                        apply_hide_show_caption = ui.button("Apply Caption").clicked();
+                        reset_hide_show_caption = ui.button("Use Default Caption").clicked();
+                    });
                 }
                 ui.separator();
                 ui.label("Parents");
@@ -245,6 +314,48 @@ impl Editor {
             {
                 Ok(true) => self.status = format!("Updated the opacity for {description}"),
                 Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if hide_show_settings_changed {
+            let previous_label = match &self.doc.objects[id - 1].kind {
+                Kind::HideShowButton { label, .. } => label.clone(),
+                _ => String::new(),
+            };
+            match self.doc.set_hide_show_button_action_and_options(
+                id,
+                self.properties_visibility_action_draft,
+                self.properties_visibility_options_draft,
+            ) {
+                Ok(true) => {
+                    self.status = format!("Updated {description}");
+                    if self.properties_label_draft == previous_label
+                        && let Kind::HideShowButton { label, .. } = &self.doc.objects[id - 1].kind
+                    {
+                        self.properties_label_draft = label.clone();
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_hide_show_caption {
+            match self
+                .doc
+                .set_hide_show_button_caption(id, &self.properties_label_draft)
+            {
+                Ok(()) => self.status = format!("Updated the caption for {description}"),
+                Err(error) => self.status = error,
+            }
+        }
+        if reset_hide_show_caption {
+            match self.doc.reset_hide_show_button_caption(id) {
+                Ok(()) => {
+                    self.status = format!("Reset the caption for {description}");
+                    if let Kind::HideShowButton { label, .. } = &self.doc.objects[id - 1].kind {
+                        self.properties_label_draft = label.clone();
+                    }
+                }
                 Err(error) => self.status = error,
             }
         }

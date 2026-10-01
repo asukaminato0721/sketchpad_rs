@@ -46,6 +46,7 @@ fn is_circle_construction_host(kind: &Kind) -> bool {
 use crate::render::{TraceSample, Viewport};
 use sketchpad_engine::action_records::{
     AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions, ScrollPlacement,
+    VisibilityAction, VisibilityOptions,
 };
 use sketchpad_engine::document::{Clipboard, Document, Kind, Point};
 use sketchpad_engine::function_records::SimpleFunction;
@@ -380,6 +381,8 @@ struct Editor {
     properties_label_draft: String,
     properties_label_visible_draft: bool,
     properties_opacity_draft: u16,
+    properties_visibility_action_draft: VisibilityAction,
+    properties_visibility_options_draft: VisibilityOptions,
     iterate_dialog: bool,
     iteration_depth_draft: String,
     plot_axis_dialog: Option<Option<usize>>,
@@ -516,6 +519,8 @@ impl Editor {
             properties_label_draft: String::new(),
             properties_label_visible_draft: false,
             properties_opacity_draft: 32767,
+            properties_visibility_action_draft: VisibilityAction::Hide,
+            properties_visibility_options_draft: VisibilityOptions::default(),
             iterate_dialog: false,
             iteration_depth_draft: "3".into(),
             plot_axis_dialog: None,

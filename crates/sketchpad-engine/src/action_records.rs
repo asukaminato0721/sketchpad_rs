@@ -22,8 +22,7 @@ pub enum VisibilityAction {
     Show,
 }
 
-/// Preserved Native Hide/Show policy word. Only bit 2 selects alternating
-/// actions; the other verified bits remain intact across edits and saves.
+/// Native Hide/Show policy word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VisibilityOptions(u16);
 
@@ -41,6 +40,26 @@ impl VisibilityOptions {
 
     pub fn alternates(self) -> bool {
         self.0 & 4 != 0
+    }
+
+    pub fn select_after_show(self) -> bool {
+        self.0 & 1 != 0
+    }
+
+    pub fn fade(self) -> bool {
+        self.0 & 2 != 0
+    }
+
+    pub fn with_alternates(self, alternates: bool) -> Self {
+        Self((self.0 & !4) | (u16::from(alternates) * 4))
+    }
+
+    pub fn with_select_after_show(self, select: bool) -> Self {
+        Self((self.0 & !1) | u16::from(select))
+    }
+
+    pub fn with_fade(self, fade: bool) -> Self {
+        Self((self.0 & !2) | (u16::from(fade) * 2))
     }
 }
 

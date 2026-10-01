@@ -119,6 +119,28 @@ Properties link. A public-API value-only control with the flag cleared displayed
 SHA-256
 `956fe4f46c9e8004a33153b9603b11377a16cc01556172a92a39e8ea82de22fc`.
 
-Labels on other geometry, picture and sampled-object opacity, Table, Iteration,
-Axis, Function, Plot, Marker, and action-specific panels remain outside this
+## Hide/Show buttons
+
+Hide/Show action buttons expose their Native Label and Hide/Show settings in
+the common Properties window. The port can edit a custom caption, restore the
+generated caption, choose Always Show, Always Hide, or alternating Hide/Show,
+and control fading and post-show target selection. The action and option edit
+is one verified undo transaction; a generated caption follows a fixed-action
+change, while a custom or explicitly empty caption remains independent.
+
+Native property probes identify the three action controls as IDs 1266–1268,
+the fade checkbox as 1159, and post-show selection as 1129. The `0906` option
+word uses bit 0 for post-show selection, bit 1 for fading, and bit 2 for
+alternation; its action word selects the fixed or next action. A port-authored
+fixed-Show button with both options disabled and custom caption `Reveal trio`
+displayed those exact settings in Sketchpad 5 and saved byte-identically,
+retaining SHA-256
+`d78a10eb91d5f0967ea4e52c0a9b77fcda1e28414e6f45880b1cdb110ce0967e`.
+
+Native probes also confirmed that ordinary pictures, tables, function plots,
+angle markers, and angle values have only the common Object panel; they do not
+represent missing specialized Properties panels.
+
+Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
+and settings for action families other than Hide/Show remain outside this
 increment.
