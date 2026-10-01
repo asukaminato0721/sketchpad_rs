@@ -25,13 +25,15 @@
       packages = forAllSystems (system:
         let
           pkgs = packagesFor system;
+          source = ./.;
+          cargoLock = { lockFile = ./Cargo.lock; };
         in
         {
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "sketchpad-rs";
             version = "0.1.0";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
+            src = source;
+            inherit cargoLock;
 
             nativeBuildInputs = with pkgs; [
               makeWrapper
@@ -47,15 +49,33 @@
                 --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.fontconfig ]}"
             '';
           };
+
+          gsp-probe = pkgs.rustPlatform.buildRustPackage {
+            pname = "gsp-probe";
+            version = "0.1.0";
+            src = source;
+            inherit cargoLock;
+            cargoBuildFlags = [ "--no-default-features" "--bin" "gsp_probe" ];
+            doCheck = false;
+          };
         });
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/sketchpad_rs";
-          meta.description = "Open Sketchpad RS or launch its built-in geometry demo";
-        };
-      });
+      apps = forAllSystems (system:
+        let
+          packages = self.packages.${system};
+        in
+        {
+          default = {
+            type = "app";
+            program = "${packages.default}/bin/sketchpad_rs";
+            meta.description = "Open Sketchpad RS or launch its built-in geometry demo";
+          };
+          gsp-probe = {
+            type = "app";
+            program = "${packages.gsp-probe}/bin/gsp_probe";
+            meta.description = "Inspect, verify, convert, and generate Sketchpad documents";
+          };
+        });
 
       devShells = forAllSystems (system:
         let
