@@ -1,7 +1,29 @@
-use super::Editor;
+use super::{Editor, ParameterAnimationSettings};
 use sketchpad_engine::document::Kind;
 
 impl Editor {
+    pub(super) fn begin_parameter_dialog(&mut self, id: usize) -> Result<(), String> {
+        let Some(Kind::Parameter(group)) = self
+            .doc
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid parameter ID")?)
+            .filter(|object| !object.deleted && object.page == self.doc.active_page)
+            .map(|object| &object.kind)
+        else {
+            return Err("Select a parameter on the active page".into());
+        };
+        let settings = group.animation_settings();
+        self.parameter_value_draft = group.value().to_string();
+        self.parameter_discrete_draft = settings.discrete;
+        self.parameter_rate_units_draft = settings.rate_units.to_string();
+        self.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
+        self.parameter_min_draft = settings.domain.0.to_string();
+        self.parameter_max_draft = settings.domain.1.to_string();
+        self.parameter_keyboard_step_draft = settings.keyboard_step.to_string();
+        self.parameter_value_dialog = Some(id);
+        Ok(())
+    }
+
     pub(super) fn begin_edit_definition(&mut self, id: usize) -> Result<(), String> {
         let object = self
             .doc
@@ -16,10 +38,8 @@ impl Editor {
             self.begin_function_dialog(false, Some(id));
             return Ok(());
         }
-        if let Kind::Parameter(group) = &object.kind {
-            self.parameter_value_draft = group.value().to_string();
-            self.parameter_value_dialog = Some(id);
-            return Ok(());
+        if matches!(object.kind, Kind::Parameter(_)) {
+            return self.begin_parameter_dialog(id);
         }
         if let Kind::Calculation(group) = &object.kind {
             self.calculation_draft = group.expression();
@@ -303,9 +323,49 @@ impl Editor {
                 ui.heading(format!("Edit parameter {id}"));
                 ui.horizontal(|ui| {
                     ui.label("Value");
-                    ui.text_edit_singleline(&mut self.parameter_value_draft);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_value_draft)
+                            .desired_width(90.),
+                    );
                 });
-                ui.label("Finite values, up to 32 native numeric tokens");
+                ui.horizontal(|ui| {
+                    ui.label("Change");
+                    ui.radio_value(&mut self.parameter_discrete_draft, false, "Continuously");
+                    ui.radio_value(&mut self.parameter_discrete_draft, true, "Discretely");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("By");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_rate_units_draft)
+                            .desired_width(70.),
+                    );
+                    ui.label("units per");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_rate_seconds_draft)
+                            .desired_width(70.),
+                    );
+                    ui.label("seconds");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Animation domain");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_min_draft)
+                            .desired_width(70.),
+                    );
+                    ui.label("to");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_max_draft)
+                            .desired_width(70.),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Keyboard (+/−) adjustment");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.parameter_keyboard_step_draft)
+                            .desired_width(70.),
+                    );
+                });
+                ui.label("The domain affects animation only");
                 ui.horizontal(|ui| {
                     apply = ui.button("Apply").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -315,12 +375,29 @@ impl Editor {
                 self.parameter_value_dialog = None;
             }
             if apply {
-                let result = self
-                    .parameter_value_draft
-                    .trim()
-                    .parse::<f64>()
-                    .map_err(|_| "Enter a numeric value".to_string())
-                    .and_then(|value| self.doc.set_parameter_value(id, value));
+                let parse = |name: &str, draft: &str| {
+                    draft
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| format!("Enter a numeric {name}"))
+                };
+                let result = (|| {
+                    let value = parse("value", &self.parameter_value_draft)?;
+                    let settings = ParameterAnimationSettings {
+                        discrete: self.parameter_discrete_draft,
+                        rate_units: parse("rate", &self.parameter_rate_units_draft)?,
+                        rate_seconds: parse("rate interval", &self.parameter_rate_seconds_draft)?,
+                        domain: (
+                            parse("domain minimum", &self.parameter_min_draft)?,
+                            parse("domain maximum", &self.parameter_max_draft)?,
+                        ),
+                        keyboard_step: parse(
+                            "keyboard adjustment",
+                            &self.parameter_keyboard_step_draft,
+                        )?,
+                    };
+                    self.doc.set_parameter_properties(id, value, settings)
+                })();
                 match result {
                     Ok(()) => {
                         self.parameter_value_dialog = None;

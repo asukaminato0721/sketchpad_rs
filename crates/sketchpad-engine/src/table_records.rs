@@ -220,6 +220,15 @@ pub struct ParameterGroup {
     evaluation_value: Option<[u8; 8]>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParameterAnimationSettings {
+    pub discrete: bool,
+    pub rate_units: f64,
+    pub rate_seconds: f64,
+    pub domain: (f64, f64),
+    pub keyboard_step: f64,
+}
+
 fn decimal_words(value: f64) -> Result<Vec<u16>, String> {
     if !value.is_finite() {
         return Err("Parameter value must be finite".into());
@@ -726,12 +735,69 @@ impl ParameterGroup {
         )
     }
     pub fn animation_domain(&self) -> (f64, f64) {
+        self.animation_settings().domain
+    }
+
+    pub fn animation_settings(&self) -> ParameterAnimationSettings {
         let rs = records(&self.bytes, 0).unwrap();
         let payload = &self.bytes[rs[1].payload..rs[1].end];
-        (
-            f64::from_le_bytes(payload[60..68].try_into().unwrap()) / self.native_unit_scale(),
-            f64::from_le_bytes(payload[68..76].try_into().unwrap()) / self.native_unit_scale(),
-        )
+        let scale = self.native_unit_scale();
+        ParameterAnimationSettings {
+            discrete: u32::from_le_bytes(payload[48..52].try_into().unwrap()) & 4 != 0,
+            keyboard_step: f64::from_le_bytes(payload[52..60].try_into().unwrap()) / scale,
+            domain: (
+                f64::from_le_bytes(payload[60..68].try_into().unwrap()) / scale,
+                f64::from_le_bytes(payload[68..76].try_into().unwrap()) / scale,
+            ),
+            rate_units: f64::from_le_bytes(payload[76..84].try_into().unwrap()) / scale,
+            rate_seconds: f64::from_le_bytes(payload[84..92].try_into().unwrap()),
+        }
+    }
+
+    pub fn set_animation_settings(
+        &mut self,
+        settings: ParameterAnimationSettings,
+    ) -> Result<(), String> {
+        let values = [
+            settings.rate_units,
+            settings.rate_seconds,
+            settings.domain.0,
+            settings.domain.1,
+            settings.keyboard_step,
+        ];
+        if values.iter().any(|value| !value.is_finite())
+            || settings.rate_units <= 0.
+            || settings.rate_seconds <= 0.
+            || settings.domain.0 >= settings.domain.1
+            || settings.keyboard_step <= 0.
+        {
+            return Err("Parameter animation values must be finite and positive, with minimum below maximum".into());
+        }
+        let scale = self.native_unit_scale();
+        let scaled = [
+            settings.keyboard_step * scale,
+            settings.domain.0 * scale,
+            settings.domain.1 * scale,
+            settings.rate_units * scale,
+            settings.rate_seconds,
+        ];
+        if scaled.iter().any(|value| !value.is_finite()) {
+            return Err("Parameter animation value is too large".into());
+        }
+        let rs = records(&self.bytes, 0)?;
+        let at = rs[1].payload;
+        let mut flags = u32::from_le_bytes(self.bytes[at + 48..at + 52].try_into().unwrap());
+        if settings.discrete {
+            flags |= 4;
+        } else {
+            flags &= !4;
+        }
+        self.bytes[at + 48..at + 52].copy_from_slice(&flags.to_le_bytes());
+        for (offset, value) in [52, 60, 68, 76, 84].into_iter().zip(scaled) {
+            self.bytes[at + offset..at + offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        Self::parse(&self.bytes)?;
+        Ok(())
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {

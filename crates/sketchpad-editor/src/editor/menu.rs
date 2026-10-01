@@ -632,9 +632,8 @@ impl Editor {
                                 .is_some_and(|object| matches!(object.kind, Kind::Parameter(_)))
                         });
                         if let Some(id) = selected {
-                            if let Kind::Parameter(group) = &self.doc.objects[id - 1].kind {
-                                self.parameter_value_draft = group.value().to_string();
-                                self.parameter_value_dialog = Some(id);
+                            if let Err(error) = self.begin_parameter_dialog(id) {
+                                self.status = error;
                             }
                         } else {
                             self.status = "Select a parameter".into();

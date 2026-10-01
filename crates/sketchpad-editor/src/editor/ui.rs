@@ -33,6 +33,30 @@ impl Editor {
             if root.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::V)) {
                 self.paste();
             }
+            let adjustment = root.input(|input| {
+                if input.key_pressed(egui::Key::Plus) {
+                    Some(1.)
+                } else if input.key_pressed(egui::Key::Minus) {
+                    Some(-1.)
+                } else {
+                    None
+                }
+            });
+            if let Some(direction) = adjustment {
+                let parameter = self.doc.selected.iter().find_map(|&id| {
+                    let object = self.doc.objects.get(id.checked_sub(1)?)?;
+                    let sketchpad_engine::document::Kind::Parameter(group) = &object.kind else {
+                        return None;
+                    };
+                    Some((id, group.value(), group.animation_settings().keyboard_step))
+                });
+                if let Some((id, value, step)) = parameter {
+                    match self.doc.set_parameter_value(id, value + direction * step) {
+                        Ok(()) => self.status = format!("Adjusted parameter {id}"),
+                        Err(error) => self.status = error,
+                    }
+                }
+            }
         }
         if root.input(|input| {
             input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace)

@@ -50,6 +50,7 @@ use sketchpad_engine::action_records::{
 use sketchpad_engine::document::{Clipboard, Document, Kind, Point};
 use sketchpad_engine::function_records::SimpleFunction;
 use sketchpad_engine::plot_points_records::PlotPointsMode;
+use sketchpad_engine::table_records::ParameterAnimationSettings;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -196,6 +197,7 @@ struct AnimationTrack {
     free_turn_remaining: f64,
     random_state: u64,
     button_settings: Option<AnimationSettings>,
+    parameter_settings: Option<ParameterAnimationSettings>,
     start_phase: f64,
     distance_travelled: f64,
 }
@@ -358,6 +360,12 @@ struct Editor {
     plot_samples_draft: String,
     parameter_value_dialog: Option<usize>,
     parameter_value_draft: String,
+    parameter_discrete_draft: bool,
+    parameter_rate_units_draft: String,
+    parameter_rate_seconds_draft: String,
+    parameter_min_draft: String,
+    parameter_max_draft: String,
+    parameter_keyboard_step_draft: String,
     named_parameter_dialog: bool,
     parameter_name_draft: String,
     calculation_dialog: bool,
@@ -484,6 +492,12 @@ impl Editor {
             plot_samples_draft: String::new(),
             parameter_value_dialog: None,
             parameter_value_draft: "1".into(),
+            parameter_discrete_draft: false,
+            parameter_rate_units_draft: "1".into(),
+            parameter_rate_seconds_draft: "1".into(),
+            parameter_min_draft: "-100".into(),
+            parameter_max_draft: "100".into(),
+            parameter_keyboard_step_draft: "0.01".into(),
             named_parameter_dialog: false,
             parameter_name_draft: "a".into(),
             calculation_dialog: false,

@@ -147,14 +147,24 @@ impl Editor {
                 free_turn_remaining: 0.35,
                 random_state,
                 button_settings: None,
+                parameter_settings: None,
                 start_phase: 0.,
                 distance_travelled: 0.,
             });
         }
         if let Kind::Parameter(group) = &object.kind {
-            let (min, max) = group.animation_domain();
+            let settings = group.animation_settings();
+            let (min, max) = settings.domain;
             let phase = (group.value() - min) / (max - min);
-            if !min.is_finite() || !max.is_finite() || max <= min || !phase.is_finite() {
+            if !min.is_finite()
+                || !max.is_finite()
+                || max <= min
+                || !phase.is_finite()
+                || !settings.rate_units.is_finite()
+                || settings.rate_units <= 0.
+                || !settings.rate_seconds.is_finite()
+                || settings.rate_seconds <= 0.
+            {
                 return None;
             }
             return Some(AnimationTrack {
@@ -171,6 +181,7 @@ impl Editor {
                 random_state: ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ phase.to_bits())
                     | 1,
                 button_settings: None,
+                parameter_settings: Some(settings),
                 start_phase: phase.clamp(0., 1.),
                 distance_travelled: 0.,
             });
@@ -221,6 +232,7 @@ impl Editor {
             free_turn_remaining: 0.,
             random_state: ((id as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ phase.to_bits()) | 1,
             button_settings: None,
+            parameter_settings: None,
             start_phase: phase.clamp(0., 1.),
             distance_travelled: 0.,
         })
@@ -477,22 +489,28 @@ impl Editor {
                 .button_settings
                 .map_or(1., |settings| f64::from(settings.speed) / 24.);
             let step = if let Some((min, max)) = track.parameter_domain {
-                let amount = elapsed_seconds.clamp(0., 0.1)
-                    * self.animation_speed
-                    * track
-                        .button_settings
-                        .map_or(1., |settings| f64::from(settings.speed));
-                let amount = if let Some(parameter) = track
-                    .button_settings
-                    .and_then(|settings| settings.parameter)
-                    .filter(|parameter| parameter.discrete)
-                {
-                    track.discrete_remainder += amount;
-                    let count = (track.discrete_remainder + 1e-9).floor();
-                    track.discrete_remainder = (track.discrete_remainder - count).max(0.);
-                    count * f64::from(parameter.step)
+                let elapsed = elapsed_seconds.clamp(0., 0.1) * self.animation_speed;
+                let amount = if let Some(settings) = track.button_settings {
+                    let amount = elapsed * f64::from(settings.speed);
+                    if let Some(parameter) = settings.parameter.filter(|value| value.discrete) {
+                        track.discrete_remainder += amount;
+                        let count = (track.discrete_remainder + 1e-9).floor();
+                        track.discrete_remainder = (track.discrete_remainder - count).max(0.);
+                        count * f64::from(parameter.step)
+                    } else {
+                        amount
+                    }
+                } else if let Some(settings) = track.parameter_settings {
+                    if settings.discrete {
+                        track.discrete_remainder += elapsed / settings.rate_seconds;
+                        let count = (track.discrete_remainder + 1e-9).floor();
+                        track.discrete_remainder = (track.discrete_remainder - count).max(0.);
+                        count * settings.rate_units
+                    } else {
+                        elapsed * settings.rate_units / settings.rate_seconds
+                    }
                 } else {
-                    amount
+                    elapsed
                 };
                 amount / (max - min)
             } else {

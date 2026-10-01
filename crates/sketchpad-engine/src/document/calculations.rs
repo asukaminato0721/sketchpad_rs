@@ -1,7 +1,7 @@
 use super::{Document, Kind, Object};
 use crate::table_records::{
     CalculationGroup, CalculationSourceKind, LengthPairCalculationGroup, MeasuredCalculationGroup,
-    NumericUnit, ParameterCalculationGroup, ParameterGroup,
+    NumericUnit, ParameterAnimationSettings, ParameterCalculationGroup, ParameterGroup,
 };
 use crate::value_equation_records::ValueEquationKind;
 
@@ -130,6 +130,17 @@ impl Document {
     pub fn set_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
         self.update_parameter_value(id, value, true)
     }
+    pub fn set_parameter_properties(
+        &mut self,
+        id: usize,
+        value: f64,
+        settings: ParameterAnimationSettings,
+    ) -> Result<(), String> {
+        self.update_parameter(id, true, |group| {
+            group.set_value(value)?;
+            group.set_animation_settings(settings)
+        })
+    }
     pub fn animate_parameter_value(&mut self, id: usize, value: f64) -> Result<(), String> {
         let Some(Kind::Parameter(group)) = self
             .objects
@@ -147,6 +158,14 @@ impl Document {
         id: usize,
         value: f64,
         checkpoint: bool,
+    ) -> Result<(), String> {
+        self.update_parameter(id, checkpoint, |group| group.set_value(value))
+    }
+    fn update_parameter(
+        &mut self,
+        id: usize,
+        checkpoint: bool,
+        edit: impl FnOnce(&mut ParameterGroup) -> Result<(), String>,
     ) -> Result<(), String> {
         if id == 0
             || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
@@ -171,7 +190,8 @@ impl Document {
         };
         let page = object.page;
         let mut group = group.clone();
-        group.set_value(value)?;
+        edit(&mut group)?;
+        let value = group.value();
         let mut tables = Vec::new();
         let mut single_tables = Vec::new();
         if group.name() == "t[1]" {
