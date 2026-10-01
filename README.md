@@ -16,12 +16,6 @@ Text fields use the desktop input method through egui/winit. Configure and start
 your desktop IME (for example, Fcitx5 or IBus) to compose CJK text. Captions and
 point labels preserve Unicode when editing, copying, and saving `.gsp` files.
 
-To check actual CJK glyph coverage on a machine with the fonts installed:
-
-```sh
-cargo test -p sketchpad-editor --test cjk_support -- --include-ignored
-```
-
 ## Run
 
 ```sh
