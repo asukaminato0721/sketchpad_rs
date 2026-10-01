@@ -54,6 +54,14 @@ fn inspect(path: &str) -> Result<(), String> {
         document.partial_view,
         document.edit_restriction()
     );
+    for definition in document.custom_transform_definitions() {
+        println!(
+            "custom transform {:?}: point {} -> point {}",
+            definition.name(),
+            definition.seed(),
+            definition.output()
+        );
+    }
     for object in &document.objects {
         let label = object.label.as_ref().and_then(|label| {
             label

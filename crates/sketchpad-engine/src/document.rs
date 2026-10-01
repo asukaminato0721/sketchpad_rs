@@ -11,6 +11,7 @@ pub mod coordinate_points;
 mod coordinates;
 mod curve_intersection;
 mod curve_points;
+mod custom_transform_metadata;
 mod data_function;
 mod decode;
 mod embedded_tools;
@@ -90,6 +91,7 @@ use kind::default_visual_style;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+pub use custom_transform_metadata::CustomTransformDefinition;
 pub use embedded_tools::EmbeddedToolSummary;
 pub use records::{Record, records};
 pub use tool_inputs::{EmbeddedToolInput, EmbeddedToolInputKind};
@@ -880,6 +882,7 @@ pub struct Document {
     run_font_families: Vec<String>,
     source_count: usize,
     last_moved_object: Option<usize>,
+    custom_transform_definitions: Vec<CustomTransformDefinition>,
     safe_structure: bool,
     image_read_only: bool,
     pub undo: Vec<DocumentSnapshot>,
@@ -908,6 +911,9 @@ impl Document {
     pub fn add(&mut self, kind: Kind) -> usize {
         self.checkpoint();
         self.append_object(kind)
+    }
+    pub fn custom_transform_definitions(&self) -> &[CustomTransformDefinition] {
+        &self.custom_transform_definitions
     }
     pub fn set_object_color_defaults(&mut self, defaults: ObjectColorDefaults) {
         self.object_color_defaults = defaults;

@@ -416,6 +416,7 @@ struct Editor {
 }
 impl Editor {
     fn new(doc: Document) -> Self {
+        let custom_transforms = custom_transforms::native_custom_transforms(&doc);
         let mut e = Self {
             doc,
             untitled_name: "Untitled",
@@ -462,7 +463,7 @@ impl Editor {
             custom_tool_inputs: Vec::new(),
             custom_tool_path_start: None,
             tool_folder: None,
-            custom_transforms: Vec::new(),
+            custom_transforms,
             define_custom_transform_dialog: None,
             custom_transform_name_draft: String::new(),
             edit_custom_transforms_dialog: false,

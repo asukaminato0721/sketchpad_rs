@@ -1,4 +1,16 @@
 use super::{CustomTransform, Editor};
+use sketchpad_engine::document::Document;
+
+pub(super) fn native_custom_transforms(doc: &Document) -> Vec<CustomTransform> {
+    doc.custom_transform_definitions()
+        .iter()
+        .map(|definition| CustomTransform {
+            name: definition.name().to_owned(),
+            seed: definition.seed(),
+            output: definition.output(),
+        })
+        .collect()
+}
 
 impl Editor {
     pub(super) fn can_define_custom_transform(&self) -> bool {

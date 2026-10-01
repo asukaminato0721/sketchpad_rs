@@ -1775,6 +1775,22 @@ impl Document {
             || !ignore_active_page_frame
                 && reparsed.active_coordinate_system()
                     != self.active_coordinate_system().map(|id| ids[id])
+            || reparsed.custom_transform_definitions
+                != self
+                    .custom_transform_definitions
+                    .iter()
+                    .filter_map(|definition| {
+                        let seed = ids.get(definition.seed()).copied().unwrap_or(0);
+                        let output = ids.get(definition.output()).copied().unwrap_or(0);
+                        (seed != 0 && output != 0).then(|| {
+                            super::CustomTransformDefinition::from_remapped(
+                                definition.name(),
+                                seed,
+                                output,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
         {
             return Err("Serialized sketch does not preserve document metadata".into());
         }

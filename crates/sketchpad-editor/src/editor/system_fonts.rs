@@ -6,6 +6,17 @@ use std::sync::Arc;
 // The first match respects the user's locale for shared Han glyphs. The language
 // matches also cover systems with separate Chinese, Japanese, and Korean fonts.
 const CJK_PATTERNS: &[&str] = &[
+    "Noto Sans CJK SC",
+    "Noto Sans CJK TC",
+    "Noto Sans CJK JP",
+    "Noto Sans CJK KR",
+    // Require representative locale-specific glyphs as well as the common
+    // Han character below. A Japanese fallback containing 中, for example,
+    // need not contain simplified Chinese 变.
+    "sans-serif:charset=53d8",
+    "sans-serif:charset=8b8a",
+    "sans-serif:charset=5909",
+    "sans-serif:charset=ac00",
     "sans-serif:charset=4e2d",
     "sans-serif:lang=zh-cn",
     "sans-serif:lang=zh-tw",

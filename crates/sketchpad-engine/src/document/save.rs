@@ -52,6 +52,7 @@ impl Document {
         self.merge_aliases.clear();
         self.run_font_families.clear();
         self.source_count = self.objects.len();
+        self.custom_transform_definitions = reparsed.custom_transform_definitions;
         self.path = Some(path.to_path_buf());
         self.safe_structure = reparsed.safe_structure;
         self.image_read_only = reparsed.image_read_only;

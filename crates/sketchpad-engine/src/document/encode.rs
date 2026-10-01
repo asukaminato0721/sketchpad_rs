@@ -435,7 +435,9 @@ impl Document {
             .unwrap_or(0);
         let insert_at = document_records(&rs)
             .find(|r| {
-                matches!(r.kind, 0x2328 | 0x232d) && r.start >= last_group_end && r.start < trailer
+                matches!(r.kind, 0x2328 | 0x232d | 0x2331)
+                    && r.start >= last_group_end
+                    && r.start < trailer
             })
             .map(|r| r.start)
             .unwrap_or(trailer);

@@ -72,6 +72,22 @@ impl Document {
                     }
                     raw[8..12].copy_from_slice(&(new as u32).to_le_bytes());
                 }
+                if record.kind == 0x2331 {
+                    let definition =
+                        super::CustomTransformDefinition::parse(&bytes[record.data.clone()])
+                            .ok_or("Invalid custom-transform definition")?;
+                    let seed = *ids
+                        .get(definition.seed())
+                        .ok_or("Invalid custom-transform seed")?;
+                    let output = *ids
+                        .get(definition.output())
+                        .ok_or("Invalid custom-transform output")?;
+                    if seed == 0 || output == 0 {
+                        continue;
+                    }
+                    raw[8..12].copy_from_slice(&(seed as u32).to_le_bytes());
+                    raw[12..16].copy_from_slice(&(output as u32).to_le_bytes());
+                }
                 if record.kind == 0x3e8 {
                     if record.data.len() < 28 {
                         return Err("Short page preamble".into());

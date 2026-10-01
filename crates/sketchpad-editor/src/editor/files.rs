@@ -358,16 +358,18 @@ impl Editor {
                     self.scroll_button_dialog = None;
                     self.presentation_button_dialog = None;
                 }
-                let cleared_custom_transforms =
-                    object_ids_will_change && !self.custom_transforms.is_empty();
-                if cleared_custom_transforms {
-                    self.custom_transforms.clear();
+                let reloaded_custom_transforms = object_ids_will_change
+                    && (!self.custom_transforms.is_empty()
+                        || !self.doc.custom_transform_definitions().is_empty());
+                if object_ids_will_change {
+                    self.custom_transforms =
+                        super::custom_transforms::native_custom_transforms(&self.doc);
                     self.define_custom_transform_dialog = None;
                     self.edit_custom_transforms_dialog = false;
                 }
-                self.status = if cleared_custom_transforms {
+                self.status = if reloaded_custom_transforms {
                     format!(
-                        "Saved {}; cleared custom-transform definitions after object IDs changed",
+                        "Saved {}; reloaded native custom-transform definitions after object IDs changed",
                         path.display()
                     )
                 } else {

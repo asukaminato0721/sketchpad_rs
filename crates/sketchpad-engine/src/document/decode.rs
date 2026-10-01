@@ -32,8 +32,8 @@ use super::kind::{
 };
 use super::records::{f64_at, page_title_slots, polygon_subtype, records, u32_at};
 use super::{
-    Document, EmbeddedToolInput, EmbeddedToolInputKind, ImagePlacement, IterationDepth, Kind,
-    LineMode, Object, Point,
+    CustomTransformDefinition, Document, EmbeddedToolInput, EmbeddedToolInputKind, ImagePlacement,
+    IterationDepth, Kind, LineMode, Object, Point,
 };
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
@@ -412,7 +412,7 @@ impl Document {
         let safe_outside: BTreeSet<u32> = baseline_records
             .iter()
             .map(|record| record.kind)
-            .chain([0x2328, 0x232d])
+            .chain([0x2328, 0x232d, 0x2331])
             .collect();
         let text_style_count = document_records(&rs)
             .filter(|record| record.kind == 0x04b3)
@@ -3250,6 +3250,29 @@ impl Document {
             i += 1;
         }
         let source_count = objects.len();
+        let mut custom_transform_definitions = Vec::new();
+        for record in document_records(&rs).filter(|record| record.kind == 0x2331) {
+            let Some(definition) = CustomTransformDefinition::parse(&b[record.data.clone()]) else {
+                safe = false;
+                continue;
+            };
+            // Editing currently uses document-wide IDs in a single-page sketch.
+            // Keep multi-page metadata restricted until its local namespace is
+            // established independently.
+            if page_count != 1
+                || definition.seed() >= definition.output()
+                || !objects
+                    .get(definition.seed() - 1)
+                    .is_some_and(|object| object.page == 0)
+                || !objects
+                    .get(definition.output() - 1)
+                    .is_some_and(|object| object.page == 0)
+            {
+                safe = false;
+                continue;
+            }
+            custom_transform_definitions.push(definition);
+        }
         let preambles: Vec<_> = document_records(&rs)
             .filter(|r| r.kind == 0x3e8 && r.data.len() >= 28)
             .collect();
@@ -3351,6 +3374,7 @@ impl Document {
             run_font_families: Vec::new(),
             source_count,
             last_moved_object: None,
+            custom_transform_definitions,
             safe_structure: safe,
             image_read_only,
             undo: Vec::new(),

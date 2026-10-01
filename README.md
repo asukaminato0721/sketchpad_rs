@@ -97,8 +97,10 @@ point and choose Transform > Define Custom Transform. The named command appears
 at the bottom of the Transform menu and maps one selected point through the same
 live construction relationship. Transform > Edit Custom Transforms renames,
 reorders, or removes definitions. Applied points use the native mapped-element
-format and survive save/reopen; the definition list itself currently lasts only
-for the open document session.
+format and survive save/reopen. Native single-page `0x2331` definition records
+are restored into the Transform menu on open, preserved on save, and safely
+remapped or removed when their endpoint objects are deleted. Definitions made,
+renamed, reordered, or removed in the port are still session-only.
 Select an independent axis-aligned PNG picture and choose Number > Define
 Function from Picture to create a data-defined function from the picture's
 nontransparent top edge. A default coordinate system is added when needed; the
@@ -331,8 +333,8 @@ all 5,356 embedded-tool prototype slots, and round-trips every original
 byte-exactly. This is an import-coverage result; structurally partial documents
 and incomplete commands remain tracked in [COMMAND_PARITY.md](COMMAND_PARITY.md).
 There are no unsupported object slots or failed documents. Editing remains
-guarded in 538 documents: 251 with multi-page structure, 123 with read-only
-image resources, and 164 with records that are preserved but not yet proven
+guarded in 405 documents: 251 with multi-page structure, 123 with read-only
+image resources, and 31 with records that are preserved but not yet proven
 safe to rewrite. Of the 103 isolated embedded-tool views, 96 are structurally
 complete and seven remain guarded.
 
