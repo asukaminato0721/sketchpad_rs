@@ -341,49 +341,6 @@ impl Document {
                 out[start..end].copy_from_slice(&encoded);
             }
             if let (
-                Kind::MovementButton {
-                    pairs,
-                    speed,
-                    follow,
-                    label,
-                    anchor,
-                },
-                Some(i),
-            ) = (&o.kind, o.header_offset)
-            {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
-                    .ok_or("Missing saved Movement button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved Movement button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = MovementButtonGroup::parse(&out[start..end])?;
-                group.set_target_pairs(
-                    &pairs
-                        .iter()
-                        .map(|&(source, destination)| (source as u32, destination as u32))
-                        .collect::<Vec<_>>(),
-                )?;
-                group.set_speed(*speed);
-                group.set_follows_destination(*follow);
-                group.set_label(label)?;
-                group.set_screen_anchor(*anchor);
-                group.set_hidden(!o.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err(
-                        "Editing a saved Movement button label cannot change its byte length"
-                            .into(),
-                    );
-                }
-                out[start..end].copy_from_slice(&encoded);
-            }
-            if let (
                 Kind::ScrollButton {
                     target,
                     placement,
@@ -589,9 +546,7 @@ impl Document {
             let out = self.patch_marked_coordinate_link(out)?;
             let out = self.patch_text_font_overrides(self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_split_points(self.patch_text_and_labels(
-                    self.patch_animation_groups(
-                        self.patch_hide_show_groups(self.compact_deleted(out)?)?,
-                    )?,
+                    self.patch_action_groups(self.compact_deleted(out)?)?,
                 )?)?)?,
             )?)?;
             return self.patch_last_moved_marker(out);
@@ -2286,9 +2241,7 @@ impl Document {
         }
         let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
             self.patch_visual_styles(self.patch_trace_flags(self.patch_split_points(
-                self.patch_text_and_labels(self.patch_animation_groups(
-                    self.patch_hide_show_groups(self.compact_deleted(out)?)?,
-                )?)?,
+                self.patch_text_and_labels(self.patch_action_groups(self.compact_deleted(out)?)?)?,
             )?)?)?,
         )?)?;
         self.patch_last_moved_marker(out)

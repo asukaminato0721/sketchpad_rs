@@ -2210,7 +2210,7 @@ impl Document {
         for (start, end, replacement) in numeric_edits.into_iter().rev() {
             out.splice(start..end, replacement);
         }
-        self.patch_animation_source_groups(self.patch_hide_show_source_groups(out)?)
+        self.patch_action_source_groups(out)
     }
     pub(super) fn encode_page_names(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;

@@ -1549,7 +1549,7 @@ impl MovementButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_movement_group.bin"),
-            false,
+            true,
         )
     }
 

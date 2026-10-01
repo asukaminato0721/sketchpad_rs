@@ -107,6 +107,32 @@ pub(super) fn animation_settings_ui(
     }
 }
 
+pub(super) fn movement_settings_ui(
+    ui: &mut egui::Ui,
+    speed: &mut MovementSpeed,
+    follow: &mut bool,
+) {
+    egui::ComboBox::from_label("Speed")
+        .selected_text(match speed {
+            MovementSpeed::Slow => "Slow",
+            MovementSpeed::Medium => "Medium",
+            MovementSpeed::Fast => "Fast",
+            MovementSpeed::Instant => "Instant",
+        })
+        .show_ui(ui, |ui| {
+            for (value, name) in [
+                (MovementSpeed::Slow, "Slow"),
+                (MovementSpeed::Medium, "Medium"),
+                (MovementSpeed::Fast, "Fast"),
+                (MovementSpeed::Instant, "Instant"),
+            ] {
+                ui.selectable_value(speed, value, name);
+            }
+        });
+    ui.radio_value(follow, true, "Follow moving destination");
+    ui.radio_value(follow, false, "Move toward initial destination");
+}
+
 impl Editor {
     pub(super) fn action_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if let Some(mut draft) = self.animation_button_dialog.clone() {
@@ -165,25 +191,7 @@ impl Editor {
                 for &(source, destination) in &draft.pairs {
                     ui.label(format!("Move object {source} toward object {destination}"));
                 }
-                egui::ComboBox::from_label("Speed")
-                    .selected_text(match draft.speed {
-                        MovementSpeed::Slow => "Slow",
-                        MovementSpeed::Medium => "Medium",
-                        MovementSpeed::Fast => "Fast",
-                        MovementSpeed::Instant => "Instant",
-                    })
-                    .show_ui(ui, |ui| {
-                        for (speed, name) in [
-                            (MovementSpeed::Slow, "Slow"),
-                            (MovementSpeed::Medium, "Medium"),
-                            (MovementSpeed::Fast, "Fast"),
-                            (MovementSpeed::Instant, "Instant"),
-                        ] {
-                            ui.selectable_value(&mut draft.speed, speed, name);
-                        }
-                    });
-                ui.radio_value(&mut draft.follow, true, "Follow moving destination");
-                ui.radio_value(&mut draft.follow, false, "Move toward initial destination");
+                movement_settings_ui(ui, &mut draft.speed, &mut draft.follow);
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();

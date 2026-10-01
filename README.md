@@ -39,7 +39,8 @@ arc outputs; polygon-interior Properties can change opacity. Hide/Show button
 Properties can edit its caption, fixed or alternating action, fade behavior,
 and post-show target selection. Animation button Properties can edit its
 caption and each target's direction, Once Only state, speed, and parameter
-timing fields.
+timing fields. Movement button Properties can edit its caption, speed, and
+follow-moving versus initial-destination policy.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge

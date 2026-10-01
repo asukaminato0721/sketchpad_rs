@@ -16,6 +16,22 @@ The four speed settings correspond to codes 0 Slow, 1 Medium, 2 Fast, and 3 Inst
 
 Opening the generated default in the Rust desktop and clicking its button likewise moved point 1 to `(270,120)`. The saved `action_movement_port_desktop_clicked.gsp` then opened and saved byte-identically in Sketchpad 5.
 
+## Properties editing
+
+The common Properties window exposes the Native speed, follow-moving versus
+initial-destination policy, and Label controls for an existing Movement button.
+One public document command applies all three fields transactionally. Movement
+now shares the post-order variable-size action writer with Hide/Show and
+Animation, including guarded rebuilding of the known zero label suffix when a
+caption changes byte parity.
+
+A public-API edit changed the port default to Instant/initial destination and
+renamed it from odd-length `Move to Point` to even-length
+`Move Once Verified`. Native Properties showed combo index 3, matching the
+Native Instant fixture, with initial-destination control 1267 selected. Native
+saved all 2,062 bytes unchanged with SHA-256
+`31928aeb5e89063ee470c1f1d140aa9f9196912aa620398b80afc7d6fb2a85d1`.
+
 ## Multi-page insertion
 
 Sketchpad 5 created `two_page_movement_native.gsp` on page 2 with global source and destination IDs `[2, 3]`, encoded as local references `[1, 2]`. `tests/replay_multi_page_movement.txt` generates the corresponding English button and a second document with a Medium/Follow button on page 2 and an Instant/initial-destination button on page 1. Both generated files opened and saved byte-identically in Sketchpad 5. Clicking the generated page-2 button there moved its source onto the destination and left page 1 unchanged; `two_page_movement_port_clicked_by_wine.gsp` imports and round-trips. The Rust editor also runs and saves that multi-page movement.

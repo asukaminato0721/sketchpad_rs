@@ -157,6 +157,22 @@ and Slow, and Sketchpad 5 saved all 2,478 bytes unchanged. SHA-256 before and
 after the Native save was
 `c2609cee6d2d8a2ed628f35222c196d4636540b7211a37e22c415489f970f26d`.
 
+## Movement buttons
+
+Movement action buttons expose Native Label and Movement panels. The port uses
+the same speed and destination-policy controls for creation and Properties,
+and applies those settings with the caption in one verified undo transaction.
+The shared post-order action writer remaps page-local pairs and safely splices
+variable-size labels. For the proved zero-suffix layout, it also rebuilds the
+Native terminator when a caption changes byte parity.
+
+A public-API edit changed a port button from Medium/Follow to Instant/initial
+destination and changed the odd-length caption to the longer even-length
+`Move Once Verified`. Native Properties showed combo index 3, the same as its
+Instant fixture, and selected control 1267 for initial-destination movement.
+Sketchpad 5 saved all 2,062 bytes unchanged, retaining SHA-256
+`31928aeb5e89063ee470c1f1d140aa9f9196912aa620398b80afc7d6fb2a85d1`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-and settings for action families other than Hide/Show and Animation remain
-outside this increment.
+and settings for action families other than Hide/Show, Animation, and Movement
+remain outside this increment.
