@@ -2034,6 +2034,18 @@ impl Document {
                         anchor: after_anchor,
                         ..
                     },
+                )
+                | (
+                    Kind::SoundButton {
+                        functions: before,
+                        anchor: before_anchor,
+                        ..
+                    },
+                    Kind::SoundButton {
+                        functions: after,
+                        anchor: after_anchor,
+                        ..
+                    },
                 ) => before == after && before_anchor == after_anchor,
                 (
                     Kind::MovementButton {

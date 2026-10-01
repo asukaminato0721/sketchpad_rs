@@ -197,6 +197,13 @@ struct ActionRecords {
     records: Vec<Record>,
 }
 
+#[derive(Clone, Copy)]
+enum LabelParityPolicy {
+    PreserveSuffix,
+    MoveZeroSuffix,
+    DropOpaqueAlignment,
+}
+
 impl ActionRecords {
     fn parse(bytes: &[u8], animation: bool) -> Result<Self, String> {
         let records = parse_record_list(bytes, if animation { 8 } else { 7 })?;
@@ -268,7 +275,7 @@ impl ActionRecords {
         &mut self,
         label: &str,
         template: &[u8],
-        allow_zero_suffix_parity: bool,
+        parity_policy: LabelParityPolicy,
     ) -> Result<(), String> {
         let bytes = label.as_bytes();
         let len =
@@ -290,11 +297,17 @@ impl ActionRecords {
         let mut suffix = record.payload[24 + old_len..].to_vec();
         if old_len % 2 != bytes.len() % 2 {
             // New labels use the Native template's text terminator convention.
-            // Existing opaque suffixes may only move in the proven Animation case.
-            if !(inserting || allow_zero_suffix_parity)
-                || suffix.len() != if old_len.is_multiple_of(2) { 2 } else { 1 }
-                || suffix.iter().any(|byte| *byte != 0)
-            {
+            // Some action families retain zero alignment bytes. Sound labels
+            // may additionally carry one opaque allocation byte after their
+            // terminator, which Native drops when the label parity changes.
+            let expected_suffix_len = if old_len.is_multiple_of(2) { 2 } else { 1 };
+            let suffix_can_move = suffix.len() == expected_suffix_len
+                && match parity_policy {
+                    LabelParityPolicy::PreserveSuffix => false,
+                    LabelParityPolicy::MoveZeroSuffix => suffix.iter().all(|byte| *byte == 0),
+                    LabelParityPolicy::DropOpaqueAlignment => suffix.first() == Some(&0),
+                };
+            if !inserting && !suffix_can_move {
                 return Err(
                     "Action button label byte parity differs; opaque suffix cannot be moved safely"
                         .into(),
@@ -998,7 +1011,7 @@ impl HideShowButtonGroup {
             self.records.set_label(
                 "",
                 include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
-                true,
+                LabelParityPolicy::MoveZeroSuffix,
             )?;
         }
         self.records.record_mut(BUTTON_LABEL).payload[..4].copy_from_slice(&flags.to_le_bytes());
@@ -1047,7 +1060,7 @@ impl HideShowButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
-            false,
+            LabelParityPolicy::PreserveSuffix,
         )
     }
 
@@ -1257,7 +1270,7 @@ impl PresentationButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_presentation_group.bin"),
-            false,
+            LabelParityPolicy::PreserveSuffix,
         )
     }
 
@@ -1378,7 +1391,7 @@ impl ScrollButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_scroll_group.bin"),
-            false,
+            LabelParityPolicy::PreserveSuffix,
         )
     }
 
@@ -1549,7 +1562,7 @@ impl MovementButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_movement_group.bin"),
-            true,
+            LabelParityPolicy::MoveZeroSuffix,
         )
     }
 
@@ -1856,7 +1869,7 @@ impl AnimationButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_animation_group.bin"),
-            true,
+            LabelParityPolicy::MoveZeroSuffix,
         )
     }
 
@@ -1893,7 +1906,7 @@ impl SoundButtonGroup {
         group.records.set_label(
             label,
             include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
-            true,
+            LabelParityPolicy::MoveZeroSuffix,
         )?;
         group.set_screen_anchor(anchor);
         group.validate()?;
@@ -1980,7 +1993,7 @@ impl SoundButtonGroup {
         self.records.set_label(
             label,
             include_bytes!("../../../assets/action_hide_show_two_points_group.bin"),
-            false,
+            LabelParityPolicy::DropOpaqueAlignment,
         )
     }
 

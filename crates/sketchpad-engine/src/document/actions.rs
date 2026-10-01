@@ -1021,6 +1021,38 @@ impl Document {
         Ok(())
     }
 
+    pub fn set_sound_button_caption(&mut self, id: usize, label: &str) -> Result<bool, String> {
+        if label.len() > u16::MAX as usize || label.as_bytes().contains(&0) {
+            return Err("Sound caption must fit native text".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        let Kind::SoundButton { label: current, .. } = &object.kind else {
+            return Err("Object is not a Sound button".into());
+        };
+        if current == label {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let Kind::SoundButton {
+            label: candidate_label,
+            ..
+        } = &mut candidate.objects[id - 1].kind
+        else {
+            unreachable!();
+        };
+        *candidate_label = label.to_owned();
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn add_sound_button_for_functions(&mut self, functions: &[usize]) -> Result<usize, String> {
         self.can_add_sound_button_for_functions(functions)?;
         let row = self

@@ -3,7 +3,7 @@ use super::embedded_tools::document_record_indices;
 use super::{Document, Kind, records};
 use crate::action_records::{
     AnimationButtonGroup, HideShowButtonGroup, LinkPageButtonGroup, LinkUrlButtonGroup,
-    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup,
+    MovementButtonGroup, PresentationButtonGroup, ScrollButtonGroup, SoundButtonGroup,
 };
 
 impl Document {
@@ -190,6 +190,22 @@ impl Document {
                     let mut group = ScrollButtonGroup::parse(&bytes[start..end])?;
                     group.set_target(reference)?;
                     group.set_placement(*placement);
+                    group.set_label(label)?;
+                    group.set_screen_anchor(*anchor);
+                    group.set_hidden(!object.visible);
+                    Some(group.encode())
+                }
+                Kind::SoundButton {
+                    functions,
+                    label,
+                    anchor,
+                } => {
+                    let references = functions
+                        .iter()
+                        .map(|&function| local_id(function, "Sound"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut group = SoundButtonGroup::parse(&bytes[start..end])?;
+                    group.set_targets(&references)?;
                     group.set_label(label)?;
                     group.set_screen_anchor(*anchor);
                     group.set_hidden(!object.visible);

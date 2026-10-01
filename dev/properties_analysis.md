@@ -230,6 +230,23 @@ also cleared the destination marker and saved all 3,606 bytes unchanged with
 SHA-256
 `93b5426e9f3535f787b50f3e753a05aa2affa2180d55e61202ec5d548d9f553d`.
 
+## Sound buttons
+
+Native Sound buttons expose only Object and Label panels, not a separate Sound
+settings panel. The port therefore edits the caption while retaining the fixed
+one-function mono or two-function stereo sources. A transactional public
+command and the shared page-local action writer support variable-length labels
+on both one-page and supported existing multi-page documents.
+
+The 17 corpus Sound groups show that the zero label terminator may be followed
+by one opaque alignment byte. Native preserves it until a parity-changing label
+edit, then drops it and rebuilds the terminator. The bounded Sound writer follows
+that rule without weakening suffix handling for other action families.
+
+A public-API edit changed `听到函数 f` to `Play Verified Sound`. Native
+Properties displayed the new caption and the unchanged function `f`, then
+saved all 2,898 bytes unchanged with SHA-256
+`d05070bc3fb7d2053832193c860ad18bec1fa5d4ba539a39763b959e82655488`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-and settings for action families other than Hide/Show, Animation, Movement,
-Scroll, Presentation, and Link remain outside this increment.
+remain outside this increment.

@@ -45,7 +45,8 @@ edit its caption and Upper Left versus Center placement. Presentation button
 Properties can edit its caption, execution mode, pre-actions, stop policy, and
 elapsed or pause time. Link button Properties can edit its caption, URL, target
 page, and optional destination action, including URL/Page conversion in
-multi-page documents.
+multi-page documents. Sound button Properties can edit its caption while
+retaining its fixed mono or stereo function sources.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge
@@ -139,7 +140,8 @@ stops their motion together.
 Edit > Action Buttons > Sound creates one button for one or two selected
 functions, including on a supported existing multi-page page. One function is
 played as mono; two functions supply left and right stereo channels. Clicking
-the button toggles playback, and Escape stops all active Sound buttons. See the
+the button toggles playback, and Escape stops all active Sound buttons.
+Properties edits its caption without changing those channel sources. See the
 [Sound-button evidence](dev/sound_buttons_analysis.md).
 
 Edit > Action Buttons > Movement takes a selected free point followed by a

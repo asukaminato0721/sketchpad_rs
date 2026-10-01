@@ -18,8 +18,9 @@ code-62 layouts are not inferred from the Sound semantics.
 Imported labels and opaque records remain byte-preserved. New buttons are built
 from the established action template with a default `Play Sound` label. The
 constructor handles the template's zero-filled label terminator when the new
-label has different byte parity; ordinary imported-label edits retain the
-stricter opaque-suffix check.
+label has different byte parity. Imported labels preserve their observed opaque
+alignment byte until an edit crosses parity; Native itself then drops that byte
+and rebuilds the zero terminator, so the bounded writer does the same.
 
 ## Playback and editing
 
@@ -39,6 +40,11 @@ crash. The Nix development shell supplies ALSA for the Rodio playback backend.
 The channel and time semantics follow the official Sound Button reference:
 <https://referencecenter.dynamicgeometry.com/gsp-reference-center/sound_buttons.htm>.
 
+Properties exposes the caption while retaining the one or two function sources.
+This matches Native's two Sound-button tabs, Object and Label; there is no
+separate Sound settings panel. Caption changes are transactional, undoable, and
+use the shared page-local action writer on supported multi-page documents.
+
 ## Native and runtime verification
 
 A corpus Sound fixture was edited, saved, reopened, and retained its function,
@@ -51,6 +57,13 @@ and the generated file was unchanged by Native save:
 The real port editor was also run under Xvfb with ALSA's null device. Clicking
 the imported button entered the `Playing Sound button 9` state and clicking it
 again reported `Stopped Sound button 9`, with no audio initialization error.
+
+A public-API Properties edit changed the imported `music.gsp` caption from
+`听到函数 f` to `Play Verified Sound`, exercising an even-to-odd UTF-8 byte
+length transition. Native Properties displayed the full new caption and
+described the same function `f`. Sketchpad 5 then saved all 2,898 bytes
+unchanged with SHA-256
+`d05070bc3fb7d2053832193c860ad18bec1fa5d4ba539a39763b959e82655488`.
 
 Corpus coverage changes as follows:
 

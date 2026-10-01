@@ -100,6 +100,7 @@ impl Editor {
             self.properties_label_draft = match &object.kind {
                 Kind::HideShowButton { label, .. }
                 | Kind::AnimationButton { label, .. }
+                | Kind::SoundButton { label, .. }
                 | Kind::MovementButton { label, .. }
                 | Kind::ScrollButton { label, .. }
                 | Kind::PresentationButton { label, .. }
@@ -168,6 +169,7 @@ impl Editor {
         let saved_label = match &object.kind {
             Kind::HideShowButton { label, .. }
             | Kind::AnimationButton { label, .. }
+            | Kind::SoundButton { label, .. }
             | Kind::MovementButton { label, .. }
             | Kind::ScrollButton { label, .. }
             | Kind::PresentationButton { label, .. }
@@ -219,6 +221,7 @@ impl Editor {
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
         let mut apply_animation_properties = false;
+        let mut apply_sound_caption = false;
         let mut apply_movement_properties = false;
         let mut apply_scroll_properties = false;
         let mut apply_presentation_properties = false;
@@ -349,6 +352,21 @@ impl Editor {
                         ui.text_edit_singleline(&mut self.properties_label_draft);
                     });
                     apply_animation_properties = ui.button("Apply Animation Settings").clicked();
+                }
+                if let Kind::SoundButton { functions, .. } = &object.kind {
+                    ui.separator();
+                    ui.heading("Sound Button");
+                    if functions.len() == 1 {
+                        ui.label(format!("Mono source: Function {}", functions[0]));
+                    } else {
+                        ui.label(format!("Left channel: Function {}", functions[0]));
+                        ui.label(format!("Right channel: Function {}", functions[1]));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    apply_sound_caption = ui.button("Apply Caption").clicked();
                 }
                 if let Kind::MovementButton { pairs, .. } = &object.kind {
                     ui.separator();
@@ -513,6 +531,16 @@ impl Editor {
                 &self.properties_animation_settings_draft,
                 &self.properties_label_draft,
             ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_sound_caption {
+            match self
+                .doc
+                .set_sound_button_caption(id, &self.properties_label_draft)
+            {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,
