@@ -36,7 +36,17 @@ impl GraphicsState {
                 )
                 .expect("window"),
         );
-        let instance = wgpu::Instance::default();
+        // Give GLES the compositor connection up front.  Creating the default
+        // instance without it can leave Vulkan as the only active backend on
+        // software/Xvfb displays, even though a working GL adapter is present.
+        // `with_env` also makes WGPU_BACKEND useful for deterministic demos and
+        // troubleshooting without changing normal backend selection.
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+                event_loop.owned_display_handle(),
+            ))
+            .with_env(),
+        );
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),

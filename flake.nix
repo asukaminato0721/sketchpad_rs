@@ -16,6 +16,7 @@
             wayland
             libxkbcommon
             libglvnd
+            mesa
             vulkan-loader
             libx11
             libxcursor
@@ -34,6 +35,7 @@
               pkg-config
               fontconfig
               alsa-lib
+              xvfb-run
             ];
 
             shellHook = ''
