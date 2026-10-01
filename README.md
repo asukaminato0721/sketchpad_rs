@@ -33,6 +33,8 @@ ray, parallel, and perpendicular constructions update together. The development
 shell also includes `xvfb-run` for unattended desktop smoke runs. To create the
 same demo as a portable `.gsp` file, run
 `nix run .#gsp-probe -- demo /tmp/sketchpad-demo.gsp`.
+The same sample is available from **File → Open Built-in Demo**, so a normal
+desktop launch does not require a command line to begin the demonstration.
 
 To build the desktop app, launch that demo on an isolated X11 display, drag a
 live point, verify the window and changed rendering, and save before/after

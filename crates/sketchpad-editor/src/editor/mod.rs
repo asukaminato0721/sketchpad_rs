@@ -83,6 +83,7 @@ enum TranslationMode {
 }
 enum PendingAction {
     New,
+    Demo,
     Open(PathBuf),
     Quit,
 }

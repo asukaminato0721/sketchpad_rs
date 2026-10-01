@@ -277,6 +277,16 @@ impl Editor {
             Err(e) => self.status = format!("Open failed: {e}"),
         }
     }
+    pub(super) fn open_demo(&mut self) {
+        match sketchpad_engine::demo::geometry_document(sketchpad_engine::demo::GEOMETRY_STEPS) {
+            Ok(document) => {
+                self.replace_document(document);
+                self.untitled_name = "Demo";
+                self.status = "Opened the built-in geometry demo; drag A, B, or C".into();
+            }
+            Err(error) => self.status = format!("Demo failed: {error}"),
+        }
+    }
     pub(super) fn import_picture(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("PNG picture", &["png"])
@@ -439,6 +449,7 @@ impl Editor {
     pub(super) fn finish_pending_action(&mut self) {
         match self.pending_action.take() {
             Some(PendingAction::New) => self.replace_document(Document::new()),
+            Some(PendingAction::Demo) => self.open_demo(),
             Some(PendingAction::Open(path)) => self.open(path),
             Some(PendingAction::Quit) => self.exit_requested = true,
             None => {}

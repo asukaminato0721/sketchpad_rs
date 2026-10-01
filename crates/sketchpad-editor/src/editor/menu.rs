@@ -44,6 +44,14 @@ impl Editor {
                         }
                         ui.close();
                     }
+                    if ui.button("Open Built-in Demo").clicked() {
+                        if self.doc.dirty {
+                            self.pending_action = Some(PendingAction::Demo);
+                        } else {
+                            self.open_demo();
+                        }
+                        ui.close();
+                    }
                     if ui.button("Import PNG Picture…").clicked() {
                         self.import_picture();
                         ui.close();
