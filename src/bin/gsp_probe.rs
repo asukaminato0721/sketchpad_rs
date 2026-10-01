@@ -381,40 +381,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
 }
 
 fn demo(path: &str, steps: usize) -> Result<(), String> {
-    if !(1..=9).contains(&steps) {
-        return Err("demo steps must be from 1 to 9".into());
-    }
-    let mut document = Document::new();
-    // Keep the construction centered in the editor's default viewport so the
-    // generated file is useful as a live demo, not only as a writer probe.
-    let a = document.add(Kind::Free(Point { x: 300., y: 270. }));
-    document.set_object_label(a, "A", true)?;
-    if steps >= 2 {
-        let b = document.add(Kind::Free(Point { x: 380., y: 320. }));
-        document.set_object_label(b, "B", true)?;
-        if steps >= 3 {
-            document.add(Kind::Segment(a, b));
-        }
-        if steps >= 4 {
-            document.add(Kind::Circle(a, b));
-        }
-        if steps >= 5 {
-            let midpoint = document.add(Kind::Midpoint(a, b));
-            document.set_object_label(midpoint, "M", true)?;
-        }
-        if steps >= 6 {
-            document.add(Kind::Line(a, b));
-        }
-        if steps >= 7 {
-            document.add(Kind::Ray(a, b));
-        }
-        if steps >= 8 {
-            document.add(Kind::Parallel(a, 3));
-        }
-        if steps >= 9 {
-            document.add(Kind::Perpendicular(b, 3));
-        }
-    }
+    let mut document = sketchpad_rs::demo::geometry_document(steps)?;
     document.save_to(Path::new(path))?;
     println!("{path}: wrote {} objects", document.objects.len());
     Ok(())

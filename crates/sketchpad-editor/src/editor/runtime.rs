@@ -306,6 +306,16 @@ impl ApplicationHandler for Application {
 pub(crate) fn run() {
     let args: Vec<_> = std::env::args_os().collect();
     let doc = match args.get(1).map(PathBuf::from) {
+        Some(path) if path.as_os_str() == "--demo" => {
+            match sketchpad_engine::demo::geometry_document(sketchpad_engine::demo::GEOMETRY_STEPS)
+            {
+                Ok(document) => document,
+                Err(error) => {
+                    eprintln!("Could not create the built-in demo: {error}");
+                    Document::new()
+                }
+            }
+        }
         Some(path) => match Document::open(&path) {
             Ok(document) => document,
             Err(error) => {
