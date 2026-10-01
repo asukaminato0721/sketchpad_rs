@@ -46,10 +46,10 @@ Native Sketchpad opens and renders it, and Ctrl+S preserves SHA-256
 `8e3a0b8f7459c64a2227ac96f04f8ffc4f611e19bb060d6bff07757adba362c4`.
 
 The two compass sampled-mapping tools and polygon-surface tool now decode
-completely. Their full invocation graphs reach separate pre-existing caption
-placement guards for bold-italic `楷体` size 18 and Times New Roman size 14.
-Those font metrics remain pending; this pass does not substitute guessed
-caption geometry.
+completely. Subsequent structural work resolved their runtime caption placement
+through Native's stored presentation suppression and anchor reuse; no guessed
+font metrics were introduced. See
+[the structural follow-up](tool_prototype_structure_analysis.md).
 
 ## Corpus result
 
@@ -60,6 +60,9 @@ other than unsupported object kinds. All 280,347 drawing slots remain decoded,
 all 285,703 total object slots are recognized, and all 1,599 originals
 round-trip byte-exactly with zero failures.
 
-This proves complete corpus object decoding, not complete editing or command
-parity. No standalone test case was added or removed. Full scan:
+Subsequent structural work raises the current isolated-view result to 96
+complete and seven image-read-only views; all seven bounded picture prototypes
+can now be invoked. This proves complete corpus object decoding and the bounded
+tool frontier, not complete editing or command parity. No standalone test case
+was added or removed. Full scan:
 `/tmp/tool_prototype_complete_coverage.log`.

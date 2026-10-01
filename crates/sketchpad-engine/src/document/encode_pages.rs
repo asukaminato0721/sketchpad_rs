@@ -1512,6 +1512,7 @@ impl Document {
                         group.set_options(*options);
                         group.set_caption_flags(*caption_flags)?;
                         group.set_hidden(!object.visible);
+                        group.set_presentation_suppressed(object.presentation_suppressed);
                         let destination_buttons = self.link_destination_buttons(page);
                         let linked = self.objects.iter().any(|source| {
                             matches!(
@@ -1659,6 +1660,7 @@ impl Document {
                         )?;
                         group.set_options(*mode, *options);
                         group.set_hidden(!object.visible);
+                        group.set_presentation_suppressed(object.presentation_suppressed);
                         groups.extend_from_slice(&group.encode());
                     }
                     _ => return Err("Expected supported multi-page addition".into()),

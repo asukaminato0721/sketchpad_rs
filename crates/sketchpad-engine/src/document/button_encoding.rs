@@ -87,6 +87,7 @@ impl Document {
             group.set_action(*action);
             group.set_screen_anchor(*anchor);
             group.set_hidden(!object.visible);
+            group.set_presentation_suppressed(object.presentation_suppressed);
             let replacement = group.encode();
             if replacement != bytes[start..end] {
                 edits.push((start, end, replacement));

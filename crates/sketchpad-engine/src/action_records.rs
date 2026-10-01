@@ -1069,7 +1069,13 @@ impl HideShowButtonGroup {
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
+        let flags = &mut self.records.record_mut(OBJECT_HEADER).payload[2];
+        *flags = (*flags & !1) | u8::from(hidden);
+    }
+
+    pub fn set_presentation_suppressed(&mut self, suppressed: bool) {
+        let flags = &mut self.records.record_mut(OBJECT_HEADER).payload[2];
+        *flags = (*flags & !2) | (u8::from(suppressed) << 1);
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -1237,7 +1243,13 @@ impl PresentationButtonGroup {
     }
 
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.records.record_mut(OBJECT_HEADER).payload[2] = u8::from(hidden);
+        let flags = &mut self.records.record_mut(OBJECT_HEADER).payload[2];
+        *flags = (*flags & !1) | u8::from(hidden);
+    }
+
+    pub fn set_presentation_suppressed(&mut self, suppressed: bool) {
+        let flags = &mut self.records.record_mut(OBJECT_HEADER).payload[2];
+        *flags = (*flags & !2) | (u8::from(suppressed) << 1);
     }
 
     pub fn encode(&self) -> Vec<u8> {

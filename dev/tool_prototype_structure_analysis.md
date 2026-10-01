@@ -10,10 +10,10 @@ structurally partial. A trace of every strict rejection separated them into
 three groups:
 
 - otherwise typed prototype objects with one empty `0x232e` metadata record;
-- code-97/class-6/subtype-42 parameter loci with a valid internal `0x07d5`
-  label and indexed `0x07d8` style;
-- eight prototypes containing image resource tables that are not structurally
-  writable yet.
+- code-97/class-6/subtype-42 or subtype-43 parameter loci with a valid internal
+  `0x07d5` label and indexed `0x07d8` style;
+- seven prototypes containing image resource tables that remain read-only as
+  imported isolated views.
 
 The first two records are admitted only when the decoder has an embedded-tool
 input namespace. This does not broaden ordinary drawing admission. The empty
@@ -23,12 +23,15 @@ validation already used for geometric loci.
 
 ## Result
 
-Nine tools become structurally complete: the wall tool, all three compass
-tools, the quadrilateral-rolling tool, both previously partial 3D-coordinate
-helpers, the second caliper tool, and the perspective 3D-coordinate tool.
-Complete isolated views rise from **86 to 95**, leaving **8** partial image
-tools. All 5,356 prototype slots and all 285,703 corpus object slots remain
-decoded, and every one of the 1,599 source files remains byte-exact.
+Nine tools initially became structurally complete: the wall tool, all three
+compass tools, the quadrilateral-rolling tool, both previously partial
+3D-coordinate helpers, the second caliper tool, and the perspective
+3D-coordinate tool.
+The subtype-43 admission then makes `12T` complete as well. Complete isolated
+views rise from **86 to 96**, leaving **7** partial views, exactly the seven
+image-bearing prototypes. All 5,356 prototype slots and all 285,703 corpus
+object slots remain decoded, and every one of the 1,599 source files remains
+byte-exact.
 
 The recovered `6.多面体棱虚实线` tool was invoked with four real points. It
 created ten outputs in a 14-object, 3,420-byte document. The result reopens
@@ -52,5 +55,24 @@ and Ctrl+S preserves SHA-256
 `e8222056418d906715948403ae19631c31cb0eb161aaf779ca207a3b3620efc3`.
 Arbitrary imported multi-picture editing remains read-only; the new writer is
 limited to newly materialized point attachments with strict affine validation.
+
+The remaining image-bearing prototypes were then invoked individually. The
+three number/shape tools create one or two pictures, and all three π-spiral
+copies create their code-100 picture. The rods tool was the final boundary: its
+stored graph-unit points depend on a structurally valid mapped terminal and
+transformed descendants whose current values may be undefined. Keeping those
+units as undefined geometry, rather than rejecting their definitions, lets the
+tool materialize all 147 outputs and seven attached pictures. Its generated
+Hide/Show and Presentation buttons also preserve Native's independent header
+suppression bit. The 149-object, 112,216-byte result reopens and re-encodes
+exactly. Native Sketchpad displays the rods, buttons, captions, and dependent
+geometry, and Ctrl+S preserves SHA-256
+`d50a9c20dd65c3e7de8c728ffb615fa65f6a5313aa37f5073a3ffb2138417c6f`.
+
+`12T` creates 39 outputs in a 44-object, 8,144-byte non-partial drawing and
+round-trips exactly. The final scan reports **96 complete / 7 partial** isolated
+views; all seven partial views are read-only only because they retain imported
+picture resources, and all seven can materialize bounded new resources during
+tool invocation.
 No standalone test case was added or removed. Full corpus scan:
 `/tmp/tool_structure_markers_coverage.log`.

@@ -913,7 +913,30 @@ This makes nine more tools structurally invokable, raising complete isolated
 tool views from 86 to 95 and reducing partial views from 17 to 8. The recovered
 3D solid-edge tool creates ten outputs in a 14-object drawing; the result
 reopens fully, re-encodes exactly, visibly renders in Sketchpad 5, and remains
-byte-identical after Ctrl+S. The other eight partial tools all contain image
-resource tables and remain read-only pending a resource-copying contract. No
-standalone test was added or removed. See
+byte-identical after Ctrl+S. Seven of the remaining views contain image resource
+tables; the eighth was the `12T` subtype-43 parameter-locus prototype addressed
+below. No standalone test was added or removed. See
+[analysis](dev/tool_prototype_structure_analysis.md).
+
+## Final partial-tool invocation frontier
+
+Subtype-43 code-97 parameter loci use the same strictly parsed internal
+label/style pair as subtype 42. Admitting that pair only in an isolated tool
+namespace makes `12T` structurally complete: it creates 39 outputs in a
+44-object, 8,144-byte drawing and reopens exactly. Complete isolated tool views
+therefore rise **95→96**, leaving seven read-only views, exactly the seven
+picture-bearing prototypes.
+
+All seven picture prototypes now invoke through the bounded point-attached
+resource writer. The last rods prototype preserves graph-unit constructions
+whose structurally valid mapped terminal or transformed point is temporarily
+undefined, and generated Hide/Show and Presentation buttons retain Native's
+independent presentation-suppression bit. It creates 147 outputs, including
+seven PNG pictures, in a 149-object, 112,216-byte drawing. Sketchpad 5 visibly
+renders the rods, controls, captions, and geometry under Xvfb/Wine; Ctrl+S
+preserves SHA-256
+`d50a9c20dd65c3e7de8c728ffb615fa65f6a5313aa37f5073a3ffb2138417c6f`.
+The final corpus scan reports 103 definitions, 5,356/5,356 decoded prototype
+slots, **96 complete / 7 image-read-only isolated views**, and 1,599/1,599
+byte-exact source round trips. No standalone test was added or removed. See
 [analysis](dev/tool_prototype_structure_analysis.md).

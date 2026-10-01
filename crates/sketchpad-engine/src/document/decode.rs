@@ -564,7 +564,9 @@ impl Document {
                 || (code == 77 && h[6..10] == [15, 0, 65, 0]);
             let locus_internal_label = (code == 35
                 && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 43, 0]))
-                || (!tool_inputs.is_empty() && code == 97 && h[6..10] == [6, 0, 42, 0]);
+                || (!tool_inputs.is_empty()
+                    && code == 97
+                    && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 43, 0]));
             let referenced_caption = matches!(code, 73 | 90) && h[6..10] == [0, 0, 59, 0];
             let numeric_label = matches!(
                 code,

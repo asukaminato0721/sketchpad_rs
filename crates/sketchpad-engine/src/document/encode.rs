@@ -490,6 +490,7 @@ impl Document {
                 group.set_label(label)?;
                 group.set_screen_anchor(*anchor);
                 group.set_hidden(!o.visible);
+                group.set_presentation_suppressed(o.presentation_suppressed);
                 let encoded = group.encode();
                 if encoded.len() != end - start {
                     return Err(
@@ -1146,6 +1147,7 @@ impl Document {
                 group.set_options(*options);
                 group.set_caption_flags(*caption_flags)?;
                 group.set_hidden(!o.visible);
+                group.set_presentation_suppressed(o.presentation_suppressed);
                 added.extend_from_slice(&group.encode());
                 continue;
             }
@@ -1235,6 +1237,7 @@ impl Document {
                     PresentationButtonGroup::from_original_template_targets(&ids, label, *anchor)?;
                 group.set_options(*mode, *options);
                 group.set_hidden(!o.visible);
+                group.set_presentation_suppressed(o.presentation_suppressed);
                 added.extend_from_slice(&group.encode());
                 continue;
             }

@@ -452,8 +452,8 @@ impl Document {
         })
     }
 
-    /// A stored distance frame remains valid when a live unit magnitude is
-    /// zero, negative or undefined. Native hides its grid and dependent plots.
+    /// Stored coordinate geometry remains valid when a live origin or unit is
+    /// undefined. Native hides its grid and dependent plots until it recovers.
     pub(super) fn coordinate_geometry_undefined(&self, id: usize) -> bool {
         let Some(object) = id.checked_sub(1).and_then(|i| self.objects.get(i)) else {
             return false;
@@ -468,6 +468,45 @@ impl Document {
                 .filter(|o| source < id && !o.deleted && o.page == object.page)
         };
         match object.kind {
+            Kind::GraphHorizontalUnit(origin, step) => {
+                step.is_finite()
+                    && step > 0.
+                    && parent(origin).is_some_and(|origin| {
+                        self.position(origin.id).is_none()
+                            && match &origin.kind {
+                                Kind::IterationPointAlias(binding) => {
+                                    super::iteration_endpoint::binding_source(
+                                        &self.objects,
+                                        *binding,
+                                        origin.page,
+                                        origin.id,
+                                    )
+                                    .is_some()
+                                }
+                                Kind::Transformed(definition) => {
+                                    definition.element()
+                                        == super::transform_model::ElementType::Point
+                                        && super::transform_validation::definition_supported(
+                                            self, definition,
+                                        )
+                                }
+                                Kind::GraphHorizontalUnit(..)
+                                | Kind::GraphVerticalUnit(..)
+                                | Kind::DistanceVerticalUnit(..) => {
+                                    self.coordinate_geometry_undefined(origin.id)
+                                }
+                                _ => false,
+                            }
+                    })
+            }
+            Kind::GraphVerticalUnit(horizontal, step) => {
+                step.is_finite()
+                    && step > 0.
+                    && parent(horizontal).is_some_and(|horizontal| {
+                        matches!(horizontal.kind, Kind::GraphHorizontalUnit(..))
+                            && self.coordinate_geometry_undefined(horizontal.id)
+                    })
+            }
             Kind::DistanceAxis(origin, distance, 0 | 1) => {
                 parent(origin).is_some_and(|o| is_point_kind(&o.kind))
                     && parent(distance).is_some_and(|o| is_coordinate_unit_kind(&o.kind))
