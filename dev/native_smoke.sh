@@ -2,18 +2,35 @@
 set -euo pipefail
 
 # Capture the native window on an isolated X11 display with software rendering.
-# Usage: dev/native_smoke.sh [--demo|sketch.gsp] [capture-prefix]
+# Usage: dev/native_smoke.sh [--demo|--save-demo|sketch.gsp] [capture-prefix]
 if [[ -z "${IN_NIX_SHELL:-}" ]] && command -v nix >/dev/null 2>&1; then
   exec nix develop -c bash "$0" "$@"
 fi
 
-sketch_path="${1:---demo}"
+source_arg="${1:---demo}"
 capture_prefix="${2:-/tmp/sketchpad_native_smoke}"
-if [[ "$sketch_path" != --demo ]]; then
-  sketch_path="$(realpath "$sketch_path")"
-fi
+case "$source_arg" in
+  --demo)
+    smoke_mode=demo
+    sketch_path=--demo
+    ;;
+  --save-demo)
+    smoke_mode=save-demo
+    sketch_path="${capture_prefix}.gsp"
+    ;;
+  *)
+    smoke_mode=sketch
+    sketch_path="$(realpath "$source_arg")"
+    ;;
+esac
 
 cargo build --quiet --bin sketchpad_rs
+if [[ "$smoke_mode" == save-demo ]]; then
+  cargo build --quiet --no-default-features --bin gsp_probe
+  target/debug/gsp_probe demo "$sketch_path"
+  source_hash="$(sha256sum "$sketch_path")"
+  source_hash="${source_hash%% *}"
+fi
 
 xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
   set -euo pipefail
@@ -54,7 +71,7 @@ xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
   done
   test "$rendered" = true
   printf "Native window: %s\nCapture: %s.png\n" "$window_title" "$2"
-  if [[ "$1" == --demo ]]; then
+  if [[ "$3" == demo || "$3" == save-demo ]]; then
     xdotool mousemove --window "$window_id" 575 507 \
       mousedown 1 \
       mousemove --window "$window_id" 635 465 \
@@ -73,7 +90,29 @@ xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
     done
     [[ "$changed_pixels" =~ ^[0-9]+$ ]]
     (( changed_pixels > 1000 ))
-    test "$(xdotool getwindowname "$window_id")" = "*Demo — Sketchpad RS"
+    dirty_title="$(xdotool getwindowname "$window_id")"
+    [[ "$dirty_title" == \**" — Sketchpad RS" ]]
     printf "Dragged capture: %s_dragged.png (%s changed pixels)\n" "$2" "$changed_pixels"
+    if [[ "$3" == save-demo ]]; then
+      xdotool windowfocus --sync "$window_id"
+      xdotool key --clearmodifiers ctrl+s
+      saved=false
+      for _ in $(seq 1 80); do
+        if [[ "$(xdotool getwindowname "$window_id")" != \** ]]; then
+          saved=true
+          break
+        fi
+        sleep 0.25
+      done
+      test "$saved" = true
+      printf "Saved window: %s\n" "$(xdotool getwindowname "$window_id")"
+    fi
   fi
-' _ "$sketch_path" "$capture_prefix"
+' _ "$sketch_path" "$capture_prefix" "$smoke_mode"
+
+if [[ "$smoke_mode" == save-demo ]]; then
+  saved_hash="$(sha256sum "$sketch_path")"
+  saved_hash="${saved_hash%% *}"
+  test "$saved_hash" != "$source_hash"
+  target/debug/gsp_probe verify "$sketch_path"
+fi

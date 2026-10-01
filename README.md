@@ -38,6 +38,8 @@ To build the desktop app, launch that demo on an isolated X11 display, drag a
 live point, verify the window and changed rendering, and save before/after
 screenshots in one command, run
 `dev/native_smoke.sh --demo /tmp/sketchpad-demo-smoke`.
+Use `--save-demo` instead to generate a portable `.gsp`, drag it in the GUI,
+save it with Ctrl+S, and verify the changed file by reopening it headlessly.
 
 For development, run the unoptimized binary with
 `nix develop -c cargo run --bin sketchpad_rs -- path/to/sketch.gsp`.
