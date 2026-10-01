@@ -48,7 +48,7 @@ use sketchpad_engine::action_records::{
     AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions, ScrollPlacement,
     VisibilityAction, VisibilityOptions,
 };
-use sketchpad_engine::document::{Clipboard, Document, Kind, Point};
+use sketchpad_engine::document::{Clipboard, Document, Kind, Point, SampledImageDistortion};
 use sketchpad_engine::function_records::SimpleFunction;
 use sketchpad_engine::plot_points_records::PlotPointsMode;
 use sketchpad_engine::table_records::ParameterAnimationSettings;
@@ -384,6 +384,8 @@ struct Editor {
     properties_iteration_depth_draft: u32,
     properties_iteration_final_only_draft: bool,
     properties_axis_pi_labels_draft: bool,
+    properties_sampled_image_samples_draft: u32,
+    properties_sampled_image_distortion_draft: SampledImageDistortion,
     properties_visibility_action_draft: VisibilityAction,
     properties_visibility_options_draft: VisibilityOptions,
     properties_animation_settings_draft: Vec<AnimationSettings>,
@@ -533,6 +535,8 @@ impl Editor {
             properties_iteration_depth_draft: 1,
             properties_iteration_final_only_draft: false,
             properties_axis_pi_labels_draft: false,
+            properties_sampled_image_samples_draft: 2_000,
+            properties_sampled_image_distortion_draft: SampledImageDistortion::Most,
             properties_visibility_action_draft: VisibilityAction::Hide,
             properties_visibility_options_draft: VisibilityOptions::default(),
             properties_animation_settings_draft: Vec::new(),

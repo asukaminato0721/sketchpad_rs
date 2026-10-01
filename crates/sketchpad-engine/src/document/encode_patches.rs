@@ -522,6 +522,64 @@ impl Document {
         Ok(bytes)
     }
 
+    pub(super) fn patch_sampled_image_properties(
+        &self,
+        mut bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, String> {
+        let rs = records(&bytes)?;
+        let mut objects = self
+            .objects
+            .iter()
+            .filter(|object| !object.deleted)
+            .collect::<Vec<_>>();
+        objects.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        let expected = objects
+            .iter()
+            .filter(|object| matches!(object.kind, Kind::SampledImage(_)))
+            .count();
+        let mut objects = objects.into_iter();
+        let mut current = None;
+        let mut constraints = 0;
+        let mut ranges = 0;
+        for record in document_records(&rs) {
+            if record.kind == 0x07d0 {
+                current = Some(
+                    objects
+                        .next()
+                        .ok_or("Object group count mismatch in patch_sampled_image_properties")?,
+                );
+            } else if let Some(object) = current
+                && let Kind::SampledImage(definition) = &object.kind
+            {
+                match record.kind {
+                    0x07d3 => {
+                        let payload = bytes
+                            .get_mut(record.data.clone())
+                            .filter(|payload| {
+                                payload.len() == 12 && payload[..4] == 96u32.to_le_bytes()
+                            })
+                            .ok_or("Invalid sampled-picture resolution record")?;
+                        payload[4..12].copy_from_slice(&definition.resolution().to_le_bytes());
+                        constraints += 1;
+                    }
+                    0x0902 => {
+                        bytes
+                            .get_mut(record.data.clone())
+                            .filter(|payload| payload.len() == 40)
+                            .ok_or("Invalid sampled-picture range record")?
+                            .copy_from_slice(definition.range_payload());
+                        ranges += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if objects.next().is_some() || constraints != expected || ranges != expected {
+            return Err("Object group mismatch in patch_sampled_image_properties".into());
+        }
+        Ok(bytes)
+    }
+
     pub(super) fn patch_visual_styles(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
         let survivors: Vec<_> = self

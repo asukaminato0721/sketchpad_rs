@@ -40,7 +40,7 @@ pub mod mapped_element;
 mod sampled_mapped;
 pub use sampled_mapped::SampledMappedDefinition;
 mod sampled_image;
-pub use sampled_image::{SampledImageDefinition, SampledImageMesh};
+pub use sampled_image::{SampledImageDefinition, SampledImageDistortion, SampledImageMesh};
 mod angle_marker;
 mod measurements;
 pub use angle_marker::{AngleMarkerGeometry, AngleMarkerStyle};

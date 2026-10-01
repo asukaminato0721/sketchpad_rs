@@ -1996,6 +1996,11 @@ impl Document {
                 {
                     expected.kind = current.kind.clone();
                 }
+                (Kind::SampledImage(before), Kind::SampledImage(after))
+                    if before.same_structure(after) =>
+                {
+                    expected.kind = current.kind.clone();
+                }
                 _ => {}
             }
             let compatible_action_edit = match (&saved.kind, &current.kind) {

@@ -13,15 +13,21 @@ Every admitted group has exactly these records:
 
 - `07d0:28` — code 96, class 6, subtype 91
 - `07d2:4+4*n` — counted references
-- `07d3:12` — code 96 followed by the `f64` sampling resolution (`0.6` in all
-  observed groups)
+- `07d3:12` — code 96 followed by the `f64` allowed-distortion value (`0.6` in
+  all corpus groups)
 - `0902:40` — native sampling range/cache
 - `07d7:0`
 
-The range record has domain `0.0..1.0`, a sample budget at bytes 16–19, flags
+The range record has domain `0.0..1.0`, a sample count at bytes 16–19, flags
 `0x00010004`, a required word `1` at bytes 32–35, and a zero tail. Bytes 24–31
 remain opaque and are retained exactly. Groups outside this schema remain
 unsupported.
+
+Native's Drawing Properties tab identifies the two editable fields. Sample
+counts are `u32` values editable from 5 through 250000. The allowed-distortion combo has
+four choices whose exact `07d3` values are None=`0.001`, Some=`0.25`,
+Most=`0.6`, and All=`0.0`. In particular, the zero sentinel is valid and must
+not be rejected as a nonpositive resolution.
 
 ## Model and evaluation
 
@@ -40,8 +46,10 @@ and affine/clipped textured triangles, so the nonlinear mapping is retained
 rather than flattened to a bounding box.
 
 The writer emits the exact five-record native group and preserves the opaque
-range bytes. Dependencies and copy remapping treat the sampled picture as a
-constructed picture, not as another curve family. No editor command for
+range bytes. Existing objects can update the sample count and one of the four
+proved distortion values in place, with encode/reparse verification and one
+undo checkpoint. Dependencies and copy remapping treat the sampled picture as
+a constructed picture, not as another curve family. No editor command for
 authoring a new custom-transformed picture is exposed yet.
 
 ## Verification
@@ -49,6 +57,11 @@ authoring a new custom-transformed picture is exposed yet.
 The real desktop editor opened the native `折扇2（钮炳坤老师）.gsp` file under
 Xvfb and rendered the visible character pictures on the fan leaves while their
 source images remained hidden. The same document exported a sampled SVG mesh.
+Native property probes established all four distortion values and showed the
+exact 5–250000 validation range. A public port edit changed the fifth sampled picture to 64
+samples and All distortion; Native Properties displayed both values, and
+Ctrl+S retained all 73,316 bytes with SHA-256
+`dcc8251373174cb0bfff024dbe8d5b3195368ba5ea632f7d39a1119a508f4677`.
 
 Corpus coverage changed as follows:
 

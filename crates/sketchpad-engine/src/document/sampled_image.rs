@@ -6,6 +6,32 @@ use super::{Document, Kind, Object, Point};
 use crate::image_records::ImageFile;
 use std::collections::BTreeSet;
 
+/// Native's four choices for the sampled-picture "Allowed distortion" field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SampledImageDistortion {
+    None,
+    Some,
+    Most,
+    All,
+}
+
+impl SampledImageDistortion {
+    pub const fn native_resolution(self) -> f64 {
+        match self {
+            Self::None => 0.001,
+            Self::Some => 0.25,
+            Self::Most => 0.6,
+            Self::All => 0.0,
+        }
+    }
+
+    fn from_native_resolution(value: f64) -> Option<Self> {
+        [Self::None, Self::Some, Self::Most, Self::All]
+            .into_iter()
+            .find(|distortion| distortion.native_resolution().to_bits() == value.to_bits())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SampledImageDefinition {
     output: usize,
@@ -17,6 +43,9 @@ pub struct SampledImageDefinition {
 }
 
 impl SampledImageDefinition {
+    pub const MIN_EDITABLE_SAMPLES: u32 = 5;
+    pub const MAX_EDITABLE_SAMPLES: u32 = 250_000;
+
     pub fn output(&self) -> usize {
         self.output
     }
@@ -37,12 +66,31 @@ impl SampledImageDefinition {
         self.resolution
     }
 
+    pub fn distortion(&self) -> SampledImageDistortion {
+        SampledImageDistortion::from_native_resolution(self.resolution)
+            .expect("decoded sampled-picture resolution")
+    }
+
     pub fn range_payload(&self) -> &[u8; 40] {
         &self.native_range
     }
 
     pub fn samples(&self) -> u32 {
         u32::from_le_bytes(self.native_range[16..20].try_into().unwrap())
+    }
+
+    fn set_properties(&mut self, samples: u32, distortion: SampledImageDistortion) {
+        self.native_range[16..20].copy_from_slice(&samples.to_le_bytes());
+        self.resolution = distortion.native_resolution();
+    }
+
+    pub(super) fn same_structure(&self, other: &Self) -> bool {
+        self.output == other.output
+            && self.source == other.source
+            && self.seed == other.seed
+            && self.carried == other.carried
+            && self.native_range[..16] == other.native_range[..16]
+            && self.native_range[20..] == other.native_range[20..]
     }
 
     pub fn native_references(&self) -> Vec<usize> {
@@ -70,8 +118,7 @@ impl SampledImageDefinition {
                 .collect::<BTreeSet<_>>()
                 .len()
                 == definition.carried.len()
-            && resolution.is_finite()
-            && resolution > 0.0
+            && SampledImageDistortion::from_native_resolution(resolution).is_some()
             && f64::from_le_bytes(native_range[..8].try_into().ok()?) == 0.0
             && f64::from_le_bytes(native_range[8..16].try_into().ok()?) == 1.0
             && definition.samples() >= 2
@@ -185,6 +232,51 @@ pub struct SampledImageMesh<'a> {
 }
 
 impl Document {
+    /// Sample count and Native allowed-distortion choice for a sampled picture.
+    pub fn sampled_image_properties(&self, id: usize) -> Option<(u32, SampledImageDistortion)> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let Kind::SampledImage(definition) = &object.kind else {
+            return None;
+        };
+        (!object.deleted && object.page == self.active_page)
+            .then(|| (definition.samples(), definition.distortion()))
+    }
+
+    /// Apply Native's sampled-picture Drawing panel as one verified transaction.
+    pub fn set_sampled_image_properties(
+        &mut self,
+        id: usize,
+        samples: u32,
+        distortion: SampledImageDistortion,
+    ) -> Result<bool, String> {
+        if !(SampledImageDefinition::MIN_EDITABLE_SAMPLES
+            ..=SampledImageDefinition::MAX_EDITABLE_SAMPLES)
+            .contains(&samples)
+        {
+            return Err("Sample count must be 5–250000".into());
+        }
+        let index = id.checked_sub(1).ok_or("Invalid sampled picture")?;
+        let object = self.objects.get(index).ok_or("Invalid sampled picture")?;
+        let Kind::SampledImage(definition) = &object.kind else {
+            return Err("Select a sampled transformed picture".into());
+        };
+        if object.deleted || object.page != self.active_page {
+            return Err("Sampled picture is not on the active page".into());
+        }
+        if definition.samples() == samples && definition.distortion() == distortion {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let Kind::SampledImage(definition) = &mut candidate.objects[index].kind else {
+            unreachable!();
+        };
+        definition.set_properties(samples, distortion);
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     /// Tessellate a sampled picture using a bounded live evaluation budget.
     pub fn sampled_image_mesh(
         &self,

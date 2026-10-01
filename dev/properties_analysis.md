@@ -287,5 +287,20 @@ distance x axis with its ordinary y partner. Sketchpad 5 displayed the expected
 `fe16de9ca77d60f34f2e5f90fea1d5937146ed2b32de711ca33f1afca9946e44`, and
 `6f4b1ab31f87be02e8371f1c047c534cb9a26856d784e6631a8f8c2dc6a9d06e`.
 
-Labels on other geometry and sampled-object opacity remain outside this
-increment.
+## Sampled transformed pictures
+
+Code-96 transformed pictures expose a second Native tab named Drawing. Control
+1075 is the sample count; Native's validation dialog requires 5–250000, and the
+stored `u32` at bytes 16–19 of `0902` changes directly. Combo 1437 has four allowed-distortion
+choices. Their `07d3` `f64` values are None=`0.001`, Some=`0.25`, Most=`0.6`,
+and All=`0.0`; the zero value is a valid sentinel rather than malformed data.
+
+The port exposes both fields as a verified, undoable Properties transaction,
+including inside the fan fixture's otherwise partial view. Its in-place writer
+changes only the selected group's resolution and sample-count bytes and retains
+the opaque remainder of `0902`. A public edit of sampled picture 191 to 64/All
+displayed `64` and combo index 3 in Native Properties. Sketchpad 5 then saved
+all 73,316 bytes unchanged with SHA-256
+`dcc8251373174cb0bfff024dbe8d5b3195368ba5ea632f7d39a1119a508f4677`.
+
+Labels on other geometry remain outside this increment.

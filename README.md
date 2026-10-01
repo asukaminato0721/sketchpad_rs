@@ -50,7 +50,8 @@ retaining its fixed mono or stereo function sources. Iteration-image Properties
 can change a fixed iteration count and choose all images or only the final
 image; parameter-driven counts remain live and are edited through their source.
 Axis Properties can independently choose decimal tick labels or fractions and
-multiples of π for x or y axes.
+multiples of π for x or y axes. Sampled transformed-picture Properties exposes
+Native's sample count and None, Some, Most, or All allowed-distortion choices.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge
@@ -342,7 +343,9 @@ spectrum color in canvas and SVG strokes. See
 Native sampled custom transformations of pictures retain their source pixels
 and validated point-mapping construction. Bounded textured meshes drive canvas
 rendering, picking, and triangulated SVG export while preserving native picture
-order and sampling metadata. The wire evidence and admission boundary are in
+order and sampling metadata. Their Drawing Properties can edit the sample budget
+and Native's four allowed-distortion levels in a verified transaction. The wire
+evidence and admission boundary are in
 [the sampled-picture analysis](dev/sampled_transformed_pictures_analysis.md).
 
 Imported Animation buttons retain the observed high-rate parameter-reset

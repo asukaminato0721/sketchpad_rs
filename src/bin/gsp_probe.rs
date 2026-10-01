@@ -7,7 +7,8 @@ use sketchpad_rs::action_records::{
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::colorized::{ColorBinding, ColorRangeBehavior};
 use sketchpad_rs::document::{
-    Clipboard, Document, IterationDepth, Kind, Point, Record, TextStyleCommand, records,
+    Clipboard, Document, IterationDepth, Kind, Point, Record, SampledImageDistortion,
+    TextStyleCommand, records,
 };
 use sketchpad_rs::graph::GridForm;
 use sketchpad_rs::plot_points_records::PlotPointsMode;
@@ -809,6 +810,28 @@ fn replay(path: &str) -> Result<(), String> {
                         _ => return Err("expected axis_labels ID decimal|pi".into()),
                     };
                     document.set_axis_uses_pi_labels(id, pi)?;
+                }
+                "sampled_picture" => {
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    let [id, samples, distortion] = parts.as_slice() else {
+                        return Err("expected sampled_picture ID SAMPLES none|some|most|all".into());
+                    };
+                    let id = id
+                        .parse()
+                        .map_err(|_| "invalid sampled-picture object ID")?;
+                    let samples = samples.parse().map_err(|_| "invalid sample count")?;
+                    let distortion = match *distortion {
+                        "none" => SampledImageDistortion::None,
+                        "some" => SampledImageDistortion::Some,
+                        "most" => SampledImageDistortion::Most,
+                        "all" => SampledImageDistortion::All,
+                        _ => {
+                            return Err(
+                                "expected sampled_picture ID SAMPLES none|some|most|all".into()
+                            );
+                        }
+                    };
+                    document.set_sampled_image_properties(id, samples, distortion)?;
                 }
                 "trace" => {
                     let parts = rest.split_whitespace().collect::<Vec<_>>();

@@ -6,7 +6,10 @@ use super::{
     },
 };
 use sketchpad_engine::action_records::VisibilityAction;
-use sketchpad_engine::document::{Document, IterationDepth, Kind, LineMode, Object};
+use sketchpad_engine::document::{
+    Document, IterationDepth, Kind, LineMode, Object, SampledImageDefinition,
+    SampledImageDistortion,
+};
 use sketchpad_engine::style_records::VisualStyle;
 
 fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str {
@@ -142,6 +145,10 @@ impl Editor {
             if let Some(pi_labels) = self.doc.axis_uses_pi_labels(id) {
                 self.properties_axis_pi_labels_draft = pi_labels;
             }
+            if let Some((samples, distortion)) = self.doc.sampled_image_properties(id) {
+                self.properties_sampled_image_samples_draft = samples;
+                self.properties_sampled_image_distortion_draft = distortion;
+            }
             if let Kind::HideShowButton {
                 action, options, ..
             } = &object.kind
@@ -242,6 +249,7 @@ impl Editor {
         let mut apply_opacity = false;
         let mut apply_iteration_properties = false;
         let mut apply_axis_properties = false;
+        let mut apply_sampled_image_properties = false;
         let mut apply_hide_show_caption = false;
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
@@ -343,6 +351,42 @@ impl Editor {
                         "Fractions and multiples of π",
                     );
                     apply_axis_properties = ui.button("Apply Axis Settings").clicked();
+                }
+                if self.doc.sampled_image_properties(id).is_some() {
+                    ui.separator();
+                    ui.heading("Drawing");
+                    ui.horizontal(|ui| {
+                        ui.label("Sample count");
+                        ui.add(
+                            egui::DragValue::new(&mut self.properties_sampled_image_samples_draft)
+                                .range(
+                                    SampledImageDefinition::MIN_EDITABLE_SAMPLES
+                                        ..=SampledImageDefinition::MAX_EDITABLE_SAMPLES,
+                                ),
+                        );
+                    });
+                    egui::ComboBox::from_label("Allowed distortion")
+                        .selected_text(match self.properties_sampled_image_distortion_draft {
+                            SampledImageDistortion::None => "None",
+                            SampledImageDistortion::Some => "Some",
+                            SampledImageDistortion::Most => "Most",
+                            SampledImageDistortion::All => "All",
+                        })
+                        .show_ui(ui, |ui| {
+                            for (value, label) in [
+                                (SampledImageDistortion::None, "None"),
+                                (SampledImageDistortion::Some, "Some"),
+                                (SampledImageDistortion::Most, "Most"),
+                                (SampledImageDistortion::All, "All"),
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.properties_sampled_image_distortion_draft,
+                                    value,
+                                    label,
+                                );
+                            }
+                        });
+                    apply_sampled_image_properties = ui.button("Apply Drawing Settings").clicked();
                 }
                 if matches!(object.kind, Kind::HideShowButton { .. }) {
                     ui.separator();
@@ -578,6 +622,17 @@ impl Editor {
                 .doc
                 .set_axis_uses_pi_labels(id, self.properties_axis_pi_labels_draft)
             {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_sampled_image_properties {
+            match self.doc.set_sampled_image_properties(
+                id,
+                self.properties_sampled_image_samples_draft,
+                self.properties_sampled_image_distortion_draft,
+            ) {
                 Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,
