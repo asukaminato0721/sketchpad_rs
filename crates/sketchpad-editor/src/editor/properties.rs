@@ -1,4 +1,4 @@
-use super::Editor;
+use super::{Editor, action_dialogs::animation_settings_ui};
 use sketchpad_engine::action_records::VisibilityAction;
 use sketchpad_engine::document::{Document, Kind, LineMode, Object};
 use sketchpad_engine::style_records::VisualStyle;
@@ -92,7 +92,9 @@ impl Editor {
 
         if self.properties_draft_for != Some(id) {
             self.properties_label_draft = match &object.kind {
-                Kind::HideShowButton { label, .. } => label.clone(),
+                Kind::HideShowButton { label, .. } | Kind::AnimationButton { label, .. } => {
+                    label.clone()
+                }
                 _ => object
                     .label
                     .as_ref()
@@ -112,6 +114,10 @@ impl Editor {
             {
                 self.properties_visibility_action_draft = *action;
                 self.properties_visibility_options_draft = *options;
+            }
+            if let Kind::AnimationButton { settings, .. } = &object.kind {
+                self.properties_animation_settings_draft = settings.clone();
+                self.properties_animation_target_draft = 0;
             }
             self.properties_draft_for = Some(id);
         }
@@ -160,6 +166,7 @@ impl Editor {
         let mut apply_hide_show_caption = false;
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
+        let mut apply_animation_properties = false;
         let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
@@ -257,6 +264,35 @@ impl Editor {
                         apply_hide_show_caption = ui.button("Apply Caption").clicked();
                         reset_hide_show_caption = ui.button("Use Default Caption").clicked();
                     });
+                }
+                if let Kind::AnimationButton { targets, .. } = &object.kind {
+                    ui.separator();
+                    ui.heading("Animation Button");
+                    if targets.len() > 1 {
+                        ui.label("Choose a target to set its motion:");
+                        for (index, target) in targets.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut self.properties_animation_target_draft,
+                                index,
+                                format!("Object {target}"),
+                            );
+                        }
+                        ui.separator();
+                    }
+                    let selected = self
+                        .properties_animation_target_draft
+                        .min(targets.len().saturating_sub(1));
+                    if let (Some(&target), Some(settings)) = (
+                        targets.get(selected),
+                        self.properties_animation_settings_draft.get_mut(selected),
+                    ) {
+                        animation_settings_ui(&self.doc, ui, target, settings);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    apply_animation_properties = ui.button("Apply Animation Settings").clicked();
                 }
                 ui.separator();
                 ui.label("Parents");
@@ -356,6 +392,17 @@ impl Editor {
                         self.properties_label_draft = label.clone();
                     }
                 }
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_animation_properties {
+            match self.doc.set_animation_button_properties(
+                id,
+                &self.properties_animation_settings_draft,
+                &self.properties_label_draft,
+            ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
                 Err(error) => self.status = error,
             }
         }

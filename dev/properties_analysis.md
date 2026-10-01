@@ -141,6 +141,22 @@ Native probes also confirmed that ordinary pictures, tables, function plots,
 angle markers, and angle values have only the common Object panel; they do not
 represent missing specialized Properties panels.
 
+## Animation buttons
+
+Animation action buttons expose Native Label and Animation panels in addition
+to the common Object panel. The port edits the caption and every target's
+direction, Once Only state, speed, and parameter continuous/discrete rate,
+step, and domain in one verified undo transaction. The creation and Properties
+flows share the same controls, while imported opaque low mode tags survive the
+edit.
+
+A three-point port file was edited through the public API to use Backward/Slow,
+Forward/Fast/Once Only, and Random/Medium settings and the longer caption
+`Animation Verified`. Native Properties displayed the first target as Backward
+and Slow, and Sketchpad 5 saved all 2,478 bytes unchanged. SHA-256 before and
+after the Native save was
+`c2609cee6d2d8a2ed628f35222c196d4636540b7211a37e22c415489f970f26d`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-and settings for action families other than Hide/Show remain outside this
-increment.
+and settings for action families other than Hide/Show and Animation remain
+outside this increment.

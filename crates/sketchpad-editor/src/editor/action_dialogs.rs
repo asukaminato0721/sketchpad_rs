@@ -1,9 +1,111 @@
 use super::Editor;
 use sketchpad_engine::action_records::{
-    AnimationDirection, MovementSpeed, PresentationMode, PresentationOptions, PresentationStop,
-    ScrollPlacement,
+    AnimationDirection, AnimationSettings, MovementSpeed, PresentationMode, PresentationOptions,
+    PresentationStop, ScrollPlacement,
 };
-use sketchpad_engine::document::Kind;
+use sketchpad_engine::document::{Document, Kind};
+
+pub(super) fn animation_settings_ui(
+    doc: &Document,
+    ui: &mut egui::Ui,
+    target: usize,
+    settings: &mut AnimationSettings,
+) {
+    let free = matches!(doc.objects[target - 1].kind, Kind::Free(_));
+    let parameter = matches!(doc.objects[target - 1].kind, Kind::Parameter(_));
+    let circle = matches!(doc.objects[target - 1].kind, Kind::PointOnCircle(_, _, _));
+    ui.label(format!(
+        "Animate {} {target}",
+        if parameter { "parameter" } else { "point" }
+    ));
+    if free {
+        ui.label("Free points move at random");
+        settings.direction = AnimationDirection::Forward;
+    } else {
+        let direction_name = match (circle, parameter, settings.direction) {
+            (true, _, AnimationDirection::Forward) => "Counterclockwise",
+            (true, _, AnimationDirection::Backward) => "Clockwise",
+            (_, true, AnimationDirection::Forward) => "Increasing",
+            (_, true, AnimationDirection::Backward) => "Decreasing",
+            (_, _, AnimationDirection::Forward) => "Forward",
+            (_, _, AnimationDirection::Backward) => "Backward",
+            (_, _, AnimationDirection::Bidirectional) => "Bidirectional",
+            (_, _, AnimationDirection::Random) => "Random",
+        };
+        egui::ComboBox::from_label("Direction")
+            .selected_text(direction_name)
+            .show_ui(ui, |ui| {
+                for (direction, name) in [
+                    (
+                        AnimationDirection::Forward,
+                        if circle {
+                            "Counterclockwise"
+                        } else if parameter {
+                            "Increasing"
+                        } else {
+                            "Forward"
+                        },
+                    ),
+                    (
+                        AnimationDirection::Backward,
+                        if circle {
+                            "Clockwise"
+                        } else if parameter {
+                            "Decreasing"
+                        } else {
+                            "Backward"
+                        },
+                    ),
+                    (AnimationDirection::Bidirectional, "Bidirectional"),
+                    (AnimationDirection::Random, "Random"),
+                ] {
+                    ui.selectable_value(&mut settings.direction, direction, name);
+                }
+            });
+    }
+    if !free && settings.direction == AnimationDirection::Bidirectional {
+        settings.once = false;
+    }
+    ui.add_enabled(
+        free || settings.direction != AnimationDirection::Bidirectional,
+        egui::Checkbox::new(&mut settings.once, "Once Only"),
+    );
+    if parameter {
+        ui.horizontal(|ui| {
+            ui.label("Change per second");
+            ui.add(egui::DragValue::new(&mut settings.speed).range(0.025..=2_500.));
+        });
+        if let Some(options) = settings.parameter.as_mut() {
+            ui.checkbox(&mut options.discrete, "Discrete changes");
+            ui.horizontal(|ui| {
+                ui.label("Step");
+                ui.add_enabled(
+                    options.discrete,
+                    egui::DragValue::new(&mut options.step).range(0.001..=10_000.),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Domain");
+                ui.add(egui::DragValue::new(&mut options.min).speed(0.1));
+                ui.label("to");
+                ui.add(egui::DragValue::new(&mut options.max).speed(0.1));
+            });
+        }
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("Speed");
+            for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
+                if ui.selectable_label(settings.speed == speed, name).clicked() {
+                    settings.speed = speed;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Custom speed");
+            ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
+        });
+    }
+}
 
 impl Editor {
     pub(super) fn action_dialogs_ui(&mut self, root: &mut egui::Ui) {
@@ -21,102 +123,7 @@ impl Editor {
                 }
                 let target = draft.targets[draft.selected];
                 let settings = &mut draft.settings[draft.selected];
-                let free = matches!(self.doc.objects[target - 1].kind, Kind::Free(_));
-                let parameter = matches!(self.doc.objects[target - 1].kind, Kind::Parameter(_));
-                let circle = matches!(
-                    self.doc.objects[target - 1].kind,
-                    Kind::PointOnCircle(_, _, _)
-                );
-                ui.label(format!(
-                    "Animate {} {target}",
-                    if parameter { "parameter" } else { "point" }
-                ));
-                if free {
-                    ui.label("Free points move at random");
-                } else {
-                    let direction_name = match (circle, parameter, settings.direction) {
-                        (true, _, AnimationDirection::Forward) => "Counterclockwise",
-                        (true, _, AnimationDirection::Backward) => "Clockwise",
-                        (_, true, AnimationDirection::Forward) => "Increasing",
-                        (_, true, AnimationDirection::Backward) => "Decreasing",
-                        (_, _, AnimationDirection::Forward) => "Forward",
-                        (_, _, AnimationDirection::Backward) => "Backward",
-                        (_, _, AnimationDirection::Bidirectional) => "Bidirectional",
-                        (_, _, AnimationDirection::Random) => "Random",
-                    };
-                    egui::ComboBox::from_label("Direction")
-                        .selected_text(direction_name)
-                        .show_ui(ui, |ui| {
-                            for (direction, name) in [
-                                (
-                                    AnimationDirection::Forward,
-                                    if circle {
-                                        "Counterclockwise"
-                                    } else if parameter {
-                                        "Increasing"
-                                    } else {
-                                        "Forward"
-                                    },
-                                ),
-                                (
-                                    AnimationDirection::Backward,
-                                    if circle {
-                                        "Clockwise"
-                                    } else if parameter {
-                                        "Decreasing"
-                                    } else {
-                                        "Backward"
-                                    },
-                                ),
-                                (AnimationDirection::Bidirectional, "Bidirectional"),
-                                (AnimationDirection::Random, "Random"),
-                            ] {
-                                ui.selectable_value(&mut settings.direction, direction, name);
-                            }
-                        });
-                }
-                if !free && settings.direction == AnimationDirection::Bidirectional {
-                    settings.once = false;
-                }
-                ui.add_enabled(
-                    free || settings.direction != AnimationDirection::Bidirectional,
-                    egui::Checkbox::new(&mut settings.once, "Once Only"),
-                );
-                if parameter {
-                    ui.horizontal(|ui| {
-                        ui.label("Change per second");
-                        ui.add(egui::DragValue::new(&mut settings.speed).range(0.025..=2_500.));
-                    });
-                    if let Some(options) = settings.parameter.as_mut() {
-                        ui.checkbox(&mut options.discrete, "Discrete changes");
-                        ui.horizontal(|ui| {
-                            ui.label("Step");
-                            ui.add_enabled(
-                                options.discrete,
-                                egui::DragValue::new(&mut options.step).range(0.001..=10_000.),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Domain");
-                            ui.add(egui::DragValue::new(&mut options.min).speed(0.1));
-                            ui.label("to");
-                            ui.add(egui::DragValue::new(&mut options.max).speed(0.1));
-                        });
-                    }
-                } else {
-                    ui.horizontal(|ui| {
-                        ui.label("Speed");
-                        for (speed, name) in [(4., "Slow"), (24., "Medium"), (80., "Fast")] {
-                            if ui.selectable_label(settings.speed == speed, name).clicked() {
-                                settings.speed = speed;
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Custom speed");
-                        ui.add(egui::DragValue::new(&mut settings.speed).range(0.1..=10_000.));
-                    });
-                }
+                animation_settings_ui(&self.doc, ui, target, settings);
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();

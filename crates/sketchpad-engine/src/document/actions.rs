@@ -863,6 +863,75 @@ impl Document {
         }
         Ok(())
     }
+
+    pub fn set_animation_button_properties(
+        &mut self,
+        id: usize,
+        settings: &[AnimationSettings],
+        label: &str,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit this action button safely".into());
+        }
+        if label.len() > u16::MAX as usize {
+            return Err("Action button label exceeds 65535 bytes".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        let Kind::AnimationButton {
+            targets,
+            label: current_label,
+            settings: current_settings,
+            ..
+        } = &object.kind
+        else {
+            return Err("Object is not an Animation button".into());
+        };
+        if settings.len() != targets.len() {
+            return Err("Animation settings count differs from targets".into());
+        }
+        for (&target, &value) in targets.iter().zip(settings) {
+            value.validate_for_authoring()?;
+            let target = self
+                .objects
+                .get(target.checked_sub(1).ok_or("Invalid Animation target")?)
+                .ok_or("Invalid Animation target")?;
+            if target.deleted || target.page != object.page {
+                return Err("Animation target is unavailable".into());
+            }
+            if matches!(target.kind, Kind::Parameter(_)) != value.parameter.is_some() {
+                return Err("Animation settings do not match the target kind".into());
+            }
+            if matches!(target.kind, Kind::Free(_))
+                && value.direction != crate::action_records::AnimationDirection::Forward
+            {
+                return Err("A free-point Animation button has no direction setting".into());
+            }
+        }
+        if current_label == label && current_settings == settings {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        if let Kind::AnimationButton {
+            label: current_label,
+            settings: current_settings,
+            ..
+        } = &mut candidate.objects[id - 1].kind
+        {
+            *current_label = label.to_owned();
+            *current_settings = settings.to_vec();
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn activate_hide_show_button(&mut self, id: usize) -> Result<(), String> {
         self.activate_hide_show_button_impl(id, true)
     }

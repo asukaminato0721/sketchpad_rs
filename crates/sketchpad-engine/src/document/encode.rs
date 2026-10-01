@@ -303,47 +303,6 @@ impl Document {
                 }
             }
             if let (
-                Kind::AnimationButton {
-                    targets,
-                    label,
-                    anchor,
-                    settings,
-                },
-                Some(i),
-            ) = (&o.kind, o.header_offset)
-            {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
-                    .ok_or("Missing saved animation button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved animation button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = AnimationButtonGroup::parse(&out[start..end])?;
-                group.set_targets(
-                    &targets
-                        .iter()
-                        .map(|&target| target as u32)
-                        .collect::<Vec<_>>(),
-                )?;
-                group.set_label(label)?;
-                group.set_screen_anchor(*anchor);
-                group.set_settings_list(settings)?;
-                group.set_hidden(!o.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err(
-                        "Editing a saved animation button label cannot change its byte length"
-                            .into(),
-                    );
-                }
-                out[start..end].copy_from_slice(&encoded);
-            }
-            if let (
                 Kind::SoundButton {
                     functions,
                     label,
@@ -630,7 +589,9 @@ impl Document {
             let out = self.patch_marked_coordinate_link(out)?;
             let out = self.patch_text_font_overrides(self.patch_visual_styles(
                 self.patch_trace_flags(self.patch_split_points(self.patch_text_and_labels(
-                    self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+                    self.patch_animation_groups(
+                        self.patch_hide_show_groups(self.compact_deleted(out)?)?,
+                    )?,
                 )?)?)?,
             )?)?;
             return self.patch_last_moved_marker(out);
@@ -2325,9 +2286,9 @@ impl Document {
         }
         let out = self.patch_text_font_overrides(self.patch_defined_coordinate_grid_style(
             self.patch_visual_styles(self.patch_trace_flags(self.patch_split_points(
-                self.patch_text_and_labels(
+                self.patch_text_and_labels(self.patch_animation_groups(
                     self.patch_hide_show_groups(self.compact_deleted(out)?)?,
-                )?,
+                )?)?,
             )?)?)?,
         )?)?;
         self.patch_last_moved_marker(out)

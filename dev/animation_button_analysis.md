@@ -24,6 +24,16 @@ The native `action_animation_two_points_original.gsp` stores target IDs `4` and 
 
 The port imports all three native files without partial view and round-trips them byte-identically. Its dialog lists the selected points and edits each point's settings separately. The desktop default and second-point-Backward saves matched `tests/replay_animation_button_two_points.txt` byte-for-byte. Both replay files opened and saved byte-identically in Sketchpad 5; clicking the port-generated default there moved both points, and `action_animation_two_points_port_clicked_by_wine.gsp` imports without partial view. In the port, one click starts both tracks and a second click stops both.
 
+The common Properties window now exposes the same per-target controls for an
+existing Animation button plus its caption. These changes use a transactional
+public document command and a variable-length group patch, so changing caption
+length is supported rather than restricted to in-place replacement. A
+three-point public-API edit with three distinct motion settings and caption
+`Animation Verified` reopened in the port, displayed Backward/Slow for its
+first target in Native Properties, and saved byte-identically in Sketchpad 5.
+The 2,478-byte file retained SHA-256
+`c2609cee6d2d8a2ed628f35222c196d4636540b7211a37e22c415489f970f26d`.
+
 ## Three-point and mixed buttons
 
 Sketchpad 5 created `action_animation_three_points_native.gsp` from three selected points on one segment. The target record contains IDs 4, 5, and 6, and the settings record has 100 bytes: a four-byte prefix and three 32-byte blocks. The port-generated default and a version with independent Backward/slow and Forward/fast/Once Only settings opened and saved byte-identically in native Sketchpad. Clicking the port default moved all three points; `action_animation_three_points_port_clicked_by_wine.gsp` preserves their changed parameters. The port imports, edits, copies, and runs the three-target button.
