@@ -14,6 +14,7 @@ impl Editor {
         };
         let settings = group.animation_settings();
         self.parameter_value_draft = group.value().to_string();
+        self.parameter_precision_draft = group.precision();
         self.parameter_discrete_draft = settings.discrete;
         self.parameter_rate_units_draft = settings.rate_units.to_string();
         self.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
@@ -329,6 +330,34 @@ impl Editor {
                     );
                 });
                 ui.horizontal(|ui| {
+                    ui.label("Precision");
+                    egui::ComboBox::from_id_salt("parameter_precision")
+                        .selected_text(match self.parameter_precision_draft {
+                            0 => "units",
+                            1 => "tenths",
+                            2 => "hundredths",
+                            3 => "thousandths",
+                            4 => "ten-thousandths",
+                            _ => "hundred-thousandths",
+                        })
+                        .show_ui(ui, |ui| {
+                            for (precision, name) in [
+                                (0, "units"),
+                                (1, "tenths"),
+                                (2, "hundredths"),
+                                (3, "thousandths"),
+                                (4, "ten-thousandths"),
+                                (5, "hundred-thousandths"),
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.parameter_precision_draft,
+                                    precision,
+                                    name,
+                                );
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
                     ui.label("Change");
                     ui.radio_value(&mut self.parameter_discrete_draft, false, "Continuously");
                     ui.radio_value(&mut self.parameter_discrete_draft, true, "Discretely");
@@ -396,7 +425,12 @@ impl Editor {
                             &self.parameter_keyboard_step_draft,
                         )?,
                     };
-                    self.doc.set_parameter_properties(id, value, settings)
+                    self.doc.set_parameter_properties(
+                        id,
+                        value,
+                        self.parameter_precision_draft,
+                        settings,
+                    )
                 })();
                 match result {
                     Ok(()) => {

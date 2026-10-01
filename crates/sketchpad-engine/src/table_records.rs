@@ -683,6 +683,38 @@ impl ParameterGroup {
                 .unwrap(),
         ) as usize
     }
+    pub fn set_precision(&mut self, precision: usize) -> Result<(), String> {
+        if precision > 5 {
+            return Err("Parameter precision must be between 0 and 5 decimal places".into());
+        }
+        let old_precision = self.precision();
+        if precision == old_precision {
+            return Ok(());
+        }
+        let rs = records(&self.bytes, 0)?;
+        let payload = rs[1].payload;
+        let precision_steps = [1_f64, 0.1, 0.01, 0.001, 0.0001, 0.00001];
+        let step = f64::from_le_bytes(self.bytes[payload + 52..payload + 60].try_into().unwrap());
+        let scale = self.native_unit_scale();
+        let right = rs
+            .iter()
+            .find(|record| record.kind == 0x08a3)
+            .unwrap()
+            .payload
+            + 4;
+        let old_right = i16::from_le_bytes(self.bytes[right..right + 2].try_into().unwrap());
+        let delta = 10 * (precision as i32 - old_precision as i32);
+        let new_right = i16::try_from(i32::from(old_right) + delta)
+            .map_err(|_| "Parameter box coordinate overflow")?;
+        if step == precision_steps[old_precision] * scale {
+            self.bytes[payload + 52..payload + 60]
+                .copy_from_slice(&(precision_steps[precision] * scale).to_le_bytes());
+        }
+        self.bytes[payload + 28..payload + 30].copy_from_slice(&(precision as u16).to_le_bytes());
+        self.bytes[right..right + 2].copy_from_slice(&new_right.to_le_bytes());
+        Self::parse(&self.bytes)?;
+        Ok(())
+    }
     pub fn unit(&self) -> NumericUnit {
         match u16::from_le_bytes(self.bytes[16..18].try_into().unwrap()) {
             80 => NumericUnit::Length,

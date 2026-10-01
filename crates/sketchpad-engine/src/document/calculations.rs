@@ -134,10 +134,12 @@ impl Document {
         &mut self,
         id: usize,
         value: f64,
+        precision: usize,
         settings: ParameterAnimationSettings,
     ) -> Result<(), String> {
         self.update_parameter(id, true, |group| {
             group.set_value(value)?;
+            group.set_precision(precision)?;
             group.set_animation_settings(settings)
         })
     }
