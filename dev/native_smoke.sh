@@ -54,4 +54,26 @@ xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
   done
   test "$rendered" = true
   printf "Native window: %s\nCapture: %s.png\n" "$window_title" "$2"
+  if [[ "$1" == --demo ]]; then
+    xdotool mousemove --window "$window_id" 575 507 \
+      mousedown 1 \
+      mousemove --window "$window_id" 635 465 \
+      sleep 0.5 \
+      mouseup 1
+    changed_pixels=0
+    for _ in $(seq 1 40); do
+      import -window "$window_id" "${2}_dragged.png"
+      changed_pixels="$(magick compare -metric AE "${2}.png" "${2}_dragged.png" null: 2>&1 || true)"
+      changed_pixels="${changed_pixels%% *}"
+      changed_pixels="${changed_pixels%%.*}"
+      if [[ "$changed_pixels" =~ ^[0-9]+$ ]] && (( changed_pixels > 1000 )); then
+        break
+      fi
+      sleep 0.25
+    done
+    [[ "$changed_pixels" =~ ^[0-9]+$ ]]
+    (( changed_pixels > 1000 ))
+    test "$(xdotool getwindowname "$window_id")" = "*Demo — Sketchpad RS"
+    printf "Dragged capture: %s_dragged.png (%s changed pixels)\n" "$2" "$changed_pixels"
+  fi
 ' _ "$sketch_path" "$capture_prefix"
