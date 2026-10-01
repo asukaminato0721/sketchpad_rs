@@ -523,6 +523,61 @@ impl Document {
         }
         Ok(())
     }
+
+    pub fn set_scroll_button_properties(
+        &mut self,
+        id: usize,
+        placement: ScrollPlacement,
+        label: &str,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit this action button safely".into());
+        }
+        if label.len() > u16::MAX as usize {
+            return Err("Action button label exceeds 65535 bytes".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        let Kind::ScrollButton {
+            target,
+            placement: current_placement,
+            label: current_label,
+            ..
+        } = &object.kind
+        else {
+            return Err("Object is not a Scroll button".into());
+        };
+        let target = self
+            .objects
+            .get(target.checked_sub(1).ok_or("Invalid Scroll target")?)
+            .ok_or("Invalid Scroll target")?;
+        if target.deleted || target.page != object.page || !is_point_kind(&target.kind) {
+            return Err("Scroll target is unavailable".into());
+        }
+        if *current_placement == placement && current_label == label {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        if let Kind::ScrollButton {
+            placement: current_placement,
+            label: current_label,
+            ..
+        } = &mut candidate.objects[id - 1].kind
+        {
+            *current_placement = placement;
+            *current_label = label.to_owned();
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn add_presentation_button_for_targets(
         &mut self,
         targets: &[usize],

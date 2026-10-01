@@ -14,6 +14,20 @@ In a 400-by-250-pixel native canvas, clicking Upper Left moved point 1 from scre
 
 The editor's SVG/PDF export carries the same button offset as its scrolled canvas. Broader point and document layouts remain to be verified.
 
+## Properties editing
+
+The common Properties window exposes the Native Upper Left/Center and Label
+panels for an existing Scroll button. One public document command applies both
+fields transactionally, and Scroll now uses the shared post-order action writer
+for page-local remapping and variable-size labels. Unknown label suffixes retain
+the existing byte-parity guard.
+
+A public-API edit changed a generated Upper Left button to Center and expanded
+its even-length caption from `Scroll` to `Scroll to Center`. Native Properties
+showed the new caption and Center control 1146 selected. Native saved all 2,120
+bytes unchanged with SHA-256
+`b231e3af819a4ea1084080b6a78d004a671ebccbd46979720df53b759a0f2d9f`.
+
 ## Multi-page insertion
 
 Sketchpad 5 created `two_page_scroll_native.gsp` on page 2 for global point 2, stored as page-local reference 1. `tests/replay_multi_page_scroll.txt` generates the corresponding English button and a file with a page-1 Center button plus a page-2 Upper Left button. Both generated files opened and saved byte-identically in Sketchpad 5. Clicking the generated page-2 button there placed its point at the canvas corner and moved the button out of view; saving left the file byte-identical. The Rust editor produced the same viewport center, and its sketch bytes did not change.

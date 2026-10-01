@@ -1,7 +1,9 @@
 //! Shared action-group patches run after ordering and before variable-size captions.
 use super::embedded_tools::document_record_indices;
 use super::{Document, Kind, records};
-use crate::action_records::{AnimationButtonGroup, HideShowButtonGroup, MovementButtonGroup};
+use crate::action_records::{
+    AnimationButtonGroup, HideShowButtonGroup, MovementButtonGroup, ScrollButtonGroup,
+};
 
 impl Document {
     pub(super) fn patch_action_groups(&self, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -127,6 +129,21 @@ impl Document {
                     group.set_target_pairs(&references)?;
                     group.set_speed(*speed);
                     group.set_follows_destination(*follow);
+                    group.set_label(label)?;
+                    group.set_screen_anchor(*anchor);
+                    group.set_hidden(!object.visible);
+                    Some(group.encode())
+                }
+                Kind::ScrollButton {
+                    target,
+                    placement,
+                    label,
+                    anchor,
+                } => {
+                    let reference = local_id(*target, "Scroll")?;
+                    let mut group = ScrollButtonGroup::parse(&bytes[start..end])?;
+                    group.set_target(reference)?;
+                    group.set_placement(*placement);
                     group.set_label(label)?;
                     group.set_screen_anchor(*anchor);
                     group.set_hidden(!object.visible);

@@ -133,6 +133,16 @@ pub(super) fn movement_settings_ui(
     ui.radio_value(follow, false, "Move toward initial destination");
 }
 
+pub(super) fn scroll_settings_ui(
+    ui: &mut egui::Ui,
+    target: usize,
+    placement: &mut ScrollPlacement,
+) {
+    ui.label(format!("Position point {target} in the sketch window:"));
+    ui.radio_value(placement, ScrollPlacement::UpperLeft, "Upper left");
+    ui.radio_value(placement, ScrollPlacement::Center, "Center");
+}
+
 impl Editor {
     pub(super) fn action_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if let Some(mut draft) = self.animation_button_dialog.clone() {
@@ -220,16 +230,7 @@ impl Editor {
             let mut cancel = false;
             egui::Modal::new(egui::Id::new("scroll_button_settings")).show(root.ctx(), |ui| {
                 ui.heading("Scroll Button");
-                ui.label(format!(
-                    "Position point {} in the sketch window:",
-                    draft.target
-                ));
-                ui.radio_value(
-                    &mut draft.placement,
-                    ScrollPlacement::UpperLeft,
-                    "Upper left",
-                );
-                ui.radio_value(&mut draft.placement, ScrollPlacement::Center, "Center");
+                scroll_settings_ui(ui, draft.target, &mut draft.placement);
                 ui.horizontal(|ui| {
                     create = ui.button("Create").clicked();
                     cancel = ui.button("Cancel").clicked();

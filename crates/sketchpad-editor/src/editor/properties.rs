@@ -1,6 +1,6 @@
 use super::{
     Editor,
-    action_dialogs::{animation_settings_ui, movement_settings_ui},
+    action_dialogs::{animation_settings_ui, movement_settings_ui, scroll_settings_ui},
 };
 use sketchpad_engine::action_records::VisibilityAction;
 use sketchpad_engine::document::{Document, Kind, LineMode, Object};
@@ -97,7 +97,8 @@ impl Editor {
             self.properties_label_draft = match &object.kind {
                 Kind::HideShowButton { label, .. }
                 | Kind::AnimationButton { label, .. }
-                | Kind::MovementButton { label, .. } => label.clone(),
+                | Kind::MovementButton { label, .. }
+                | Kind::ScrollButton { label, .. } => label.clone(),
                 _ => object
                     .label
                     .as_ref()
@@ -126,6 +127,9 @@ impl Editor {
                 self.properties_movement_speed_draft = *speed;
                 self.properties_movement_follow_draft = *follow;
             }
+            if let Kind::ScrollButton { placement, .. } = &object.kind {
+                self.properties_scroll_placement_draft = *placement;
+            }
             self.properties_draft_for = Some(id);
         }
 
@@ -134,6 +138,7 @@ impl Editor {
             Kind::HideShowButton { label, .. }
             | Kind::AnimationButton { label, .. }
             | Kind::MovementButton { label, .. }
+            | Kind::ScrollButton { label, .. }
                 if !label.is_empty() =>
             {
                 Some(label.clone())
@@ -181,6 +186,7 @@ impl Editor {
         let mut hide_show_settings_changed = false;
         let mut apply_animation_properties = false;
         let mut apply_movement_properties = false;
+        let mut apply_scroll_properties = false;
         let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
@@ -325,6 +331,16 @@ impl Editor {
                     });
                     apply_movement_properties = ui.button("Apply Movement Settings").clicked();
                 }
+                if let Kind::ScrollButton { target, .. } = &object.kind {
+                    ui.separator();
+                    ui.heading("Scroll Button");
+                    scroll_settings_ui(ui, *target, &mut self.properties_scroll_placement_draft);
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    apply_scroll_properties = ui.button("Apply Scroll Settings").clicked();
+                }
                 ui.separator();
                 ui.label("Parents");
                 if parent_labels.is_empty() {
@@ -442,6 +458,17 @@ impl Editor {
                 id,
                 self.properties_movement_speed_draft,
                 self.properties_movement_follow_draft,
+                &self.properties_label_draft,
+            ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_scroll_properties {
+            match self.doc.set_scroll_button_properties(
+                id,
+                self.properties_scroll_placement_draft,
                 &self.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),

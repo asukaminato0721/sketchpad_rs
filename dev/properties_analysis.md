@@ -173,6 +173,20 @@ Instant fixture, and selected control 1267 for initial-destination movement.
 Sketchpad 5 saved all 2,062 bytes unchanged, retaining SHA-256
 `31928aeb5e89063ee470c1f1d140aa9f9196912aa620398b80afc7d6fb2a85d1`.
 
+## Scroll buttons
+
+Scroll action buttons expose Native Label and Scroll panels. Creation and
+Properties share the Upper Left and Center controls, while one verified public
+document command applies the placement and caption atomically. Scroll groups
+now use the shared post-order action writer, including page-local target
+remapping and safe same-parity variable-length label splicing.
+
+A public-API edit changed a port button from Upper Left to Center and expanded
+its caption from `Scroll` to `Scroll to Center`. Native Properties displayed
+the new caption and selected Center control 1146. Sketchpad 5 saved all 2,120
+bytes unchanged, retaining SHA-256
+`b231e3af819a4ea1084080b6a78d004a671ebccbd46979720df53b759a0f2d9f`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-and settings for action families other than Hide/Show, Animation, and Movement
-remain outside this increment.
+and settings for action families other than Hide/Show, Animation, Movement, and
+Scroll remain outside this increment.

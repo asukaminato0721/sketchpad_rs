@@ -341,41 +341,6 @@ impl Document {
                 out[start..end].copy_from_slice(&encoded);
             }
             if let (
-                Kind::ScrollButton {
-                    target,
-                    placement,
-                    label,
-                    anchor,
-                },
-                Some(i),
-            ) = (&o.kind, o.header_offset)
-            {
-                let start_record = rs
-                    .iter()
-                    .position(|record| record.kind == 0x7d0 && record.data.start == i)
-                    .ok_or("Missing saved Scroll button header")?;
-                let end_record = rs[start_record..]
-                    .iter()
-                    .position(|record| record.kind == 0x7d7)
-                    .map(|index| start_record + index)
-                    .ok_or("Missing saved Scroll button terminator")?;
-                let start = rs[start_record].start;
-                let end = rs[end_record].data.end;
-                let mut group = ScrollButtonGroup::parse(&out[start..end])?;
-                group.set_target(*target as u32)?;
-                group.set_placement(*placement);
-                group.set_label(label)?;
-                group.set_screen_anchor(*anchor);
-                group.set_hidden(!o.visible);
-                let encoded = group.encode();
-                if encoded.len() != end - start {
-                    return Err(
-                        "Editing a saved Scroll button label cannot change its byte length".into(),
-                    );
-                }
-                out[start..end].copy_from_slice(&encoded);
-            }
-            if let (
                 Kind::PresentationButton {
                     targets,
                     mode,
