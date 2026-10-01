@@ -16,6 +16,24 @@ The native original and clicked fixtures import as editable with `partial_view=f
 
 `tests/replay_presentation_button.txt` generates simultaneous and sequential files from two Hide/Show parents. Both opened and saved byte-identically in native Sketchpad 5. Clicking either port-generated Presentation there hid both points and changed both parents to Show. `action_presentation_port_simultaneous_clicked_by_wine.gsp` and `action_presentation_port_sequential_clicked_by_wine.gsp` preserve these results. A click in the Rust desktop editor produced the same object state in `action_presentation_port_desktop_clicked.gsp`; that saved file then opened and saved byte-identically in native Sketchpad 5. The advanced-setting probes were made on disposable copies and establish the wire mutation, while the Rust regression assertions cover their runtime behavior.
 
+## Properties editing
+
+The common Properties window exposes the Native Label and Presentation panels
+for an existing button. Creation and Properties reuse the same controls. One
+public document command applies mode, options, timing, and caption in a verified
+transaction while preserving the opaque native progress word. Presentation now
+uses the shared post-order action writer for page-local target remapping and
+variable-size labels; unknown label suffixes retain the existing byte-parity
+guard.
+
+A public-API edit changed a generated simultaneous button to sequential mode,
+enabled Deselect Objects, Stop Animations, and Erase Traces, selected a
+2.5-second pause, and expanded its even-length caption from `Run Presentation`
+to `Start Presentation`. Native Properties displayed the expanded caption,
+sequential-only pause controls, and all three selected pre-actions. Native saved
+all 2,358 bytes unchanged with SHA-256
+`7f410fea0545a270718043e201d7ace7eee101dabdb0dc337757ce1a478a9432`.
+
 `tests/replay_multi_page_presentation.txt` adds a simultaneous Presentation button on page 2 of a two-page document with two Hide/Show buttons. The port stores their page-local ordinals `[5, 6]` after the reference count, corresponding to global object IDs `[6, 7]`. The generated file opened and saved byte-identically in native Sketchpad 5. Clicking the Presentation button there hid all three parent targets, changed both Hide/Show actions to Show, and kept page 1 visible. The native-clicked file imports and round-trips in Rust.
 
 `tests/replay_multi_page_presentation_sequential.txt` creates the same page-2 button in sequential mode. After the Wine harness waited for Sketchpad's startup and file-open window, the generated file opened and saved byte-identically. A native click hid the same three parent targets. Both clicked modes retain their mode values and import byte-identically in Rust.

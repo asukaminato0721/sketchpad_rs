@@ -2,7 +2,8 @@
 use super::embedded_tools::document_record_indices;
 use super::{Document, Kind, records};
 use crate::action_records::{
-    AnimationButtonGroup, HideShowButtonGroup, MovementButtonGroup, ScrollButtonGroup,
+    AnimationButtonGroup, HideShowButtonGroup, MovementButtonGroup, PresentationButtonGroup,
+    ScrollButtonGroup,
 };
 
 impl Document {
@@ -147,6 +148,26 @@ impl Document {
                     group.set_label(label)?;
                     group.set_screen_anchor(*anchor);
                     group.set_hidden(!object.visible);
+                    Some(group.encode())
+                }
+                Kind::PresentationButton {
+                    targets,
+                    mode,
+                    options,
+                    label,
+                    anchor,
+                } => {
+                    let references = targets
+                        .iter()
+                        .map(|&target| local_id(target, "Presentation"))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut group = PresentationButtonGroup::parse(&bytes[start..end])?;
+                    group.set_targets(&references)?;
+                    group.set_options(*mode, *options);
+                    group.set_label(label)?;
+                    group.set_screen_anchor(*anchor);
+                    group.set_hidden(!object.visible);
+                    group.set_presentation_suppressed(object.presentation_suppressed);
                     Some(group.encode())
                 }
                 _ => None,

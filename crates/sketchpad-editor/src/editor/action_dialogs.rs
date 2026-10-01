@@ -143,6 +143,72 @@ pub(super) fn scroll_settings_ui(
     ui.radio_value(placement, ScrollPlacement::Center, "Center");
 }
 
+pub(super) fn presentation_settings_ui(
+    ui: &mut egui::Ui,
+    target_count: usize,
+    mode: &mut PresentationMode,
+    options: &mut PresentationOptions,
+) {
+    ui.label(format!("Present {target_count} action button(s)"));
+    let previous_mode = *mode;
+    ui.radio_value(mode, PresentationMode::Simultaneous, "Simultaneously");
+    ui.radio_value(mode, PresentationMode::Sequential, "Sequentially");
+    if *mode != previous_mode {
+        let before = (
+            options.deselect,
+            options.stop_animations,
+            options.erase_traces,
+            options.native_state,
+        );
+        *options = PresentationOptions::for_mode(*mode);
+        options.deselect = before.0;
+        options.stop_animations = before.1;
+        options.erase_traces = before.2;
+        options.native_state = before.3;
+    }
+    ui.separator();
+    ui.label("Before starting:");
+    ui.checkbox(&mut options.deselect, "Deselect objects");
+    ui.checkbox(&mut options.stop_animations, "Stop running animations");
+    ui.checkbox(&mut options.erase_traces, "Erase traces");
+    ui.separator();
+    if *mode == PresentationMode::Simultaneous {
+        ui.label("Stop after:");
+        ui.radio_value(
+            &mut options.stop,
+            PresentationStop::LastAction,
+            "Last action stops",
+        );
+        ui.radio_value(
+            &mut options.stop,
+            PresentationStop::FirstAction,
+            "First action stops",
+        );
+        ui.radio_value(
+            &mut options.stop,
+            PresentationStop::ElapsedTime,
+            "Elapsed time",
+        );
+    } else {
+        options.stop = PresentationStop::LastAction;
+        ui.label("Pause between actions:");
+    }
+    if *mode == PresentationMode::Sequential || options.stop == PresentationStop::ElapsedTime {
+        let mut seconds = f64::from(options.time_tenths) / 10.;
+        if ui
+            .add(
+                egui::DragValue::new(&mut seconds)
+                    .range(0.0..=6553.5)
+                    .speed(0.1)
+                    .suffix(" s"),
+            )
+            .changed()
+        {
+            options.time_tenths = (seconds * 10.).round() as u16;
+        }
+    }
+}
+
 impl Editor {
     pub(super) fn action_dialogs_ui(&mut self, root: &mut egui::Ui) {
         if let Some(mut draft) = self.animation_button_dialog.clone() {
@@ -257,78 +323,12 @@ impl Editor {
                 root.ctx(),
                 |ui| {
                     ui.heading("Presentation Button");
-                    ui.label(format!(
-                        "Present {} selected action button(s)",
-                        draft.targets.len()
-                    ));
-                    let previous_mode = draft.mode;
-                    ui.radio_value(
+                    presentation_settings_ui(
+                        ui,
+                        draft.targets.len(),
                         &mut draft.mode,
-                        PresentationMode::Simultaneous,
-                        "Simultaneously",
+                        &mut draft.options,
                     );
-                    ui.radio_value(
-                        &mut draft.mode,
-                        PresentationMode::Sequential,
-                        "Sequentially",
-                    );
-                    if draft.mode != previous_mode {
-                        let before = (
-                            draft.options.deselect,
-                            draft.options.stop_animations,
-                            draft.options.erase_traces,
-                        );
-                        draft.options = PresentationOptions::for_mode(draft.mode);
-                        draft.options.deselect = before.0;
-                        draft.options.stop_animations = before.1;
-                        draft.options.erase_traces = before.2;
-                    }
-                    ui.separator();
-                    ui.label("Before starting:");
-                    ui.checkbox(&mut draft.options.deselect, "Deselect objects");
-                    ui.checkbox(
-                        &mut draft.options.stop_animations,
-                        "Stop running animations",
-                    );
-                    ui.checkbox(&mut draft.options.erase_traces, "Erase traces");
-                    ui.separator();
-                    if draft.mode == PresentationMode::Simultaneous {
-                        ui.label("Stop after:");
-                        ui.radio_value(
-                            &mut draft.options.stop,
-                            PresentationStop::LastAction,
-                            "Last action stops",
-                        );
-                        ui.radio_value(
-                            &mut draft.options.stop,
-                            PresentationStop::FirstAction,
-                            "First action stops",
-                        );
-                        ui.radio_value(
-                            &mut draft.options.stop,
-                            PresentationStop::ElapsedTime,
-                            "Elapsed time",
-                        );
-                    } else {
-                        draft.options.stop = PresentationStop::LastAction;
-                        ui.label("Pause between actions:");
-                    }
-                    if draft.mode == PresentationMode::Sequential
-                        || draft.options.stop == PresentationStop::ElapsedTime
-                    {
-                        let mut seconds = f64::from(draft.options.time_tenths) / 10.;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut seconds)
-                                    .range(0.0..=6553.5)
-                                    .speed(0.1)
-                                    .suffix(" s"),
-                            )
-                            .changed()
-                        {
-                            draft.options.time_tenths = (seconds * 10.).round() as u16;
-                        }
-                    }
                     ui.horizontal(|ui| {
                         create = ui.button("Create").clicked();
                         cancel = ui.button("Cancel").clicked();

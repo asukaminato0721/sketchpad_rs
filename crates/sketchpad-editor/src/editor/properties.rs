@@ -1,6 +1,8 @@
 use super::{
     Editor,
-    action_dialogs::{animation_settings_ui, movement_settings_ui, scroll_settings_ui},
+    action_dialogs::{
+        animation_settings_ui, movement_settings_ui, presentation_settings_ui, scroll_settings_ui,
+    },
 };
 use sketchpad_engine::action_records::VisibilityAction;
 use sketchpad_engine::document::{Document, Kind, LineMode, Object};
@@ -98,7 +100,8 @@ impl Editor {
                 Kind::HideShowButton { label, .. }
                 | Kind::AnimationButton { label, .. }
                 | Kind::MovementButton { label, .. }
-                | Kind::ScrollButton { label, .. } => label.clone(),
+                | Kind::ScrollButton { label, .. }
+                | Kind::PresentationButton { label, .. } => label.clone(),
                 _ => object
                     .label
                     .as_ref()
@@ -130,6 +133,10 @@ impl Editor {
             if let Kind::ScrollButton { placement, .. } = &object.kind {
                 self.properties_scroll_placement_draft = *placement;
             }
+            if let Kind::PresentationButton { mode, options, .. } = &object.kind {
+                self.properties_presentation_mode_draft = *mode;
+                self.properties_presentation_options_draft = *options;
+            }
             self.properties_draft_for = Some(id);
         }
 
@@ -139,6 +146,7 @@ impl Editor {
             | Kind::AnimationButton { label, .. }
             | Kind::MovementButton { label, .. }
             | Kind::ScrollButton { label, .. }
+            | Kind::PresentationButton { label, .. }
                 if !label.is_empty() =>
             {
                 Some(label.clone())
@@ -187,6 +195,7 @@ impl Editor {
         let mut apply_animation_properties = false;
         let mut apply_movement_properties = false;
         let mut apply_scroll_properties = false;
+        let mut apply_presentation_properties = false;
         let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
@@ -341,6 +350,22 @@ impl Editor {
                     });
                     apply_scroll_properties = ui.button("Apply Scroll Settings").clicked();
                 }
+                if let Kind::PresentationButton { targets, .. } = &object.kind {
+                    ui.separator();
+                    ui.heading("Presentation Button");
+                    presentation_settings_ui(
+                        ui,
+                        targets.len(),
+                        &mut self.properties_presentation_mode_draft,
+                        &mut self.properties_presentation_options_draft,
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Caption");
+                        ui.text_edit_singleline(&mut self.properties_label_draft);
+                    });
+                    apply_presentation_properties =
+                        ui.button("Apply Presentation Settings").clicked();
+                }
                 ui.separator();
                 ui.label("Parents");
                 if parent_labels.is_empty() {
@@ -469,6 +494,18 @@ impl Editor {
             match self.doc.set_scroll_button_properties(
                 id,
                 self.properties_scroll_placement_draft,
+                &self.properties_label_draft,
+            ) {
+                Ok(true) => self.status = format!("Updated {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_presentation_properties {
+            match self.doc.set_presentation_button_properties(
+                id,
+                self.properties_presentation_mode_draft,
+                self.properties_presentation_options_draft,
                 &self.properties_label_draft,
             ) {
                 Ok(true) => self.status = format!("Updated {description}"),

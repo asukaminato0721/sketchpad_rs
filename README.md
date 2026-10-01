@@ -41,7 +41,9 @@ and post-show target selection. Animation button Properties can edit its
 caption and each target's direction, Once Only state, speed, and parameter
 timing fields. Movement button Properties can edit its caption, speed, and
 follow-moving versus initial-destination policy. Scroll button Properties can
-edit its caption and Upper Left versus Center placement.
+edit its caption and Upper Left versus Center placement. Presentation button
+Properties can edit its caption, execution mode, pre-actions, stop policy, and
+elapsed or pause time.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge

@@ -589,6 +589,78 @@ impl Document {
             PresentationOptions::for_mode(mode),
         )
     }
+
+    pub fn set_presentation_button_properties(
+        &mut self,
+        id: usize,
+        mode: PresentationMode,
+        options: PresentationOptions,
+        label: &str,
+    ) -> Result<bool, String> {
+        if self.partial_view && self.page_count == 1 {
+            return Err("Cannot edit this action button safely".into());
+        }
+        if label.len() > u16::MAX as usize {
+            return Err("Action button label exceeds 65535 bytes".into());
+        }
+        if mode == PresentationMode::Sequential
+            && options.stop != crate::action_records::PresentationStop::LastAction
+        {
+            return Err("A sequential Presentation has no simultaneous stop condition".into());
+        }
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or("Invalid button ID")?)
+            .ok_or("Invalid button ID")?;
+        if object.deleted || object.page != self.active_page {
+            return Err("Button is unavailable on this page".into());
+        }
+        let Kind::PresentationButton {
+            targets,
+            mode: current_mode,
+            options: current_options,
+            label: current_label,
+            ..
+        } = &object.kind
+        else {
+            return Err("Object is not a Presentation button".into());
+        };
+        if options.native_state as usize > targets.len()
+            || targets.is_empty()
+            || targets.iter().enumerate().any(|(index, &target)| {
+                target == 0
+                    || target >= id
+                    || targets[..index].contains(&target)
+                    || self.objects.get(target - 1).is_none_or(|target| {
+                        target.deleted
+                            || target.page != object.page
+                            || !target.kind.is_action_button()
+                    })
+            })
+        {
+            return Err("Presentation target is unavailable".into());
+        }
+        if *current_mode == mode && *current_options == options && current_label == label {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        if let Kind::PresentationButton {
+            mode: current_mode,
+            options: current_options,
+            label: current_label,
+            ..
+        } = &mut candidate.objects[id - 1].kind
+        {
+            *current_mode = mode;
+            *current_options = options;
+            *current_label = label.to_owned();
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn add_presentation_button_for_targets_with_options(
         &mut self,
         targets: &[usize],

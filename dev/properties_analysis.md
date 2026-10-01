@@ -187,6 +187,23 @@ the new caption and selected Center control 1146. Sketchpad 5 saved all 2,120
 bytes unchanged, retaining SHA-256
 `b231e3af819a4ea1084080b6a78d004a671ebccbd46979720df53b759a0f2d9f`.
 
+## Presentation buttons
+
+Presentation action buttons expose Native Label and Presentation panels. The
+creation and Properties paths share simultaneous/sequential mode, Deselect
+Objects, Stop Animations, Erase Traces, simultaneous stop policy, and elapsed
+or sequential pause time controls. One public document command applies those
+fields and the caption atomically while retaining the opaque native progress
+word. Presentation groups now use the shared post-order action writer for
+page-local target remapping and safe same-parity variable-length label splicing.
+
+A public-API edit changed a port button from simultaneous defaults to
+sequential mode with all three pre-actions, a 2.5-second pause, and caption
+`Start Presentation`. Native Properties displayed the expanded caption,
+sequential-only pause controls, and all three selected pre-actions. Sketchpad 5
+saved all 2,358 bytes unchanged, retaining SHA-256
+`7f410fea0545a270718043e201d7ace7eee101dabdb0dc337757ce1a478a9432`.
+
 Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-and settings for action families other than Hide/Show, Animation, Movement, and
-Scroll remain outside this increment.
+and settings for action families other than Hide/Show, Animation, Movement,
+Scroll, and Presentation remain outside this increment.
