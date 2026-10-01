@@ -24,8 +24,10 @@ use std::{
 };
 
 fn usage() -> String {
-    "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | coverage FILE_OR_DIRECTORY... | demo OUTPUT.gsp [1..9] | replay SCRIPT | svg INPUT.gsp OUTPUT.svg"
-        .into()
+    format!(
+        "Usage: gsp_probe inspect FILE | diff BEFORE AFTER | verify FILE... | coverage FILE_OR_DIRECTORY... | demo OUTPUT.gsp [1..{}] | replay SCRIPT | svg INPUT.gsp OUTPUT.svg",
+        sketchpad_rs::demo::GEOMETRY_STEPS
+    )
 }
 
 fn read(path: &str) -> Result<Vec<u8>, String> {
@@ -2707,7 +2709,7 @@ fn run() -> Result<(), String> {
         [command, before, after] if command == "diff" => diff(before, after),
         [command, paths @ ..] if command == "verify" => verify(paths),
         [command, paths @ ..] if command == "coverage" => coverage(paths),
-        [command, path] if command == "demo" => demo(path, 9),
+        [command, path] if command == "demo" => demo(path, sketchpad_rs::demo::GEOMETRY_STEPS),
         [command, path, steps] if command == "demo" => demo(
             path,
             steps.parse().map_err(|_| "demo steps must be an integer")?,
