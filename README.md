@@ -25,16 +25,19 @@ nix run . -- path/to/sketch.gsp
 For a quick interactive demonstration, launch the built-in sample:
 
 ```sh
-nix run . -- --demo
+nix run .#demo
 ```
+
+`nix run . -- --demo` is equivalent.
 
 Drag points A, B, or C to see the live segment, midpoint, circle, line, ray,
 parallel, perpendicular, filled triangle, length, perimeter, area, and angle
 update together. The development shell also includes `xvfb-run` for unattended
 desktop smoke runs. To create the same demo as a portable `.gsp` file, run
 `nix run .#gsp-probe -- demo /tmp/sketchpad-demo.gsp`.
-The same sample is available from **File → Open Built-in Demo**, so a normal
-desktop launch does not require a command line to begin the demonstration.
+The same sample is available from **File → Open Built-in Demo** and as an
+**Open Built-in Demo** desktop action, so a normal desktop launch does not
+require a command line to begin the demonstration.
 
 To build the desktop app, launch that demo on an isolated X11 display, drag a
 live point, verify the window and changed rendering, and save before/after

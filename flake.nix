@@ -88,6 +88,10 @@
             icon = "applications-graphics";
             categories = [ "Education" "Math" ];
             mimeTypes = [ "application/x-geometer-sketchpad" ];
+            actions.Demo = {
+              name = "Open Built-in Demo";
+              exec = "sketchpad_rs --demo";
+            };
           };
           mimeInfo = pkgs.writeTextFile {
             name = "sketchpad-rs-mime";
@@ -146,17 +150,26 @@
       apps = forAllSystems (system:
         let
           packages = self.packages.${system};
+          pkgs = packagesFor system;
+          demoLauncher = pkgs.writeShellScript "sketchpad-rs-demo" ''
+            exec ${packages.default}/bin/sketchpad_rs --demo
+          '';
         in
         {
           default = {
             type = "app";
             program = "${packages.default}/bin/sketchpad_rs";
-            meta.description = "Open Sketchpad RS or launch its built-in geometry demo";
+            meta.description = "Open the Sketchpad RS geometry editor";
           };
           gsp-probe = {
             type = "app";
             program = "${packages.gsp-probe}/bin/gsp_probe";
             meta.description = "Inspect, verify, convert, and generate Sketchpad documents";
+          };
+          demo = {
+            type = "app";
+            program = "${demoLauncher}";
+            meta.description = "Launch the built-in live geometry demonstration";
           };
         });
 
