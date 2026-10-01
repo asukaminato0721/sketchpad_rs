@@ -25,15 +25,27 @@
       packages = forAllSystems (system:
         let
           pkgs = packagesFor system;
-          source = ./.;
-          cargoLock = { lockFile = ./Cargo.lock; };
-        in
-        {
-          default = pkgs.rustPlatform.buildRustPackage {
-            pname = "sketchpad-rs";
+          source = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./src
+              ./crates
+              ./assets
+              ./tests/fixtures
+            ];
+          };
+          commonPackage = {
             version = "0.1.0";
             src = source;
-            inherit cargoLock;
+            cargoLock.lockFile = ./Cargo.lock;
+            doCheck = false;
+          };
+        in
+        {
+          default = pkgs.rustPlatform.buildRustPackage (commonPackage // {
+            pname = "sketchpad-rs";
 
             nativeBuildInputs = with pkgs; [
               makeWrapper
@@ -41,23 +53,18 @@
             ];
             buildInputs = [ pkgs.alsa-lib ];
             cargoBuildFlags = [ "--bin" "sketchpad_rs" ];
-            doCheck = false;
 
             postFixup = ''
               wrapProgram "$out/bin/sketchpad_rs" \
                 --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath (runtimeLibraries pkgs)}" \
                 --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.fontconfig ]}"
             '';
-          };
+          });
 
-          gsp-probe = pkgs.rustPlatform.buildRustPackage {
+          gsp-probe = pkgs.rustPlatform.buildRustPackage (commonPackage // {
             pname = "gsp-probe";
-            version = "0.1.0";
-            src = source;
-            inherit cargoLock;
             cargoBuildFlags = [ "--no-default-features" "--bin" "gsp_probe" ];
-            doCheck = false;
-          };
+          });
         });
 
       apps = forAllSystems (system:
