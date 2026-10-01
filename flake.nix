@@ -42,9 +42,29 @@
             cargoLock.lockFile = ./Cargo.lock;
             doCheck = false;
           };
-        in
-        {
-          default = pkgs.rustPlatform.buildRustPackage (commonPackage // {
+          desktopItem = pkgs.makeDesktopItem {
+            name = "sketchpad-rs";
+            desktopName = "Sketchpad RS";
+            comment = "Open and edit Geometer's Sketchpad documents";
+            exec = "sketchpad_rs %f";
+            icon = "applications-graphics";
+            categories = [ "Education" "Math" ];
+            mimeTypes = [ "application/x-geometer-sketchpad" ];
+          };
+          mimeInfo = pkgs.writeTextFile {
+            name = "sketchpad-rs-mime";
+            destination = "/share/mime/packages/sketchpad-rs.xml";
+            text = ''
+              <?xml version="1.0" encoding="UTF-8"?>
+              <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+                <mime-type type="application/x-geometer-sketchpad">
+                  <comment>Geometer's Sketchpad document</comment>
+                  <glob pattern="*.gsp"/>
+                </mime-type>
+              </mime-info>
+            '';
+          };
+          guiBinary = pkgs.rustPlatform.buildRustPackage (commonPackage // {
             pname = "sketchpad-rs";
 
             nativeBuildInputs = with pkgs; [
@@ -60,10 +80,28 @@
                 --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.fontconfig ]}"
             '';
           });
+        in
+        {
+          default = pkgs.symlinkJoin {
+            name = "sketchpad-rs-0.1.0";
+            paths = [
+              guiBinary
+              desktopItem
+              mimeInfo
+            ];
+            meta = {
+              description = "Linux editor for Geometer's Sketchpad documents";
+              mainProgram = "sketchpad_rs";
+            };
+          };
 
           gsp-probe = pkgs.rustPlatform.buildRustPackage (commonPackage // {
             pname = "gsp-probe";
             cargoBuildFlags = [ "--no-default-features" "--bin" "gsp_probe" ];
+            meta = {
+              description = "Headless tools for Geometer's Sketchpad documents";
+              mainProgram = "gsp_probe";
+            };
           });
         });
 
