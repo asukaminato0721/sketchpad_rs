@@ -141,6 +141,7 @@ impl Editor {
         let mut visibility_changed = false;
         let mut apply_label = false;
         let mut apply_opacity = false;
+        let mut edit_parameter = false;
         let mut navigate_to = None;
         egui::Window::new("Properties")
             .id(egui::Id::new("object_properties"))
@@ -161,6 +162,9 @@ impl Editor {
                     });
                 ui.separator();
                 visibility_changed = ui.checkbox(&mut hidden, "Hidden").changed();
+                if matches!(object.kind, Kind::Parameter(_)) {
+                    edit_parameter = ui.button("Parameter Settings…").clicked();
+                }
                 if self.doc.can_edit_geometry_label(id) {
                     ui.separator();
                     ui.heading("Label");
@@ -231,6 +235,14 @@ impl Editor {
                 Ok(false) => {}
                 Err(error) => self.status = error,
             }
+        }
+        if edit_parameter {
+            self.properties_dialog = None;
+            self.properties_draft_for = None;
+            if let Err(error) = self.begin_parameter_dialog(id) {
+                self.status = error;
+            }
+            return;
         }
         if let Some(related) = navigate_to {
             self.select_only(related);

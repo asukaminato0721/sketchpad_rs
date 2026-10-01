@@ -136,12 +136,14 @@ impl Document {
         value: f64,
         precision: usize,
         display_mode: u16,
+        includes_edit_box: bool,
         settings: ParameterAnimationSettings,
     ) -> Result<(), String> {
         self.update_parameter(id, true, |group| {
             group.set_value(value)?;
             group.set_precision(precision)?;
             group.set_display_mode(display_mode)?;
+            group.set_includes_edit_box(includes_edit_box)?;
             group.set_animation_settings(settings)
         })
     }

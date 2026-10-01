@@ -171,6 +171,11 @@ impl Editor {
                                     self.status = error;
                                 }
                             }
+                            Kind::Parameter(ref group) if group.includes_edit_box() => {
+                                if let Err(error) = self.begin_edit_definition(id) {
+                                    self.status = error;
+                                }
+                            }
                             Kind::FunctionPlot(..)
                             | Kind::ParametricPlot(..)
                             | Kind::ParameterLocus(..) => {
@@ -501,12 +506,18 @@ impl Editor {
                     {
                         ui.painter()
                             .rect_filled(number_rect, 0., egui::Color32::WHITE);
-                        ui.painter().rect_stroke(
-                            number_rect,
-                            0.,
-                            egui::Stroke::new(1., egui::Color32::from_gray(70)),
-                            egui::StrokeKind::Inside,
-                        );
+                        let includes_edit_box = match &object.kind {
+                            Kind::Parameter(group) => group.includes_edit_box(),
+                            _ => true,
+                        };
+                        if includes_edit_box {
+                            ui.painter().rect_stroke(
+                                number_rect,
+                                0.,
+                                egui::Stroke::new(1., egui::Color32::from_gray(70)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                         for (row, line) in lines.iter().enumerate() {
                             ui.painter().text(
                                 number_rect.min + egui::vec2(5., 3. + row as f32 * 21.),

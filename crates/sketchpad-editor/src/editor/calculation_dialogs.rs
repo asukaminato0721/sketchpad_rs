@@ -17,6 +17,7 @@ impl Editor {
         self.parameter_precision_draft = group.precision();
         self.parameter_display_mode_draft = group.display_mode();
         self.parameter_original_display_mode = group.display_mode() == 0;
+        self.parameter_edit_box_draft = group.includes_edit_box();
         self.parameter_discrete_draft = settings.discrete;
         self.parameter_rate_units_draft = settings.rate_units.to_string();
         self.parameter_rate_seconds_draft = settings.rate_seconds.to_string();
@@ -387,6 +388,10 @@ impl Editor {
                             );
                         });
                 });
+                ui.checkbox(
+                    &mut self.parameter_edit_box_draft,
+                    "Show edit box (double-click to edit)",
+                );
                 ui.horizontal(|ui| {
                     ui.label("Change");
                     ui.radio_value(&mut self.parameter_discrete_draft, false, "Continuously");
@@ -460,6 +465,7 @@ impl Editor {
                         value,
                         self.parameter_precision_draft,
                         self.parameter_display_mode_draft,
+                        self.parameter_edit_box_draft,
                         settings,
                     )
                 })();

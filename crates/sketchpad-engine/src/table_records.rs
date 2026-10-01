@@ -669,6 +669,31 @@ impl ParameterGroup {
         )
     }
 
+    /// Whether Native draws the parameter as an inline edit box. The flag is
+    /// presentation-only; it does not change the parameter's numeric value.
+    pub fn includes_edit_box(&self) -> bool {
+        let rs = records(&self.bytes, 0).unwrap();
+        let at = rs[1].payload + 48;
+        u32::from_le_bytes(self.bytes[at..at + 4].try_into().unwrap()) & 0x0002_0000 != 0
+    }
+
+    pub fn set_includes_edit_box(&mut self, includes: bool) -> Result<(), String> {
+        if includes == self.includes_edit_box() {
+            return Ok(());
+        }
+        let rs = records(&self.bytes, 0)?;
+        let at = rs[1].payload + 48;
+        let mut flags = u32::from_le_bytes(self.bytes[at..at + 4].try_into().unwrap());
+        if includes {
+            flags |= 0x0002_0000;
+        } else {
+            flags &= !0x0002_0000;
+        }
+        self.bytes[at..at + 4].copy_from_slice(&flags.to_le_bytes());
+        Self::parse(&self.bytes)?;
+        Ok(())
+    }
+
     pub fn set_display_mode(&mut self, mode: u16) -> Result<(), String> {
         if !matches!(mode, 0 | 1 | 3) {
             return Err("Unsupported parameter display mode".into());

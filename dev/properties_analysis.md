@@ -90,6 +90,19 @@ Sketchpad 5 opened it with the expected translucent fill and saved all 2,040
 bytes unchanged. The SHA-256 before and after Native save was
 `cf630a541350eb6c16920274ae3b6a756ddabf0108d8caf01e43494ddbe229ad`.
 
-Labels on other geometry, picture and sampled-object opacity, Value, Parameter,
-Table, Iteration, Axis, Function, Plot, Marker, and action-specific panels
-remain outside this increment.
+## Parameter values
+
+The common Properties panel links parameters to the same atomic editor as Edit
+Selected Parameter. Alongside value, precision, display mode, animation timing,
+domain, and keyboard adjustment, it exposes Native's Show Edit Box flag. That
+flag is bit `0x0002_0000` of the `0907` payload mode word at offset 48. Enabled
+parameters retain their canvas border and open the editor on double-click;
+disabled parameters render without the border and require the menu or common
+Properties link. A public-API value-only control with the flag cleared displayed
+`1.000` without a border and saved byte-identically in Sketchpad 5, retaining
+SHA-256
+`956fe4f46c9e8004a33153b9603b11377a16cc01556172a92a39e8ea82de22fc`.
+
+Labels on other geometry, picture and sampled-object opacity, Table, Iteration,
+Axis, Function, Plot, Marker, and action-specific panels remain outside this
+increment.
