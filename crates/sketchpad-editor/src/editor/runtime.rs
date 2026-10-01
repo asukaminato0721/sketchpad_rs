@@ -12,6 +12,7 @@ use winit::window::{Window, WindowId};
 
 struct GraphicsState {
     window: Arc<Window>,
+    title: String,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -90,6 +91,7 @@ impl GraphicsState {
 
         Self {
             window,
+            title: "Sketchpad RS".into(),
             surface,
             device,
             queue,
@@ -125,6 +127,11 @@ impl GraphicsState {
         editor.sync_document_fonts(&self.ctx);
         let mut viewport = None;
         let mut output = self.ctx.run_ui(input, |ui| viewport = Some(editor.ui(ui)));
+        let title = editor.window_title();
+        if self.title != title {
+            self.window.set_title(&title);
+            self.title = title;
+        }
         self.next_ui_frame = output
             .viewport_output
             .get(&self.ctx.viewport_id())
@@ -249,6 +256,22 @@ impl GraphicsState {
     }
 }
 
+impl Editor {
+    fn window_title(&self) -> String {
+        let name = self
+            .doc
+            .path
+            .as_deref()
+            .and_then(std::path::Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.untitled_name.into());
+        format!(
+            "{}{name} — Sketchpad RS",
+            if self.doc.dirty { "*" } else { "" }
+        )
+    }
+}
+
 struct Application {
     editor: Editor,
     graphics: Option<GraphicsState>,
@@ -305,30 +328,32 @@ impl ApplicationHandler for Application {
 
 pub(crate) fn run() {
     let args: Vec<_> = std::env::args_os().collect();
-    let doc = match args.get(1).map(PathBuf::from) {
+    let (doc, untitled_name) = match args.get(1).map(PathBuf::from) {
         Some(path) if path.as_os_str() == "--demo" => {
             match sketchpad_engine::demo::geometry_document(sketchpad_engine::demo::GEOMETRY_STEPS)
             {
-                Ok(document) => document,
+                Ok(document) => (document, "Demo"),
                 Err(error) => {
                     eprintln!("Could not create the built-in demo: {error}");
-                    Document::new()
+                    (Document::new(), "Untitled")
                 }
             }
         }
         Some(path) => match Document::open(&path) {
-            Ok(document) => document,
+            Ok(document) => (document, "Untitled"),
             Err(error) => {
                 eprintln!("Could not open {}: {error}", path.display());
-                Document::new()
+                (Document::new(), "Untitled")
             }
         },
-        None => Document::new(),
+        None => (Document::new(), "Untitled"),
     };
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
+    let mut editor = Editor::new(doc);
+    editor.untitled_name = untitled_name;
     let mut application = Application {
-        editor: Editor::new(doc),
+        editor,
         graphics: None,
     };
     event_loop

@@ -260,6 +260,7 @@ struct PresentationTrack {
 }
 struct Editor {
     doc: Document,
+    untitled_name: &'static str,
     clipboard: Option<Clipboard>,
     image_textures: HashMap<usize, egui::TextureHandle>,
     tool: Tool,
@@ -416,6 +417,7 @@ impl Editor {
     fn new(doc: Document) -> Self {
         let mut e = Self {
             doc,
+            untitled_name: "Untitled",
             clipboard: None,
             image_textures: HashMap::new(),
             tool: Tool::Select,
