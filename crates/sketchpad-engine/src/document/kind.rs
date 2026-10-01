@@ -27,6 +27,18 @@ impl Kind {
     pub fn is_iteration_depth_value(&self) -> bool {
         self.numeric_unit() == Some(NumericUnit::Scalar)
     }
+    pub fn iteration_depth(&self) -> Option<IterationDepth> {
+        match self {
+            Kind::PointParameterIteration(_, _, _, _, _, depth)
+            | Kind::PointIteration(_, _, depth)
+            | Kind::SegmentIteration(_, _, _, depth)
+            | Kind::CircleIteration(_, _, _, depth) => Some(*depth),
+            Kind::BranchingPolygonIteration { depth, .. }
+            | Kind::MappedPointIteration { depth, .. } => Some(*depth),
+            Kind::RayIteration(_, _, _, parameter) => Some(IterationDepth::Value(*parameter)),
+            _ => None,
+        }
+    }
     pub fn numeric_unit(&self) -> Option<NumericUnit> {
         match self {
             Kind::Calculation(group) => Some(group.unit()),

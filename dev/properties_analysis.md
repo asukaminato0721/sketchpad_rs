@@ -248,5 +248,26 @@ Properties displayed the new caption and the unchanged function `f`, then
 saved all 2,898 bytes unchanged with SHA-256
 `d05070bc3fb7d2053832193c860ad18bec1fa5d4ba539a39763b959e82655488`.
 
-Labels on other geometry, sampled-object opacity, Iteration and Axis panels,
-remain outside this increment.
+## Iteration images
+
+Native exposes an Iteration panel on a selected iteration image rather than on
+the hidden iteration controller. The image forwards edits to its controller.
+Control 1281 holds the iteration count, while radio controls 1266 and 1267
+select all images or only the final image. In the `090a` definition, the display
+mode is the `u16` at offset 4 and a fixed count is the `u32` at offset 16.
+
+The port applies those fields in one verified transaction for every supported
+iteration family. Fixed counts retain their family-specific 1–128 or mapped
+1–4096 bound. A parameter-driven count keeps its existing dependency and is
+edited through that source value; its all/final display mode remains editable.
+Final-only mode also reaches point, carried straight/circle, numeric-label,
+branching-polygon, and general mapped rendering rather than being a save-only
+flag.
+
+A public-API edit changed the native point-translation fixture from three/all
+to five/final. Only `090a` offsets 4 and 16 changed. Native Properties selected
+control 1267, and Sketchpad 5 saved all 2,184 bytes unchanged with SHA-256
+`4f32a95725c8fd0f8813452ca3d5a3c634cfb70f74fbbe470691419cbc1124ac`.
+
+Labels on other geometry, sampled-object opacity, and Axis panels remain
+outside this increment.

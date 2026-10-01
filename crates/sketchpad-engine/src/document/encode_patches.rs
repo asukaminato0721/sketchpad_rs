@@ -1,7 +1,7 @@
 use super::calculations::calculation_source_ids;
 use super::embedded_tools::{document_record_indices, document_records};
 use super::records::{header, put_record, records, u32_at};
-use super::{Document, Kind, Object};
+use super::{Document, IterationDepth, Kind, Object};
 use crate::plot_points_records::PlotPointsMode;
 use crate::{function_records, style_records, text_object, text_style_records};
 
@@ -481,34 +481,43 @@ impl Document {
         }
         Ok(bytes)
     }
-    pub(super) fn patch_mapped_iteration_image_levels(
-        &self,
-        mut bytes: Vec<u8>,
-    ) -> Result<Vec<u8>, String> {
+    pub(super) fn patch_iteration_properties(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         let rs = records(&bytes)?;
         let mut objects = self.objects.iter().filter(|o| !o.deleted);
         let mut current = None;
         for record in document_records(&rs) {
             if record.kind == 0x07d0 {
-                current =
-                    Some(objects.next().ok_or(
-                        "Object group count mismatch in patch_mapped_iteration_image_levels",
-                    )?);
+                current = Some(
+                    objects
+                        .next()
+                        .ok_or("Object group count mismatch in patch_iteration_properties")?,
+                );
             } else if record.kind == 0x090a
                 && let Some(object) = current
-                && let Kind::MappedPointIteration { final_only, .. } = object.kind
+                && matches!(
+                    object.kind,
+                    Kind::PointParameterIteration(..)
+                        | Kind::BranchingPolygonIteration { .. }
+                        | Kind::MappedPointIteration { .. }
+                        | Kind::PointIteration(..)
+                        | Kind::SegmentIteration(..)
+                        | Kind::CircleIteration(..)
+                        | Kind::RayIteration(..)
+                )
             {
                 if record.data.len() != 24 {
-                    return Err("Invalid mapped iteration definition".into());
+                    return Err("Invalid iteration definition".into());
                 }
                 bytes[record.data.start + 4..record.data.start + 6]
-                    .copy_from_slice(&u16::from(final_only).to_le_bytes());
+                    .copy_from_slice(&u16::from(object.iteration_final_only).to_le_bytes());
+                if let Some(IterationDepth::Fixed(depth)) = object.kind.iteration_depth() {
+                    bytes[record.data.start + 16..record.data.start + 20]
+                        .copy_from_slice(&depth.to_le_bytes());
+                }
             }
         }
         if objects.next().is_some() {
-            return Err(
-                "Object group count mismatch in patch_mapped_iteration_image_levels".into(),
-            );
+            return Err("Object group count mismatch in patch_iteration_properties".into());
         }
         Ok(bytes)
     }

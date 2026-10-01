@@ -6,7 +6,7 @@ use super::{
     },
 };
 use sketchpad_engine::action_records::VisibilityAction;
-use sketchpad_engine::document::{Document, Kind, LineMode, Object};
+use sketchpad_engine::document::{Document, IterationDepth, Kind, LineMode, Object};
 use sketchpad_engine::style_records::VisualStyle;
 
 fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str {
@@ -58,6 +58,14 @@ fn object_type_name(doc: &Document, id: usize, object: &Object) -> &'static str 
         | Kind::LinkPageButton { .. } => "Action Button",
         Kind::CoordinateSystem(..) => "Coordinate System",
         Kind::Locus(..) => "Locus",
+        Kind::PointParameterIteration(..)
+        | Kind::BranchingPolygonIteration { .. }
+        | Kind::MappedPointIteration { .. }
+        | Kind::PointIteration(..)
+        | Kind::SegmentIteration(..)
+        | Kind::CircleIteration(..)
+        | Kind::RayIteration(..) => "Iteration",
+        Kind::IterationBinding(..) => "Iteration Image",
         _ => "Object",
     }
 }
@@ -119,6 +127,12 @@ impl Editor {
                 Some(VisualStyle::Polygon { opacity, .. }) => opacity,
                 _ => 32767,
             };
+            if let Some((_, depth, final_only, _)) = self.doc.iteration_properties(id) {
+                if let IterationDepth::Fixed(depth) = depth {
+                    self.properties_iteration_depth_draft = depth;
+                }
+                self.properties_iteration_final_only_draft = final_only;
+            }
             if let Kind::HideShowButton {
                 action, options, ..
             } = &object.kind
@@ -217,6 +231,7 @@ impl Editor {
         let mut arrow_selectability_changed = false;
         let mut apply_label = false;
         let mut apply_opacity = false;
+        let mut apply_iteration_properties = false;
         let mut apply_hide_show_caption = false;
         let mut reset_hide_show_caption = false;
         let mut hide_show_settings_changed = false;
@@ -271,6 +286,37 @@ impl Editor {
                             .custom_formatter(|value, _| format!("{:.0}%", value * 100. / 65535.)),
                     );
                     apply_opacity = ui.button("Apply Opacity").clicked();
+                }
+                if let Some((_, depth, _, maximum)) = self.doc.iteration_properties(id) {
+                    ui.separator();
+                    ui.heading("Iteration");
+                    match depth {
+                        IterationDepth::Fixed(_) => {
+                            ui.horizontal(|ui| {
+                                ui.label("Iterations");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut self.properties_iteration_depth_draft,
+                                    )
+                                    .range(1..=maximum),
+                                );
+                            });
+                        }
+                        IterationDepth::Value(source) => {
+                            ui.label(format!("Iterations: live value from object {source}"));
+                        }
+                    }
+                    ui.radio_value(
+                        &mut self.properties_iteration_final_only_draft,
+                        false,
+                        "Show all iterations",
+                    );
+                    ui.radio_value(
+                        &mut self.properties_iteration_final_only_draft,
+                        true,
+                        "Show final iteration only",
+                    );
+                    apply_iteration_properties = ui.button("Apply Iteration Settings").clicked();
                 }
                 if matches!(object.kind, Kind::HideShowButton { .. }) {
                     ui.separator();
@@ -479,6 +525,24 @@ impl Editor {
                 .set_object_polygon_opacity(id, self.properties_opacity_draft)
             {
                 Ok(true) => self.status = format!("Updated the opacity for {description}"),
+                Ok(false) => {}
+                Err(error) => self.status = error,
+            }
+        }
+        if apply_iteration_properties {
+            let fixed_depth = self
+                .doc
+                .iteration_properties(id)
+                .and_then(|(_, depth, _, _)| {
+                    matches!(depth, IterationDepth::Fixed(_))
+                        .then_some(self.properties_iteration_depth_draft)
+                });
+            match self.doc.set_iteration_properties(
+                id,
+                fixed_depth,
+                self.properties_iteration_final_only_draft,
+            ) {
+                Ok(true) => self.status = format!("Updated {description}"),
                 Ok(false) => {}
                 Err(error) => self.status = error,
             }

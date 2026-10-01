@@ -1796,6 +1796,8 @@ impl Document {
                 Some("Arrow selectability")
             } else if saved.presentation_suppressed != current.presentation_suppressed {
                 Some("presentation suppression")
+            } else if saved.iteration_final_only != current.iteration_final_only {
+                Some("iteration display mode")
             } else if saved.label != current.label {
                 Some("label")
             } else if saved.visual_style != current.visual_style {

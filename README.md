@@ -46,7 +46,9 @@ Properties can edit its caption, execution mode, pre-actions, stop policy, and
 elapsed or pause time. Link button Properties can edit its caption, URL, target
 page, and optional destination action, including URL/Page conversion in
 multi-page documents. Sound button Properties can edit its caption while
-retaining its fixed mono or stereo function sources.
+retaining its fixed mono or stereo function sources. Iteration-image Properties
+can change a fixed iteration count and choose all images or only the final
+image; parameter-driven counts remain live and are edited through their source.
 Edit > Split Point detaches a supported constructed point from its parents in a
 safe single-page sketch while keeping its dependent constructions attached.
 Select an independent point first and a target point second to use Edit > Merge

@@ -430,6 +430,7 @@ impl Document {
                             .map_or_else(|| object.kind.clone(), |point| Kind::Free(*point)),
                         visible: object.visible && !self.is_presentation_suppressed(id),
                         arrow_selectable: object.arrow_selectable,
+                        iteration_final_only: object.iteration_final_only,
                         tracing: object.tracing,
                         midpoint_host: if frozen_points.contains_key(&id) {
                             None
@@ -477,6 +478,7 @@ impl Document {
             kind,
             visible,
             arrow_selectable,
+            iteration_final_only,
             tracing,
             midpoint_host,
             locus_interval,
@@ -573,6 +575,7 @@ impl Document {
                 visible: *visible && !clipboard.hide_on_paste.contains(old_id),
                 arrow_selectable: *arrow_selectable,
                 presentation_suppressed: false,
+                iteration_final_only: *iteration_final_only,
                 tracing: *tracing,
                 deleted: false,
                 midpoint_host: midpoint_host.map(|host| ids[host]),

@@ -530,77 +530,6 @@ impl MappedValue {
     }
 }
 
-#[derive(Clone)]
-struct IterationMapping {
-    seeds: Vec<usize>,
-    branches: Vec<Vec<usize>>,
-    carried: Vec<usize>,
-    depth: IterationDepth,
-    final_only: bool,
-}
-
-fn iteration_mapping(kind: &Kind) -> Option<IterationMapping> {
-    let (seeds, branches, carried, depth, final_only) = match kind {
-        Kind::MappedPointIteration {
-            seeds,
-            branches,
-            carried,
-            depth,
-            final_only,
-        } => (
-            seeds.clone(),
-            branches.clone(),
-            carried.clone(),
-            *depth,
-            *final_only,
-        ),
-        Kind::PointIteration(seed, image, depth) => {
-            (vec![*seed], vec![vec![*image]], vec![*image], *depth, false)
-        }
-        Kind::SegmentIteration(seed, image, host, depth)
-        | Kind::CircleIteration(seed, image, host, depth) => (
-            vec![*seed],
-            vec![vec![*image]],
-            vec![*image, *host],
-            *depth,
-            false,
-        ),
-        Kind::RayIteration(seed, image, host, depth) => (
-            vec![*seed],
-            vec![vec![*image]],
-            vec![*image, *host],
-            IterationDepth::Value(*depth),
-            false,
-        ),
-        Kind::BranchingPolygonIteration {
-            seed,
-            first,
-            second,
-            polygon,
-            segments,
-            depth,
-        } => {
-            let mut carried = vec![*second, *first, *polygon];
-            carried.extend(segments);
-            (
-                vec![*seed],
-                vec![vec![*first], vec![*second]],
-                carried,
-                *depth,
-                false,
-            )
-        }
-        _ => return None,
-    };
-    Some(IterationMapping {
-        seeds,
-        branches,
-        carried,
-        depth,
-        final_only,
-    })
-}
-
 /// Canonicalize the legacy native layouts that already have supported adapters.
 /// Wider carried graphs use the same mapped representation for one or many seeds.
 fn mapped_iteration_kind(
@@ -875,46 +804,110 @@ impl Document {
         Ok(id)
     }
 
+    fn iteration_root_id(&self, id: usize) -> Option<usize> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let root = match object.kind {
+            Kind::IterationBinding(_, parent) => parent,
+            _ if object.kind.iteration_depth().is_some() => id,
+            _ => return None,
+        };
+        let root_object = self.objects.get(root.checked_sub(1)?)?;
+        (!object.deleted
+            && !root_object.deleted
+            && object.page == self.active_page
+            && root_object.page == self.active_page
+            && root_object.kind.iteration_depth().is_some())
+        .then_some(root)
+    }
+
+    /// Root ID, saved depth source, final-only mode, and the fixed-depth limit.
+    pub fn iteration_properties(&self, id: usize) -> Option<(usize, IterationDepth, bool, u32)> {
+        let root = self.iteration_root_id(id)?;
+        let object = &self.objects[root - 1];
+        let depth = object.kind.iteration_depth()?;
+        let maximum = if matches!(object.kind, Kind::MappedPointIteration { .. }) {
+            MAX_MAPPED_ITERATION_DEPTH
+        } else {
+            128
+        };
+        Some((root, depth, object.iteration_final_only, maximum))
+    }
+
+    /// Apply Native's Iteration panel without changing a live depth dependency.
+    pub fn set_iteration_properties(
+        &mut self,
+        id: usize,
+        fixed_depth: Option<u32>,
+        final_only: bool,
+    ) -> Result<bool, String> {
+        if self.partial_view || !self.safe_structure || self.page_count != 1 {
+            return Err("Cannot edit iteration properties in this sketch safely".into());
+        }
+        let root = self
+            .iteration_root_id(id)
+            .ok_or("Select an iteration image on the active page")?;
+        let (_, depth, saved_final_only, maximum) = self
+            .iteration_properties(root)
+            .ok_or("Select a supported iteration")?;
+        let requested_depth = match (depth, fixed_depth) {
+            (IterationDepth::Fixed(current), None) => current,
+            (IterationDepth::Fixed(_), Some(value)) if (1..=maximum).contains(&value) => value,
+            (IterationDepth::Fixed(_), Some(_)) => {
+                return Err(format!("Iteration count must be 1–{maximum}"));
+            }
+            (IterationDepth::Value(_), None) => 0,
+            (IterationDepth::Value(_), Some(_)) => {
+                return Err(
+                    "A live iteration count must be edited through its source value".into(),
+                );
+            }
+        };
+        if saved_final_only == final_only
+            && !matches!(depth, IterationDepth::Fixed(current) if current != requested_depth)
+        {
+            return Ok(false);
+        }
+        let mut candidate = self.clone();
+        candidate.checkpoint();
+        let object = &mut candidate.objects[root - 1];
+        object.iteration_final_only = final_only;
+        match &mut object.kind {
+            Kind::PointParameterIteration(_, _, _, _, _, depth)
+            | Kind::PointIteration(_, _, depth)
+            | Kind::SegmentIteration(_, _, _, depth)
+            | Kind::CircleIteration(_, _, _, depth) => {
+                if matches!(depth, IterationDepth::Fixed(_)) {
+                    *depth = IterationDepth::Fixed(requested_depth);
+                }
+            }
+            Kind::BranchingPolygonIteration { depth, .. }
+            | Kind::MappedPointIteration { depth, .. } => {
+                if matches!(depth, IterationDepth::Fixed(_)) {
+                    *depth = IterationDepth::Fixed(requested_depth);
+                }
+            }
+            Kind::RayIteration(..) => {}
+            _ => return Err("Select a supported iteration".into()),
+        }
+        if let Kind::MappedPointIteration {
+            final_only: mapped_final_only,
+            ..
+        } = &mut object.kind
+        {
+            *mapped_final_only = final_only;
+        }
+        candidate.verify_roundtrip()?;
+        *self = candidate;
+        Ok(true)
+    }
+
     pub fn set_mapped_iteration_final_only(
         &mut self,
         id: usize,
         final_only: bool,
     ) -> Result<(), String> {
-        if self.partial_view || !self.safe_structure || self.page_count != 1 {
-            return Err("Cannot edit iteration image levels in this sketch safely".into());
-        }
-        let object = self
-            .objects
-            .get(id.checked_sub(1).ok_or("Invalid iteration ID")?)
-            .filter(|o| !o.deleted && o.page == self.active_page)
-            .ok_or("Select an iteration on the active page")?;
-        let mut mapping =
-            iteration_mapping(&object.kind).ok_or("Select a supported mapped iteration")?;
-        if mapping.final_only == final_only {
-            return Ok(());
-        }
-        if !supported_mapped_point_iteration(
-            &self.objects,
-            &mapping.seeds,
-            &mapping.branches,
-            &mapping.carried,
-        ) {
-            return Err("Select a supported mapped iteration".into());
-        }
-        mapping.final_only = final_only;
-        let mut candidate = self.clone();
-        candidate.checkpoint();
-        candidate.objects[id - 1].kind = mapped_iteration_kind(
-            &candidate.objects,
-            &mapping.seeds,
-            &mapping.branches,
-            &mapping.carried,
-            mapping.depth,
-            mapping.final_only,
-        );
-        candidate.verify_roundtrip()?;
-        *self = candidate;
-        Ok(())
+        self.set_iteration_properties(id, None, final_only)
+            .map(|_| ())
     }
 
     fn mapped_segment_iteration_images(
@@ -1471,6 +1464,11 @@ impl Document {
             return None;
         }
         let depth = self.numeric_iteration_depth(depth)?;
+        let levels = if o.iteration_final_only {
+            depth..=depth
+        } else {
+            1..=depth
+        };
         let seed = self.position(seed)?;
         let a = self.position(first)?;
         let b = self.position(second)?;
@@ -1485,7 +1483,7 @@ impl Document {
             },
         );
         let mut result = Vec::new();
-        for level in 1..=depth {
+        for level in levels {
             let mut paths = 1.;
             for second_steps in 0..=level {
                 let first_steps = level - second_steps;
@@ -1726,7 +1724,7 @@ impl Document {
     }
     pub fn point_parameter_iteration_labels(&self, id: usize) -> Option<Vec<(Point, String)>> {
         let o = self.objects.get(id.checked_sub(1)?)?;
-        let Kind::PointParameterIteration(_, parameter, _, calculation, _, _) = o.kind else {
+        let Kind::PointParameterIteration(_, parameter, _, calculation, _, depth) = o.kind else {
             return None;
         };
         if o.deleted {
@@ -1785,6 +1783,11 @@ impl Document {
             Some(value)
         };
         next_value()?;
+        if o.iteration_final_only {
+            for _ in 1..self.numeric_iteration_depth(depth)? {
+                next_value()?;
+            }
+        }
         self.point_iteration_images(id)?
             .into_iter()
             .map(|point| {
@@ -1984,7 +1987,8 @@ impl Document {
         if let Some(images) = self.mapped_point_binding_images(id) {
             return Some(images);
         }
-        let (seed, image, depth) = match self.objects.get(id.checked_sub(1)?)?.kind {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        let (seed, image, depth) = match object.kind {
             Kind::PointIteration(seed, image, depth) => {
                 (seed, image, self.numeric_iteration_depth(depth)?)
             }
@@ -2000,12 +2004,15 @@ impl Document {
             }
             _ => return None,
         };
-        Some(
-            self.iteration_orbit(seed, image, depth)?
-                .into_iter()
-                .skip(2)
-                .collect(),
-        )
+        let images = self
+            .iteration_orbit(seed, image, depth)?
+            .into_iter()
+            .skip(2);
+        Some(if object.iteration_final_only {
+            images.last().into_iter().collect()
+        } else {
+            images.collect()
+        })
     }
 
     pub(super) fn iteration_depth_value(&self, id: usize) -> Option<u32> {

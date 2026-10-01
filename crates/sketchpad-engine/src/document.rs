@@ -699,6 +699,8 @@ pub struct Object {
     pub arrow_selectable: bool,
     /// Native flag 2 suppresses presentation independently of ordinary hide/show.
     pub presentation_suppressed: bool,
+    /// Native `0x090a` display mode for an iteration controller.
+    pub iteration_final_only: bool,
     pub tracing: bool,
     pub deleted: bool,
     pub midpoint_host: Option<usize>,
@@ -730,6 +732,7 @@ struct ClipboardObject {
     kind: Kind,
     visible: bool,
     arrow_selectable: bool,
+    iteration_final_only: bool,
     tracing: bool,
     midpoint_host: Option<usize>,
     locus_interval: Option<[f64; 2]>,
@@ -1068,6 +1071,13 @@ impl Document {
             None
         };
         let measurement_precision = kind.has_measurement_precision().then_some(precision);
+        let iteration_final_only = matches!(
+            kind,
+            Kind::MappedPointIteration {
+                final_only: true,
+                ..
+            }
+        );
         let interior_order = if matches!(
             kind,
             Kind::Polygon(_) | Kind::SectorBoundary(_) | Kind::CircularSegmentBoundary(_)
@@ -1087,6 +1097,7 @@ impl Document {
             visible: true,
             arrow_selectable: true,
             presentation_suppressed: false,
+            iteration_final_only,
             tracing: false,
             deleted: false,
             midpoint_host,

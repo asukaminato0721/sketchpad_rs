@@ -115,9 +115,8 @@ impl Document {
         {
             return Err("Tool givens must be bound before saving a drawing".into());
         }
-        let bytes = self.patch_arrow_selectability(
-            self.patch_mapped_iteration_image_levels(self.encode_core()?)?,
-        )?;
+        let bytes =
+            self.patch_arrow_selectability(self.patch_iteration_properties(self.encode_core()?)?)?;
         self.encode_page_names(self.patch_active_page(
             self.patch_measurement_precisions(self.patch_angle_marker_styles(bytes)?)?,
         )?)
@@ -510,7 +509,7 @@ impl Document {
                 ref branches,
                 ref carried,
                 depth,
-                final_only,
+                ..
             } = o.kind
             {
                 let mut header =
@@ -541,7 +540,7 @@ impl Document {
                 put_record(&mut added, 0x07d2, &refs);
                 let mut definition =
                     *include_bytes!("../../../../assets/mapped_point_iteration_definition.bin");
-                definition[4..6].copy_from_slice(&u16::from(final_only).to_le_bytes());
+                definition[4..6].copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 definition[6..8].copy_from_slice(&(seeds.len() as u16).to_le_bytes());
                 definition[8..12].copy_from_slice(&(branches.len() as u32).to_le_bytes());
                 definition[16..20].copy_from_slice(
@@ -590,6 +589,7 @@ impl Document {
                 }
                 put_record(&mut added, 0x07d2, &refs);
                 let mut definition = template[96..120].to_vec();
+                definition[4..6].copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 definition[16..20].copy_from_slice(
                     &self
                         .numeric_iteration_depth(depth)
@@ -637,6 +637,8 @@ impl Document {
                         .copy_from_slice(&(id as u32).to_le_bytes());
                 }
                 let cached_depth = self.numeric_iteration_depth(depth).unwrap_or(0);
+                group[88 + shift..90 + shift]
+                    .copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 group[100 + shift..104 + shift].copy_from_slice(&cached_depth.to_le_bytes());
                 if !o.visible {
                     group[10] |= 1;
@@ -707,6 +709,7 @@ impl Document {
                         .unwrap_or(0)
                         .to_le_bytes(),
                 );
+                group[80..82].copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -740,6 +743,8 @@ impl Document {
                         .unwrap_or(0)
                         .to_le_bytes(),
                 );
+                group[76 + shift..78 + shift]
+                    .copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 if !o.visible {
                     group[10] |= 1;
                 }
@@ -771,6 +776,8 @@ impl Document {
                         .unwrap_or(0)
                         .to_le_bytes(),
                 );
+                group[72 + shift..74 + shift]
+                    .copy_from_slice(&u16::from(o.iteration_final_only).to_le_bytes());
                 if !o.visible {
                     group[10] |= 1;
                 }

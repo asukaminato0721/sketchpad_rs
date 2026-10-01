@@ -57,6 +57,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn iteration_definition_matches(data: &[u8], columns: u16, branches: u32) -> bool {
+    data.len() == 24
+        && data[..4] == [0; 4]
+        && matches!(data[4..6], [0, 0] | [1, 0])
+        && data[6..8] == columns.to_le_bytes()
+        && u32_at(data, 8) == branches
+        && data[20..24] == [0; 4]
+}
+
 fn transformed_image_png(
     objects: &[Object],
     page: usize,
@@ -1707,19 +1716,19 @@ impl Document {
                         if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
                             && objects.get(parameter.saturating_sub(1)).is_some_and(|o| o.kind.is_iteration_depth_value())
                             && supported_branch_polygon_mapping(&objects,*seed,*first,*second,*polygon,segments)
-                            && iteration_definition.as_ref().is_some_and(|d| d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==2 && d[20..24]==[0;4]) => {
+                            && iteration_definition.as_ref().is_some_and(|d| iteration_definition_matches(d, 1, 2)) => {
                             Kind::BranchingPolygonIteration { seed:*seed, first:*first, second:*second, polygon:*polygon, segments:segments.to_vec(), depth:IterationDepth::Value(*parameter) }
                         }
                     (76, None, [seed, first, second, carried_second, carried_first, polygon, segments @ ..])
                         if h[6..10] == [14,0,64,0] && second == carried_second && first == carried_first
                             && supported_branch_polygon_mapping(&objects,*seed,*first,*second,*polygon,segments)
-                            && iteration_definition.as_ref().is_some_and(|d| d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==2 && (1..=128).contains(&u32_at(d,16)) && d[20..24]==[0;4]) => {
+                            && iteration_definition.as_ref().is_some_and(|d| iteration_definition_matches(d, 1, 2) && (1..=128).contains(&u32_at(d,16))) => {
                             Kind::BranchingPolygonIteration { seed:*seed, first:*first, second:*second, polygon:*polygon, segments:segments.to_vec(), depth:IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16)) }
                         }
                     (76,None,[seed,parameter,image,calculation,carried_value,carried_point,label])
                         if h[6..10] == [14,0,64,0] && calculation==carried_value && image==carried_point
                             && supported_point_parameter_iteration(&objects,*seed,*parameter,*image,*calculation,*label)
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,2,0] && u32_at(d,8)==1 && (1..=128).contains(&u32_at(d,16)) && d[20..24]==[0;4]) => {
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 2, 1) && (1..=128).contains(&u32_at(d,16))) => {
                             Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16)))
                         }
                     (89,None,[depth_parameter,seed,parameter,image,calculation,carried_value,carried_point,label])
@@ -1727,7 +1736,7 @@ impl Document {
                             && *depth_parameter != *parameter
                             && objects.get(depth_parameter.saturating_sub(1)).is_some_and(|o| !o.deleted && o.kind.is_iteration_depth_value())
                             && supported_point_parameter_iteration(&objects,*seed,*parameter,*image,*calculation,*label)
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,2,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => {
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 2, 1)) => {
                             Kind::PointParameterIteration(*seed,*parameter,*image,*calculation,*label,IterationDepth::Value(*depth_parameter))
                         }
                     (76 | 89, None, _) if mapped_iteration.as_ref().is_some_and(|kind| matches!(kind, Kind::MappedPointIteration { seeds,.. } if seeds.len() > 1)) => mapped_iteration.unwrap(),
@@ -1751,12 +1760,7 @@ impl Document {
                         if *parameter > 0 && *seed > 0 && *image > 0 && *ray > 0
                             && h[6..10] == [14, 0, 64, 0]
                             && image == carried
-                            && iteration_definition.as_ref().is_some_and(|definition| {
-                                definition.len() == 24
-                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
-                                    && u32_at(definition, 8) == 1
-                                    && definition[20..24] == [0; 4]
-                            })
+                            && iteration_definition.as_ref().is_some_and(|definition| iteration_definition_matches(definition, 1, 1))
                             && objects.get(parameter - 1).is_some_and(|o| o.kind.is_iteration_depth_value())
                             && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image)
@@ -1769,29 +1773,26 @@ impl Document {
                             && supported_point_iteration_mapping(&objects,*seed,*image)
                             && objects.get(seed.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
                             && objects.get(segment.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Segment(a,b) if a==*seed && b==*image))
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => Kind::SegmentIteration(*seed,*image,*segment,IterationDepth::Value(*depth)),
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 1, 1)) => Kind::SegmentIteration(*seed,*image,*segment,IterationDepth::Value(*depth)),
                     (89,None,[depth,seed,image,carried,circle])
                         if h[6..10]==[14,0,64,0] && image==carried
                             && objects.get(depth.saturating_sub(1)).is_some_and(|o|o.kind.is_iteration_depth_value())
                             && objects.get(seed.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image)
                             && objects.get(circle.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Circle(a,b) if a==*seed&&b==*image))
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => Kind::CircleIteration(*seed,*image,*circle,IterationDepth::Value(*depth)),
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 1, 1)) => Kind::CircleIteration(*seed,*image,*circle,IterationDepth::Value(*depth)),
                     (76,None,[seed,image,carried,circle])
                         if h[6..10]==[14,0,64,0] && image==carried
                             && objects.get(seed.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image)
                             && objects.get(circle.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Circle(a,b) if a==*seed&&b==*image))
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==1 && (1..=128).contains(&u32_at(d,16)) && d[20..24]==[0;4]) => Kind::CircleIteration(*seed,*image,*circle,IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16))),
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 1, 1) && (1..=128).contains(&u32_at(d,16))) => Kind::CircleIteration(*seed,*image,*circle,IterationDepth::Fixed(u32_at(iteration_definition.as_ref().unwrap(),16))),
                     (76, None, [seed, image, carried, segment])
                         if h[6..10] == [14, 0, 64, 0]
                             && image == carried
                             && iteration_definition.as_ref().is_some_and(|definition| {
-                                definition.len() == 24
-                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
-                                    && u32_at(definition, 8) == 1
+                                iteration_definition_matches(definition, 1, 1)
                                     && (1..=128).contains(&u32_at(definition, 16))
-                                    && definition[20..24] == [0; 4]
                             })
                             && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image)
@@ -1803,16 +1804,13 @@ impl Document {
                             && objects.get(depth.saturating_sub(1)).is_some_and(|o|o.kind.is_iteration_depth_value())
                             && objects.get(seed.saturating_sub(1)).is_some_and(|o|matches!(o.kind,Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image)
-                            && iteration_definition.as_ref().is_some_and(|d|d.len()==24 && d[..8]==[0,0,0,0,0,0,1,0] && u32_at(d,8)==1 && d[20..24]==[0;4]) => Kind::PointIteration(*seed,*image,IterationDepth::Value(*depth)),
+                            && iteration_definition.as_ref().is_some_and(|d|iteration_definition_matches(d, 1, 1)) => Kind::PointIteration(*seed,*image,IterationDepth::Value(*depth)),
                     (76, None, [seed, image, carried])
                         if h[6..10] == [14, 0, 64, 0]
                             && image == carried
                             && iteration_definition.as_ref().is_some_and(|definition| {
-                                definition.len() == 24
-                                    && definition[..8] == [0, 0, 0, 0, 0, 0, 1, 0]
-                                    && u32_at(definition, 8) == 1
+                                iteration_definition_matches(definition, 1, 1)
                                     && (1..=128).contains(&u32_at(definition, 16))
-                                    && definition[20..24] == [0; 4]
                             })
                             && objects.get(seed - 1).is_some_and(|o| matches!(o.kind, Kind::Free(_)))
                             && supported_point_iteration_mapping(&objects,*seed,*image) => {
@@ -3187,6 +3185,18 @@ impl Document {
                 } == 0;
             let angle_marker_style =
                 super::AngleMarkerStyle::for_kind(&kind).and(angle_marker_style);
+            let iteration_final_only = matches!(
+                kind,
+                Kind::PointParameterIteration(..)
+                    | Kind::BranchingPolygonIteration { .. }
+                    | Kind::MappedPointIteration { .. }
+                    | Kind::PointIteration(..)
+                    | Kind::SegmentIteration(..)
+                    | Kind::CircleIteration(..)
+                    | Kind::RayIteration(..)
+            ) && iteration_definition
+                .as_ref()
+                .is_some_and(|definition| definition.get(4..6) == Some(&[1, 0]));
             objects.push(Object {
                 midpoint_host: matches!(kind, Kind::Midpoint(_, _)).then(|| refs[0]),
                 locus_interval: (matches!(kind, Kind::Locus(..))
@@ -3202,6 +3212,7 @@ impl Document {
                 visible,
                 arrow_selectable,
                 presentation_suppressed: raw & 0x20000 != 0,
+                iteration_final_only,
                 tracing: h[4] & 1 != 0,
                 deleted: false,
                 point_offset,
