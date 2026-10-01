@@ -316,8 +316,11 @@ The current 1,599-file corpus scan decodes all 285,703 object slots, including
 all 5,356 embedded-tool prototype slots, and round-trips every original
 byte-exactly. This is an import-coverage result; structurally partial documents
 and incomplete commands remain tracked in [COMMAND_PARITY.md](COMMAND_PARITY.md).
-Of the 103 isolated embedded-tool views, 95 are now structurally complete; the
-remaining eight contain read-only image resource tables.
+There are no unsupported object slots or failed documents. Editing remains
+guarded in 538 documents: 251 with multi-page structure, 123 with read-only
+image resources, and 164 with records that are preserved but not yet proven
+safe to rewrite. Of the 103 isolated embedded-tool views, 96 are structurally
+complete and seven remain guarded.
 
 Loci retain defined samples when their targets become undefined at some
 positions. Point curves break at missing samples; object families omit those
@@ -599,3 +602,7 @@ outer seed. This restores 11 code-89 definitions and 48 bindings, lowering
 unsupported objects to 1,822 and raising complete documents/drawings to
 1,401/1,436. Native and the port agree on the 3/9/18/30/45 pipe progression;
 Native preserves the 5,682-byte control exactly.
+
+The restoration counts in the preceding implementation notes are historical
+checkpoints. The current aggregate corpus result is the zero-unsupported-object
+scan reported in the Verification section above.

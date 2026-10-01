@@ -1,5 +1,5 @@
 use super::{Editor, MarkedAngle, Tool};
-use sketchpad_engine::document::{Kind, TextStyleCommand};
+use sketchpad_engine::document::{EditRestriction, Kind, TextStyleCommand};
 use std::time::Instant;
 
 impl Editor {
@@ -379,17 +379,14 @@ impl Editor {
             }
             ui.separator();
             ui.label(format!("{} objects", self.doc.objects.len()));
-            if self.doc.partial_view {
-                let reason = if self.doc.page_count > 1
-                    && self
-                        .doc
-                        .objects
-                        .iter()
-                        .all(|object| !matches!(object.kind, Kind::Unsupported(_)))
-                {
-                    "Multi-page editing is limited"
-                } else {
-                    "Partial view: unsupported objects"
+            if let Some(restriction) = self.doc.edit_restriction() {
+                let reason = match restriction {
+                    EditRestriction::UnsupportedObjects => "Some objects are not supported",
+                    EditRestriction::ReadOnlyImages => "Editing imported images is limited",
+                    EditRestriction::MultiPageStructure => "Multi-page editing is limited",
+                    EditRestriction::UnrecognizedRecords => {
+                        "Editing is limited to preserve unfamiliar records"
+                    }
                 };
                 ui.colored_label(egui::Color32::DARK_RED, reason);
             }

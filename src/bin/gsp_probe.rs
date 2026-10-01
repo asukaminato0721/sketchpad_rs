@@ -7,8 +7,8 @@ use sketchpad_rs::action_records::{
 use sketchpad_rs::coordinate_measure_records::CoordinateMeasureKind;
 use sketchpad_rs::document::colorized::{ColorBinding, ColorRangeBehavior};
 use sketchpad_rs::document::{
-    Clipboard, Document, IterationDepth, Kind, Point, Record, SampledImageDistortion,
-    TextStyleCommand, records,
+    Clipboard, Document, EditRestriction, IterationDepth, Kind, Point, Record,
+    SampledImageDistortion, TextStyleCommand, records,
 };
 use sketchpad_rs::function_records::PlotPresentation;
 use sketchpad_rs::graph::GridForm;
@@ -48,10 +48,11 @@ fn inspect(path: &str) -> Result<(), String> {
     }
     let document = Document::from_bytes(&bytes, None)?;
     println!(
-        "{} page(s), {} object(s), partial_view={}",
+        "{} page(s), {} object(s), partial_view={}, edit_restriction={:?}",
         document.page_count,
         document.objects.len(),
-        document.partial_view
+        document.partial_view,
+        document.edit_restriction()
     );
     for object in &document.objects {
         let label = object.label.as_ref().and_then(|label| {
@@ -248,6 +249,7 @@ fn coverage(paths: &[String]) -> Result<(), String> {
     let mut prototype_unsupported: BTreeMap<u16, (usize, BTreeSet<PathBuf>)> = BTreeMap::new();
     let (mut full, mut partial, mut objects, mut preserved, mut failures, mut partial_views) =
         (0, 0, 0, 0, 0, 0);
+    let mut restrictions: BTreeMap<&'static str, (usize, PathBuf)> = BTreeMap::new();
     let (mut tool_definitions, mut tool_documents, mut tool_slots, mut scene_full) = (0, 0, 0, 0);
     let (mut tool_known, mut tool_complete, mut tool_partial, mut tool_failed) = (0, 0, 0, 0);
     for path in &files {
@@ -264,6 +266,18 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         match result {
             Ok(document) => {
                 partial_views += usize::from(document.partial_view);
+                if let Some(restriction) = document.edit_restriction() {
+                    let name = match restriction {
+                        EditRestriction::UnsupportedObjects => "unsupported objects",
+                        EditRestriction::ReadOnlyImages => "read-only image resources",
+                        EditRestriction::MultiPageStructure => "multi-page structure",
+                        EditRestriction::UnrecognizedRecords => "unrecognized records",
+                    };
+                    let (count, _) = restrictions
+                        .entry(name)
+                        .or_insert_with(|| (0, path.clone()));
+                    *count += 1;
+                }
                 let tools = document.embedded_tools()?;
                 let prototype_slots: usize = tools.iter().map(|tool| tool.object_codes.len()).sum();
                 tool_definitions += tools.len();
@@ -343,6 +357,9 @@ fn coverage(paths: &[String]) -> Result<(), String> {
         "Partial views: {partial_views}/{} (includes multi-page structural edit restrictions)",
         files.len()
     );
+    for (reason, (count, example)) in restrictions {
+        println!("  {reason}: {count}; first example: {}", example.display());
+    }
     println!(
         "Drawing objects: {} slots; {scene_full} documents with all drawing kinds decoded",
         objects - tool_slots

@@ -775,6 +775,25 @@ impl sketchpad_ir::DependencyNode for Object {
     }
 }
 impl Document {
+    pub fn edit_restriction(&self) -> Option<EditRestriction> {
+        if !self.partial_view {
+            return None;
+        }
+        if self
+            .objects
+            .iter()
+            .any(|object| matches!(object.kind, Kind::Unsupported(_)))
+        {
+            Some(EditRestriction::UnsupportedObjects)
+        } else if self.image_read_only {
+            Some(EditRestriction::ReadOnlyImages)
+        } else if self.page_count > 1 {
+            Some(EditRestriction::MultiPageStructure)
+        } else {
+            Some(EditRestriction::UnrecognizedRecords)
+        }
+    }
+
     /// Derive dependency indexes from the authoritative semantic objects.
     pub fn dependency_index(&self) -> Result<DependencyIndex, sketchpad_ir::DependencyError> {
         DependencyIndex::build(&self.objects)
@@ -803,6 +822,15 @@ impl Clipboard {
         self.objects.is_empty()
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EditRestriction {
+    UnsupportedObjects,
+    ReadOnlyImages,
+    MultiPageStructure,
+    UnrecognizedRecords,
+}
+
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
     objects: Vec<Object>,
