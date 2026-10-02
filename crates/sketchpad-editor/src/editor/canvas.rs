@@ -203,8 +203,10 @@ impl Editor {
                         self.selection_order.clear();
                     }
                 }
-                for id in crate::render::ordered_picture_ids(&self.doc) {
-                    if let Some(sampled) = self.doc.sampled_image_mesh(id, 1600) {
+                let evaluated = self.doc.evaluated();
+                let doc = &*evaluated;
+                for id in crate::render::ordered_picture_ids(doc) {
+                    if let Some(sampled) = doc.sampled_image_mesh(id, 1600) {
                         if !self.image_textures.contains_key(&sampled.source)
                             && let Ok(decoded) = image::load_from_memory_with_format(
                                 sampled.png,
@@ -240,7 +242,7 @@ impl Editor {
                             ui.painter().add(egui::Shape::mesh(mesh));
                         }
                     }
-                    if let Some((source, png, transform, polygon)) = self.doc.cropped_image(id) {
+                    if let Some((source, png, transform, polygon)) = doc.cropped_image(id) {
                         if !self.image_textures.contains_key(&source)
                             && let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -280,7 +282,7 @@ impl Editor {
                             ui.painter().add(egui::Shape::mesh(mesh));
                         }
                     }
-                    if let Some((source, png, transforms)) = self.doc.image_instances(id) {
+                    if let Some((source, png, transforms)) = doc.image_instances(id) {
                         if !self.image_textures.contains_key(&source)
                             && let Ok(decoded) =
                                 image::load_from_memory_with_format(png, image::ImageFormat::Png)
@@ -321,36 +323,33 @@ impl Editor {
                         }
                     }
                 }
-                let mapped_numeric_labels = self.doc.visible_mapped_numeric_label_images();
-                for object in self
-                    .doc
+                let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
+                for object in doc
                     .objects
                     .iter()
-                    .filter(|object| self.doc.is_displayed(object.id))
+                    .filter(|object| doc.is_displayed(object.id))
                 {
-                    if let Some((text, rect)) = self.doc.text_content(object.id) {
+                    if let Some((text, rect)) = doc.text_content(object.id) {
                         let at = vp.screen(Point {
                             x: rect.left.into(),
                             y: rect.top.into(),
                         });
-                        let style = self.doc.text_font_state(object.id);
+                        let style = doc.text_font_state(object.id);
                         let size = style.as_ref().map_or(16., |style| style.size_code as f32);
                         let font_id = self.canvas_font_id(
                             style.as_ref().map(|style| style.family.as_str()),
                             size,
                         );
-                        let rows = self.doc.text_rich_runs(object.id);
-                        let families = self.doc.text_font_families().unwrap_or_default();
+                        let rows = doc.text_rich_runs(object.id);
+                        let families = doc.text_font_families().unwrap_or_default();
                         let has_mixed_runs = rows.as_ref().is_some_and(|rows| {
                             rows.iter().flatten().any(|run| {
                                 run.style != sketchpad_engine::text_object::RichRunStyle::default()
                             })
                         });
-                        if let Some(layout) = crate::render::math_text::measured_layout(
-                            &self.doc,
-                            object.id,
-                            ui.ctx(),
-                        ) {
+                        if let Some(layout) =
+                            crate::render::math_text::measured_layout(doc, object.id, ui.ctx())
+                        {
                             layout.paint(ui.painter(), at);
                         } else if has_mixed_runs {
                             let mut line_y = at.y;
@@ -454,14 +453,14 @@ impl Editor {
                             }
                         }
                     }
-                    if let Some(labels) = self.doc.point_parameter_iteration_labels(object.id) {
+                    if let Some(labels) = doc.point_parameter_iteration_labels(object.id) {
                         for (point, text) in labels {
                             ui.painter().text(
                                 vp.screen(point),
                                 egui::Align2::CENTER_CENTER,
                                 text,
                                 egui::FontId::proportional(16.),
-                                if self.doc.selected.contains(&object.id) {
+                                if doc.selected.contains(&object.id) {
                                     self.selection_color()
                                 } else {
                                     egui::Color32::BLACK
@@ -469,10 +468,10 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some(labels) = self.doc.point_math_labels(object.id) {
+                    if let Some(labels) = doc.point_math_labels(object.id) {
                         for (point, nodes) in labels {
                             let layout = crate::render::math_text::measured_nodes(
-                                &self.doc,
+                                doc,
                                 object.id,
                                 &nodes,
                                 ui.ctx(),
@@ -482,14 +481,13 @@ impl Editor {
                             layout.paint(ui.painter(), at);
                         }
                     } else {
-                        for (point, text) in self
-                            .doc
+                        for (point, text) in doc
                             .point_numeric_label(object.id)
                             .map(|label| vec![label])
                             .or_else(|| mapped_numeric_labels.get(&object.id).cloned())
                             .unwrap_or_default()
                         {
-                            let style = self.doc.numeric_label_font_state(object.id);
+                            let style = doc.numeric_label_font_state(object.id);
                             let size = style.as_ref().map_or(16, |style| style.size_code);
                             let font_id = self.canvas_font_id(
                                 style.as_ref().map(|style| style.family.as_str()),
@@ -500,7 +498,7 @@ impl Editor {
                                 egui::Align2::CENTER_CENTER,
                                 text,
                                 font_id,
-                                if self.doc.selected.contains(&object.id) {
+                                if doc.selected.contains(&object.id) {
                                     self.selection_color()
                                 } else {
                                     egui::Color32::BLACK
@@ -508,10 +506,9 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some((_, lines)) =
-                        crate::render::number_lines_for_object(&self.doc, object.id)
+                    if let Some((_, lines)) = crate::render::number_lines_for_object(doc, object.id)
                         && let Some(number_rect) =
-                            crate::render::number_screen_rect_for_object(&vp, &self.doc, object.id)
+                            crate::render::number_screen_rect_for_object(&vp, doc, object.id)
                     {
                         ui.painter()
                             .rect_filled(number_rect, 0., egui::Color32::WHITE);
@@ -540,7 +537,7 @@ impl Editor {
                     if let Some(label) = &object.label
                         && label.visible()
                         && let Ok(name) = label.name_utf8()
-                        && let Some(point) = self.doc.object_label_anchor(object.id)
+                        && let Some(point) = doc.object_label_anchor(object.id)
                     {
                         let at = vp.screen(point);
                         let offset = label.offset();
@@ -550,7 +547,7 @@ impl Editor {
                         } else {
                             egui::Align2::LEFT_TOP
                         };
-                        let style = self.doc.text_font_state(object.id);
+                        let style = doc.text_font_state(object.id);
                         let size = style.as_ref().map_or(13., |style| style.size_code as f32);
                         let font_id = self.canvas_font_id(
                             style.as_ref().map(|style| style.family.as_str()),
@@ -613,14 +610,9 @@ impl Editor {
                         );
                     }
                 }
-                for o in self
-                    .doc
-                    .objects
-                    .iter()
-                    .filter(|o| self.doc.is_displayed(o.id))
-                {
+                for o in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
                     if o.label.is_none()
-                        && let Some(p) = self.doc.position(o.id)
+                        && let Some(p) = doc.position(o.id)
                     {
                         let at = vp.screen(p);
                         if r.contains(at) {
@@ -634,9 +626,7 @@ impl Editor {
                         }
                     }
                 }
-                for (at, label, vertical) in
-                    crate::render::trigonometric_axis_labels(&self.doc, &vp)
-                {
+                for (at, label, vertical) in crate::render::trigonometric_axis_labels(doc, &vp) {
                     ui.painter().text(
                         at,
                         if vertical {
@@ -649,7 +639,7 @@ impl Editor {
                         egui::Color32::from_rgb(36, 48, 61),
                     );
                 }
-                for (at, label, vertical) in crate::render::defined_axis_labels(&self.doc, &vp) {
+                for (at, label, vertical) in crate::render::defined_axis_labels(doc, &vp) {
                     ui.painter().text(
                         at,
                         if vertical {
@@ -662,7 +652,7 @@ impl Editor {
                         egui::Color32::from_rgb(36, 48, 61),
                     );
                 }
-                for (row, (id, text)) in self.overlay_rows().into_iter().enumerate() {
+                for (row, (id, text)) in Self::overlay_rows_for(doc).into_iter().enumerate() {
                     let rect = self.overlay_row_rect(&vp, row, id, &text);
                     if self.doc.selected.contains(&id) {
                         let selected = self.selection_color();

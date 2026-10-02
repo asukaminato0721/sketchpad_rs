@@ -20,6 +20,7 @@ mod encode_pages;
 mod encode_patches;
 mod encode_templates;
 mod evaluation_context;
+pub use evaluation_context::EvaluatedDocument;
 mod functions;
 mod geometry;
 mod history;

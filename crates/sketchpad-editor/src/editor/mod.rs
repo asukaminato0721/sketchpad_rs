@@ -583,19 +583,15 @@ impl Editor {
     }
 
     fn fit(&mut self) {
-        let mut pts: Vec<_> = self
-            .doc
+        let evaluated = self.doc.evaluated();
+        let doc = &*evaluated;
+        let mut pts: Vec<_> = doc
             .objects
             .iter()
-            .filter(|o| self.doc.is_displayed(o.id))
-            .filter_map(|o| self.doc.position(o.id))
+            .filter(|o| doc.is_displayed(o.id))
+            .filter_map(|o| doc.position(o.id))
             .collect();
-        for object in self
-            .doc
-            .objects
-            .iter()
-            .filter(|o| self.doc.is_displayed(o.id))
-        {
+        for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
             if let Kind::PlainText { rect, .. } = &object.kind {
                 pts.push(Point {
                     x: rect.left.into(),
@@ -606,15 +602,14 @@ impl Editor {
                     y: rect.bottom.into(),
                 });
             }
-            if let Some((anchor, _)) = crate::render::number_lines_for_object(&self.doc, object.id)
-            {
+            if let Some((anchor, _)) = crate::render::number_lines_for_object(doc, object.id) {
                 pts.push(Point {
                     x: anchor.0 as f64,
                     y: anchor.1 as f64,
                 });
             }
             if let Kind::Image { png, .. } = &object.kind
-                && let Some(transform) = self.doc.image_transform(object.id)
+                && let Some(transform) = doc.image_transform(object.id)
                 && let Some(corners) = crate::render::picture_screen_quad(
                     &Viewport {
                         rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO),

@@ -1453,6 +1453,8 @@ fn svg_page_with_layout(
     page: Rect,
     physical_size_mm: Option<(f32, f32)>,
 ) -> Result<String, String> {
+    let evaluated = doc.evaluated();
+    let doc = &*evaluated;
     if doc.partial_view
         && doc.objects.iter().any(|object| {
             object.page == doc.active_page
@@ -2575,6 +2577,8 @@ impl GeometryRenderer {
         traces: &[TraceSample],
         preferences: RenderPreferences,
     ) {
+        let evaluated = doc.evaluated();
+        let doc = &*evaluated;
         let RenderTarget {
             device,
             encoder,

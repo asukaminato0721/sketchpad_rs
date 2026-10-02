@@ -17,7 +17,14 @@ impl Editor {
             .objects
             .iter()
             .filter(|object| !object.deleted)
-            .filter_map(|object| self.doc.text_font_state(object.id).map(|font| font.family))
+            // Source font families are collected together below. Resolving each
+            // object's source style would reparse the entire file per object.
+            .filter_map(|object| {
+                object
+                    .text_style_override
+                    .as_ref()
+                    .map(|font| font.family.clone())
+            })
             .collect::<Vec<_>>();
         families.extend(self.doc.text_font_families().unwrap_or_default());
         let mut changed = !self.font_definitions_applied;
@@ -72,5 +79,42 @@ impl Editor {
                 egui::FontFamily::Name(family.into())
             });
         egui::FontId::new(size, font_family)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sketchpad_engine::document::Document;
+
+    #[test]
+    fn font_sync_includes_source_families_and_unsaved_style_edits() {
+        let doc = Document::from_bytes(
+            include_bytes!("../../../../tests/fixtures/text_mixed_adventor_he_original.gsp"),
+            None,
+        )
+        .unwrap();
+        let mut editor = Editor::new(doc);
+        let ctx = egui::Context::default();
+        editor.sync_document_fonts(&ctx);
+        // Font discovery must work even when a requested font is not installed.
+        for family in editor.doc.text_font_families().unwrap() {
+            assert!(editor.loaded_fonts.contains_key(&family));
+        }
+
+        editor.doc.selected.insert(1);
+        editor
+            .doc
+            .set_selected_text_family("Test Caption Font")
+            .unwrap();
+        editor.sync_document_fonts(&ctx);
+        assert!(editor.loaded_fonts.contains_key("Test Caption Font"));
+
+        editor
+            .doc
+            .format_text_range_family(1, 0, 2, "Test Run Font")
+            .unwrap();
+        editor.sync_document_fonts(&ctx);
+        assert!(editor.loaded_fonts.contains_key("Test Run Font"));
     }
 }

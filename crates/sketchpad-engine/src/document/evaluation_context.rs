@@ -9,6 +9,19 @@ use std::sync::Arc as Shared;
 type Straight = (Point, Point, LineMode);
 type Arc = (Point, f64, f64, f64, bool);
 
+/// An immutable evaluated view. Create a new view after editing its source.
+/// Calculation caches and history are never written back to the source document.
+#[derive(Clone, Debug)]
+pub struct EvaluatedDocument(Document);
+
+impl std::ops::Deref for EvaluatedDocument {
+    type Target = Document;
+
+    fn deref(&self) -> &Document {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct EvaluationContext {
     points: BTreeMap<usize, Option<Point>>,
@@ -43,6 +56,57 @@ impl EvaluationContext {
 }
 
 impl Document {
+    /// Evaluate shared point and numeric dependencies once in topological order
+    /// for a read-only pass such as drawing, fitting, or exporting.
+    pub fn evaluated(&self) -> EvaluatedDocument {
+        let mut snapshot = self.clone_for_evaluation();
+        if let Ok(index) = self.dependency_index() {
+            let _ = snapshot.ensure_evaluation_context(self);
+            let _ = snapshot.cache_evaluation_values(&index.topological);
+        }
+        EvaluatedDocument(snapshot)
+    }
+
+    // Read-only evaluation needs construction and presentation state, but never
+    // undo history. Copying history here would make every frame more expensive
+    // after each drag, even though the construction size had not changed.
+    fn clone_for_evaluation(&self) -> Self {
+        Self {
+            objects: self.objects.clone(),
+            path: self.path.clone(),
+            selected: self.selected.clone(),
+            dirty: self.dirty,
+            partial_view: self.partial_view,
+            active_page: self.active_page,
+            page_count: self.page_count,
+            snap_points: self.snap_points.clone(),
+            grid_dotted: self.grid_dotted.clone(),
+            grid_form: self.grid_form.clone(),
+            page_names: self.page_names.clone(),
+            angle_unit_radians: self.angle_unit_radians,
+            marked_coordinate_system: self.marked_coordinate_system.clone(),
+            frame_styles: self.frame_styles.clone(),
+            object_color_defaults: self.object_color_defaults,
+            object_style_defaults: self.object_style_defaults,
+            measurement_precision_defaults: self.measurement_precision_defaults,
+            new_polygon_opacity: self.new_polygon_opacity,
+            randomize_interior_colors: self.randomize_interior_colors,
+            interior_color_cursor: self.interior_color_cursor,
+            merge_aliases: self.merge_aliases.clone(),
+            measurement_names: self.measurement_names.clone(),
+            evaluation_context: self.evaluation_context.clone(),
+            original: self.original.clone(),
+            run_font_families: self.run_font_families.clone(),
+            source_count: self.source_count,
+            last_moved_object: self.last_moved_object,
+            custom_transform_definitions: self.custom_transform_definitions.clone(),
+            safe_structure: self.safe_structure,
+            image_read_only: self.image_read_only,
+            undo: Vec::new(),
+            redo: Vec::new(),
+        }
+    }
+
     /// Temporarily place a constructed point without changing its native
     /// construction. Serialization and document history ignore this value.
     pub fn set_transient_point_position(&mut self, id: usize, point: Point) -> bool {
@@ -113,7 +177,7 @@ impl Document {
         external_ids: &[usize],
         retain_parent: bool,
     ) -> Option<()> {
-        let mut baseline = original.clone();
+        let mut baseline = original.clone_for_evaluation();
         if !retain_parent {
             baseline.evaluation_context = None;
         }
@@ -349,5 +413,101 @@ impl Document {
             .frozen
             .contains(&id)
             .then_some(context.original.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evaluated_views_match_recursive_geometry_and_sampled_scopes() {
+        for name in [
+            "locus_midpoint_original.gsp",
+            "curve_style_parameter_locus_native_verified.gsp",
+            "numeric_cood_trace_native.gsp",
+            "locus_undefined_sample_verified.gsp",
+            "mapped_calculated_angle_iteration_full_native_verified.gsp",
+            "source_exponents_numeric_iteration_port.gsp",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(name);
+            let doc = Document::open(&path).unwrap();
+            let evaluated = doc.evaluated();
+            for object in &doc.objects {
+                let id = object.id;
+                assert_eq!(
+                    evaluated.position(id),
+                    doc.position(id),
+                    "{name}: point {id}"
+                );
+                assert_eq!(
+                    evaluated.numeric_value(id),
+                    doc.numeric_value(id),
+                    "{name}: number {id}"
+                );
+                assert_eq!(
+                    evaluated.line_points(id),
+                    doc.line_points(id),
+                    "{name}: line {id}"
+                );
+                assert_eq!(
+                    evaluated.is_displayed(id),
+                    doc.is_displayed(id),
+                    "{name}: display {id}"
+                );
+                assert_eq!(
+                    evaluated.locus_segments(id, 8),
+                    doc.locus_segments(id, 8),
+                    "{name}: locus {id}"
+                );
+                assert_eq!(
+                    evaluated.mapped_collection_strokes(id, 8),
+                    doc.mapped_collection_strokes(id, 8),
+                    "{name}: mapping {id}"
+                );
+            }
+            assert_eq!(evaluated.encode(), doc.encode(), "{name}: saved bytes");
+        }
+    }
+
+    #[test]
+    fn evaluated_views_are_isolated_from_edits_history_and_transient_inputs() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let middle = doc.add(Kind::Midpoint(a, b));
+        let parameter = doc.add_named_parameter("n", 2., (0, 0)).unwrap();
+        let reciprocal = doc
+            .add_parameter_calculation(parameter, "1/n", (0, 20))
+            .unwrap();
+        let view = doc.evaluated();
+        assert_eq!(view.position(middle), Some(Point { x: 5., y: 10. }));
+        assert_eq!(view.numeric_value(reciprocal), Some(0.5));
+        assert!(view.undo.is_empty() && view.redo.is_empty());
+        assert!(!doc.undo.is_empty());
+        assert!(doc.evaluation_context.is_none());
+
+        assert!(doc.move_point(a, Point { x: 20., y: 30. }));
+        doc.set_parameter_value(parameter, 0.).unwrap();
+        assert_eq!(doc.evaluated().numeric_value(reciprocal), None);
+        doc.set_parameter_value(parameter, 4.).unwrap();
+        let updated = doc.evaluated();
+        assert_eq!(updated.position(middle), Some(Point { x: 15., y: 25. }));
+        assert_eq!(updated.numeric_value(reciprocal), Some(0.25));
+        assert_eq!(view.position(middle), Some(Point { x: 5., y: 10. }));
+        assert_eq!(view.numeric_value(reciprocal), Some(0.5));
+
+        assert!(doc.set_transient_point_position(a, Point { x: 30., y: 40. }));
+        assert_eq!(
+            doc.evaluated().position(middle),
+            Some(Point { x: 20., y: 30. })
+        );
+        doc.clear_transient_point_positions(&[a]);
+        assert_eq!(
+            doc.evaluated().position(middle),
+            Some(Point { x: 15., y: 25. })
+        );
     }
 }
