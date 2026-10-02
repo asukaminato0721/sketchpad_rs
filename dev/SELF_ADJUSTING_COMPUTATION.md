@@ -33,6 +33,19 @@ replaces this cache; older snapshots retain their own cache. Queries observe a
 propagate without adding every validation read to every sample trace. Temporary
 seed coordinates are not inputs to this construction-only check.
 
+Geometric sampling sometimes substitutes a point's constraint parameters. These
+substitutions use a sparse copy-on-write map over the shared object table, with
+an individual revision token for each replaced object. A sample does not clone
+the full object table or the full vector of revision tokens. Object lookup and
+iteration include the replacements, so point-value measurements still read the
+sampled circle, arc or polygon parameters. Nested scopes share the sparse map
+until a replacement changes; older snapshots retain their own values.
+
+Callers that require a contiguous slice lazily materialize the merged table.
+Ordinary object edits also materialize it and preserve the existing per-object
+revision tokens. Both sparse replacements and regular edits use the same
+dependency reconnection and validation invalidation rules.
+
 The construction dependency program remains useful for validating references,
 selecting frozen boundaries and clearing temporary substitutions. It no longer
 eagerly evaluates every affected object. Query demands drive value computation.

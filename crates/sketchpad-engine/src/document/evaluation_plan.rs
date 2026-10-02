@@ -21,7 +21,7 @@ impl Document {
                 EvaluationInput::Point(id, point) => self.set_evaluation_point(id, point)?,
                 EvaluationInput::Number(id, value) => self.seed_evaluation_number(id, value)?,
                 EvaluationInput::Kind(id, kind) => {
-                    self.objects.get_mut(id.checked_sub(1)?)?.kind = kind;
+                    self.objects.substitute_kind(id.checked_sub(1)?, kind)?;
                 }
             }
         }

@@ -187,4 +187,51 @@ mod tests {
             assert_eq!(sample.position(7), doc.position(7));
         }
     }
+
+    #[test]
+    fn sampled_constraints_update_parameter_measurements_and_keep_nested_samples_isolated() {
+        use crate::value_equation_records::ValueEquationKind;
+        let mut original = Document::new();
+        let center = original.add(Kind::Free(Point { x: 0., y: 0. }));
+        let rim = original.add(Kind::Free(Point { x: 10., y: 0. }));
+        let circle = original.add(Kind::Circle(center, rim));
+        let driver = original.add(Kind::PointOnCircle(circle, 1., 0.));
+        let measurement = original.add(Kind::ValueEquation {
+            kind: ValueEquationKind::PointValue,
+            first: driver,
+            second: circle,
+        });
+        let plan = SamplingPlan::new(&original, driver, &[measurement], Some(circle)).unwrap();
+        let view = original.evaluated();
+        let mut sample = view.clone_for_evaluation();
+        sample
+            .freeze_scoped_evaluation_inputs(&view, &plan.external)
+            .unwrap();
+        let mut expected = original.clone_for_evaluation();
+        for fraction in [0.25, 0.75, 0., 0.5] {
+            let angle = fraction * std::f64::consts::TAU;
+            let kind = original
+                .locus_driver_kind_at(driver, circle, angle)
+                .unwrap();
+            expected.objects.edit(driver - 1).kind = kind.clone();
+            plan.kind(&mut sample, kind).unwrap();
+            assert_eq!(sample.position(driver), expected.position(driver));
+            assert_eq!(
+                sample.numeric_value(measurement),
+                expected.numeric_value(measurement)
+            );
+            assert_eq!(sample.numeric_value(measurement), Some(fraction));
+            let before = sample.position(driver);
+            let mut nested = sample.clone_for_evaluation();
+            nested
+                .freeze_scoped_evaluation_inputs(&sample, &plan.external)
+                .unwrap();
+            plan.kind(&mut nested, Kind::PointOnCircle(circle, 1., 0.))
+                .unwrap();
+            assert_eq!(nested.numeric_value(measurement), Some(0.));
+            assert_eq!(sample.position(driver), before);
+            assert_eq!(sample.numeric_value(measurement), Some(fraction));
+            assert_eq!(view.numeric_value(measurement), Some(0.));
+        }
+    }
 }

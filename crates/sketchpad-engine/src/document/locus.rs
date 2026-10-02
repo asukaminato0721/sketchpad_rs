@@ -569,7 +569,7 @@ impl Document {
                         };
                         match &plan {
                             Some(plan) => plan.kind(sample, kind)?,
-                            None => sample.objects.edit(driver - 1).kind = kind,
+                            None => sample.objects.substitute_kind(driver - 1, kind)?,
                         }
                     }
                     Some(evaluate(sample, target))

@@ -19,8 +19,10 @@ arc, polygon, sector, circular-segment, or bounded point-curve sampler; it must
 not be the driver and cannot depend on the driver. Stored-path loci retain their
 earlier-before-driver ordering requirement.
 
-Sampling replaces only the driver's kind in the cloned locus scope. Point-curve
-paths also receive the same nested `PointCurve` evaluation scope used by an
+Sampling replaces only the driver's kind in a sparse copy-on-write map over the
+shared object table. Reads see the full replacement, including its path parameters;
+point-value measurements must not read the driver's saved parameter instead.
+Point-curve paths also receive the same nested `PointCurve` evaluation scope used by an
 ordinary point-on-curve driver. External inputs remain frozen by the existing
 locus evaluator, so the temporary constraint cannot leak into the document or
 an enclosing sampled construction.
