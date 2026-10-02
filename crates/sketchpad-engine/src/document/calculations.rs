@@ -20,7 +20,7 @@ pub(super) fn calculation_source_ids(
 pub(super) fn calculation_source_units(
     group: &ParameterCalculationGroup,
     refs: &[usize],
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
 ) -> Option<Vec<NumericUnit>> {
     let kinds = group.source_kinds().ok()?;
     if refs.len() != kinds.len() {

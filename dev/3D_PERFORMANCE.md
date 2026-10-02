@@ -1,5 +1,8 @@
 # 3D sample performance
 
+This report describes the pre-SAC implementation at `3523b5c`. For the current
+runtime and its measured regressions, see [SAC performance](SAC_PERFORMANCE.md).
+
 Measured on 2026-10-02 with the 25 files in
 `gsp-rs/tests/Samples/热研系列/3D系列`. Source sample files were not modified.
 

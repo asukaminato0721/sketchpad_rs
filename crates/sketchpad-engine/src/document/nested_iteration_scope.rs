@@ -1,12 +1,12 @@
 //! Resolve nested iteration adapters and their explicit construction capture.
-use super::{Kind, Object};
+use super::Kind;
 use std::collections::BTreeSet;
 
 /// Structural bindings do not choose an environment; their mapped descriptor
 /// does. Return descriptors reached through a valid terminal or explicitly
 /// captured with their complete mapped root.
 pub(super) fn captured_structures(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     page: usize,
     seeds: &[usize],
     branches: &[Vec<usize>],
@@ -113,7 +113,11 @@ pub(super) fn captured_structures(
     Some(structures)
 }
 
-fn depends_on_seeds(objects: &[Object], id: usize, seeds: &[usize]) -> Option<bool> {
+fn depends_on_seeds(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    id: usize,
+    seeds: &[usize],
+) -> Option<bool> {
     let mut pending = vec![id];
     let mut seen = BTreeSet::new();
     while let Some(id) = pending.pop() {

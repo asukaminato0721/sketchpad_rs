@@ -30,14 +30,22 @@ impl EvaluatedDocument {
             return;
         };
         let pending: Vec<_> = {
-            let curves = context.curves.0.lock().unwrap();
             self.objects
                 .iter()
                 .filter(|o| matches!(o.kind, Kind::Locus(..) | Kind::ParameterLocus(..)))
                 .filter(|o| self.is_displayed(o.id))
-                .filter(|o| !curves.contains(&(o.id, subdivisions)))
+                .filter(|o| {
+                    !context
+                        .sac
+                        .graph
+                        .is_current(&super::sac_evaluation::Query::Geometry(
+                            o.id,
+                            super::geometry_cache::GeometryQuery::LocusStrokes,
+                            subdivisions,
+                        ))
+                })
                 .map(|o| o.id)
-                .take(curves.cap().get())
+                .take(64)
                 .collect()
         };
         if pending.is_empty() {
@@ -70,10 +78,9 @@ impl EvaluatedDocument {
 
 #[derive(Clone, Debug)]
 pub(super) struct EvaluationContext {
+    sac: super::sac_evaluation::Evaluation,
     sampling_baseline: std::sync::OnceLock<Shared<Document>>,
     validated: ValidatedDependencies,
-    curves: CurveCache,
-    geometry: super::geometry_cache::GeometryCache,
     fonts: FontCache,
     points: BTreeMap<usize, Option<Point>>,
     numbers: BTreeMap<usize, Option<f64>>,
@@ -88,9 +95,10 @@ pub(super) struct EvaluationContext {
     pub(super) original: Shared<Document>,
 }
 
-type Curves = lru::LruCache<(usize, usize), Option<Shared<Vec<super::LocusStroke>>>>;
 #[derive(Debug, Default)]
-struct ValidatedDependencies(std::sync::Mutex<BTreeSet<usize>>);
+struct ValidatedDependencies(
+    std::sync::Mutex<(Option<super::sac_evaluation::Identity>, BTreeSet<usize>)>,
+);
 impl Clone for ValidatedDependencies {
     fn clone(&self) -> Self {
         Self(std::sync::Mutex::new(self.0.lock().unwrap().clone()))
@@ -103,24 +111,13 @@ impl Clone for FontCache {
         Self(std::sync::Mutex::new(self.0.lock().unwrap().clone()))
     }
 }
-#[derive(Debug)]
-struct CurveCache(std::sync::Mutex<Curves>);
-impl Clone for CurveCache {
-    fn clone(&self) -> Self {
-        Self(std::sync::Mutex::new(self.0.lock().unwrap().clone()))
-    }
-}
-
 impl EvaluationContext {
     fn new(original: Shared<Document>) -> Self {
         Self {
+            sac: Default::default(),
             sampling_baseline: std::sync::OnceLock::new(),
             validated: ValidatedDependencies::default(),
             fonts: FontCache::default(),
-            geometry: Default::default(),
-            curves: CurveCache(std::sync::Mutex::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(64).unwrap(),
-            ))),
             points: BTreeMap::new(),
             numbers: BTreeMap::new(),
             straights: BTreeMap::new(),
@@ -137,6 +134,73 @@ impl EvaluationContext {
 }
 
 impl Document {
+    pub(super) fn with_sac_scope<T>(
+        &self,
+        sample: &mut Document,
+        name: super::sac_evaluation::Scope,
+        evaluate: impl FnOnce(&mut Document) -> T,
+    ) -> T {
+        if let Some(parent) = self.sac_evaluation()
+            && let Some(context) = sample.evaluation_context_mut()
+        {
+            let fallback = std::mem::replace(
+                &mut context.sac.graph,
+                super::sac_evaluation::Graph::new(4096.try_into().unwrap()),
+            );
+            context.sac = parent.child(name, fallback);
+            let result = evaluate(sample);
+            sample.sac_evaluation().unwrap().publish();
+            result
+        } else {
+            evaluate(sample)
+        }
+    }
+    pub(super) fn sac_evaluation(&self) -> Option<&super::sac_evaluation::Evaluation> {
+        self.evaluation_context.as_ref().map(|context| &context.sac)
+    }
+
+    pub(super) fn sac_frozen_stamp(&self, id: usize) -> super::sac_evaluation::Stamp {
+        let context = self.evaluation_context.as_ref().unwrap();
+        super::sac_evaluation::Stamp::Frozen(context.frozen.contains(&id).then(|| {
+            (
+                context.original.objects.sac_identity(None),
+                context
+                    .original
+                    .sac_evaluation()
+                    .map(|scope| scope.input_revision()),
+            )
+        }))
+    }
+
+    pub(super) fn sac_slot(
+        &self,
+        input: super::sac_evaluation::Input,
+    ) -> Option<super::sac_evaluation::Value> {
+        use super::sac_evaluation::{Input, Value};
+        let context = self.evaluation_context.as_ref()?;
+        match input {
+            Input::Point(id) => context
+                .seed_points
+                .get(&id)
+                .copied()
+                .map(Some)
+                .or_else(|| context.points.get(&id).copied())
+                .map(Value::Point),
+            Input::Number(id) => context
+                .seed_numbers
+                .get(&id)
+                .copied()
+                .map(Some)
+                .or_else(|| context.numbers.get(&id).copied())
+                .map(Value::Number),
+            Input::Straight(id) => context.straights.get(&id).copied().map(Value::Straight),
+            Input::Circle(id) => context.circles.get(&id).copied().map(Value::Circle),
+            Input::Polygon(id) => context.polygons.get(&id).cloned().map(Value::Polygon),
+            Input::Arc(id) => context.arcs.get(&id).copied().map(Value::Arc),
+            Input::Frame(id) => context.frames.get(&id).copied().map(Value::Frame),
+            _ => None,
+        }
+    }
     pub(super) fn cached_geometry<T: Clone + Send + Sync + 'static>(
         &self,
         id: usize,
@@ -144,18 +208,19 @@ impl Document {
         resolution: usize,
         evaluate: impl FnOnce() -> Option<T>,
     ) -> Option<T> {
-        match &self.evaluation_context {
-            Some(context) => context
-                .geometry
-                .get_or_evaluate(id, query, resolution, evaluate),
-            None => evaluate(),
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Geometry(value)) = self.sac_query(Query::Geometry(id, query, resolution))
+        {
+            return value.and_then(|value| value.get::<T>());
         }
+        evaluate()
     }
 
     // Sampling baselines share immutable values. Detach before changing seeds
     // or invalidating results so older views and sibling samples stay valid.
     pub(super) fn evaluation_context_mut(&mut self) -> Option<&mut EvaluationContext> {
         let context = self.evaluation_context.as_mut().map(Shared::make_mut)?;
+        context.sac.graph.advance();
         context.sampling_baseline.take();
         Some(context)
     }
@@ -180,11 +245,19 @@ impl Document {
         &self,
         validate: impl FnOnce(&mut BTreeSet<usize>) -> T,
     ) -> T {
-        if let Some(context) = &self.evaluation_context {
-            validate(&mut context.validated.0.lock().unwrap())
-        } else {
-            validate(&mut BTreeSet::new())
-        }
+        super::sac_evaluation::structural_validation(|| {
+            if let Some(context) = &self.evaluation_context {
+                let identity = self.objects.sac_validation_identity();
+                let mut cached = context.validated.0.lock().unwrap();
+                if cached.0.as_ref() != Some(&identity) {
+                    cached.0 = Some(identity);
+                    cached.1.clear();
+                }
+                validate(&mut cached.1)
+            } else {
+                validate(&mut BTreeSet::new())
+            }
+        })
     }
 
     pub(super) fn cached_text_font(
@@ -213,37 +286,12 @@ impl Document {
         }
     }
 
-    pub(super) fn cached_locus_strokes(
-        &self,
-        id: usize,
-        subdivisions: usize,
-        evaluate: impl FnOnce() -> Option<Vec<super::LocusStroke>>,
-    ) -> Option<Vec<super::LocusStroke>> {
-        let Some(context) = &self.evaluation_context else {
-            return evaluate();
-        };
-        let key = (id, subdivisions);
-        let cached = context.curves.0.lock().unwrap().get(&key).cloned();
-        if let Some(value) = cached {
-            return value.map(|value| (*value).clone());
-        }
-        let value = evaluate();
-        context
-            .curves
-            .0
-            .lock()
-            .unwrap()
-            .put(key, value.clone().map(Shared::new));
-        value
-    }
-
-    /// Evaluate shared point and numeric dependencies once in topological order
-    /// for a read-only pass such as drawing, fitting, or exporting.
+    /// Create an isolated SAC view. Values are evaluated when first demanded
+    /// by drawing, fitting, export or another construction.
     pub fn evaluated(&self) -> EvaluatedDocument {
         let mut snapshot = self.clone_for_evaluation();
-        if let Ok(program) = self.objects.dependency_program() {
+        if self.objects.dependency_program().is_ok() {
             let _ = snapshot.ensure_evaluation_context(self);
-            let _ = snapshot.cache_evaluation_values(program.order());
         }
         EvaluatedDocument(snapshot)
     }
@@ -368,6 +416,10 @@ impl Document {
             Shared::new(baseline)
         };
         let mut context = EvaluationContext::new(baseline);
+        if let Some(parent) = original.sac_evaluation() {
+            context.sac = parent.clone();
+            context.sac.graph.advance();
+        }
         // Validation concerns references, pages and object kinds, not sampled
         // coordinates. A scope over the same immutable table can reuse it.
         if self.objects.shares_objects(&original.objects)
@@ -474,16 +526,6 @@ impl Document {
     ) {
         if let Some(context) = self.evaluation_context_mut() {
             for id in ids {
-                context.geometry.invalidate(id);
-                context.validated.0.get_mut().unwrap().remove(&id);
-                let curves = context.curves.0.get_mut().unwrap();
-                let keys: Vec<_> = curves
-                    .iter()
-                    .filter_map(|(&key, _)| (key.0 == id).then_some(key))
-                    .collect();
-                for key in keys {
-                    curves.pop(&key);
-                }
                 context.points.remove(&id);
                 context.numbers.remove(&id);
                 context.straights.remove(&id);
@@ -521,8 +563,6 @@ impl Document {
             return;
         };
         let frozen = &context.frozen;
-        context.curves.0.get_mut().unwrap().clear();
-        context.geometry.clear();
         context.points.retain(|id, _| frozen.contains(id));
         context.numbers.retain(|id, _| frozen.contains(id));
         context.straights.retain(|id, _| frozen.contains(id));
@@ -530,41 +570,6 @@ impl Document {
         context.polygons.retain(|id, _| frozen.contains(id));
         context.arcs.retain(|id, _| frozen.contains(id));
         context.frames.retain(|id, _| frozen.contains(id));
-    }
-
-    /// Materialize a topologically ordered carried DAG for the current seeds.
-    /// Cache shared points, numbers, and analytic line/circle hosts together.
-    /// Cached undefined values are retained as such for the rest of this state.
-    pub(super) fn cache_evaluation_values(&mut self, ids: &[usize]) -> Option<()> {
-        self.evaluation_context.as_ref()?;
-        for &id in ids {
-            let object = self.objects.get(id.checked_sub(1)?)?;
-            if object.deleted {
-                continue;
-            }
-            let point = is_point_kind(&object.kind) && self.evaluation_point(id).is_none();
-            let number =
-                object.kind.numeric_unit().is_some() && self.evaluation_numeric(id).is_none();
-            let straight = is_straight_kind(&object.kind) && self.evaluation_straight(id).is_none();
-            let circle = object.kind.is_circle() && self.evaluation_circle(id).is_none();
-            if point {
-                let value = self.position(id);
-                self.evaluation_context_mut()?.points.insert(id, value);
-            }
-            if number {
-                let value = self.numeric_value(id);
-                self.evaluation_context_mut()?.numbers.insert(id, value);
-            }
-            if straight {
-                let value = self.line_points(id);
-                self.evaluation_context_mut()?.straights.insert(id, value);
-            }
-            if circle {
-                let value = self.circle_points(id);
-                self.evaluation_context_mut()?.circles.insert(id, value);
-            }
-        }
-        Some(())
     }
 
     pub(super) fn set_evaluation_point(&mut self, id: usize, point: Point) -> Option<()> {
@@ -604,6 +609,7 @@ impl Document {
     }
 
     pub(super) fn evaluation_point(&self, id: usize) -> Option<Option<Point>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Point(id));
         let context = self.evaluation_context.as_ref()?;
         if let Some(point) = context.seed_points.get(&id) {
             return Some(Some(*point));
@@ -611,6 +617,7 @@ impl Document {
         context.points.get(&id).copied()
     }
     pub(super) fn evaluation_numeric(&self, id: usize) -> Option<Option<f64>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Number(id));
         let context = self.evaluation_context.as_ref()?;
         if let Some(value) = context.seed_numbers.get(&id) {
             return Some(Some(*value));
@@ -618,6 +625,7 @@ impl Document {
         context.numbers.get(&id).copied()
     }
     pub(super) fn evaluation_straight(&self, id: usize) -> Option<Option<Straight>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Straight(id));
         self.evaluation_context
             .as_ref()?
             .straights
@@ -625,20 +633,25 @@ impl Document {
             .copied()
     }
     pub(super) fn evaluation_circle(&self, id: usize) -> Option<Option<(Point, f64)>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Circle(id));
         self.evaluation_context.as_ref()?.circles.get(&id).copied()
     }
     pub(super) fn evaluation_polygon(&self, id: usize) -> Option<Option<Vec<Point>>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Polygon(id));
         self.evaluation_context.as_ref()?.polygons.get(&id).cloned()
     }
     pub(super) fn evaluation_arc(&self, id: usize) -> Option<Option<Arc>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Arc(id));
         self.evaluation_context.as_ref()?.arcs.get(&id).copied()
     }
     pub(super) fn evaluation_frame(&self, id: usize) -> Option<Option<CoordinateFrame>> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Frame(id));
         self.evaluation_context.as_ref()?.frames.get(&id).copied()
     }
     /// Functions and degenerate arc policies need the original construction,
     /// rather than a single sampled number or circular geometry.
     pub(super) fn frozen_evaluation_document(&self, id: usize) -> Option<&Document> {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::Frozen(id));
         let context = self.evaluation_context.as_ref()?;
         context
             .frozen

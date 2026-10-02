@@ -557,7 +557,20 @@ impl Document {
     }
 
     pub fn position(&self, id: usize) -> Option<Point> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Point(value)) = self.sac_query(Query::Point(id)) {
+            return value;
+        }
+        self.position_untracked(id)
+    }
+    pub(super) fn position_untracked(&self, id: usize) -> Option<Point> {
         fn go(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
+            if d.sac_evaluation().is_some() {
+                return d.position(id);
+            }
+            go_body(d, id, seen)
+        }
+        fn go_body(d: &Document, id: usize, seen: &mut BTreeSet<usize>) -> Option<Point> {
             if let Some(value) = d.evaluation_point(id) {
                 return value;
             }
@@ -853,7 +866,7 @@ impl Document {
             seen.remove(&id);
             p
         }
-        go(self, id, &mut BTreeSet::new())
+        go_body(self, id, &mut BTreeSet::new())
     }
     /// Native 11/12 share their wire identity for circles and bounded arcs.
     /// Circle branches retain ordered straight roots. Arc branches select the
@@ -1016,6 +1029,13 @@ impl Document {
     }
 
     pub fn polygon_points(&self, id: usize) -> Option<Vec<Point>> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Polygon(value)) = self.sac_query(Query::Polygon(id)) {
+            return value;
+        }
+        self.polygon_points_untracked(id)
+    }
+    pub(super) fn polygon_points_untracked(&self, id: usize) -> Option<Vec<Point>> {
         if let Some(value) = self.evaluation_polygon(id) {
             return value;
         }
@@ -1043,7 +1063,24 @@ impl Document {
         }
     }
     pub fn line_points(&self, id: usize) -> Option<(Point, Point, LineMode)> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Straight(value)) = self.sac_query(Query::Straight(id)) {
+            return value;
+        }
+        self.line_points_untracked(id)
+    }
+    pub(super) fn line_points_untracked(&self, id: usize) -> Option<(Point, Point, LineMode)> {
         fn go(
+            d: &Document,
+            id: usize,
+            seen: &mut BTreeSet<usize>,
+        ) -> Option<(Point, Point, LineMode)> {
+            if d.sac_evaluation().is_some() {
+                return d.line_points(id);
+            }
+            go_body(d, id, seen)
+        }
+        fn go_body(
             d: &Document,
             id: usize,
             seen: &mut BTreeSet<usize>,
@@ -1186,9 +1223,16 @@ impl Document {
             seen.remove(&id);
             result
         }
-        go(self, id, &mut BTreeSet::new())
+        go_body(self, id, &mut BTreeSet::new())
     }
     pub fn circle_points(&self, id: usize) -> Option<(Point, f64)> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Circle(value)) = self.sac_query(Query::Circle(id)) {
+            return value;
+        }
+        self.circle_points_untracked(id)
+    }
+    pub(super) fn circle_points_untracked(&self, id: usize) -> Option<(Point, f64)> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted || !object.kind.is_circle() {
             return None;
@@ -1233,6 +1277,13 @@ impl Document {
         (radius.is_finite() && radius > 0.).then_some((center, radius))
     }
     pub(super) fn arc_geometry(&self, id: usize) -> Option<(Point, f64, f64, f64, bool)> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Arc(value)) = self.sac_query(Query::Arc(id)) {
+            return value;
+        }
+        self.arc_geometry_untracked(id)
+    }
+    pub(super) fn arc_geometry_untracked(&self, id: usize) -> Option<(Point, f64, f64, f64, bool)> {
         if let Some(value) = self.evaluation_arc(id) {
             return value;
         }

@@ -3,17 +3,22 @@
 use super::kind::is_arc_kind;
 use super::transform_evaluator::TransformGeometry;
 use super::transform_model::ElementType;
-use super::{Document, Kind, Object, Point};
+use super::{Document, Kind, Point};
 
 pub(super) type SectorArc = (Point, f64, f64, f64, bool);
 
-pub(super) fn supported_source(objects: &[Object], arc: usize, page: usize, before: usize) -> bool {
+pub(super) fn supported_source(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    arc: usize,
+    page: usize,
+    before: usize,
+) -> bool {
     arc.checked_sub(1)
         .and_then(|i| objects.get(i))
         .is_some_and(|o| arc < before && !o.deleted && o.page == page && is_arc_kind(&o.kind))
 }
 pub(super) fn supported_circular_segment_source(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     arc: usize,
     page: usize,
     before: usize,
@@ -26,13 +31,18 @@ pub(super) fn supported_circular_segment_source(
             )
         })
 }
-pub(super) fn supported_host(objects: &[Object], host: usize, page: usize, before: usize) -> bool {
+pub(super) fn supported_host(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    host: usize,
+    page: usize,
+    before: usize,
+) -> bool {
     host.checked_sub(1)
         .and_then(|i| objects.get(i))
         .is_some_and(|o| host < before && !o.deleted && o.page == page && o.kind.is_sector())
 }
 pub(super) fn supported_circular_segment_host(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     host: usize,
     page: usize,
     before: usize,

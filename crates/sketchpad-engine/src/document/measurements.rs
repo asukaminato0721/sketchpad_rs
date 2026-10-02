@@ -80,10 +80,29 @@ impl Document {
         self.numeric_value(id)
     }
     pub fn numeric_value(&self, id: usize) -> Option<f64> {
-        self.numeric_value_with_cache(id, &mut NumericValues::new())
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Number(value)) = self.sac_query(Query::Number(id)) {
+            return value;
+        }
+        self.numeric_value_untracked(id)
+    }
+
+    pub(super) fn numeric_value_untracked(&self, id: usize) -> Option<f64> {
+        self.numeric_value_with_cache_untracked(id, &mut NumericValues::new())
     }
 
     pub(super) fn numeric_value_with_cache(
+        &self,
+        id: usize,
+        values: &mut NumericValues,
+    ) -> Option<f64> {
+        if self.sac_evaluation().is_some() {
+            return self.numeric_value(id);
+        }
+        self.numeric_value_with_cache_untracked(id, values)
+    }
+
+    fn numeric_value_with_cache_untracked(
         &self,
         id: usize,
         values: &mut NumericValues,

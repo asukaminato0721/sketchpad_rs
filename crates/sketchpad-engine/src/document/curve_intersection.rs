@@ -1,11 +1,12 @@
 //! Native98 ranks crossings on an ordered carrier, after domain filtering.
 use super::kind::{is_arc_kind, is_point_kind, is_straight_kind};
+use super::object_store::ObjectRead;
 use super::point_curve::PointCurve;
-use super::{Document, Kind, LineMode, Object, Point};
+use super::{Document, Kind, LineMode, Point};
 use crate::function_records::FunctionPlotMode;
 use std::collections::BTreeSet;
 
-fn point_curve(objects: &[Object], kind: &Kind) -> bool {
+fn point_curve(objects: &(impl ObjectRead + ?Sized), kind: &Kind) -> bool {
     match kind {
         Kind::FunctionPlot(..) | Kind::ParametricPlot(..) | Kind::SampledMapped(_) => true,
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs
@@ -17,7 +18,7 @@ fn point_curve(objects: &[Object], kind: &Kind) -> bool {
     }
 }
 
-fn function_plot_pair(objects: &[Object], first: usize, second: usize) -> bool {
+fn function_plot_pair(objects: &(impl ObjectRead + ?Sized), first: usize, second: usize) -> bool {
     let Some(Kind::FunctionPlot(_, first_frame, first_min, first_max, _, first_mode)) = first
         .checked_sub(1)
         .and_then(|index| objects.get(index))
@@ -39,7 +40,7 @@ fn function_plot_pair(objects: &[Object], first: usize, second: usize) -> bool {
 }
 
 pub(super) fn supported(
-    objects: &[Object],
+    objects: &(impl ObjectRead + ?Sized),
     carrier: usize,
     curve: usize,
     page: usize,
@@ -63,7 +64,7 @@ pub(super) fn supported(
             || function_plot_pair(objects, carrier, curve))
 }
 pub(super) fn decode(
-    objects: &[Object],
+    objects: &(impl ObjectRead + ?Sized),
     page: usize,
     id: usize,
     header: &[u8],
@@ -378,12 +379,10 @@ impl Document {
             }
         };
         let intervals = curve.intervals;
-        let values: Vec<_> = (0..=intervals)
-            .map(|i| {
-                curve
-                    .at(i as f64 / intervals as f64)
-                    .map(|p| (p, carrier.residual(p)))
-            })
+        let values: Vec<_> = curve
+            .sample_points()?
+            .into_iter()
+            .map(|point| point.map(|p| (p, carrier.residual(p))))
             .collect();
         for i in 0..intervals {
             let (Some((_, left_value)), Some((_, right_value))) = (values[i], values[i + 1]) else {

@@ -3,7 +3,7 @@ use super::kind::is_point_kind;
 use super::{Document, Kind, Object, Point};
 
 pub(super) fn binding_source(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     binding: usize,
     page: usize,
     before: usize,

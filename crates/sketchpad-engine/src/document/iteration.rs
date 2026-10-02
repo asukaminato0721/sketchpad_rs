@@ -33,7 +33,7 @@ fn point_iteration_definition(
 }
 
 fn iteration_transform_inputs_supported(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     definition: &TransformDefinition,
 ) -> bool {
     let get = |id: usize| {
@@ -99,7 +99,10 @@ pub(super) fn supported_point_iteration_mapping(
 }
 
 /// The carried DAG uses the same typed transform inputs as ordinary geometry.
-fn mapped_transform_supported(objects: &[Object], definition: &TransformDefinition) -> bool {
+fn mapped_transform_supported(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    definition: &TransformDefinition,
+) -> bool {
     let Some(source) = definition
         .source()
         .checked_sub(1)
@@ -274,7 +277,7 @@ pub(super) fn supported_branch_polygon_mapping(
 
 /// Simultaneous point/scalar substitutions followed by reevaluation of the carried DAG.
 pub(super) fn supported_mapped_point_iteration(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     seeds: &[usize],
     branches: &[Vec<usize>],
     carried: &[usize],
@@ -283,7 +286,7 @@ pub(super) fn supported_mapped_point_iteration(
 }
 
 pub(super) fn supported_tool_mapped_point_iteration(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     seeds: &[usize],
     branches: &[Vec<usize>],
     carried: &[usize],
@@ -292,7 +295,7 @@ pub(super) fn supported_tool_mapped_point_iteration(
 }
 
 fn supported_mapped_point_iteration_impl(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     seeds: &[usize],
     branches: &[Vec<usize>],
     carried: &[usize],
@@ -1317,39 +1320,9 @@ impl Document {
             .iter()
             .map(|id| MappedValue::read(self, *id))
             .collect::<Option<_>>()?;
-        let mut level = vec![initial];
+        let mut level = vec![(Vec::<usize>::new(), initial)];
         let mut sample = self.clone_for_evaluation();
         let external = self.mapped_external_inputs(seeds, branches, carried)?;
-        let mut evaluation_order = branches
-            .iter()
-            .flatten()
-            .chain(carried)
-            .copied()
-            .filter(|id| !seeds.contains(id))
-            .collect::<Vec<_>>();
-        evaluation_order.sort_unstable();
-        evaluation_order.dedup();
-        // Advancing the seeds does not require rendering every carried object.
-        // Shared branch ancestors are evaluated in dependency order, while
-        // omitted inputs continue to resolve through the frozen environment.
-        let branch_roots: Vec<_> = branches.iter().flatten().copied().collect();
-        let graph = self.objects.dependency_graph();
-        let slice_order = |roots: &[usize]| {
-            graph
-                .slice(roots)
-                .ok()
-                .map(|program| {
-                    program
-                        .order()
-                        .iter()
-                        .copied()
-                        .filter(|id| evaluation_order.binary_search(id).is_ok())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_else(|| evaluation_order.clone())
-        };
-        let branch_order = slice_order(&branch_roots);
-        let output_order = slice_order(&[source]);
         if retain_parent {
             sample.freeze_scoped_evaluation_inputs(self, &external)?;
             sample.inherit_evaluation_seeds(self)?;
@@ -1359,7 +1332,7 @@ impl Document {
         if depth == 0 {
             return Some(vec![(0, evaluate(&sample, source))]);
         }
-        for (&id, value) in seeds.iter().zip(&level[0]) {
+        for (&id, value) in seeds.iter().zip(&level[0].1) {
             if matches!(value, MappedValue::Number(_)) {
                 sample.invalidate_evaluation_dependents(id);
             }
@@ -1369,25 +1342,43 @@ impl Document {
         for step in 0..depth {
             let mut next = Vec::new();
             let mut seen = BTreeSet::new();
-            for state in &level {
-                sample.clear_evaluation_results();
-                if retain_parent {
-                    sample.clear_evaluation_seed_ids(seeds);
-                } else {
-                    sample.clear_evaluation_seeds();
-                }
-                for (id, value) in seeds.iter().zip(state) {
-                    value.seed_cleared_state(&mut sample, *id)?;
-                }
-                sample.cache_evaluation_values(&branch_order)?;
-                for branch in branches {
-                    let mapped: Vec<_> = branch
-                        .iter()
-                        .map(|id| MappedValue::read(&sample, *id))
-                        .collect::<Option<_>>()?;
+            for (path, state) in &level {
+                let mapped = self.with_sac_scope(
+                    &mut sample,
+                    super::sac_evaluation::Scope::Iteration {
+                        owner: iteration,
+                        step,
+                        branch: path.clone(),
+                    },
+                    |sample| {
+                        sample.clear_evaluation_results();
+                        if retain_parent {
+                            sample.clear_evaluation_seed_ids(seeds);
+                        } else {
+                            sample.clear_evaluation_seeds();
+                        }
+                        for (id, value) in seeds.iter().zip(state) {
+                            value.seed_cleared_state(sample, *id)?;
+                        }
+                        branches
+                            .iter()
+                            .map(|branch| {
+                                branch
+                                    .iter()
+                                    .map(|id| MappedValue::read(sample, *id))
+                                    .collect::<Option<Vec<_>>>()
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    },
+                )?;
+                for (branch, mapped) in mapped.into_iter().enumerate() {
                     let key: Vec<_> = mapped.iter().map(|value| value.key()).collect();
                     if seen.insert(key) {
-                        next.push(mapped);
+                        let mut next_path = path.clone();
+                        if branches.len() > 1 {
+                            next_path.push(branch);
+                        }
+                        next.push((next_path, mapped));
                     }
                 }
             }
@@ -1397,20 +1388,28 @@ impl Document {
             }
             generated += next.len();
             if (!terminal_only && !*final_only) || step + 1 == depth {
-                for state in &next {
-                    sample.clear_evaluation_results();
-                    if retain_parent {
-                        sample.clear_evaluation_seed_ids(seeds);
-                    } else {
-                        sample.clear_evaluation_seeds();
-                    }
-                    for (id, value) in seeds.iter().zip(state) {
-                        value.seed_cleared_state(&mut sample, *id)?;
-                    }
-                    sample.cache_evaluation_values(&output_order)?;
-                    // Keep terminal undefinedness. The ordinary image reader
-                    // filters each undefined image while preserving valid levels.
-                    result.push((step + 1, evaluate(&sample, source)));
+                for (path, state) in &next {
+                    let value = self.with_sac_scope(
+                        &mut sample,
+                        super::sac_evaluation::Scope::Iteration {
+                            owner: iteration,
+                            step: step + 1,
+                            branch: path.clone(),
+                        },
+                        |sample| {
+                            sample.clear_evaluation_results();
+                            if retain_parent {
+                                sample.clear_evaluation_seed_ids(seeds);
+                            } else {
+                                sample.clear_evaluation_seeds();
+                            }
+                            for (id, value) in seeds.iter().zip(state) {
+                                value.seed_cleared_state(sample, *id)?;
+                            }
+                            Some(evaluate(sample, source))
+                        },
+                    )?;
+                    result.push((step + 1, value));
                 }
             }
             level = next;
@@ -1542,7 +1541,10 @@ impl Document {
         })
     }
 
-    fn circle_interior_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, f64)>> {
+    pub(super) fn circle_interior_iteration_images_uncached(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, f64)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -1574,7 +1576,7 @@ impl Document {
         )
     }
 
-    fn colorized_disk_iteration_images_uncached(
+    pub(super) fn colorized_disk_iteration_images_uncached(
         &self,
         id: usize,
     ) -> Option<Vec<(Point, f64, RgbColor)>> {
@@ -1612,7 +1614,7 @@ impl Document {
         )
     }
 
-    fn colorized_polygon_iteration_images_uncached(
+    pub(super) fn colorized_polygon_iteration_images_uncached(
         &self,
         id: usize,
     ) -> Option<Vec<(Vec<Point>, RgbColor)>> {
@@ -1647,7 +1649,10 @@ impl Document {
         )
     }
 
-    fn polygon_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Vec<Point>, f64)>> {
+    pub(super) fn polygon_iteration_images_uncached(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Vec<Point>, f64)>> {
         let o = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
@@ -1700,7 +1705,10 @@ impl Document {
         )
     }
 
-    fn branch_segment_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+    pub(super) fn branch_segment_iteration_images_uncached(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, Point)>> {
         let o = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
@@ -2073,7 +2081,7 @@ impl Document {
         })
     }
 
-    fn point_iteration_images_uncached(&self, id: usize) -> Option<Vec<Point>> {
+    pub(super) fn point_iteration_images_uncached(&self, id: usize) -> Option<Vec<Point>> {
         if let Some(images) = self.mapped_point_binding_images(id) {
             return Some(images);
         }
@@ -2142,7 +2150,7 @@ impl Document {
         })
     }
 
-    fn line_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+    pub(super) fn line_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         self.mapped_straight_binding_images(id, super::LineMode::Line)
     }
     pub fn arc_iteration_images(&self, id: usize, subdivisions: usize) -> Option<Vec<Vec<Point>>> {
@@ -2154,7 +2162,7 @@ impl Document {
         )
     }
 
-    fn arc_iteration_images_uncached(
+    pub(super) fn arc_iteration_images_uncached(
         &self,
         id: usize,
         subdivisions: usize,
@@ -2176,7 +2184,7 @@ impl Document {
         })
     }
 
-    fn ray_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+    pub(super) fn ray_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         if let Some(images) = self.mapped_straight_binding_images(id, super::LineMode::Ray) {
             return Some(images);
         }
@@ -2201,7 +2209,10 @@ impl Document {
         )
     }
 
-    fn segment_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+    pub(super) fn segment_iteration_images_uncached(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, Point)>> {
         let Kind::SegmentIteration(seed, image, segment, depth) =
             self.objects.get(id.checked_sub(1)?)?.kind
         else {
@@ -2220,7 +2231,7 @@ impl Document {
         })
     }
 
-    fn circle_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, f64)>> {
+    pub(super) fn circle_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, f64)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, parent) = object.kind else {
             return None;

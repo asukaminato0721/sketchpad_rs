@@ -72,13 +72,18 @@ impl MappedElementDefinition {
             carried: self.carried.iter().map(|id| ids[*id]).collect(),
         }
     }
-    pub(super) fn supported(&self, objects: &[Object], page: usize, object_id: usize) -> bool {
+    pub(super) fn supported(
+        &self,
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
+        page: usize,
+        object_id: usize,
+    ) -> bool {
         self.supported_internal(objects, page, object_id, false)
     }
 
     fn supported_internal(
         &self,
-        objects: &[Object],
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
         page: usize,
         object_id: usize,
         allow_tool_path_points: bool,
@@ -259,7 +264,8 @@ impl Document {
         let Kind::MappedElement(definition) = &object.kind else {
             return None;
         };
-        if object.deleted || !definition.supported(&self.objects, object.page, id) {
+        super::sac_evaluation::observe(super::sac_evaluation::Input::MappedElementValidity(id));
+        if !self.objects.mapped_element_validity(id) {
             return None;
         }
         let value = MappedValue::read(self, definition.replacement)?;
@@ -270,11 +276,13 @@ impl Document {
         )?;
         let mut sample = self.clone_for_evaluation();
         sample.freeze_scoped_evaluation_inputs(self, &external)?;
-        value.substitute(&mut sample, definition.seed)?;
-        // A mapped construction is a shared DAG, not a tree. Materialize the
-        // carried intermediates once before reading an output that may reuse
-        // them through several numeric expressions and geometric transforms.
-        sample.cache_evaluation_values(&definition.carried)?;
-        sample.position(definition.output)
+        self.with_sac_scope(
+            &mut sample,
+            super::sac_evaluation::Scope::Mapping(id),
+            |sample| {
+                value.substitute(sample, definition.seed)?;
+                sample.position(definition.output)
+            },
+        )
     }
 }

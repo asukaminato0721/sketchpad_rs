@@ -171,13 +171,18 @@ impl ColorizedDefinition {
             behavior: self.behavior,
         }
     }
-    pub(super) fn supported(&self, objects: &[Object], page: usize, id: usize) -> bool {
+    pub(super) fn supported(
+        &self,
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
+        page: usize,
+        id: usize,
+    ) -> bool {
         self.supported_internal(objects, page, id, false)
     }
 
     fn supported_internal(
         &self,
-        objects: &[Object],
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
         page: usize,
         id: usize,
         tool_prototype: bool,

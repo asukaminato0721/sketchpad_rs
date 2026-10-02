@@ -1342,7 +1342,7 @@ impl ParameterLocusDriverProfile {
 /// Native parameter loci may replay either a parameter or the displayed result
 /// of a parameter calculation. Their ranges use radians for angular values.
 pub(super) fn parameter_locus_driver_profile(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     driver: usize,
 ) -> Option<ParameterLocusDriverProfile> {
     let object = objects.get(driver.checked_sub(1)?)?;
@@ -1712,7 +1712,10 @@ pub(super) fn locus_straight_mode(kind: &Kind) -> Option<LineMode> {
 /// A wrapper retains a geometric carrier's role, not an axis or abstract input
 /// role. Follow only wrapper sources; ordinary derived constructions keep their
 /// existing independently supported inputs.
-pub(super) fn locus_straight_source_mode(objects: &[Object], id: usize) -> Option<LineMode> {
+pub(super) fn locus_straight_source_mode(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    id: usize,
+) -> Option<LineMode> {
     let first = objects.get(id.checked_sub(1)?)?;
     let mode = locus_straight_mode(&first.kind)?;
     let page = first.page;

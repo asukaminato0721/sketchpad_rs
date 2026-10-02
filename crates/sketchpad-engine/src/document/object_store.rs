@@ -1,26 +1,81 @@
 //! The mutation boundary for construction objects. No mutable slice escapes:
 //! every insertion or completed edit records connections and a change event.
 use super::Object;
+use super::sac_evaluation::{Identity, Input, observe};
 use sketchpad_ir::{DependencyError, DependencyGraph, DependencyProgram};
 use std::collections::{BTreeSet, VecDeque};
-use std::ops::{Deref, DerefMut};
+use std::ops::{Deref, DerefMut, Index};
 use std::sync::{Arc, Mutex};
 
 const HISTORY_LIMIT: usize = 256;
+
+/// Helpers shared by loading and evaluation keep per-object reads observable.
+/// Taking a raw slice from ObjectStore would register the entire table instead.
+pub(super) trait ObjectRead: Index<usize, Output = Object> {
+    fn get(&self, slot: usize) -> Option<&Object>;
+    fn len(&self) -> usize;
+}
+impl ObjectRead for [Object] {
+    fn len(&self) -> usize {
+        <[Object]>::len(self)
+    }
+    fn get(&self, slot: usize) -> Option<&Object> {
+        <[Object]>::get(self, slot)
+    }
+}
+impl ObjectRead for Vec<Object> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+    fn get(&self, slot: usize) -> Option<&Object> {
+        self.as_slice().get(slot)
+    }
+}
+impl ObjectRead for ObjectStore {
+    fn len(&self) -> usize {
+        ObjectStore::len(self)
+    }
+    fn get(&self, slot: usize) -> Option<&Object> {
+        ObjectStore::get(self, slot)
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct Tracking {
     graph: Arc<DependencyGraph>,
     revision: Arc<()>,
+    object_revisions: Arc<Vec<Arc<()>>>,
+    validation_revision: Arc<()>,
+    coordinate_systems: Arc<Vec<usize>>,
+    coordinate_revision: Arc<()>,
+    mapped_validity: Arc<Mutex<rustc_hash::FxHashMap<usize, bool>>>,
     // Each entry identifies the revision before a mutation. Shared tokens make
     // cloned branches distinguishable without a global counter or shared state.
     history: VecDeque<(Arc<()>, usize)>,
 }
 
 impl Tracking {
-    fn changed(&mut self, id: usize) {
+    fn coordinate_membership(&mut self, slot: usize, present: bool) {
+        match (self.coordinate_systems.binary_search(&slot), present) {
+            (Err(index), true) => Arc::make_mut(&mut self.coordinate_systems).insert(index, slot),
+            (Ok(index), false) => {
+                Arc::make_mut(&mut self.coordinate_systems).remove(index);
+            }
+            _ => return,
+        }
+        self.coordinate_revision = Arc::new(());
+    }
+
+    fn changed(&mut self, id: usize, slot: usize) {
+        self.mapped_validity = Arc::new(Mutex::new(Default::default()));
         self.history.push_back((self.revision.clone(), id));
         self.revision = Arc::new(());
+        let versions = Arc::make_mut(&mut self.object_revisions);
+        if slot == versions.len() {
+            versions.push(self.revision.clone());
+        } else if let Some(version) = versions.get_mut(slot) {
+            *version = self.revision.clone();
+        }
         if self.history.len() > HISTORY_LIMIT {
             self.history.pop_front();
         }
@@ -61,6 +116,16 @@ impl PartialEq for ObjectStore {
 
 impl From<Vec<Object>> for ObjectStore {
     fn from(objects: Vec<Object>) -> Self {
+        let object_revisions = Arc::new(objects.iter().map(|_| Arc::new(())).collect());
+        let coordinate_systems = Arc::new(
+            objects
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, object)| {
+                    matches!(object.kind, super::Kind::CoordinateSystem(..)).then_some(slot)
+                })
+                .collect(),
+        );
         let mut graph = DependencyGraph::default();
         for object in &objects {
             graph.register(object);
@@ -69,6 +134,8 @@ impl From<Vec<Object>> for ObjectStore {
             objects: Arc::new(objects),
             tracking: Mutex::new(Tracking {
                 graph: Arc::new(graph),
+                object_revisions,
+                coordinate_systems,
                 ..Tracking::default()
             }),
         }
@@ -78,11 +145,73 @@ impl From<Vec<Object>> for ObjectStore {
 impl Deref for ObjectStore {
     type Target = [Object];
     fn deref(&self) -> &Self::Target {
+        observe(Input::Objects);
         &self.objects
     }
 }
 
 impl ObjectStore {
+    /// Pure construction validation is shared by scopes over this object table.
+    /// Mutation replaces the cache, preserving old snapshots. This raw accessor
+    /// also serves input-stamp validation and must not record nested reads.
+    pub(super) fn mapped_element_validity(&self, id: usize) -> bool {
+        let Some(object) = id.checked_sub(1).and_then(|slot| self.objects.get(slot)) else {
+            return false;
+        };
+        let super::Kind::MappedElement(definition) = &object.kind else {
+            return false;
+        };
+        let cache = self.tracking.lock().unwrap().mapped_validity.clone();
+        if let Some(valid) = cache.lock().unwrap().get(&id) {
+            return *valid;
+        }
+        let valid =
+            !object.deleted && definition.supported(self.objects.as_slice(), object.page, id);
+        cache.lock().unwrap().insert(id, valid);
+        valid
+    }
+
+    pub(super) fn sac_identity(&self, slot: Option<usize>) -> Identity {
+        let tracking = self.tracking.lock().unwrap();
+        Identity(
+            slot.and_then(|slot| tracking.object_revisions.get(slot))
+                .unwrap_or(&tracking.revision)
+                .clone(),
+        )
+    }
+    pub(super) fn sac_validation_identity(&self) -> Identity {
+        Identity(self.tracking.lock().unwrap().validation_revision.clone())
+    }
+    pub(super) fn sac_coordinate_identity(&self) -> Identity {
+        Identity(self.tracking.lock().unwrap().coordinate_revision.clone())
+    }
+    /// Track the candidate set separately from the contents of unrelated objects.
+    pub(super) fn coordinate_systems(&self) -> impl DoubleEndedIterator<Item = &Object> {
+        observe(Input::CoordinateSystems);
+        let slots = self.tracking.lock().unwrap().coordinate_systems.clone();
+        (0..slots.len()).map(move |index| &self[slots[index]])
+    }
+    pub(super) fn untracked_len(&self) -> usize {
+        self.objects.len()
+    }
+    pub fn len(&self) -> usize {
+        observe(Input::Length);
+        self.objects.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn get(&self, slot: usize) -> Option<&Object> {
+        observe(Input::Object(slot));
+        self.objects.get(slot)
+    }
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Object> + ExactSizeIterator {
+        observe(Input::Length);
+        self.objects.iter().enumerate().map(|(slot, object)| {
+            observe(Input::Object(slot));
+            object
+        })
+    }
     pub(super) fn shares_objects(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.objects, &other.objects)
     }
@@ -90,7 +219,12 @@ impl ObjectStore {
     pub fn push(&mut self, object: Object) {
         let tracking = self.tracking.get_mut().unwrap();
         Arc::make_mut(&mut tracking.graph).register(&object);
-        tracking.changed(object.id);
+        tracking.validation_revision = Arc::new(());
+        tracking.coordinate_membership(
+            self.objects.len(),
+            matches!(object.kind, super::Kind::CoordinateSystem(..)),
+        );
+        tracking.changed(object.id, self.objects.len());
         Arc::make_mut(&mut self.objects).push(object);
     }
 
@@ -99,8 +233,14 @@ impl ObjectStore {
     }
 
     pub fn get_mut(&mut self, slot: usize) -> Option<ObjectEdit<'_>> {
+        let object = Arc::make_mut(&mut self.objects).get_mut(slot)?;
+        let validity = (
+            object.deleted,
+            matches!(object.kind, super::Kind::Unsupported(_)),
+        );
         Some(ObjectEdit {
-            object: Arc::make_mut(&mut self.objects).get_mut(slot)?,
+            object,
+            validity,
             slot,
             tracking: &self.tracking,
         })
@@ -111,6 +251,10 @@ impl ObjectStore {
             .iter_mut()
             .enumerate()
             .map(|(slot, object)| ObjectEdit {
+                validity: (
+                    object.deleted,
+                    matches!(object.kind, super::Kind::Unsupported(_)),
+                ),
                 object,
                 slot,
                 tracking: &self.tracking,
@@ -150,10 +294,39 @@ impl ObjectStore {
     }
 }
 
+impl Index<usize> for ObjectStore {
+    type Output = Object;
+    fn index(&self, slot: usize) -> &Object {
+        observe(Input::Object(slot));
+        &self.objects[slot]
+    }
+}
+
+macro_rules! slice_index {
+    ($($index:ty),*) => {$(
+        impl Index<$index> for ObjectStore {
+            type Output = [Object];
+            fn index(&self, index: $index) -> &[Object] {
+                observe(Input::Objects);
+                &self.objects[index]
+            }
+        }
+    )*};
+}
+slice_index!(
+    std::ops::Range<usize>,
+    std::ops::RangeFrom<usize>,
+    std::ops::RangeTo<usize>,
+    std::ops::RangeFull,
+    std::ops::RangeInclusive<usize>,
+    std::ops::RangeToInclusive<usize>
+);
+
 impl<'a> IntoIterator for &'a ObjectStore {
     type Item = &'a Object;
     type IntoIter = std::slice::Iter<'a, Object>;
     fn into_iter(self) -> Self::IntoIter {
+        observe(Input::Objects);
         self.objects.iter()
     }
 }
@@ -168,6 +341,7 @@ impl IntoIterator for ObjectStore {
 
 /// A scoped edit. The store cannot be evaluated while this guard is borrowed.
 pub struct ObjectEdit<'a> {
+    validity: (bool, bool),
     object: &'a mut Object,
     slot: usize,
     tracking: &'a Mutex<Tracking>,
@@ -191,8 +365,20 @@ impl Drop for ObjectEdit<'_> {
         let mut tracking = self.tracking.lock().unwrap();
         if !tracking.graph.matches_at(self.slot, self.object) {
             Arc::make_mut(&mut tracking.graph).reconnect(self.slot, self.object);
+            tracking.validation_revision = Arc::new(());
+        } else if self.validity
+            != (
+                self.object.deleted,
+                matches!(self.object.kind, super::Kind::Unsupported(_)),
+            )
+        {
+            tracking.validation_revision = Arc::new(());
         }
-        tracking.changed(self.object.id);
+        tracking.coordinate_membership(
+            self.slot,
+            matches!(self.object.kind, super::Kind::CoordinateSystem(..)),
+        );
+        tracking.changed(self.object.id, self.slot);
     }
 }
 

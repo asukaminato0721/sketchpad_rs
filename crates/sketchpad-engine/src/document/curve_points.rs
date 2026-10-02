@@ -1,8 +1,13 @@
 //! Native free (15/42) and numeric (95) point definitions on point traces.
+use super::Kind;
 use super::kind::is_point_kind;
-use super::{Kind, Object};
 
-pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
+pub(super) fn supported(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+    page: usize,
+    before: usize,
+) -> bool {
     let Some(object) = path.checked_sub(1).and_then(|i| objects.get(i)) else {
         return false;
     };
@@ -47,7 +52,12 @@ pub(super) fn supported(objects: &[Object], path: usize, page: usize, before: us
         })
 }
 
-fn parametric_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
+fn parametric_supported(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+    page: usize,
+    before: usize,
+) -> bool {
     path.checked_sub(1)
         .and_then(|index| objects.get(index))
         .is_some_and(|object| {
@@ -73,7 +83,7 @@ fn parametric_supported(objects: &[Object], path: usize, page: usize, before: us
 /// ordinary geometric point loci, and parameter loci. Parameter-locus values
 /// use the saved driver domain rather than a normalized curve fraction.
 pub(super) fn literal_supported(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     path: usize,
     page: usize,
     before: usize,
@@ -89,11 +99,19 @@ pub(super) fn literal_supported(
         && supported(objects, path, page, before)
 }
 
-pub(super) fn free_supported(objects: &[Object], path: usize, page: usize, before: usize) -> bool {
+pub(super) fn free_supported(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+    page: usize,
+    before: usize,
+) -> bool {
     supported(objects, path, page, before) || parametric_supported(objects, path, page, before)
 }
 
-pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option<u8> {
+pub(super) fn free_constraint_subtype(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+) -> Option<u8> {
     match &objects.get(path.checked_sub(1)?)?.kind {
         Kind::FunctionPlot(..) => Some(58),
         Kind::ParametricPlot(..) => Some(99),
@@ -104,7 +122,7 @@ pub(super) fn free_constraint_subtype(objects: &[Object], path: usize) -> Option
 }
 
 pub(super) fn decode(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     path: usize,
     page: usize,
     before: usize,

@@ -85,12 +85,17 @@ impl SampledMappedDefinition {
             && d.native_range[36..40] == [0; 4])
             .then_some(d)
     }
-    pub(super) fn supported(&self, objects: &[Object], page: usize, before: usize) -> bool {
+    pub(super) fn supported(
+        &self,
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
+        page: usize,
+        before: usize,
+    ) -> bool {
         self.supported_impl(objects, page, before, false)
     }
     fn supported_impl(
         &self,
-        objects: &[Object],
+        objects: &(impl super::object_store::ObjectRead + ?Sized),
         page: usize,
         before: usize,
         allow_tool_points: bool,
@@ -240,6 +245,8 @@ impl PathGeometry {
 /// external boundaries, not lazy carried results. Replacing the seed leaves
 /// those boundaries intact while immutable geometry queries reevaluate the DAG.
 pub(super) struct SampledMappedEvaluator {
+    parent: Box<Document>,
+    owner: usize,
     sample: Box<Document>,
     path: PathGeometry,
     seed: usize,
@@ -248,7 +255,7 @@ pub(super) struct SampledMappedEvaluator {
     max: f64,
 }
 impl SampledMappedEvaluator {
-    pub(super) fn new(doc: &Document, d: &SampledMappedDefinition) -> Option<Self> {
+    pub(super) fn new(doc: &Document, owner: usize, d: &SampledMappedDefinition) -> Option<Self> {
         let kind = &doc.objects.get(d.path.checked_sub(1)?)?.kind;
         let path = if kind.is_circle() {
             doc.circle_points(d.path)
@@ -284,6 +291,8 @@ impl SampledMappedEvaluator {
         // established by an enclosing mapping still belong to this caller.
         sample.inherit_evaluation_seeds(doc)?;
         Some(Self {
+            parent: Box::new(doc.clone_for_evaluation()),
+            owner,
             sample,
             path,
             seed: d.seed,
@@ -325,10 +334,19 @@ impl SampledMappedEvaluator {
         let fraction = self.literal_fraction(fraction)?;
         let value = self.min + (self.max - self.min) * fraction;
         let replacement = self.path.at(value)?;
-        self.sample.set_evaluation_point(self.seed, replacement)?;
-        self.sample
-            .position(self.output)
-            .filter(|p| p.x.is_finite() && p.y.is_finite())
+        self.parent.with_sac_scope(
+            &mut self.sample,
+            super::sac_evaluation::Scope::MappedSample {
+                owner: self.owner,
+                fraction: fraction.to_bits(),
+            },
+            |sample| {
+                sample.set_evaluation_point(self.seed, replacement)?;
+                sample
+                    .position(self.output)
+                    .filter(|p| p.x.is_finite() && p.y.is_finite())
+            },
+        )
     }
 }
 impl Document {
@@ -396,7 +414,7 @@ impl Document {
         if o.deleted || !d.supported(&self.objects, o.page, id) {
             return None;
         }
-        SampledMappedEvaluator::new(self, d)
+        SampledMappedEvaluator::new(self, id, d)
     }
     pub fn sampled_mapped_point(&self, id: usize, fraction: f64) -> Option<Point> {
         self.sampled_mapped_evaluator(id)?.at(fraction)
@@ -440,7 +458,7 @@ impl Document {
         )
     }
 
-    fn sampled_mapped_styled_strokes_uncached(
+    pub(super) fn sampled_mapped_styled_strokes_uncached(
         &self,
         id: usize,
         subdivisions: usize,

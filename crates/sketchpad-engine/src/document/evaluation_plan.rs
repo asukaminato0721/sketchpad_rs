@@ -25,6 +25,7 @@ impl Document {
                 }
             }
         }
-        self.cache_evaluation_values(plan.order())
+        // SAC queries repair only the values actually demanded by consumers.
+        Some(())
     }
 }

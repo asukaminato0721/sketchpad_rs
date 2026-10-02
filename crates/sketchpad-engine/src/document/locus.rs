@@ -4,7 +4,7 @@ use super::kind::{
 };
 use super::sampling_plan::SamplingPlan;
 use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
-use super::{Document, Kind, LineMode, Object, Point};
+use super::{Document, Kind, LineMode, Point};
 use crate::style_records::VisualStyle;
 
 /// One independently evaluated member of a straight sweep. Rendering clips its
@@ -38,7 +38,10 @@ fn circle_strokes(center: Point, radius: f64) -> Vec<(Point, Point, LineMode)> {
 
 /// Point-output loci are sampled as independent traces in a mapped scope.
 /// A locus used as the driver's own path has a separate nested-domain contract.
-pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
+pub(super) fn is_point_locus(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    kind: &Kind,
+) -> bool {
     let refs = match kind {
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs,
         _ => return false,
@@ -55,7 +58,10 @@ pub(super) fn is_point_locus(objects: &[Object], kind: &Kind) -> bool {
 /// A sampled family whose members can be replayed efficiently inside a mapped
 /// scope. These must not be joined like a point trace: every sampled line or
 /// circle is rendered as a separate member and may carry its own dynamic color.
-pub(super) fn is_mapped_stroke_locus(objects: &[Object], kind: &Kind) -> bool {
+pub(super) fn is_mapped_stroke_locus(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    kind: &Kind,
+) -> bool {
     let target = match kind {
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first().unwrap_or(&0),
         _ => return false,
@@ -71,7 +77,10 @@ pub(super) fn is_mapped_stroke_locus(objects: &[Object], kind: &Kind) -> bool {
         })
 }
 
-pub(super) fn is_mapped_polygon_locus(objects: &[Object], kind: &Kind) -> bool {
+pub(super) fn is_mapped_polygon_locus(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    kind: &Kind,
+) -> bool {
     let target = match kind {
         Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first().unwrap_or(&0),
         _ => return false,
@@ -88,7 +97,10 @@ pub(super) fn is_mapped_polygon_locus(objects: &[Object], kind: &Kind) -> bool {
 
 /// A sampled polygon family can itself be swept by a later locus. IDs must
 /// descend at every level so malformed native cycles cannot recurse here.
-pub(super) fn is_locus_surface_collection(objects: &[Object], id: usize) -> bool {
+pub(super) fn is_locus_surface_collection(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    id: usize,
+) -> bool {
     let Some(object) = id.checked_sub(1).and_then(|index| objects.get(index)) else {
         return false;
     };
@@ -106,7 +118,10 @@ pub(super) fn is_locus_surface_collection(objects: &[Object], id: usize) -> bool
         || is_locus_surface_collection(objects, target)
 }
 
-pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> {
+pub(super) fn locus_curve_flags(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+) -> Option<u32> {
     let source = objects.get(path.checked_sub(1)?)?;
     match &source.kind {
         Kind::FunctionPlot(..) | Kind::ParametricPlot(..) => Some(1),
@@ -139,7 +154,10 @@ pub(super) fn locus_curve_flags(objects: &[Object], path: usize) -> Option<u32> 
     }
 }
 
-fn locus_driver_straight_mode(objects: &[Object], path: usize) -> Option<LineMode> {
+fn locus_driver_straight_mode(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+) -> Option<LineMode> {
     super::kind::locus_straight_source_mode(objects, path).or_else(|| {
         matches!(
             objects.get(path.checked_sub(1)?)?.kind,
@@ -152,7 +170,11 @@ fn locus_driver_straight_mode(objects: &[Object], path: usize) -> Option<LineMod
 /// Native loci can name the full source segment while constraining their
 /// driver to a shortened copy of that segment.  This is used to keep a sweep
 /// away from a singular endpoint without changing its normalized domain.
-fn compatible_shortened_segment_host(objects: &[Object], path: usize, host: usize) -> bool {
+fn compatible_shortened_segment_host(
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
+    path: usize,
+    host: usize,
+) -> bool {
     if path == host {
         return true;
     }
@@ -213,7 +235,7 @@ fn compatible_shortened_segment_host(objects: &[Object], path: usize, host: usiz
 /// path. Native loci may instead name another independent path and temporarily
 /// place an existing point on it only while sampling the locus.
 pub(super) fn locus_driver_uses_stored_path(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     driver: usize,
     path: usize,
 ) -> bool {
@@ -238,7 +260,7 @@ pub(super) fn locus_driver_uses_stored_path(
 /// retain a point's independent saved construction here; the locus record
 /// supplies a different path constraint only while evaluating the sweep.
 pub(super) fn locus_driver_range_info_for_path(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     driver: usize,
     path: usize,
 ) -> Option<(f64, u32)> {
@@ -328,7 +350,7 @@ pub(super) fn locus_driver_range_info_for_path(
 /// Imported sampled-circle drivers also retain a proved open display profile.
 /// This metadata does not change the driver's periodic parameter domain.
 pub(super) fn locus_driver_range_matches(
-    objects: &[Object],
+    objects: &(impl super::object_store::ObjectRead + ?Sized),
     driver: usize,
     path: usize,
     minimum: f64,
@@ -445,14 +467,15 @@ impl Document {
 
     fn sample_parameter_locus<T>(
         &self,
+        id: usize,
         refs: &[usize],
-        min: f64,
-        max: f64,
+        range: [f64; 2],
         samples: u32,
         subdivisions: usize,
         mut evaluate: impl FnMut(&Document, usize) -> Option<T>,
     ) -> Option<Vec<Option<T>>> {
         let (&target, &driver) = (refs.first()?, refs.get(1)?);
+        let [min, max] = range;
         let profile = parameter_locus_driver_profile(&self.objects, driver)?;
         if !min.is_finite() || !max.is_finite() || min >= max || samples < 2 {
             return None;
@@ -465,15 +488,22 @@ impl Document {
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
             let value = (min + (max - min) * fraction) / profile.scale();
-            let updated = match &plan {
-                Some(plan) => plan.number(&mut sample, value),
-                None => sample.set_evaluation_number(driver, value),
-            };
-            if updated.is_none() {
-                values.push(None);
-                continue;
-            }
-            values.push(evaluate(&sample, target));
+            let result = self.with_sac_scope(
+                &mut sample,
+                super::sac_evaluation::Scope::Sample {
+                    owner: id,
+                    index,
+                    count,
+                },
+                |sample| {
+                    match &plan {
+                        Some(plan) => plan.number(sample, value)?,
+                        None => sample.set_evaluation_number(driver, value)?,
+                    }
+                    evaluate(sample, target)
+                },
+            );
+            values.push(result);
         }
         Some(values)
     }
@@ -517,26 +547,35 @@ impl Document {
         for step in 0..=steps {
             let fraction = step as f64 / steps as f64;
             let parameter = minimum + (maximum - minimum) * fraction;
-            if let Some(curve) = &mut nested_curve {
-                let Some(point) = curve.at_literal(parameter) else {
-                    values.push(None);
-                    continue;
-                };
-                match &plan {
-                    Some(plan) => plan.point(&mut sample, point)?,
-                    None => sample.set_evaluation_point(driver, point)?,
-                }
-            } else {
-                let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
-                    values.push(None);
-                    continue;
-                };
-                match &plan {
-                    Some(plan) => plan.kind(&mut sample, kind)?,
-                    None => sample.objects.edit(driver - 1).kind = kind,
-                }
-            }
-            values.push(evaluate(&sample, target));
+            let result = self.with_sac_scope(
+                &mut sample,
+                super::sac_evaluation::Scope::Sample {
+                    owner: id,
+                    index: step,
+                    count: steps + 1,
+                },
+                |sample| {
+                    if let Some(curve) = &mut nested_curve {
+                        let Some(point) = curve.at_literal(parameter) else {
+                            return Some(None);
+                        };
+                        match &plan {
+                            Some(plan) => plan.point(sample, point)?,
+                            None => sample.set_evaluation_point(driver, point)?,
+                        }
+                    } else {
+                        let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
+                            return Some(None);
+                        };
+                        match &plan {
+                            Some(plan) => plan.kind(sample, kind)?,
+                            None => sample.objects.edit(driver - 1).kind = kind,
+                        }
+                    }
+                    Some(evaluate(sample, target))
+                },
+            )?;
+            values.push(result);
         }
         Some(values)
     }
@@ -548,9 +587,14 @@ impl Document {
         evaluate: impl FnMut(&Document, usize) -> Option<T>,
     ) -> Option<Vec<Option<T>>> {
         match &self.objects.get(id.checked_sub(1)?)?.kind {
-            Kind::ParameterLocus(refs, min, max, samples) => {
-                self.sample_parameter_locus(refs, *min, *max, *samples, subdivisions, evaluate)
-            }
+            Kind::ParameterLocus(refs, min, max, samples) => self.sample_parameter_locus(
+                id,
+                refs,
+                [*min, *max],
+                *samples,
+                subdivisions,
+                evaluate,
+            ),
             Kind::Locus(..) => self.sample_locus(id, subdivisions, evaluate),
             _ => None,
         }
@@ -646,16 +690,27 @@ impl Document {
     }
 
     pub fn locus_styled_strokes(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusStroke>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::LocusStrokes,
+            subdivisions,
+            || self.locus_styled_strokes_untracked(id, subdivisions),
+        )
+    }
+
+    pub(super) fn locus_styled_strokes_untracked(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusStroke>> {
         let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
             _ => return None,
         };
-        self.cached_locus_strokes(id, subdivisions, || {
-            let style = self
-                .effective_visual_style(id)
-                .or_else(|| self.effective_visual_style(target))?;
-            self.locus_styled_strokes_with_style(id, subdivisions, style)
-        })
+        let style = self
+            .effective_visual_style(id)
+            .or_else(|| self.effective_visual_style(target))?;
+        self.locus_styled_strokes_with_style(id, subdivisions, style)
     }
 
     /// A carried collection owns its local sampling domain. Replay each outer
@@ -673,7 +728,7 @@ impl Document {
         )
     }
 
-    fn mapped_collection_strokes_uncached(
+    pub(super) fn mapped_collection_strokes_uncached(
         &self,
         id: usize,
         subdivisions: usize,
@@ -1006,7 +1061,11 @@ impl Document {
         )
     }
 
-    fn locus_surfaces_uncached(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
+    pub(super) fn locus_surfaces_uncached(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusSurface>> {
         let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
             _ => return None,
@@ -1075,7 +1134,7 @@ impl Document {
         )
     }
 
-    fn mapped_collection_surfaces_uncached(
+    pub(super) fn mapped_collection_surfaces_uncached(
         &self,
         id: usize,
         subdivisions: usize,

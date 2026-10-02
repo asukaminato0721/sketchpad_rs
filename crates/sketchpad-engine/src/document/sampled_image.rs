@@ -215,13 +215,6 @@ impl SampledImageEvaluator {
             output: definition.output,
         })
     }
-
-    fn map(&mut self, point: Point) -> Option<Point> {
-        self.sample.set_evaluation_point(self.seed, point)?;
-        self.sample
-            .position(self.output)
-            .filter(|point| point.x.is_finite() && point.y.is_finite())
-    }
 }
 
 pub struct SampledImageMesh<'a> {
@@ -321,7 +314,22 @@ impl Document {
                     x: transform[0] * x + transform[1] * y + transform[2],
                     y: transform[3] * x + transform[4] * y + transform[5],
                 };
-                let point = evaluator.map(source);
+                let point = self.with_sac_scope(
+                    &mut evaluator.sample,
+                    super::sac_evaluation::Scope::ImageSample {
+                        owner: id,
+                        column,
+                        row,
+                        columns,
+                        rows,
+                    },
+                    |sample| {
+                        sample.set_evaluation_point(evaluator.seed, source)?;
+                        sample
+                            .position(evaluator.output)
+                            .filter(|p| p.x.is_finite() && p.y.is_finite())
+                    },
+                );
                 mapped.push(point);
                 vertices.push((point.unwrap_or(source), [u as f32, v as f32]));
             }

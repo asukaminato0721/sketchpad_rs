@@ -17,7 +17,7 @@ impl Document {
             return Some(id);
         }
         self.objects
-            .iter()
+            .coordinate_systems()
             .rev()
             .find(|o| {
                 o.page == page && !o.deleted && matches!(o.kind, Kind::CoordinateSystem(_, _))
@@ -26,7 +26,7 @@ impl Document {
     }
     pub fn coordinate_system_for_object(&self, id: usize) -> Option<usize> {
         let page = self.objects.get(id.checked_sub(1)?)?.page;
-        self.objects.iter().rev().find_map(|frame| {
+        self.objects.coordinate_systems().rev().find_map(|frame| {
             if frame.page != page || frame.deleted {
                 return None;
             }
@@ -455,6 +455,13 @@ impl Document {
         Ok(true)
     }
     pub fn graph_frame(&self, id: usize) -> Option<CoordinateFrame> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Frame(value)) = self.sac_query(Query::Frame(id)) {
+            return value;
+        }
+        self.graph_frame_untracked(id)
+    }
+    pub(super) fn graph_frame_untracked(&self, id: usize) -> Option<CoordinateFrame> {
         if let Some(value) = self.evaluation_frame(id) {
             return value;
         }

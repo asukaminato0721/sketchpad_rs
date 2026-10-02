@@ -25,6 +25,7 @@ mod evaluation_plan;
 mod object_store;
 pub use evaluation_cache::EvaluationCache;
 pub use object_store::{ObjectEdit, ObjectStore};
+mod sac_evaluation;
 mod sampling_plan;
 pub use evaluation_context::EvaluatedDocument;
 mod functions;

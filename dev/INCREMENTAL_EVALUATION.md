@@ -6,10 +6,11 @@ operation declares its input IDs in `Kind::dependencies()` and implements its
 geometry or numeric evaluator. It then participates in graph analysis without
 an operation-specific invalidation or scheduling implementation.
 
-This resembles the graph recording stage of automatic differentiation. It
-records construction dependencies, not derivatives. It does not trace arbitrary
-Rust reads: every semantic input must be declared. Conditional operations must
-declare all possible inputs unless their edges are explicitly rebuilt.
+This static program records construction connections, not derivatives. It
+remains useful for reference validation and frozen sampling boundaries. Runtime
+value reuse now uses [self-adjusting computation](SELF_ADJUSTING_COMPUTATION.md):
+tracked getters record the inputs actually read, including the active branch.
+Neither layer instruments arbitrary Rust memory accesses.
 
 ## Shared pipeline
 
@@ -24,10 +25,10 @@ declare all possible inputs unless their edges are explicitly rebuilt.
    the changed inputs, affected nodes in topological order, and unchanged input
    boundaries. Overlapping changes update each descendant once.
 4. `Document::execute_evaluation_plan` invalidates affected values, applies
-   temporary inputs when present, and materializes values in that order.
+   temporary inputs when present. The SAC runtime materializes values on demand.
 5. `EvaluationCache` uses this executor for document edits. `SamplingPlan` uses
    it for point, numeric, and path-parameter substitutions in isolated scopes.
-   Initial read-only evaluation uses the same dependency program's full order.
+   Initial read-only evaluation creates a lazy SAC view.
 
 For `C = midpoint(A, B)` and `d = distance(C, B)`, changing `A` creates an update
 ordered as `A, C, d`, with `B` as a preserved boundary. An unrelated construction
@@ -69,9 +70,9 @@ actual edits detach it. Other snapshot metadata and evaluation work remain.
   dirty-marking call is required. Sampling plans compare shared graph identity.
 - Each evaluated view owns its current values. Sampling baselines share immutable
   data and detach on mutation. Sibling samples and older views retain their values.
-- LRU caches bound reusable sampling plans, update plans, sampled curves, and
-  derived iteration geometry. Geometry keys include query kind and resolution;
-  affected outputs are invalidated through the same dependency graph.
+- LRU caches bound reusable sampling plans, update plans, and named SAC scopes.
+  SAC memo tables bound calculated values and derived geometry. Geometry keys
+  include query kind and resolution; actual input reads govern revalidation.
   Parsed formula programs are immutable and shared by clones of their owning
   formula; reparsing an edited formula creates a new program.
 - A result cache can contain an explicitly undefined result. A later input
@@ -80,12 +81,14 @@ actual edits detach it. Other snapshot metadata and evaluation work remain.
   Metadata-only edits still refresh the snapshot; font edits invalidate font
   metadata. Object presentation fields are separate from construction edges.
 
-The executor eagerly caches points, numeric values, straight hosts, and circles.
-Other operations continue through their existing evaluators; their dependencies
-and invalidation still use the common graph. Cycles and invalid references are
-rejected by compilation, and existing conservative evaluation remains the
-fallback for unsupported or partial graphs. Cyclic constraint solving would
-need a separate solver node or a cycle-aware execution contract.
+The SAC runtime handles points, numbers, straight hosts, circles, polygons, arcs,
+coordinate frames, curve samples and derived display geometry. Equal results
+stop propagation; evaluation replaces stale branch traces. Stable nested scope
+names allow sampling and iteration computations to survive successive demands.
+Static cycles and invalid references prevent an initial compiled dependency
+program; conservative evaluation remains available for partial documents.
+Runtime cycles produce an invalidatable undefined result. Cyclic constraint
+solving would need a separate solver node.
 
 Regression coverage compares incremental views and parallel samples with fresh
 evaluation after input changes, formula edits, rewiring, deletion, undo, and redo.

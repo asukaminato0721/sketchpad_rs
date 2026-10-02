@@ -43,10 +43,26 @@ enum Source {
 }
 pub(super) struct PointCurve<'a> {
     original: &'a Document,
+    owner: usize,
     source: Source,
     pub(super) intervals: usize,
 }
 impl<'a> PointCurve<'a> {
+    pub(super) fn sample_points(&mut self) -> Option<Vec<Option<Point>>> {
+        self.original.cached_geometry(
+            self.owner,
+            super::geometry_cache::GeometryQuery::CurveSamples,
+            self.intervals,
+            || Some(self.sample_points_uncached(self.intervals)),
+        )
+    }
+
+    pub(super) fn sample_points_uncached(&mut self, intervals: usize) -> Vec<Option<Point>> {
+        (0..=intervals)
+            .map(|i| self.at(i as f64 / intervals as f64))
+            .collect()
+    }
+
     pub(super) fn includes_maximum(&self) -> bool {
         matches!(self.source, Source::Numeric { .. })
     }
@@ -166,6 +182,7 @@ impl<'a> PointCurve<'a> {
         };
         Some(Self {
             original: doc,
+            owner: id,
             source,
             intervals: intervals.clamp(64, 4096),
         })
@@ -318,11 +335,20 @@ impl<'a> PointCurve<'a> {
                 scale,
             } => {
                 let value = (*min + (*max - *min) * fraction) / *scale;
-                match plan {
-                    Some(plan) => plan.number(sample, value)?,
-                    None => sample.set_evaluation_number(*driver, value)?,
-                }
-                sample.position(*target)?
+                self.original.with_sac_scope(
+                    sample,
+                    super::sac_evaluation::Scope::MappedSample {
+                        owner: self.owner,
+                        fraction: fraction.to_bits(),
+                    },
+                    |sample| {
+                        match plan {
+                            Some(plan) => plan.number(sample, value)?,
+                            None => sample.set_evaluation_number(*driver, value)?,
+                        }
+                        sample.position(*target)
+                    },
+                )?
             }
             Source::Geometric {
                 sample,
@@ -338,11 +364,20 @@ impl<'a> PointCurve<'a> {
                 let kind = self
                     .original
                     .locus_driver_kind_at(*driver, *path, parameter)?;
-                match plan {
-                    Some(plan) => plan.kind(sample, kind)?,
-                    None => sample.objects.edit(*driver - 1).kind = kind,
-                }
-                sample.position(*target)?
+                self.original.with_sac_scope(
+                    sample,
+                    super::sac_evaluation::Scope::MappedSample {
+                        owner: self.owner,
+                        fraction: fraction.to_bits(),
+                    },
+                    |sample| {
+                        match plan {
+                            Some(plan) => plan.kind(sample, kind)?,
+                            None => sample.objects.edit(*driver - 1).kind = kind,
+                        }
+                        sample.position(*target)
+                    },
+                )?
             }
         };
         (point.x.is_finite() && point.y.is_finite()).then_some(point)
