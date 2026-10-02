@@ -1,5 +1,6 @@
 //! Evaluated point traces shared by curve constructions.
 use super::kind::is_point_kind;
+use super::sampling_plan::SamplingPlan;
 use super::{Document, Kind, Point};
 use crate::function_records::FunctionPlotMode;
 use crate::plot_points_records::PlotPointsMode;
@@ -23,6 +24,7 @@ enum Source {
     },
     Numeric {
         sample: Box<Document>,
+        plan: Option<std::sync::Arc<SamplingPlan>>,
         driver: usize,
         target: usize,
         min: f64,
@@ -31,6 +33,7 @@ enum Source {
     },
     Geometric {
         sample: Box<Document>,
+        plan: Option<std::sync::Arc<SamplingPlan>>,
         driver: usize,
         path: usize,
         target: usize,
@@ -103,12 +106,13 @@ impl<'a> PointCurve<'a> {
                 {
                     return None;
                 }
-                let mut sample = Box::new(doc.clone());
+                let plan = SamplingPlan::new(doc, driver, refs, None);
+                let mut sample = Box::new(doc.clone_for_evaluation());
                 sample.ensure_evaluation_context(doc)?;
-                sample.invalidate_evaluation_dependents(driver);
                 (
                     Source::Numeric {
                         sample,
+                        plan,
                         driver,
                         target,
                         min: *min,
@@ -138,21 +142,17 @@ impl<'a> PointCurve<'a> {
                 {
                     return None;
                 }
-                let mut sample = Box::new(doc.clone());
-                if let Some(external) = doc.locus_external_inputs(refs) {
-                    sample.freeze_scoped_evaluation_inputs(doc, &external)?;
+                let plan = SamplingPlan::new(doc, driver, refs, Some(path));
+                let mut sample = Box::new(doc.clone_for_evaluation());
+                if let Some(plan) = &plan {
+                    sample.freeze_scoped_evaluation_inputs(doc, &plan.external)?;
+                } else {
+                    sample.invalidate_evaluation_dependents(driver);
                 }
-                // Only predecessors can contribute to a native locus. Keep
-                // unrelated later geometry out of per-sample invalidation.
-                if let Some(objects) = sample.objects.get(..id)
-                    && sketchpad_ir::DependencyIndex::build(objects).is_ok()
-                {
-                    sample.objects.truncate(id);
-                }
-                sample.invalidate_evaluation_dependents(driver);
                 (
                     Source::Geometric {
                         sample,
+                        plan,
                         driver,
                         path,
                         target,
@@ -310,6 +310,7 @@ impl<'a> PointCurve<'a> {
             }
             Source::Numeric {
                 sample,
+                plan,
                 driver,
                 target,
                 min,
@@ -317,11 +318,15 @@ impl<'a> PointCurve<'a> {
                 scale,
             } => {
                 let value = (*min + (*max - *min) * fraction) / *scale;
-                sample.set_evaluation_number(*driver, value)?;
+                match plan {
+                    Some(plan) => plan.number(sample, value)?,
+                    None => sample.set_evaluation_number(*driver, value)?,
+                }
                 sample.position(*target)?
             }
             Source::Geometric {
                 sample,
+                plan,
                 driver,
                 path,
                 target,
@@ -330,9 +335,13 @@ impl<'a> PointCurve<'a> {
             } => {
                 // Use the original host geometry, retaining unrelated scoped inputs.
                 let parameter = *minimum + (*maximum - *minimum) * fraction;
-                sample.objects[*driver - 1].kind = self
+                let kind = self
                     .original
                     .locus_driver_kind_at(*driver, *path, parameter)?;
+                match plan {
+                    Some(plan) => plan.kind(sample, kind)?,
+                    None => sample.objects[*driver - 1].kind = kind,
+                }
                 sample.position(*target)?
             }
         };

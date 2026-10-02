@@ -70,7 +70,7 @@ impl Document {
     // Read-only evaluation needs construction and presentation state, but never
     // undo history. Copying history here would make every frame more expensive
     // after each drag, even though the construction size had not changed.
-    fn clone_for_evaluation(&self) -> Self {
+    pub(super) fn clone_for_evaluation(&self) -> Self {
         Self {
             objects: self.objects.clone(),
             path: self.path.clone(),
@@ -95,6 +95,7 @@ impl Document {
             merge_aliases: self.merge_aliases.clone(),
             measurement_names: self.measurement_names.clone(),
             evaluation_context: self.evaluation_context.clone(),
+            sampling_plans: self.sampling_plans.clone(),
             original: self.original.clone(),
             run_font_families: self.run_font_families.clone(),
             source_count: self.source_count,
@@ -271,8 +272,16 @@ impl Document {
                 affected
             }
         };
+        self.invalidate_evaluation_ids(driver, affected);
+    }
+
+    pub(super) fn invalidate_evaluation_ids(
+        &mut self,
+        driver: usize,
+        ids: impl IntoIterator<Item = usize>,
+    ) {
         if let Some(context) = &mut self.evaluation_context {
-            for id in affected {
+            for id in ids {
                 context.points.remove(&id);
                 context.numbers.remove(&id);
                 context.straights.remove(&id);
@@ -366,6 +375,15 @@ impl Document {
             return None;
         }
         self.invalidate_evaluation_dependents(id);
+        self.seed_evaluation_number(id, value)
+    }
+
+    // Callers with a fixed sampling plan invalidate its affected slots first.
+    pub(super) fn seed_evaluation_number(&mut self, id: usize, value: f64) -> Option<()> {
+        let object = self.objects.get(id.checked_sub(1)?)?;
+        if object.deleted || object.kind.numeric_unit().is_none() || !value.is_finite() {
+            return None;
+        }
         let context = self.evaluation_context.as_mut()?;
         context.seed_points.remove(&id);
         context.seed_numbers.insert(id, value);

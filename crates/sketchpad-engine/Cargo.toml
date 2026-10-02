@@ -8,6 +8,7 @@ encoding_rs.workspace = true
 sketchpad-format = { path = "../sketchpad-format" }
 sketchpad-ir = { path = "../sketchpad-ir" }
 image.workspace = true
+lru = { version = "0.18.5", default-features = false }
 
 [dev-dependencies]
 egui.workspace = true

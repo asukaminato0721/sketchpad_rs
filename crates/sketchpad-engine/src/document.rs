@@ -20,6 +20,7 @@ mod encode_pages;
 mod encode_patches;
 mod encode_templates;
 mod evaluation_context;
+mod sampling_plan;
 pub use evaluation_context::EvaluatedDocument;
 mod functions;
 mod geometry;
@@ -879,6 +880,7 @@ pub struct Document {
     merge_aliases: BTreeMap<usize, usize>,
     measurement_names: BTreeMap<usize, u32>,
     evaluation_context: Option<evaluation_context::EvaluationContext>,
+    sampling_plans: sampling_plan::SamplingPlans,
     original: Vec<u8>,
     run_font_families: Vec<String>,
     source_count: usize,

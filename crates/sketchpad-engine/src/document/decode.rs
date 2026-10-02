@@ -3411,6 +3411,7 @@ impl Document {
             merge_aliases: Default::default(),
             measurement_names: Default::default(),
             evaluation_context: None,
+            sampling_plans: Default::default(),
             original: b.to_vec(),
             run_font_families: Vec::new(),
             source_count,

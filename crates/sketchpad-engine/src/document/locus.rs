@@ -2,10 +2,10 @@ use super::kind::{
     expected_locus_refs, expected_parameter_locus_refs, is_arc_kind, is_locus_curve_collection,
     is_locus_polygon_kind, is_locus_straight_kind, is_point_kind, parameter_locus_driver_profile,
 };
+use super::sampling_plan::SamplingPlan;
 use super::transform_model::{ElementType, NativeTransformFlavor, NumericExpr, Transform};
 use super::{Document, Kind, LineMode, Object, Point};
 use crate::style_records::VisualStyle;
-use std::collections::BTreeSet;
 
 /// One independently evaluated member of a straight sweep. Rendering clips its
 /// carrier and retains its style instead of joining differently coloured samples.
@@ -372,36 +372,6 @@ pub(super) fn locus_driver_range_matches(
 }
 
 impl Document {
-    /// Cache the invariant boundary of a locus's driver-dependent subgraph.
-    /// Nested sweeps can then reuse expensive intersections and measurements.
-    pub(super) fn locus_external_inputs(&self, refs: &[usize]) -> Option<Vec<usize>> {
-        let (&path, &driver) = (refs.get(1)?, refs.get(2)?);
-        // A stored locus references earlier objects. Later constructions cannot
-        // affect its invariant inputs, and indexing them for every point on the
-        // curve is very expensive in large sketches. Retain the full-graph
-        // fallback for documents whose IDs are not topologically ordered.
-        let end = refs.iter().copied().max()?;
-        let index = self
-            .objects
-            .get(..end)
-            .and_then(|objects| sketchpad_ir::DependencyIndex::build(objects).ok())
-            .or_else(|| self.dependency_index().ok())?;
-        let affected = index
-            .affected_by(driver)
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        let mut external = BTreeSet::from([path]);
-        for id in refs.iter().copied().filter(|id| affected.contains(id)) {
-            external.extend(
-                index.forward[&id]
-                    .iter()
-                    .copied()
-                    .filter(|dependency| !affected.contains(dependency)),
-            );
-        }
-        Some(external.into_iter().collect())
-    }
-
     pub(super) fn locus_sampling_interval(&self, id: usize) -> Option<[f64; 2]> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::Locus(refs, _) = &object.kind else {
@@ -488,14 +458,18 @@ impl Document {
             return None;
         }
         let count = subdivisions.clamp(2, 4096).min(samples as usize);
-        let mut sample = self.clone();
+        let plan = SamplingPlan::new(self, driver, refs, None);
+        let mut sample = self.clone_for_evaluation();
         sample.ensure_evaluation_context(self)?;
-        sample.invalidate_evaluation_dependents(driver);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
             let fraction = index as f64 / (count - 1) as f64;
             let value = (min + (max - min) * fraction) / profile.scale();
-            if sample.set_evaluation_number(driver, value).is_none() {
+            let updated = match &plan {
+                Some(plan) => plan.number(&mut sample, value),
+                None => sample.set_evaluation_number(driver, value),
+            };
+            if updated.is_none() {
                 values.push(None);
                 continue;
             }
@@ -522,8 +496,8 @@ impl Document {
             return None;
         }
         let steps = subdivisions.clamp(2, 1000).min(samples as usize);
-        let external = self.locus_external_inputs(refs);
-        let mut sample = self.clone();
+        let plan = SamplingPlan::new(self, driver, refs, Some(path));
+        let mut sample = self.clone_for_evaluation();
         let moving = self.objects.get(driver.checked_sub(1)?)?;
         let transient_driver = !locus_driver_uses_stored_path(&self.objects, driver, path);
         let mut nested_curve = (matches!(moving.kind, Kind::PointOnCurve(host, _) if host == path)
@@ -531,12 +505,14 @@ impl Document {
                 && super::curve_points::free_supported(&self.objects, path, moving.page, driver))
         .then(|| super::point_curve::PointCurve::new(self, path))
         .flatten();
-        if let Some(external) = &external {
-            sample.freeze_scoped_evaluation_inputs(self, external)?;
+        if let Some(plan) = &plan {
+            sample.freeze_scoped_evaluation_inputs(self, &plan.external)?;
         } else if nested_curve.is_some() {
             sample.ensure_evaluation_context(self)?;
         }
-        sample.invalidate_evaluation_dependents(driver);
+        if plan.is_none() {
+            sample.invalidate_evaluation_dependents(driver);
+        }
         let mut values = Vec::with_capacity(steps + 1);
         for step in 0..=steps {
             let fraction = step as f64 / steps as f64;
@@ -546,13 +522,19 @@ impl Document {
                     values.push(None);
                     continue;
                 };
-                sample.set_evaluation_point(driver, point)?;
+                match &plan {
+                    Some(plan) => plan.point(&mut sample, point)?,
+                    None => sample.set_evaluation_point(driver, point)?,
+                }
             } else {
                 let Some(kind) = self.locus_driver_kind_at(driver, path, parameter) else {
                     values.push(None);
                     continue;
                 };
-                sample.objects[driver - 1].kind = kind;
+                match &plan {
+                    Some(plan) => plan.kind(&mut sample, kind)?,
+                    None => sample.objects[driver - 1].kind = kind,
+                }
             }
             values.push(evaluate(&sample, target));
         }
