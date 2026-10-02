@@ -142,6 +142,13 @@ impl<'a> PointCurve<'a> {
                 if let Some(external) = doc.locus_external_inputs(refs) {
                     sample.freeze_scoped_evaluation_inputs(doc, &external)?;
                 }
+                // Only predecessors can contribute to a native locus. Keep
+                // unrelated later geometry out of per-sample invalidation.
+                if let Some(objects) = sample.objects.get(..id)
+                    && sketchpad_ir::DependencyIndex::build(objects).is_ok()
+                {
+                    sample.objects.truncate(id);
+                }
                 sample.invalidate_evaluation_dependents(driver);
                 (
                     Source::Geometric {

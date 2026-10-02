@@ -1,3 +1,4 @@
+use super::measurements::NumericValues;
 use super::{Document, Kind, Object};
 use crate::table_records::{
     CalculationGroup, CalculationSourceKind, LengthPairCalculationGroup, MeasuredCalculationGroup,
@@ -973,7 +974,15 @@ impl Document {
         })
     }
     pub fn parameter_calculation_value(&self, id: usize) -> Option<f64> {
-        let (group, values, units) = self.parameter_calculation_inputs(id)?;
+        self.parameter_calculation_value_with_cache(id, &mut NumericValues::new())
+    }
+
+    pub(super) fn parameter_calculation_value_with_cache(
+        &self,
+        id: usize,
+        cache: &mut NumericValues,
+    ) -> Option<f64> {
+        let (group, values, units) = self.parameter_calculation_inputs(id, cache)?;
         let Kind::ParameterCalculation(first, _) = self.objects[id - 1].kind else {
             return None;
         };
@@ -989,7 +998,8 @@ impl Document {
     }
 
     pub fn parameter_calculation_display_value(&self, id: usize) -> Option<f64> {
-        let (group, values, units) = self.parameter_calculation_inputs(id)?;
+        let (group, values, units) =
+            self.parameter_calculation_inputs(id, &mut NumericValues::new())?;
         let Kind::ParameterCalculation(first, _) = self.objects[id - 1].kind else {
             return None;
         };
@@ -1007,6 +1017,7 @@ impl Document {
     fn parameter_calculation_inputs(
         &self,
         id: usize,
+        cache: &mut NumericValues,
     ) -> Option<(&ParameterCalculationGroup, Vec<f64>, Vec<NumericUnit>)> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::ParameterCalculation(source, group) = &object.kind else {
@@ -1032,7 +1043,7 @@ impl Document {
                 if kind == CalculationSourceKind::Function {
                     Some(0.)
                 } else {
-                    self.numeric_value(*source)
+                    self.numeric_value_with_cache(*source, cache)
                 }
             })
             .collect::<Option<Vec<_>>>()?;

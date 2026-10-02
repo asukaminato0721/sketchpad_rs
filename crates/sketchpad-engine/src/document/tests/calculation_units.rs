@@ -1,6 +1,69 @@
 use super::*;
 
 #[test]
+fn shared_calculation_chains_evaluate_without_expanding_every_dependency_path() {
+    let mut doc = Document::default();
+    let seed = doc.add_named_parameter("n", 2., (10, 10)).unwrap();
+    let mut previous = seed;
+    let mut last = doc
+        .add_parameter_calculation(seed, "n+1", (10, 30))
+        .unwrap();
+    // Each level shares both earlier branches. Walking every path would take
+    // billions of evaluations; the graph itself contains only 52 values.
+    let mut expected = (2., 3.);
+    for _ in 0..50 {
+        let next = doc
+            .add_multi_calculation(&[previous, last], "a+b", (10, 50))
+            .unwrap();
+        previous = last;
+        last = next;
+        expected = (expected.1, expected.0 + expected.1);
+    }
+    assert_eq!(doc.numeric_value(last), Some(expected.1));
+    assert_eq!(doc.parameter_calculation_value(last), Some(expected.1));
+    assert_eq!(
+        doc.parameter_calculation_display_value(last),
+        Some(expected.1)
+    );
+
+    doc.set_parameter_value(seed, 4.).unwrap();
+    let mut updated = (4., 5.);
+    for _ in 0..50 {
+        updated = (updated.1, updated.0 + updated.1);
+    }
+    assert_eq!(doc.numeric_value(last), Some(updated.1));
+    assert_eq!(
+        doc.parameter_calculation_display_value(last),
+        Some(updated.1)
+    );
+}
+
+#[test]
+fn calculation_memo_does_not_retain_undefined_or_scoped_values() {
+    let mut doc = Document::default();
+    let seed = doc.add_named_parameter("n", 1., (10, 10)).unwrap();
+    let reciprocal = doc
+        .add_parameter_calculation(seed, "1/n", (10, 30))
+        .unwrap();
+    let sum = doc
+        .add_multi_calculation(&[seed, reciprocal], "a+b", (10, 50))
+        .unwrap();
+    assert_eq!(doc.numeric_value(sum), Some(2.));
+    doc.set_parameter_value(seed, 0.).unwrap();
+    assert_eq!(doc.numeric_value(sum), None);
+    doc.set_parameter_value(seed, 2.).unwrap();
+    assert_eq!(doc.numeric_value(sum), Some(2.5));
+
+    let mut sample = doc.clone();
+    sample.ensure_evaluation_context(&doc).unwrap();
+    sample.set_evaluation_number(seed, 4.).unwrap();
+    assert_eq!(sample.numeric_value(sum), Some(4.25));
+    sample.set_evaluation_number(seed, 8.).unwrap();
+    assert_eq!(sample.numeric_value(sum), Some(8.125));
+    assert_eq!(doc.numeric_value(sum), Some(2.5));
+}
+
+#[test]
 fn dimensional_length_expressions_update_units_and_marked_distance() {
     let bytes = include_bytes!("../../../../../tests/fixtures/calculation_dimensions_port.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();

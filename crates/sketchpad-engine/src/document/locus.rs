@@ -376,7 +376,16 @@ impl Document {
     /// Nested sweeps can then reuse expensive intersections and measurements.
     pub(super) fn locus_external_inputs(&self, refs: &[usize]) -> Option<Vec<usize>> {
         let (&path, &driver) = (refs.get(1)?, refs.get(2)?);
-        let index = self.dependency_index().ok()?;
+        // A stored locus references earlier objects. Later constructions cannot
+        // affect its invariant inputs, and indexing them for every point on the
+        // curve is very expensive in large sketches. Retain the full-graph
+        // fallback for documents whose IDs are not topologically ordered.
+        let end = refs.iter().copied().max()?;
+        let index = self
+            .objects
+            .get(..end)
+            .and_then(|objects| sketchpad_ir::DependencyIndex::build(objects).ok())
+            .or_else(|| self.dependency_index().ok())?;
         let affected = index
             .affected_by(driver)
             .into_iter()

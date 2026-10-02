@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn locus_evaluation_ignores_later_objects_and_retains_forward_reference_fallback() {
+    let bytes = include_bytes!("../../../../../tests/fixtures/locus_midpoint_original.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    let point = doc.plot_literal_on_path(2. / 3., Some(8)).unwrap();
+    let expected = doc.position(point).unwrap();
+    let curve = doc.locus_segments(8, 8).unwrap();
+    for index in 0..1000 {
+        doc.append_object(Kind::Free(Point {
+            x: index as f64,
+            y: 0.,
+        }));
+    }
+    assert_eq!(doc.position(point), Some(expected));
+    assert_eq!(doc.locus_segments(8, 8), Some(curve));
+
+    // Public semantic objects need not be in native ID order. A predecessor
+    // that acquires a later dependency must still evaluate using the full DAG.
+    let source = doc.position(1).unwrap();
+    let later = doc.append_object(Kind::Free(source));
+    doc.objects[0].kind = Kind::Midpoint(later, later);
+    assert_eq!(doc.position(point), Some(expected));
+    assert!(doc.move_point(
+        later,
+        Point {
+            x: source.x + 60.,
+            y: source.y
+        }
+    ));
+    assert_ne!(doc.position(point), Some(expected));
+}
+
+#[test]
 fn native_midpoint_locus_import_generation_and_parent_edit() {
     let native_bytes = include_bytes!("../../../../../tests/fixtures/locus_midpoint_original.gsp");
     let native = Document::from_bytes(native_bytes, None).unwrap();

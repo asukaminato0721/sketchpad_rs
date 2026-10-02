@@ -8,7 +8,11 @@ use crate::graph::GraphPoint;
 use crate::table_records::NumericUnit;
 use crate::value_equation_records::{CartesianFrame, EquationValue, ValueEquationKind};
 use crate::{coordinate_measure_records, value_equation_records};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+// Values live only for one calculation traversal. Edits, animation samples and
+// scoped iteration substitutions must always start with a fresh map.
+pub(super) type NumericValues = HashMap<usize, Option<f64>>;
 
 pub(super) fn point_value_refs_match(
     objects: &[Object],
@@ -76,6 +80,25 @@ impl Document {
         self.numeric_value(id)
     }
     pub fn numeric_value(&self, id: usize) -> Option<f64> {
+        self.numeric_value_with_cache(id, &mut NumericValues::new())
+    }
+
+    pub(super) fn numeric_value_with_cache(
+        &self,
+        id: usize,
+        values: &mut NumericValues,
+    ) -> Option<f64> {
+        if let Some(value) = values.get(&id) {
+            return *value;
+        }
+        // An in-progress node is undefined if a malformed alias returns to it.
+        values.insert(id, None);
+        let value = self.numeric_value_uncached(id, values);
+        values.insert(id, value);
+        value
+    }
+
+    fn numeric_value_uncached(&self, id: usize, values: &mut NumericValues) -> Option<f64> {
         if let Some(value) = self.evaluation_numeric(id) {
             return value;
         }
@@ -85,7 +108,9 @@ impl Document {
         }
         match &o.kind {
             Kind::Parameter(group) => Some(group.value()),
-            Kind::ParameterCalculation(_, _) => self.parameter_calculation_value(id),
+            Kind::ParameterCalculation(_, _) => {
+                self.parameter_calculation_value_with_cache(id, values)
+            }
             Kind::Calculation(group) => group.evaluated_value(),
             Kind::SegmentRatio(_, _) | Kind::PointRatio(_, _, _) => self.ratio_value(id),
             Kind::SlopeMeasurement(_, _) => self.slope_value(id),
@@ -96,7 +121,7 @@ impl Document {
             Kind::PolarAngleValue(_, _, _) | Kind::VertexAngleValue(_, _, _) => {
                 self.directed_angle_degrees(id)
             }
-            Kind::NumericAlias { source, .. } => self.numeric_value(*source),
+            Kind::NumericAlias { source, .. } => self.numeric_value_with_cache(*source, values),
             Kind::ArcAngle(_) => self.arc_angle_degrees(id),
             Kind::SegmentLength(_) => self.segment_length_cm(id),
             Kind::PointDistance(_, _) => self.point_distance_cm(id),
