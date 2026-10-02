@@ -268,9 +268,13 @@ impl Document {
             &[vec![definition.replacement]],
             &definition.carried,
         )?;
-        let mut sample = self.clone();
+        let mut sample = self.clone_for_evaluation();
         sample.freeze_scoped_evaluation_inputs(self, &external)?;
         value.substitute(&mut sample, definition.seed)?;
+        // A mapped construction is a shared DAG, not a tree. Materialize the
+        // carried intermediates once before reading an output that may reuse
+        // them through several numeric expressions and geometric transforms.
+        sample.cache_evaluation_values(&definition.carried)?;
         sample.position(definition.output)
     }
 }

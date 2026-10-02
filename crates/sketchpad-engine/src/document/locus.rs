@@ -665,6 +665,19 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<LocusStroke>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::MappedStrokes,
+            subdivisions,
+            || self.mapped_collection_strokes_uncached(id, subdivisions),
+        )
+    }
+
+    fn mapped_collection_strokes_uncached(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusStroke>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -985,6 +998,15 @@ impl Document {
     }
 
     pub fn locus_surfaces(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::LocusSurfaces,
+            subdivisions,
+            || self.locus_surfaces_uncached(id, subdivisions),
+        )
+    }
+
+    fn locus_surfaces_uncached(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
         let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
             Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
             _ => return None,
@@ -1041,6 +1063,19 @@ impl Document {
     }
 
     pub fn mapped_collection_surfaces(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusSurface>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::MappedSurfaces,
+            subdivisions,
+            || self.mapped_collection_surfaces_uncached(id, subdivisions),
+        )
+    }
+
+    fn mapped_collection_surfaces_uncached(
         &self,
         id: usize,
         subdivisions: usize,

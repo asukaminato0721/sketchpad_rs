@@ -522,6 +522,15 @@ impl MappedValue {
         }
     }
 
+    // Iteration clears derived values between states and invalidates numeric
+    // seed boundaries once before replay. Do not walk the graph per generation.
+    fn seed_cleared_state(self, document: &mut Document, id: usize) -> Option<()> {
+        match self {
+            Self::Point(point) => document.set_evaluation_point(id, point),
+            Self::Number(value) => document.seed_evaluation_number(id, value),
+        }
+    }
+
     fn key(self) -> (u8, u64, u64) {
         match self {
             Self::Point(point) => (0, point.x.to_bits(), point.y.to_bits()),
@@ -1309,7 +1318,7 @@ impl Document {
             .map(|id| MappedValue::read(self, *id))
             .collect::<Option<_>>()?;
         let mut level = vec![initial];
-        let mut sample = self.clone();
+        let mut sample = self.clone_for_evaluation();
         let external = self.mapped_external_inputs(seeds, branches, carried)?;
         let mut evaluation_order = branches
             .iter()
@@ -1320,6 +1329,27 @@ impl Document {
             .collect::<Vec<_>>();
         evaluation_order.sort_unstable();
         evaluation_order.dedup();
+        // Advancing the seeds does not require rendering every carried object.
+        // Shared branch ancestors are evaluated in dependency order, while
+        // omitted inputs continue to resolve through the frozen environment.
+        let branch_roots: Vec<_> = branches.iter().flatten().copied().collect();
+        let graph = self.objects.dependency_graph();
+        let slice_order = |roots: &[usize]| {
+            graph
+                .slice(roots)
+                .ok()
+                .map(|program| {
+                    program
+                        .order()
+                        .iter()
+                        .copied()
+                        .filter(|id| evaluation_order.binary_search(id).is_ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| evaluation_order.clone())
+        };
+        let branch_order = slice_order(&branch_roots);
+        let output_order = slice_order(&[source]);
         if retain_parent {
             sample.freeze_scoped_evaluation_inputs(self, &external)?;
             sample.inherit_evaluation_seeds(self)?;
@@ -1328,6 +1358,11 @@ impl Document {
         }
         if depth == 0 {
             return Some(vec![(0, evaluate(&sample, source))]);
+        }
+        for (&id, value) in seeds.iter().zip(&level[0]) {
+            if matches!(value, MappedValue::Number(_)) {
+                sample.invalidate_evaluation_dependents(id);
+            }
         }
         let mut result = Vec::new();
         let mut generated = 0;
@@ -1342,9 +1377,9 @@ impl Document {
                     sample.clear_evaluation_seeds();
                 }
                 for (id, value) in seeds.iter().zip(state) {
-                    value.substitute(&mut sample, *id)?;
+                    value.seed_cleared_state(&mut sample, *id)?;
                 }
-                sample.cache_evaluation_values(&evaluation_order)?;
+                sample.cache_evaluation_values(&branch_order)?;
                 for branch in branches {
                     let mapped: Vec<_> = branch
                         .iter()
@@ -1370,9 +1405,9 @@ impl Document {
                         sample.clear_evaluation_seeds();
                     }
                     for (id, value) in seeds.iter().zip(state) {
-                        value.substitute(&mut sample, *id)?;
+                        value.seed_cleared_state(&mut sample, *id)?;
                     }
-                    sample.cache_evaluation_values(&evaluation_order)?;
+                    sample.cache_evaluation_values(&output_order)?;
                     // Keep terminal undefinedness. The ordinary image reader
                     // filters each undefined image while preserving valid levels.
                     result.push((step + 1, evaluate(&sample, source)));
@@ -1502,6 +1537,12 @@ impl Document {
     }
     /// Analytic disk samples; polygon vertices remain presentation-only outlines.
     pub fn circle_interior_iteration_images(&self, id: usize) -> Option<Vec<(Point, f64)>> {
+        self.cached_geometry(id, super::geometry_cache::GeometryQuery::Disks, 0, || {
+            self.circle_interior_iteration_images_uncached(id)
+        })
+    }
+
+    fn circle_interior_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, f64)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -1522,6 +1563,18 @@ impl Document {
 
     /// Per-generation analytic disks and colors from one carried color binding.
     pub fn colorized_disk_iteration_images(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Point, f64, RgbColor)>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::ColorizedDisks,
+            0,
+            || self.colorized_disk_iteration_images_uncached(id),
+        )
+    }
+
+    fn colorized_disk_iteration_images_uncached(
         &self,
         id: usize,
     ) -> Option<Vec<(Point, f64, RgbColor)>> {
@@ -1551,6 +1604,18 @@ impl Document {
         &self,
         id: usize,
     ) -> Option<Vec<(Vec<Point>, RgbColor)>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::ColorizedPolygons,
+            0,
+            || self.colorized_polygon_iteration_images_uncached(id),
+        )
+    }
+
+    fn colorized_polygon_iteration_images_uncached(
+        &self,
+        id: usize,
+    ) -> Option<Vec<(Vec<Point>, RgbColor)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -1574,6 +1639,15 @@ impl Document {
     }
 
     pub fn polygon_iteration_images(&self, id: usize) -> Option<Vec<(Vec<Point>, f64)>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::Polygons,
+            0,
+            || self.polygon_iteration_images_uncached(id),
+        )
+    }
+
+    fn polygon_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Vec<Point>, f64)>> {
         let o = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
@@ -1618,6 +1692,15 @@ impl Document {
         )
     }
     pub fn branch_segment_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::BranchSegments,
+            0,
+            || self.branch_segment_iteration_images_uncached(id),
+        )
+    }
+
+    fn branch_segment_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         let o = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = o.kind else {
             return None;
@@ -1985,6 +2068,12 @@ impl Document {
         Some(orbit)
     }
     pub fn point_iteration_images(&self, id: usize) -> Option<Vec<Point>> {
+        self.cached_geometry(id, super::geometry_cache::GeometryQuery::Points, 0, || {
+            self.point_iteration_images_uncached(id)
+        })
+    }
+
+    fn point_iteration_images_uncached(&self, id: usize) -> Option<Vec<Point>> {
         if let Some(images) = self.mapped_point_binding_images(id) {
             return Some(images);
         }
@@ -2048,9 +2137,28 @@ impl Document {
         })
     }
     pub fn line_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        self.cached_geometry(id, super::geometry_cache::GeometryQuery::Lines, 0, || {
+            self.line_iteration_images_uncached(id)
+        })
+    }
+
+    fn line_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         self.mapped_straight_binding_images(id, super::LineMode::Line)
     }
     pub fn arc_iteration_images(&self, id: usize, subdivisions: usize) -> Option<Vec<Vec<Point>>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::Arcs,
+            subdivisions,
+            || self.arc_iteration_images_uncached(id, subdivisions),
+        )
+    }
+
+    fn arc_iteration_images_uncached(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<Vec<Point>>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, iteration) = object.kind else {
             return None;
@@ -2063,6 +2171,12 @@ impl Document {
         })
     }
     pub fn ray_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        self.cached_geometry(id, super::geometry_cache::GeometryQuery::Rays, 0, || {
+            self.ray_iteration_images_uncached(id)
+        })
+    }
+
+    fn ray_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         if let Some(images) = self.mapped_straight_binding_images(id, super::LineMode::Ray) {
             return Some(images);
         }
@@ -2079,6 +2193,15 @@ impl Document {
         self.carried_line_iteration_images(seed, image, depth)
     }
     pub fn segment_iteration_images(&self, id: usize) -> Option<Vec<(Point, Point)>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::Segments,
+            0,
+            || self.segment_iteration_images_uncached(id),
+        )
+    }
+
+    fn segment_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, Point)>> {
         let Kind::SegmentIteration(seed, image, segment, depth) =
             self.objects.get(id.checked_sub(1)?)?.kind
         else {
@@ -2092,6 +2215,12 @@ impl Document {
         self.carried_line_iteration_images(seed, image, depth)
     }
     pub fn circle_iteration_images(&self, id: usize) -> Option<Vec<(Point, f64)>> {
+        self.cached_geometry(id, super::geometry_cache::GeometryQuery::Circles, 0, || {
+            self.circle_iteration_images_uncached(id)
+        })
+    }
+
+    fn circle_iteration_images_uncached(&self, id: usize) -> Option<Vec<(Point, f64)>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::IterationBinding(source, parent) = object.kind else {
             return None;

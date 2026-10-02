@@ -38,7 +38,9 @@ impl Tracking {
 /// ```
 #[derive(Debug)]
 pub struct ObjectStore {
-    objects: Vec<Object>,
+    // Evaluation scopes only substitute values. Share their construction table
+    // until an actual edit goes through one of the mutation guards below.
+    objects: Arc<Vec<Object>>,
     tracking: Mutex<Tracking>,
 }
 
@@ -64,7 +66,7 @@ impl From<Vec<Object>> for ObjectStore {
             graph.register(object);
         }
         Self {
-            objects,
+            objects: Arc::new(objects),
             tracking: Mutex::new(Tracking {
                 graph: Arc::new(graph),
                 ..Tracking::default()
@@ -81,11 +83,15 @@ impl Deref for ObjectStore {
 }
 
 impl ObjectStore {
+    pub(super) fn shares_objects(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.objects, &other.objects)
+    }
+
     pub fn push(&mut self, object: Object) {
         let tracking = self.tracking.get_mut().unwrap();
         Arc::make_mut(&mut tracking.graph).register(&object);
         tracking.changed(object.id);
-        self.objects.push(object);
+        Arc::make_mut(&mut self.objects).push(object);
     }
 
     pub fn edit(&mut self, slot: usize) -> ObjectEdit<'_> {
@@ -94,14 +100,14 @@ impl ObjectStore {
 
     pub fn get_mut(&mut self, slot: usize) -> Option<ObjectEdit<'_>> {
         Some(ObjectEdit {
-            object: self.objects.get_mut(slot)?,
+            object: Arc::make_mut(&mut self.objects).get_mut(slot)?,
             slot,
             tracking: &self.tracking,
         })
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = ObjectEdit<'_>> {
-        self.objects
+        Arc::make_mut(&mut self.objects)
             .iter_mut()
             .enumerate()
             .map(|(slot, object)| ObjectEdit {
@@ -156,7 +162,7 @@ impl IntoIterator for ObjectStore {
     type Item = Object;
     type IntoIter = std::vec::IntoIter<Object>;
     fn into_iter(self) -> Self::IntoIter {
-        self.objects.into_iter()
+        Arc::unwrap_or_clone(self.objects).into_iter()
     }
 }
 

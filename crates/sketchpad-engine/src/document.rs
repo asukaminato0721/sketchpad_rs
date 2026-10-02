@@ -29,6 +29,7 @@ mod sampling_plan;
 pub use evaluation_context::EvaluatedDocument;
 mod functions;
 mod geometry;
+mod geometry_cache;
 mod history;
 mod images;
 mod iteration;

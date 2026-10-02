@@ -57,7 +57,9 @@ Clones share revision tokens until edited, then diverge. Missing history or an
 unrelated branch triggers fresh evaluation. Undo and redo restore the object
 collection, its connections, and its revision together. No full object comparison
 is needed to discover changes. Document-wide settings still use conservative
-environment comparisons; this does not remove snapshot copying or evaluation work.
+environment comparisons. Object tables use `Arc<Vec<Object>>` with
+`Arc::make_mut` at each mutation guard: read-only scopes share the table and
+actual edits detach it. Other snapshot metadata and evaluation work remain.
 
 ## Lifetime and invalidation
 
@@ -67,7 +69,9 @@ environment comparisons; this does not remove snapshot copying or evaluation wor
   dirty-marking call is required. Sampling plans compare shared graph identity.
 - Each evaluated view owns its current values. Sampling baselines share immutable
   data and detach on mutation. Sibling samples and older views retain their values.
-- LRU caches bound reusable sampling plans, update plans, and sampled curves.
+- LRU caches bound reusable sampling plans, update plans, sampled curves, and
+  derived iteration geometry. Geometry keys include query kind and resolution;
+  affected outputs are invalidated through the same dependency graph.
   Parsed formula programs are immutable and shared by clones of their owning
   formula; reparsing an edited formula creates a new program.
 - A result cache can contain an explicitly undefined result. A later input
@@ -89,3 +93,6 @@ Additional tests cover independent consumers, divergent clones, history overflow
 bulk edits, collection replacement, and edits interrupted by returns or panics.
 IR tests cover merged inputs, boundaries, forward references, duplicate IDs,
 and cycles.
+
+See [3D sample performance](3D_PERFORMANCE.md) for measurements and the geometry
+benchmark command. Reusing unchanged geometry does not establish animation FPS.

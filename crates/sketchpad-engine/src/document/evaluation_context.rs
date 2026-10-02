@@ -73,6 +73,7 @@ pub(super) struct EvaluationContext {
     sampling_baseline: std::sync::OnceLock<Shared<Document>>,
     validated: ValidatedDependencies,
     curves: CurveCache,
+    geometry: super::geometry_cache::GeometryCache,
     fonts: FontCache,
     points: BTreeMap<usize, Option<Point>>,
     numbers: BTreeMap<usize, Option<f64>>,
@@ -116,6 +117,7 @@ impl EvaluationContext {
             sampling_baseline: std::sync::OnceLock::new(),
             validated: ValidatedDependencies::default(),
             fonts: FontCache::default(),
+            geometry: Default::default(),
             curves: CurveCache(std::sync::Mutex::new(lru::LruCache::new(
                 std::num::NonZeroUsize::new(64).unwrap(),
             ))),
@@ -135,6 +137,21 @@ impl EvaluationContext {
 }
 
 impl Document {
+    pub(super) fn cached_geometry<T: Clone + Send + Sync + 'static>(
+        &self,
+        id: usize,
+        query: super::geometry_cache::GeometryQuery,
+        resolution: usize,
+        evaluate: impl FnOnce() -> Option<T>,
+    ) -> Option<T> {
+        match &self.evaluation_context {
+            Some(context) => context
+                .geometry
+                .get_or_evaluate(id, query, resolution, evaluate),
+            None => evaluate(),
+        }
+    }
+
     // Sampling baselines share immutable values. Detach before changing seeds
     // or invalidating results so older views and sibling samples stay valid.
     pub(super) fn evaluation_context_mut(&mut self) -> Option<&mut EvaluationContext> {
@@ -351,6 +368,13 @@ impl Document {
             Shared::new(baseline)
         };
         let mut context = EvaluationContext::new(baseline);
+        // Validation concerns references, pages and object kinds, not sampled
+        // coordinates. A scope over the same immutable table can reuse it.
+        if self.objects.shares_objects(&original.objects)
+            && let Some(parent) = &original.evaluation_context
+        {
+            context.validated = parent.validated.clone();
+        }
         for &id in external_ids {
             let object = context.original.objects.get(id.checked_sub(1)?)?;
             if object.deleted {
@@ -422,8 +446,8 @@ impl Document {
         if self.evaluation_context.is_none() {
             return;
         }
-        let affected: BTreeSet<_> = match self.dependency_index() {
-            Ok(index) => index.affected_by(driver).into_iter().collect(),
+        let affected: BTreeSet<_> = match self.objects.dependency_program() {
+            Ok(program) => program.index().affected_by(driver).into_iter().collect(),
             // Imported partial documents may have unresolved construction edges.
             // Preserve their existing conservative invalidation behavior.
             Err(_) => {
@@ -450,6 +474,7 @@ impl Document {
     ) {
         if let Some(context) = self.evaluation_context_mut() {
             for id in ids {
+                context.geometry.invalidate(id);
                 context.validated.0.get_mut().unwrap().remove(&id);
                 let curves = context.curves.0.get_mut().unwrap();
                 let keys: Vec<_> = curves
@@ -496,8 +521,8 @@ impl Document {
             return;
         };
         let frozen = &context.frozen;
-        context.validated.0.get_mut().unwrap().clear();
         context.curves.0.get_mut().unwrap().clear();
+        context.geometry.clear();
         context.points.retain(|id, _| frozen.contains(id));
         context.numbers.retain(|id, _| frozen.contains(id));
         context.straights.retain(|id, _| frozen.contains(id));

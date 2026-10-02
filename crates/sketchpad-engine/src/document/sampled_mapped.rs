@@ -432,6 +432,19 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<LocusStroke>> {
+        self.cached_geometry(
+            id,
+            super::geometry_cache::GeometryQuery::SampledStrokes,
+            subdivisions,
+            || self.sampled_mapped_styled_strokes_uncached(id, subdivisions),
+        )
+    }
+
+    fn sampled_mapped_styled_strokes_uncached(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<LocusStroke>> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         let Kind::SampledMapped(d) = &object.kind else {
             return None;

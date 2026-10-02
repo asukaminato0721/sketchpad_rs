@@ -314,4 +314,79 @@ mod tests {
             assert_ne!(moved.locus_styled_strokes(id, 32), before);
         }
     }
+
+    #[test]
+    fn cached_collections_follow_edits_resolution_and_undo_without_changing_old_views() {
+        fn compare_geometry(view: &Document, source: &Document) {
+            for object in &source.objects {
+                let id = object.id;
+                macro_rules! compare {
+                    ($method:ident $(, $arg:expr)*) => {
+                        assert_eq!(view.$method(id $(, $arg)*), source.$method(id $(, $arg)*),
+                            "{} object {id}", stringify!($method));
+                    };
+                }
+                compare!(point_iteration_images);
+                compare!(polygon_iteration_images);
+                compare!(colorized_polygon_iteration_images);
+                compare!(circle_interior_iteration_images);
+                compare!(colorized_disk_iteration_images);
+                compare!(branch_segment_iteration_images);
+                compare!(line_iteration_images);
+                compare!(segment_iteration_images);
+                compare!(ray_iteration_images);
+                compare!(circle_iteration_images);
+                for resolution in [8, 17, 8] {
+                    compare!(arc_iteration_images, resolution);
+                    compare!(mapped_collection_strokes, resolution);
+                    compare!(mapped_collection_surfaces, resolution);
+                    compare!(locus_surfaces, resolution);
+                    compare!(sampled_mapped_styled_strokes, resolution);
+                }
+            }
+        }
+        for name in [
+            "branch_polygon_iteration_native.gsp",
+            "mapped_calculated_angle_iteration_full_native_verified.gsp",
+            "locus_arc_target_original.gsp",
+            "locus_polar_polygon_target_original.gsp",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(name);
+            let mut doc = Document::open(&path).unwrap();
+            let baseline = doc.clone();
+            let mut cache = EvaluationCache::default();
+            let old = cache.evaluate(&doc);
+            compare_geometry(&old, &baseline);
+            let (id, at) = doc
+                .objects
+                .iter()
+                .find_map(|object| match object.kind {
+                    Kind::Free(at) => Some((object.id, at)),
+                    _ => None,
+                })
+                .unwrap();
+            doc.checkpoint();
+            assert!(doc.move_point(
+                id,
+                Point {
+                    x: at.x + 23.,
+                    y: at.y - 11.
+                }
+            ));
+            let moved = cache.evaluate(&doc);
+            compare_geometry(&moved, &doc);
+            compare_geometry(&old, &baseline);
+            doc.undo();
+            compare_geometry(&cache.evaluate(&doc), &doc);
+            if name == "branch_polygon_iteration_native.gsp" {
+                doc.set_parameter_value(3, 2.).unwrap();
+                let changed = cache.evaluate(&doc);
+                assert_eq!(changed.polygon_iteration_images(10).unwrap().len(), 5);
+                assert_eq!(old.polygon_iteration_images(10).unwrap().len(), 14);
+                compare_geometry(&changed, &doc);
+            }
+        }
+    }
 }
