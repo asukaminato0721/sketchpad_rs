@@ -217,9 +217,15 @@ The workspace has four implementation crates and the original application facade
 - `sketchpad-ir`: generic object nodes, semantic geometry/transform expressions, and the derived dependency index. It has no file-format or UI dependency.
 - `sketchpad-engine`: semantic decoding, document evaluation and scoped substitutions, editing/history, and byte-preserving saving. It depends on format and IR, and has no production GPU/window dependency.
 - `sketchpad-editor`: desktop commands, dialogs, animation, picking and rendering over the engine.
-- The root `sketchpad_rs` package preserves the previous public module paths and starts the desktop application.
+- The root `sketchpad_rs` package provides the application facade and starts the desktop application.
 
 The IR object graph is authoritative. The dependency index derives forward and reverse edges and a topological order; it does not maintain a second editable graph. Element transforms retain live numeric/geometry references until evaluation. Native offsets and retained source bytes remain engine provenance.
+
+Runtime geometry evaluation uses the `incremental` crate for dependency scheduling
+and change propagation, with shared sampling graphs and immutable result snapshots.
+The former public `sketchpad_engine::sac` module has been removed. See the
+[evaluation design](dev/SELF_ADJUSTING_COMPUTATION.md) and
+[measured migration results](dev/INCREMENTAL_PERFORMANCE.md).
 
 Sources live under `crates/<crate>/src/`. Binary fixtures remain in `tests/fixtures/`. Existing engine tests compile the shared renderer source as a test-only verification bridge; this does not add a production editor dependency to the engine.
 

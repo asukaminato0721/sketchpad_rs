@@ -1,7 +1,7 @@
 //! Bridge evaluator reads into the self-adjusting runtime. Observers are thread
 //! local; values and traces belong to each immutable evaluated scope.
+pub(super) use super::incremental_graph::Graph;
 use super::{Document, LineMode, Point};
-use crate::sac::{Cycle, Resolver, Runtime};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -174,7 +174,6 @@ pub(super) enum Stamp {
     Frozen(Option<(Identity, Option<(u64, u64)>)>),
 }
 
-pub(super) type Graph = Runtime<Query, Input, Value, Stamp>;
 static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 /// Names describe a call site and its logical sample, never current coordinates.
@@ -209,12 +208,14 @@ type ScopePath = Arc<Vec<Scope>>;
 struct Scopes {
     entries: lru::LruCache<ScopePath, Arc<Graph>>,
     nodes: usize,
+    families: lru::LruCache<ScopePath, u64>,
 }
 impl Default for Scopes {
     fn default() -> Self {
         Self {
             entries: lru::LruCache::sparse(8192.try_into().unwrap()),
             nodes: 0,
+            families: lru::LruCache::sparse(8192.try_into().unwrap()),
         }
     }
 }
@@ -274,8 +275,42 @@ impl Evaluation {
         let mut path = (*self.path).clone();
         path.push(name);
         let path = Arc::new(path);
-        let previous = self.scopes.lock().unwrap().entries.get(&path).cloned();
-        let mut graph = previous.map_or(fallback, |old| (*old).clone());
+        let mut execution_path = (*path).clone();
+        for scope in &mut execution_path {
+            match scope {
+                Scope::Sample { index, .. } => *index = 0,
+                Scope::Iteration { step, .. } => *step = 0,
+                Scope::MappedSample { fraction, .. } => *fraction = 0,
+                Scope::ImageSample { column, row, .. } => {
+                    *column = 0;
+                    *row = 0;
+                }
+                _ => {}
+            }
+        }
+        let execution_path = Arc::new(execution_path);
+        let (previous, family) = {
+            let mut scopes = self.scopes.lock().unwrap();
+            let previous = scopes.entries.get(&path).cloned();
+            let family = if let Some(family) = scopes.families.get(&execution_path) {
+                *family
+            } else {
+                let family = Graph::new_family();
+                scopes.families.put(execution_path, family);
+                family
+            };
+            (previous, family)
+        };
+        let mut graph = if let Some(previous) = previous {
+            (*previous).clone()
+        } else {
+            let mut graph = fallback;
+            graph.detach_execution();
+            graph
+        };
+        // Sibling samples run the same construction with different inputs.
+        // Reuse their scheduler while keeping named result snapshots separate.
+        graph.use_family(family);
         // The same logical scope may now have different seeds or frozen inputs.
         graph.advance();
         graph.coalesce_nested_queries(coalesce);
@@ -360,8 +395,8 @@ impl Drop for Recording {
     }
 }
 
-impl Resolver<Query, Input, Value, Stamp> for Document {
-    fn can_inline(&self, key: &Query) -> bool {
+impl Document {
+    pub(super) fn sac_can_inline(&self, key: &Query) -> bool {
         !matches!(key, Query::Geometry(..))
             && READS.with_borrow(|frames| {
                 frames.last().is_some_and(|frame| {
@@ -370,13 +405,7 @@ impl Resolver<Query, Input, Value, Stamp> for Document {
                 })
             })
     }
-    fn evaluate_inline(&self, _: &Graph, key: &Query) -> Result<Value, Cycle<Query>> {
-        Ok(self.sac_evaluate_body(*key))
-    }
-    fn revision_stamp(&self) -> Option<Stamp> {
-        Some(Stamp::Identity(self.objects.sac_identity(None)))
-    }
-    fn input_stamp(&self, input: &Input) -> Stamp {
+    pub(super) fn sac_input_stamp(&self, input: &Input) -> Stamp {
         // Verification must not manufacture new dependencies.
         match *input {
             Input::MappedElementValidity(id) => {
@@ -392,17 +421,17 @@ impl Resolver<Query, Input, Value, Stamp> for Document {
             input => Stamp::Slot(self.sac_slot(input)),
         }
     }
-    fn evaluate(&self, graph: &Graph, key: &Query) -> Result<Value, Cycle<Query>> {
+    pub(super) fn sac_execute_query(&self, key: &Query) -> Value {
         let scope = self.sac_evaluation().unwrap();
         let recording = Recording::new(scope.id);
         let value = self.sac_evaluate_body(*key);
-        recording.record_inputs(graph, self);
-        Ok(value)
+        recording.record_inputs(&scope.graph, self);
+        value
     }
 }
 
 impl Document {
-    fn sac_evaluate_body(&self, key: Query) -> Value {
+    pub(super) fn sac_evaluate_body(&self, key: Query) -> Value {
         match key {
             Query::Point(id) => Value::Point(self.position_untracked(id)),
             Query::Number(id) => Value::Number(self.numeric_value_untracked(id)),
