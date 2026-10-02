@@ -88,6 +88,9 @@ impl Document {
         id: usize,
         values: &mut NumericValues,
     ) -> Option<f64> {
+        if let Some(value) = self.evaluation_numeric(id) {
+            return value;
+        }
         if let Some(value) = values.get(&id) {
             return *value;
         }
@@ -99,9 +102,6 @@ impl Document {
     }
 
     fn numeric_value_uncached(&self, id: usize, values: &mut NumericValues) -> Option<f64> {
-        if let Some(value) = self.evaluation_numeric(id) {
-            return value;
-        }
         let o = self.objects.get(id.checked_sub(1)?)?;
         if o.deleted {
             return None;
@@ -275,7 +275,7 @@ impl Document {
             return Ok(());
         }
         let mut candidate = self.clone();
-        candidate.objects[id - 1].measurement_anchor = Some(anchor);
+        candidate.objects.edit(id - 1).measurement_anchor = Some(anchor);
         candidate.dirty = true;
         if self.page_count > 1 {
             let bytes = candidate.encode()?;
@@ -319,7 +319,7 @@ impl Document {
         if !changed.is_empty() {
             self.checkpoint();
             for id in &changed {
-                self.objects[*id - 1].measurement_precision = Some(precision);
+                self.objects.edit(*id - 1).measurement_precision = Some(precision);
             }
         }
         Ok(changed.len())
@@ -390,9 +390,9 @@ impl Document {
             self.checkpoint();
             for (id, kind) in &changes {
                 if let Some(kind) = kind {
-                    self.objects[*id - 1].kind = kind.clone();
+                    self.objects.edit(*id - 1).kind = kind.clone();
                 } else {
-                    self.objects[*id - 1].measurement_precision = Some(precision);
+                    self.objects.edit(*id - 1).measurement_precision = Some(precision);
                 }
             }
         }

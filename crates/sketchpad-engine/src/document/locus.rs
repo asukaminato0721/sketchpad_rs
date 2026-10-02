@@ -533,7 +533,7 @@ impl Document {
                 };
                 match &plan {
                     Some(plan) => plan.kind(&mut sample, kind)?,
-                    None => sample.objects[driver - 1].kind = kind,
+                    None => sample.objects.edit(driver - 1).kind = kind,
                 }
             }
             values.push(evaluate(&sample, target));
@@ -650,10 +650,12 @@ impl Document {
             Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
             _ => return None,
         };
-        let style = self
-            .effective_visual_style(id)
-            .or_else(|| self.effective_visual_style(target))?;
-        self.locus_styled_strokes_with_style(id, subdivisions, style)
+        self.cached_locus_strokes(id, subdivisions, || {
+            let style = self
+                .effective_visual_style(id)
+                .or_else(|| self.effective_visual_style(target))?;
+            self.locus_styled_strokes_with_style(id, subdivisions, style)
+        })
     }
 
     /// A carried collection owns its local sampling domain. Replay each outer

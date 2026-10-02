@@ -351,7 +351,7 @@ fn multi_page_constraint_writer_rejects_invalid_edits() {
     ] {
         let mut document = Document::from_bytes(base, None).unwrap();
         document.checkpoint();
-        document.objects[index].kind = replacement;
+        document.objects.edit(index).kind = replacement;
         assert!(document.can_save().is_err());
         assert!(document.encode().is_err());
     }
@@ -471,7 +471,7 @@ fn multi_page_visual_styles_save_on_both_pages() {
 
     let mut invalid = Document::from_bytes(base, None).unwrap();
     invalid.checkpoint();
-    invalid.objects[0].visual_style = Some(VisualStyle::Stroke {
+    invalid.objects.edit(0).visual_style = Some(VisualStyle::Stroke {
         line: SegmentLineStyle {
             width: LineWidth::Thick,
             pattern: LinePattern::Dashed,

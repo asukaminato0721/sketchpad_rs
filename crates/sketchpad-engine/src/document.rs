@@ -19,7 +19,12 @@ mod encode;
 mod encode_pages;
 mod encode_patches;
 mod encode_templates;
+mod evaluation_cache;
 mod evaluation_context;
+mod evaluation_plan;
+mod object_store;
+pub use evaluation_cache::EvaluationCache;
+pub use object_store::{ObjectEdit, ObjectStore};
 mod sampling_plan;
 pub use evaluation_context::EvaluatedDocument;
 mod functions;
@@ -798,9 +803,9 @@ impl Document {
         }
     }
 
-    /// Derive dependency indexes from the authoritative semantic objects.
+    /// Validate and order the connections recorded by construction edits.
     pub fn dependency_index(&self) -> Result<DependencyIndex, sketchpad_ir::DependencyError> {
-        DependencyIndex::build(&self.objects)
+        Ok(self.objects.dependency_program()?.index().clone())
     }
 }
 
@@ -837,7 +842,7 @@ pub enum EditRestriction {
 
 #[derive(Clone, Debug)]
 pub struct DocumentSnapshot {
-    objects: Vec<Object>,
+    objects: ObjectStore,
     merge_aliases: BTreeMap<usize, usize>,
     measurement_names: BTreeMap<usize, u32>,
     snap_points: Vec<bool>,
@@ -857,7 +862,7 @@ pub struct DocumentSnapshot {
 }
 #[derive(Clone, Debug)]
 pub struct Document {
-    pub objects: Vec<Object>,
+    pub objects: ObjectStore,
     pub path: Option<PathBuf>,
     pub selected: BTreeSet<usize>,
     pub dirty: bool,
@@ -879,7 +884,7 @@ pub struct Document {
     interior_color_cursor: usize,
     merge_aliases: BTreeMap<usize, usize>,
     measurement_names: BTreeMap<usize, u32>,
-    evaluation_context: Option<evaluation_context::EvaluationContext>,
+    evaluation_context: Option<std::sync::Arc<evaluation_context::EvaluationContext>>,
     sampling_plans: sampling_plan::SamplingPlans,
     original: Vec<u8>,
     run_font_families: Vec<String>,

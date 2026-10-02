@@ -51,7 +51,7 @@ impl Document {
         };
         let group = group.with_font_reference(font)?;
         let id = candidate.append_object(Kind::ValueTable(source, group));
-        candidate.objects[id - 1].text_style_override = Some(style);
+        candidate.objects.edit(id - 1).text_style_override = Some(style);
         candidate.dirty = true;
         candidate.verify_roundtrip()?;
         self.checkpoint_structure();
@@ -118,7 +118,7 @@ impl Document {
             _ => return Err("Object is not a number or table".into()),
         }
         self.checkpoint();
-        self.objects[id - 1].kind = kind;
+        self.objects.edit(id - 1).kind = kind;
         Ok(())
     }
     pub fn change_table_rows(&mut self, id: usize, add: bool) -> Result<(), String> {
@@ -179,7 +179,7 @@ impl Document {
             _ => return Err("Object is not a table".into()),
         };
         self.checkpoint();
-        self.objects[id - 1].kind = kind;
+        self.objects.edit(id - 1).kind = kind;
         Ok(())
     }
 }

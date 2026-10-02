@@ -32,7 +32,7 @@ fn selected_geometry_iteration(shape: usize) -> (Editor, usize, Viewport) {
         Kind::MappedPointIteration { .. }
     ));
     let binding = parent + 1;
-    for object in &mut editor.doc.objects {
+    for mut object in editor.doc.objects.iter_mut() {
         object.visible = object.id == binding;
     }
     let viewport = Viewport {

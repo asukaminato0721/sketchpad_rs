@@ -799,7 +799,7 @@ impl Document {
         for source in bindings {
             let style = self.objects[*source - 1].visual_style;
             let binding = self.append_object(Kind::IterationBinding(*source, id));
-            self.objects[binding - 1].visual_style = style;
+            self.objects.edit(binding - 1).visual_style = style;
         }
         Ok(id)
     }
@@ -869,7 +869,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        let object = &mut candidate.objects[root - 1];
+        let mut object = candidate.objects.edit(root - 1);
         object.iteration_final_only = final_only;
         match &mut object.kind {
             Kind::PointParameterIteration(_, _, _, _, _, depth)
@@ -896,6 +896,7 @@ impl Document {
         {
             *mapped_final_only = final_only;
         }
+        drop(object);
         candidate.verify_roundtrip()?;
         *self = candidate;
         Ok(true)
@@ -1443,7 +1444,7 @@ impl Document {
         for source in std::iter::once(polygon).chain(segments.iter().copied()) {
             let style = self.objects[source - 1].visual_style;
             let id = self.append_object(Kind::IterationBinding(source, iteration));
-            self.objects[id - 1].visual_style = style;
+            self.objects.edit(id - 1).visual_style = style;
         }
         Ok(iteration)
     }
@@ -1699,7 +1700,7 @@ impl Document {
         self.append_object(Kind::IterationBinding(image, iteration));
         self.append_object(Kind::IterationBinding(label, iteration));
         let values = self.append_object(Kind::IterationValues(iteration, vec![calculation]));
-        self.objects[values - 1].visible = false;
+        self.objects.edit(values - 1).visible = false;
         Ok(iteration)
     }
     pub(super) fn numeric_iteration_depth(&self, depth: IterationDepth) -> Option<u32> {
@@ -1769,7 +1770,7 @@ impl Document {
             if !mapped_parameter.set_evaluation_value(value) {
                 return None;
             }
-            sample.objects[parameter - 1].kind = Kind::Parameter(mapped_parameter.clone());
+            sample.objects.edit(parameter - 1).kind = Kind::Parameter(mapped_parameter.clone());
             for index in &mapped_inputs {
                 values[*index] = value;
             }
@@ -1855,7 +1856,7 @@ impl Document {
         let iteration = self.append_object(Kind::CircleIteration(seed, image, circle, depth));
         self.append_object(Kind::IterationBinding(image, iteration));
         let binding = self.append_object(Kind::IterationBinding(circle, iteration));
-        self.objects[binding - 1].visual_style = style_records::iteration_binding_visual_style(
+        self.objects.edit(binding - 1).visual_style = style_records::iteration_binding_visual_style(
             &include_bytes!("../../../../assets/segment_iteration_binding_group.bin")[8..36],
             false,
         );

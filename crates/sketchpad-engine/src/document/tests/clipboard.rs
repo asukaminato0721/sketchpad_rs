@@ -441,7 +441,7 @@ fn midpoint_tracks_its_specific_segment_when_segments_share_endpoints() {
     let first = doc.add(Kind::Segment(a, b));
     let second = doc.add(Kind::Segment(a, b));
     let midpoint = doc.add(Kind::Midpoint(a, b));
-    doc.objects[midpoint - 1].midpoint_host = Some(second);
+    doc.objects.edit(midpoint - 1).midpoint_host = Some(second);
     let mut loaded = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
     assert_eq!(loaded.objects[midpoint - 1].midpoint_host, Some(second));
     loaded.selected.insert(first);

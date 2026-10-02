@@ -203,7 +203,7 @@ impl Editor {
                         self.selection_order.clear();
                     }
                 }
-                let evaluated = self.doc.evaluated();
+                let evaluated = self.evaluated_document();
                 let doc = &*evaluated;
                 for id in crate::render::ordered_picture_ids(doc) {
                     if let Some(sampled) = doc.sampled_image_mesh(id, 1600) {
@@ -653,7 +653,7 @@ impl Editor {
                     );
                 }
                 for (row, (id, text)) in Self::overlay_rows_for(doc).into_iter().enumerate() {
-                    let rect = self.overlay_row_rect(&vp, row, id, &text);
+                    let rect = Self::overlay_row_rect_for(doc, &vp, row, id, &text);
                     if self.doc.selected.contains(&id) {
                         let selected = self.selection_color();
                         ui.painter().rect_filled(
@@ -667,7 +667,7 @@ impl Editor {
                             ),
                         );
                     }
-                    let style = self.doc.text_font_state(id);
+                    let style = doc.text_font_state(id);
                     let size = style
                         .as_ref()
                         .map_or(16., |style| f32::from(style.size_code));

@@ -72,14 +72,14 @@ impl Document {
             visiting: &mut BTreeSet<usize>,
             completed: &mut BTreeSet<usize>,
         ) -> Result<(), Error> {
-            if completed.contains(&id) {
-                return Ok(());
-            }
             let o = id
                 .checked_sub(1)
                 .and_then(|i| document.objects.get(i))
                 .filter(|o| !o.deleted && o.page == page && !matches!(o.kind, Kind::Unsupported(_)))
                 .ok_or(Error::InvalidReference(id))?;
+            if completed.contains(&id) {
+                return Ok(());
+            }
             if !visiting.insert(id) {
                 return Err(Error::InvalidReference(id));
             }
@@ -93,13 +93,9 @@ impl Document {
             completed.insert(id);
             Ok(())
         }
-        validate(
-            self,
-            id,
-            object.page,
-            &mut BTreeSet::new(),
-            &mut BTreeSet::new(),
-        )?;
+        self.with_validated_dependencies(|completed| {
+            validate(self, id, object.page, &mut BTreeSet::new(), completed)
+        })?;
         let source = definition.source();
         let kind = &self.objects[source - 1].kind;
         // Resolve source geometry first: finite target inputs cannot restore an

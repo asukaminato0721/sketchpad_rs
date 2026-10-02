@@ -133,7 +133,7 @@ impl Document {
             return Err("Deleting these multi-page objects cannot be saved safely".into());
         }
         let mut unmarked = self.clone();
-        for object in &mut unmarked.objects {
+        for mut object in unmarked.objects.iter_mut() {
             object.deleted = false;
         }
         let bytes = if unmarked.has_pending_multi_page_additions() {
@@ -1709,9 +1709,9 @@ impl Document {
     fn patch_multi_page_text(&self, mut bytes: Vec<u8>) -> Result<Vec<u8>, String> {
         // Serialized groups are ordered by page, while additions have global IDs.
         let mut ordered = self.clone();
-        ordered
-            .objects
-            .sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        let mut objects = ordered.objects.to_vec();
+        objects.sort_by_key(|object| (object.page, object.id > self.source_count, object.id));
+        ordered.objects = objects.into();
         let rs = records(&bytes)?;
         let mut edits = Vec::new();
         let starts = document_record_indices(&rs)

@@ -40,7 +40,7 @@ impl Document {
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
         let id = self.append_object(Kind::PlottedPoint(frame, mode, plot.stored));
-        self.objects[id - 1].visual_style = style;
+        self.objects.edit(id - 1).visual_style = style;
         Ok(id)
     }
     pub fn plot_pair_table_data(
@@ -96,7 +96,7 @@ impl Document {
             let group = plot_points_records::encode_frame_point_group(frame as u32, mode, stored)?;
             let style = style_records::visual_style(&group[8..36]);
             let id = self.append_object(Kind::PlottedPoint(frame, mode, stored));
-            self.objects[id - 1].visual_style = style;
+            self.objects.edit(id - 1).visual_style = style;
             ids.push(id);
         }
         Ok(ids)
@@ -258,7 +258,7 @@ impl Document {
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
         let id = self.append_object(Kind::PathValuePoint(source, path));
-        self.objects[id - 1].visual_style = style;
+        self.objects.edit(id - 1).visual_style = style;
         Ok(id)
     }
     pub fn plot_literal_on_path(
@@ -292,7 +292,7 @@ impl Document {
         let style = style_records::visual_style(&group[8..36]);
         self.checkpoint();
         let id = self.append_object(Kind::PathLiteralPoint(path, value));
-        self.objects[id - 1].visual_style = style;
+        self.objects.edit(id - 1).visual_style = style;
         Ok(id)
     }
 }

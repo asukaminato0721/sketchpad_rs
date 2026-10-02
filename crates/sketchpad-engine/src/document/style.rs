@@ -68,7 +68,7 @@ impl Document {
             candidate.checkpoint();
         }
         for (id, style) in &changes {
-            candidate.objects[ids[*id] - 1].visual_style = Some(*style);
+            candidate.objects.edit(ids[*id] - 1).visual_style = Some(*style);
         }
         candidate.verify_roundtrip()?;
         *self = candidate;

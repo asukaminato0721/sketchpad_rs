@@ -268,10 +268,12 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        let Kind::SampledImage(definition) = &mut candidate.objects[index].kind else {
+        let mut object = candidate.objects.edit(index);
+        let Kind::SampledImage(definition) = &mut object.kind else {
             unreachable!();
         };
         definition.set_properties(samples, distortion);
+        drop(object);
         candidate.verify_roundtrip()?;
         *self = candidate;
         Ok(true)

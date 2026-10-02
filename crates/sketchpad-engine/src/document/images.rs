@@ -226,7 +226,7 @@ impl Document {
     ) -> Result<usize, String> {
         self.can_crop_picture_to_polygon(source, polygon)?;
         self.checkpoint();
-        self.objects[source - 1].visible = false;
+        self.objects.edit(source - 1).visible = false;
         Ok(self.append_object(Kind::CroppedImage { source, polygon }))
     }
 
@@ -259,7 +259,7 @@ impl Document {
         if let Kind::Image {
             placement: ImagePlacement::Independent(transform),
             ..
-        } = &mut self.objects[id - 1].kind
+        } = &mut self.objects.edit(id - 1).kind
         {
             transform[2] = at.x;
             transform[5] = at.y;

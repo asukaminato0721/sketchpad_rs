@@ -1182,12 +1182,28 @@ impl NumericUnitWire for NumericUnit {
 // Bound expression work separately from the 256-addressable source operands.
 const MAX_CALCULATION_TOKENS: usize = 4096;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ParameterCalculationGroup {
     bytes: Vec<u8>,
+    program: std::sync::Arc<ParameterProgram>,
     // Native subtype 51 covers generic quantities, including higher unit powers.
     inferred_unit: Option<NumericUnit>,
 }
+
+// Presentation changes do not change the parsed program. Formula edits and
+// source remapping go through parse() and construct a new immutable program.
+#[derive(Debug)]
+struct ParameterProgram {
+    expression: ParameterExpr,
+    sources: Vec<u32>,
+    source_kinds: Vec<CalculationSourceKind>,
+}
+impl PartialEq for ParameterCalculationGroup {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes && self.inferred_unit == other.inferred_unit
+    }
+}
+impl Eq for ParameterCalculationGroup {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CalculationSourceKind {
@@ -2016,12 +2032,26 @@ impl ParameterCalculationGroup {
         put_record(&mut normalized, 0x07d2, &refs);
         normalized.extend_from_slice(&bytes[reference.end..]);
         Self::validate_single_layout(&normalized)?;
-        let group = Self {
+        let expression = Self::parse_expression(bytes, count)?;
+        let sources = payload[4..]
+            .chunks_exact(4)
+            .map(|id| u32::from_le_bytes(id.try_into().unwrap()))
+            .collect();
+        let mut kinds = vec![None; count];
+        expression.source_kinds(&mut kinds)?;
+        let source_kinds = kinds
+            .into_iter()
+            .map(|kind| kind.unwrap_or(CalculationSourceKind::Numeric))
+            .collect();
+        Ok(Self {
             bytes: bytes.to_vec(),
+            program: std::sync::Arc::new(ParameterProgram {
+                expression,
+                sources,
+                source_kinds,
+            }),
             inferred_unit: None,
-        };
-        group.expression_tree()?;
-        Ok(group)
+        })
     }
     fn validate_single_layout(bytes: &[u8]) -> Result<(), String> {
         let rs = records(bytes, 0)?;
@@ -2076,13 +2106,15 @@ impl ParameterCalculationGroup {
         }
         Ok(())
     }
-    fn expression_tree(&self) -> Result<ParameterExpr, String> {
-        let rs = records(&self.bytes, 0)?;
-        let words = self.bytes[rs[2].payload + 92..rs[2].end]
+    fn expression_tree(&self) -> &ParameterExpr {
+        &self.program.expression
+    }
+    fn parse_expression(bytes: &[u8], count: usize) -> Result<ParameterExpr, String> {
+        let rs = records(bytes, 0)?;
+        let words = bytes[rs[2].payload + 92..rs[2].end]
             .chunks_exact(2)
             .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
             .collect::<Vec<_>>();
-        let count = self.sources().len();
         if !words
             .iter()
             .any(|w| (0x6000..=0x60ff).contains(w) || (0x7000..=0x70ff).contains(w))
@@ -2098,31 +2130,21 @@ impl ParameterCalculationGroup {
         Ok(tree)
     }
     pub fn source_kinds(&self) -> Result<Vec<CalculationSourceKind>, String> {
-        let mut kinds = vec![None; self.sources().len()];
-        self.expression_tree()?.source_kinds(&mut kinds)?;
-        // Retained unused references are still concrete numeric dependencies.
-        Ok(kinds
-            .into_iter()
-            .map(|kind| kind.unwrap_or(CalculationSourceKind::Numeric))
-            .collect())
+        Ok(self.program.source_kinds.clone())
     }
     pub fn value(&self, source: f64) -> Option<f64> {
-        self.expression_tree().ok()?.eval(source)
+        self.expression_tree().eval(source)
     }
     pub fn value_with_source_unit(&self, source: f64, unit: NumericUnit) -> Option<f64> {
-        let expression = self.expression_tree().ok()?;
+        let expression = self.expression_tree();
         expression.unit(unit).ok()?;
         expression.eval(source)
     }
     pub fn expression(&self, source_name: &str) -> String {
-        self.expression_tree().unwrap().display(source_name)
+        self.expression_tree().display(source_name)
     }
     pub fn sources(&self) -> Vec<u32> {
-        let rs = records(&self.bytes, 0).unwrap();
-        self.bytes[rs[1].payload + 4..rs[1].end]
-            .chunks_exact(4)
-            .map(|id| u32::from_le_bytes(id.try_into().unwrap()))
-            .collect()
+        self.program.sources.clone()
     }
     pub fn source_id(&self) -> u32 {
         self.sources()[0]
@@ -2174,7 +2196,7 @@ impl ParameterCalculationGroup {
         {
             return None;
         }
-        let tree = self.expression_tree().ok()?;
+        let tree = self.expression_tree();
         if tree.units(units).ok()? != self.unit() {
             return None;
         }
@@ -2190,10 +2212,10 @@ impl ParameterCalculationGroup {
         self.display_value_with_functions(values, units, &|_, _, _| None)
     }
     pub fn expression_for_sources(&self, names: &[&str]) -> String {
-        self.expression_tree().unwrap().display_names(names)
+        self.expression_tree().display_names(names)
     }
     pub fn units_for_sources(&self, units: &[NumericUnit]) -> Result<NumericUnit, String> {
-        self.expression_tree()?.units(units)
+        self.expression_tree().units(units)
     }
     pub fn remap_sources(&self, ids: &[u32]) -> Result<Self, String> {
         if ids.len() != self.sources().len() || ids.contains(&0) {
@@ -2263,7 +2285,7 @@ impl ParameterCalculationGroup {
         }
     }
     pub fn expression_unit(&self, source: NumericUnit) -> Result<NumericUnit, String> {
-        self.expression_tree()?.unit(source)
+        self.expression_tree().unit(source)
     }
     pub fn display_mode(&self) -> u16 {
         let rs = records(&self.bytes, 0).unwrap();
@@ -2327,12 +2349,11 @@ impl ParameterCalculationGroup {
         if sources.len() != self.sources().len() {
             return Err("Invalid numeric caption source layouts".into());
         }
-        self.expression_tree()?.caption_layout(base, sources)
+        self.expression_tree().caption_layout(base, sources)
     }
 
     pub(crate) fn caption_is_flat(&self) -> bool {
-        self.expression_tree()
-            .is_ok_and(|tree| tree.caption_is_flat())
+        self.expression_tree().caption_is_flat()
     }
 
     pub fn set_anchor(&mut self, anchor: (i16, i16)) -> Result<(), String> {

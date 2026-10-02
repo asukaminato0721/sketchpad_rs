@@ -110,7 +110,7 @@ fn arc_commands_share_live_transforms_picking_constraints_styles_and_measurement
             editor.doc.undo();
             assert_eq!(editor.doc.encode().unwrap(), before);
             editor.doc.redo();
-            for object in &mut editor.doc.objects {
+            for mut object in editor.doc.objects.iter_mut() {
                 object.visible = object.id == image;
             }
             if element != ElementType::Arc {

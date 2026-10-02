@@ -3376,7 +3376,7 @@ impl Document {
             })
             .unwrap_or(0);
         let mut document = Self {
-            objects,
+            objects: objects.into(),
             path,
             selected: BTreeSet::new(),
             dirty: false,

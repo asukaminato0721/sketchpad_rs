@@ -71,7 +71,7 @@ impl Editor {
                 ColorRangeBehavior::Reflect,
             ) {
                 Ok(id) => {
-                    candidate.objects[*source - 1].visible = false;
+                    candidate.objects.edit(*source - 1).visible = false;
                     outputs.push(id);
                 }
                 Err(error) => {

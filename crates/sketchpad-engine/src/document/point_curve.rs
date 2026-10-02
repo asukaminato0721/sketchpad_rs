@@ -340,7 +340,7 @@ impl<'a> PointCurve<'a> {
                     .locus_driver_kind_at(*driver, *path, parameter)?;
                 match plan {
                     Some(plan) => plan.kind(sample, kind)?,
-                    None => sample.objects[*driver - 1].kind = kind,
+                    None => sample.objects.edit(*driver - 1).kind = kind,
                 }
                 sample.position(*target)?
             }

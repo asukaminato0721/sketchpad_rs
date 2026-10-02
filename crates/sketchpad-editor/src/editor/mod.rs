@@ -261,6 +261,7 @@ struct PresentationTrack {
 }
 struct Editor {
     doc: Document,
+    evaluation_cache: std::cell::RefCell<sketchpad_engine::document::EvaluationCache>,
     untitled_name: &'static str,
     clipboard: Option<Clipboard>,
     image_textures: HashMap<usize, egui::TextureHandle>,
@@ -415,10 +416,15 @@ struct Editor {
     exit_requested: bool,
 }
 impl Editor {
+    fn evaluated_document(&self) -> std::sync::Arc<sketchpad_engine::document::EvaluatedDocument> {
+        self.evaluation_cache.borrow_mut().evaluate(&self.doc)
+    }
+
     fn new(doc: Document) -> Self {
         let custom_transforms = custom_transforms::native_custom_transforms(&doc);
         let mut e = Self {
             doc,
+            evaluation_cache: Default::default(),
             untitled_name: "Untitled",
             clipboard: None,
             image_textures: HashMap::new(),
@@ -583,7 +589,7 @@ impl Editor {
     }
 
     fn fit(&mut self) {
-        let evaluated = self.doc.evaluated();
+        let evaluated = self.evaluated_document();
         let doc = &*evaluated;
         let mut pts: Vec<_> = doc
             .objects

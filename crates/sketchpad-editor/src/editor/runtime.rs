@@ -172,7 +172,8 @@ impl GraphicsState {
             size_in_pixels: [self.size.width, self.size.height],
             pixels_per_point: output.pixels_per_point,
         };
-        self.geometry.render(
+        let evaluated = editor.evaluated_document();
+        self.geometry.render_evaluated(
             crate::render::RenderTarget {
                 device: &self.device,
                 encoder: &mut encoder,
@@ -180,7 +181,7 @@ impl GraphicsState {
                 size: [self.size.width, self.size.height],
                 pixels_per_point: output.pixels_per_point,
             },
-            &editor.doc,
+            &evaluated,
             &viewport.expect("editor viewport"),
             &editor.trace_marks,
             RenderPreferences {

@@ -146,7 +146,7 @@ fn imported_picture_moves_undoes_and_survives_save() {
 
     let top_left = document.add(Kind::Free(Point { x: 16., y: 26. }));
     let bottom_left = document.add(Kind::Free(Point { x: 16., y: 90. }));
-    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+    if let Kind::Image { placement, .. } = &mut document.objects.edit(image - 1).kind {
         *placement = ImagePlacement::Rectangle {
             bottom_right: 1,
             top_left,
@@ -157,7 +157,7 @@ fn imported_picture_moves_undoes_and_survives_save() {
         Some([4., 0., 16., 0., 4., 26.])
     );
     assert_eq!(document.objects[image - 1].kind.dependencies(), vec![1, 3]);
-    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+    if let Kind::Image { placement, .. } = &mut document.objects.edit(image - 1).kind {
         *placement = ImagePlacement::Parallelogram {
             top_left,
             bottom_right: 1,
@@ -224,7 +224,7 @@ fn imported_picture_moves_undoes_and_survives_save() {
         document.objects[scaled - 1].kind.dependencies(),
         vec![image, top_left]
     );
-    if let Kind::Image { placement, .. } = &mut document.objects[image - 1].kind {
+    if let Kind::Image { placement, .. } = &mut document.objects.edit(image - 1).kind {
         *placement = ImagePlacement::Point {
             anchor: 1,
             relative: [0., 1., -8., -1., 0., 8.],
@@ -1316,7 +1316,7 @@ fn multi_page_measurement_caption_moves_atomically_and_preserves_other_page() {
     assert_eq!(doc.encode().unwrap(), off_page);
     doc.active_page = 1 - doc.active_page;
     let mut unknown = doc.clone();
-    unknown.objects[0].kind = Kind::Unsupported(0xffff);
+    unknown.objects.edit(0).kind = Kind::Unsupported(0xffff);
     let snapshot = unknown.objects.clone();
     assert!(unknown.move_measurement_caption(id, (25, 80)).is_err());
     assert_eq!(unknown.objects, snapshot);

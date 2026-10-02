@@ -20,7 +20,7 @@ fn locus_evaluation_ignores_later_objects_and_retains_forward_reference_fallback
     // that acquires a later dependency must still evaluate using the full DAG.
     let source = doc.position(1).unwrap();
     let later = doc.append_object(Kind::Free(source));
-    doc.objects[0].kind = Kind::Midpoint(later, later);
+    doc.objects.edit(0).kind = Kind::Midpoint(later, later);
     assert_eq!(doc.position(point), Some(expected));
     assert!(doc.move_point(
         later,

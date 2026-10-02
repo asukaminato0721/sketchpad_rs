@@ -217,7 +217,7 @@ impl Document {
                     if !step.is_finite() || step <= 0. {
                         return false;
                     }
-                    self.objects[id - 1].kind = Kind::GraphHorizontalUnit(origin, step);
+                    self.objects.edit(id - 1).kind = Kind::GraphHorizontalUnit(origin, step);
                     self.last_moved_object = Some(id);
                     self.dirty = true;
                     true

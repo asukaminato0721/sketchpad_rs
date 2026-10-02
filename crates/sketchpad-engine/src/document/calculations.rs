@@ -233,12 +233,12 @@ impl Document {
             }
         }
         let mut candidate = self.clone();
-        candidate.objects[id - 1].kind = Kind::Parameter(group);
+        candidate.objects.edit(id - 1).kind = Kind::Parameter(group);
         for (index, source, table) in single_tables {
-            candidate.objects[index].kind = Kind::ValueTable(source, table);
+            candidate.objects.edit(index).kind = Kind::ValueTable(source, table);
         }
         for (index, first, second, table) in tables {
-            candidate.objects[index].kind = Kind::ValueTablePair(first, second, table);
+            candidate.objects.edit(index).kind = Kind::ValueTablePair(first, second, table);
         }
         candidate.dirty = true;
         if self.page_count > 1 {
@@ -287,7 +287,7 @@ impl Document {
         let mut updated = group.clone();
         updated.set_expression(expression)?;
         self.checkpoint();
-        self.objects[id - 1].kind = Kind::Calculation(updated);
+        self.objects.edit(id - 1).kind = Kind::Calculation(updated);
         Ok(())
     }
     fn numeric_caption_height(&self, id: usize) -> usize {

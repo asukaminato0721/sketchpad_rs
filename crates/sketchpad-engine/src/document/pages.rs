@@ -104,7 +104,7 @@ impl Document {
             || result.page_names[..new_page] != parsed.page_names
             || result.page_names[new_page] != parsed.page_names[page]
             || result.objects.len() != parsed.objects.len() + source_objects.len()
-            || result.objects[..parsed.objects.len()] != parsed.objects
+            || result.objects[..parsed.objects.len()] != *parsed.objects
         {
             return Err("Copied page changes the existing document".into());
         }

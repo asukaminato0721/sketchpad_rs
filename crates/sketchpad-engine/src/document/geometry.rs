@@ -1513,7 +1513,7 @@ impl Document {
             }
             _ => return false,
         };
-        self.objects[id - 1].kind = kind;
+        self.objects.edit(id - 1).kind = kind;
         self.last_moved_object = Some(id);
         self.dirty = true;
         true

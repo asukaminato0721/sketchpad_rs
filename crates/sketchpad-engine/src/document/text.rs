@@ -126,11 +126,11 @@ impl Document {
             object.rich_text_override.clone()
         };
         self.checkpoint();
-        self.objects[id - 1].kind = Kind::PlainText {
+        self.objects.edit(id - 1).kind = Kind::PlainText {
             text: text.to_owned(),
             rect,
         };
-        self.objects[id - 1].rich_text_override = rich;
+        self.objects.edit(id - 1).rich_text_override = rich;
         Ok(())
     }
     pub(super) fn text_rich_template(&self, id: usize) -> Option<text_object::RichTextTemplate> {
@@ -182,6 +182,10 @@ impl Document {
         )
     }
     pub fn text_font_state(&self, id: usize) -> Option<FontState> {
+        self.cached_text_font(id, || self.text_font_state_uncached(id))
+    }
+
+    fn text_font_state_uncached(&self, id: usize) -> Option<FontState> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if !matches!(object.kind, Kind::PlainText { .. })
             && object.label.is_none()
@@ -325,7 +329,7 @@ impl Document {
         let count = updates.len();
         self.checkpoint();
         for (id, style) in updates {
-            self.objects[id - 1].text_style_override = Some(style);
+            self.objects.edit(id - 1).text_style_override = Some(style);
         }
         Ok(count)
     }
@@ -364,7 +368,7 @@ impl Document {
         let count = updates.len();
         self.checkpoint();
         for (id, style) in updates {
-            self.objects[id - 1].text_style_override = Some(style);
+            self.objects.edit(id - 1).text_style_override = Some(style);
         }
         Ok(count)
     }
@@ -504,7 +508,7 @@ impl Document {
             return Err("Styled text did not round-trip".into());
         }
         self.checkpoint();
-        self.objects[id - 1].rich_text_override = Some(template);
+        self.objects.edit(id - 1).rich_text_override = Some(template);
         Ok(())
     }
     pub fn move_text(&mut self, id: usize, at: Point) -> Result<(), String> {
@@ -529,7 +533,7 @@ impl Document {
             if checkpoint {
                 self.checkpoint();
             }
-            self.objects[id - 1].kind = Kind::ReferencedText { parents, text };
+            self.objects.edit(id - 1).kind = Kind::ReferencedText { parents, text };
             self.dirty = true;
             return Ok(());
         }
@@ -546,7 +550,7 @@ impl Document {
         if checkpoint {
             self.checkpoint();
         }
-        self.objects[id - 1].kind = Kind::PlainText {
+        self.objects.edit(id - 1).kind = Kind::PlainText {
             text,
             rect: TextRect {
                 left: x,
@@ -694,7 +698,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        candidate.objects[id - 1].label = Some(label);
+        candidate.objects.edit(id - 1).label = Some(label);
         candidate.verify_roundtrip()?;
         *self = candidate;
         Ok(true)
@@ -725,7 +729,9 @@ impl Document {
         let mut candidate = self.clone();
         candidate.checkpoint();
         for id in &ids {
-            candidate.objects[*id - 1]
+            candidate
+                .objects
+                .edit(*id - 1)
                 .label
                 .as_mut()
                 .unwrap()

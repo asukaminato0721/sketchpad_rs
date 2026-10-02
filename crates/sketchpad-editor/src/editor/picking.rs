@@ -27,7 +27,7 @@ impl Editor {
     }
 
     pub(super) fn hit_point(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
-        let evaluated = self.doc.evaluated();
+        let evaluated = self.evaluated_document();
         self.hit_point_in(&evaluated, v, p)
     }
 
@@ -86,7 +86,7 @@ impl Editor {
             .map(|(id, _)| id)
     }
     pub(super) fn overlay_rows(&self) -> Vec<(usize, String)> {
-        Self::overlay_rows_for(&self.doc.evaluated())
+        Self::overlay_rows_for(&self.evaluated_document())
     }
 
     pub(super) fn overlay_rows_for(doc: &Document) -> Vec<(usize, String)> {
@@ -125,13 +125,22 @@ impl Editor {
         id: usize,
         text: &str,
     ) -> egui::Rect {
-        let at = self.doc.objects[id - 1]
+        Self::overlay_row_rect_for(&self.evaluated_document(), v, row, id, text)
+    }
+
+    pub(super) fn overlay_row_rect_for(
+        doc: &Document,
+        v: &Viewport,
+        row: usize,
+        id: usize,
+        text: &str,
+    ) -> egui::Rect {
+        let at = doc.objects[id - 1]
             .measurement_anchor
-            .or(self.doc.objects[id - 1].function_anchor)
+            .or(doc.objects[id - 1].function_anchor)
             .map(|(x, y)| v.rect.min + egui::vec2(x as f32 + 2., y as f32 + 7.))
             .unwrap_or_else(|| v.rect.min + egui::vec2(12., 12. + row as f32 * 20.));
-        let size = self
-            .doc
+        let size = doc
             .text_font_state(id)
             .map_or(16., |style| f32::from(style.size_code));
         egui::Rect::from_min_size(
@@ -154,7 +163,7 @@ impl Editor {
         crate::render::action_button_rect(v, anchor, label).translate(self.button_offset(v))
     }
     pub(super) fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
-        let evaluated = self.doc.evaluated();
+        let evaluated = self.evaluated_document();
         let doc = &*evaluated;
         let radius = self.geometry_hit_radius();
         if let Some(object) = doc.objects.iter().rev().find(|object| {
@@ -294,7 +303,9 @@ impl Editor {
             .iter()
             .enumerate()
             .rev()
-            .find(|(row, (id, text))| self.overlay_row_rect(v, *row, *id, text).contains(p))
+            .find(|(row, (id, text))| {
+                Self::overlay_row_rect_for(doc, v, *row, *id, text).contains(p)
+            })
             .map(|(_, entry)| entry)
         {
             return Some(*id);

@@ -136,7 +136,7 @@ impl Document {
         prepared.measurement_names = names.clone();
         let mut counters = BTreeMap::<usize, u32>::new();
         for (id, number) in names {
-            let Some(object) = prepared.objects.get_mut(id.saturating_sub(1)) else {
+            let Some(mut object) = prepared.objects.get_mut(id.saturating_sub(1)) else {
                 continue;
             };
             let after = number
@@ -165,7 +165,7 @@ impl Document {
                 )?);
             }
         }
-        for object in &mut prepared.objects {
+        for mut object in prepared.objects.iter_mut() {
             if let (Kind::ParameterCalculation(source, group), Some(label)) =
                 (&object.kind, &object.label)
             {

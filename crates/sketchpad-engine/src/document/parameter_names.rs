@@ -74,7 +74,7 @@ impl Document {
         }
         let location = location.ok_or("Missing parameter naming counter")?;
         for (id, group) in changes {
-            self.objects[id - 1].kind = Kind::Parameter(group);
+            self.objects.edit(id - 1).kind = Kind::Parameter(group);
         }
         self.original[location..location + 4].copy_from_slice(&next.to_le_bytes());
         self.dirty = true;

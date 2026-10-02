@@ -211,7 +211,7 @@ impl Document {
             caption_flags,
             label,
             ..
-        } = &mut candidate.objects[id - 1].kind
+        } = &mut candidate.objects.edit(id - 1).kind
         {
             *current_action = action;
             *current_options = options;
@@ -259,7 +259,7 @@ impl Document {
             caption_flags,
             label,
             ..
-        } = &mut self.objects[id - 1].kind
+        } = &mut self.objects.edit(id - 1).kind
         {
             *caption_flags = flags;
             *label = caption.into();
@@ -306,7 +306,7 @@ impl Document {
             caption_flags,
             label,
             ..
-        } = &mut self.objects[id - 1].kind
+        } = &mut self.objects.edit(id - 1).kind
         {
             *caption_flags = flags;
             *label = next_label;
@@ -453,7 +453,7 @@ impl Document {
             follow: current_follow,
             label: current_label,
             ..
-        } = &mut candidate.objects[id - 1].kind
+        } = &mut candidate.objects.edit(id - 1).kind
         {
             *current_speed = speed;
             *current_follow = follow;
@@ -568,7 +568,7 @@ impl Document {
             placement: current_placement,
             label: current_label,
             ..
-        } = &mut candidate.objects[id - 1].kind
+        } = &mut candidate.objects.edit(id - 1).kind
         {
             *current_placement = placement;
             *current_label = label.to_owned();
@@ -650,7 +650,7 @@ impl Document {
             options: current_options,
             label: current_label,
             ..
-        } = &mut candidate.objects[id - 1].kind
+        } = &mut candidate.objects.edit(id - 1).kind
         {
             *current_mode = mode;
             *current_options = options;
@@ -793,7 +793,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        candidate.objects[id - 1].kind = Kind::LinkUrlButton {
+        candidate.objects.edit(id - 1).kind = Kind::LinkUrlButton {
             url: url.to_owned(),
             label: label.to_owned(),
             anchor,
@@ -931,7 +931,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        candidate.objects[id - 1].kind = Kind::LinkPageButton {
+        candidate.objects.edit(id - 1).kind = Kind::LinkPageButton {
             target_page,
             target_button_ordinal,
             label: label.to_owned(),
@@ -1040,14 +1040,16 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        let Kind::SoundButton {
-            label: candidate_label,
-            ..
-        } = &mut candidate.objects[id - 1].kind
-        else {
-            unreachable!();
-        };
-        *candidate_label = label.to_owned();
+        {
+            let Kind::SoundButton {
+                label: candidate_label,
+                ..
+            } = &mut candidate.objects.edit(id - 1).kind
+            else {
+                unreachable!();
+            };
+            *candidate_label = label.to_owned();
+        }
         candidate.verify_roundtrip()?;
         *self = candidate;
         Ok(true)
@@ -1259,7 +1261,7 @@ impl Document {
             label: current_label,
             settings: current_settings,
             ..
-        } = &mut candidate.objects[id - 1].kind
+        } = &mut candidate.objects.edit(id - 1).kind
         {
             *current_label = label.to_owned();
             *current_settings = settings.to_vec();
@@ -1362,14 +1364,14 @@ impl Document {
         }
         self.checkpoint();
         for target in targets {
-            self.objects[target - 1].visible = action == VisibilityAction::Show;
+            self.objects.edit(target - 1).visible = action == VisibilityAction::Show;
         }
         if let Kind::HideShowButton {
             action,
             caption_flags,
             label,
             ..
-        } = &mut self.objects[id - 1].kind
+        } = &mut self.objects.edit(id - 1).kind
         {
             *action = next_action;
             *caption_flags = next_caption_flags;

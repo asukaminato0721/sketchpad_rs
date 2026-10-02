@@ -85,7 +85,7 @@ impl Document {
             return Err("Legacy upgrade changed the supported object graph".into());
         }
         let mut expected = self.clone();
-        for object in &mut expected.objects {
+        for mut object in expected.objects.iter_mut() {
             if object.kind.is_filled_region() && object.interior_order.is_none() {
                 object.interior_order = Some(0);
             }

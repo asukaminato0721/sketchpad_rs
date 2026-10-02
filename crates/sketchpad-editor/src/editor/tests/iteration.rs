@@ -349,6 +349,6 @@ fn mapped_midpoint_iteration_point_binding_is_pickable_and_styles_survive_save()
         .set_selected_point_style(sketchpad_engine::style_records::PointStyle::Large)
         .unwrap();
     editor.doc.verify_roundtrip().unwrap();
-    editor.doc.objects[13].visible = false;
+    editor.doc.objects.edit(13).visible = false;
     assert_ne!(editor.hit(&vp, vp.screen(point)), Some(14));
 }

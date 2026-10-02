@@ -202,7 +202,7 @@ impl Document {
             return Err("Select a coordinate point with a fixed coordinate".into());
         }
         self.checkpoint();
-        if let Kind::CoordinatePoint(d) = &mut self.objects[id - 1].kind {
+        if let Kind::CoordinatePoint(d) = &mut self.objects.edit(id - 1).kind {
             d.set_fixed_coordinate(value);
         }
         self.dirty = true;

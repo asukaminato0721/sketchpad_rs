@@ -2578,7 +2578,18 @@ impl GeometryRenderer {
         preferences: RenderPreferences,
     ) {
         let evaluated = doc.evaluated();
-        let doc = &*evaluated;
+        self.render_evaluated(target, &evaluated, vp, traces, preferences);
+    }
+
+    pub fn render_evaluated(
+        &self,
+        target: RenderTarget<'_>,
+        doc: &crate::document::EvaluatedDocument,
+        vp: &Viewport,
+        traces: &[TraceSample],
+        preferences: RenderPreferences,
+    ) {
+        doc.prepare_locus_strokes(384);
         let RenderTarget {
             device,
             encoder,

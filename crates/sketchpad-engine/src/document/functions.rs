@@ -261,7 +261,7 @@ impl Document {
             }
         }
         self.checkpoint();
-        self.objects[definition - 1].kind = if sources.is_empty() {
+        self.objects.edit(definition - 1).kind = if sources.is_empty() {
             Kind::FunctionDefinition(expression)
         } else {
             Kind::ReferencedFunction(sources, expression)
@@ -270,7 +270,8 @@ impl Document {
             if id != definition
                 && let Kind::DerivativeFunction(sources, _) = &self.objects[id - 1].kind
             {
-                self.objects[id - 1].kind = Kind::DerivativeFunction(sources.clone(), expression);
+                self.objects.edit(id - 1).kind =
+                    Kind::DerivativeFunction(sources.clone(), expression);
             }
         }
         if uses_trigonometry {
@@ -453,8 +454,8 @@ impl Document {
             return Ok(false);
         }
         self.checkpoint();
-        self.objects[plot - 1].kind = updated;
-        self.objects[plot - 1].plot_presentation = updated_presentation;
+        self.objects.edit(plot - 1).kind = updated;
+        self.objects.edit(plot - 1).plot_presentation = updated_presentation;
         Ok(true)
     }
     pub fn function_plot_points(&self, id: usize, count: usize) -> Option<Vec<Point>> {

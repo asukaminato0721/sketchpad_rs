@@ -504,7 +504,7 @@ impl Document {
         let style = self.objects[source - 1].visual_style;
         self.checkpoint();
         let id = self.append_object(Kind::Colorized(definition));
-        self.objects[id - 1].visual_style = style;
+        self.objects.edit(id - 1).visual_style = style;
         Ok(id)
     }
 }

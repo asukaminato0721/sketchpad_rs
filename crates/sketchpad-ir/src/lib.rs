@@ -3,7 +3,9 @@
 //! Geometry kinds remain generic. Selection, visual state and native record
 //! offsets belong to the engine's wrapper around an [`ObjectNode`].
 pub mod affine;
+mod dependency_program;
 pub use affine::{AffineMatrix, TransformEvaluationError, TransformGeometry, TransformSequence};
+pub use dependency_program::{DependencyGraph, DependencyProgram, UpdatePlan};
 pub mod transform_model;
 pub mod units;
 pub use units::NumericUnit;

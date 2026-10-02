@@ -210,7 +210,7 @@ fn multi_page_state_writer_refuses_geometry_changes() {
     );
     let mut document = Document::from_bytes(base, None).unwrap();
     document.checkpoint();
-    document.objects[0].kind = Kind::Segment(1, 2);
+    document.objects.edit(0).kind = Kind::Segment(1, 2);
     assert!(document.can_save().is_err());
     assert!(document.encode().is_err());
 }
@@ -243,7 +243,7 @@ fn multi_page_parameter_tables_keep_local_refs_rows_and_other_page_bytes() {
     };
     let untouched = other_page(bytes);
     let mut changed_caption = doc.clone();
-    if let Kind::Parameter(group) = &mut changed_caption.objects[0].kind {
+    if let Kind::Parameter(group) = &mut changed_caption.objects.edit(0).kind {
         group.set_anchor((200, 200)).unwrap();
     }
     let invalid_state = changed_caption.objects.clone();
@@ -252,7 +252,7 @@ fn multi_page_parameter_tables_keep_local_refs_rows_and_other_page_bytes() {
     assert!(changed_caption.undo.is_empty());
     assert!(!changed_caption.dirty);
     let mut unknown = doc.clone();
-    unknown.objects[7].kind = Kind::Unsupported(0xffff);
+    unknown.objects.edit(7).kind = Kind::Unsupported(0xffff);
     assert!(unknown.set_parameter_value(1, 2.).is_err());
     assert!(!unknown.dirty);
     let old_pair = match &doc.objects[2].kind {

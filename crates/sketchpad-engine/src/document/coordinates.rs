@@ -232,7 +232,7 @@ impl Document {
             && self.objects[id - 1].visible != visible
         {
             self.checkpoint();
-            self.objects[id - 1].visible = visible;
+            self.objects.edit(id - 1).visible = visible;
         }
     }
     pub fn grid_visible(&self) -> bool {
@@ -347,7 +347,8 @@ impl Document {
             }
             self.checkpoint();
             if let Some((unit, (step, independent))) = unit_change {
-                self.objects[unit - 1].kind = Kind::DistanceVerticalUnit(x_axis, step, independent);
+                self.objects.edit(unit - 1).kind =
+                    Kind::DistanceVerticalUnit(x_axis, step, independent);
             }
             self.grid_form[self.active_page] = form;
             self.frame_styles
@@ -385,7 +386,7 @@ impl Document {
             return Err("Invalid grid spacing".into());
         }
         self.checkpoint();
-        self.objects[y_unit - 1].kind = Kind::GraphVerticalUnit(x_unit, y_step);
+        self.objects.edit(y_unit - 1).kind = Kind::GraphVerticalUnit(x_unit, y_step);
         self.grid_form[self.active_page] = form;
         self.frame_styles
             .insert(frame, (form, self.grid_dotted[self.active_page]));
@@ -449,7 +450,7 @@ impl Document {
             return Ok(false);
         }
         self.checkpoint();
-        self.objects[index].kind = next;
+        self.objects.edit(index).kind = next;
         self.dirty = true;
         Ok(true)
     }

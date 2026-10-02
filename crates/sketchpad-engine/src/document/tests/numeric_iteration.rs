@@ -418,7 +418,7 @@ fn point_parameter_iteration_creation_roundtrip_and_invalid_mapping() {
         reopened.point_parameter_iteration_labels(id).unwrap().len(),
         2
     );
-    doc.objects[id - 1].kind =
+    doc.objects.edit(id - 1).kind =
         Kind::PointParameterIteration(1, 4, 3, 5, 6, IterationDepth::Fixed(129));
     assert!(doc.can_save().is_err());
     let edited = Document::from_bytes(

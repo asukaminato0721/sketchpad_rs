@@ -52,11 +52,12 @@ impl Document {
         let position = self.position(id).ok_or("Selected point is undefined")?;
         let mut candidate = self.clone();
         candidate.checkpoint();
-        let object = &mut candidate.objects[id - 1];
+        let mut object = candidate.objects.edit(id - 1);
         object.kind = Kind::Free(position);
         object.midpoint_host = None;
         object.constraint_offset = None;
         object.point_offset = None;
+        drop(object);
         let encoded = candidate.encode()?;
         let reparsed = Self::from_bytes(&encoded, None)?;
         candidate.validate_reparsed(&reparsed)?;
@@ -94,14 +95,14 @@ impl Document {
         candidate.checkpoint();
         let mut ids: Vec<_> = (0..=candidate.objects.len()).collect();
         ids[source] = target;
-        for object in &mut candidate.objects {
+        for mut object in candidate.objects.iter_mut() {
             if object.deleted || object.id == source {
                 continue;
             }
             object.kind = object.kind.remap_checked(&ids)?;
             object.midpoint_host = object.midpoint_host.map(|host| ids[host]);
         }
-        candidate.objects[source - 1].deleted = true;
+        candidate.objects.edit(source - 1).deleted = true;
         candidate.merge_aliases.insert(source, target);
         candidate.selected.clear();
         candidate.selected.insert(target);
@@ -675,7 +676,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        for object in &mut candidate.objects {
+        for mut object in candidate.objects.iter_mut() {
             if removed.contains(&object.id) {
                 object.deleted = true;
             }
@@ -724,7 +725,7 @@ impl Document {
         }
         self.checkpoint();
         for id in ids {
-            self.objects[id - 1].visible = visible;
+            self.objects.edit(id - 1).visible = visible;
         }
         if !visible {
             self.selected.clear();
@@ -745,7 +746,7 @@ impl Document {
             return Ok(false);
         }
         self.checkpoint();
-        self.objects[id - 1].visible = visible;
+        self.objects.edit(id - 1).visible = visible;
         Ok(true)
     }
     pub fn set_object_arrow_selectable(
@@ -768,7 +769,7 @@ impl Document {
         }
         let mut candidate = self.clone();
         candidate.checkpoint();
-        candidate.objects[id - 1].arrow_selectable = arrow_selectable;
+        candidate.objects.edit(id - 1).arrow_selectable = arrow_selectable;
         let encoded = candidate.encode()?;
         let reparsed = Self::from_bytes(&encoded, None)?;
         candidate.validate_reparsed_document(&reparsed)?;
@@ -799,7 +800,7 @@ impl Document {
         if !ids.is_empty() {
             self.checkpoint();
             for id in &ids {
-                self.objects[*id - 1].tracing = tracing;
+                self.objects.edit(*id - 1).tracing = tracing;
             }
         }
         Ok(ids.len())
@@ -821,7 +822,7 @@ impl Document {
         }
         self.checkpoint();
         for id in ids {
-            self.objects[id - 1].visible = true;
+            self.objects.edit(id - 1).visible = true;
         }
     }
 }

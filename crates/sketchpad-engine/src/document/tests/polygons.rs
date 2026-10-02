@@ -448,12 +448,12 @@ fn native_polygon_order_is_signed_presentation_preserved_by_edits_and_copy() {
         assert_eq!(doc.encode().unwrap(), bytes);
     }
     let mut doc = Document::from_bytes(original, None).unwrap();
-    doc.objects[3].interior_order = Some(1);
-    doc.objects[5].interior_order = Some(0);
+    doc.objects.edit(3).interior_order = Some(1);
+    doc.objects.edit(5).interior_order = Some(0);
     doc.dirty = true;
     assert_eq!(doc.encode().unwrap(), swapped.as_slice());
-    doc.objects[3].interior_order = Some(0);
-    doc.objects[5].interior_order = Some(-1);
+    doc.objects.edit(3).interior_order = Some(0);
+    doc.objects.edit(5).interior_order = Some(-1);
     assert_eq!(doc.encode().unwrap(), negative.as_slice());
     doc.selected.insert(6);
     let clipboard = doc.copy_selected().unwrap();
@@ -532,25 +532,25 @@ fn polygon_vertex_count_rejects_unsupported_cyclic_and_cross_page_chains() {
         Some(3)
     );
     let valid = doc.objects.clone();
-    doc.objects[4].kind = Kind::VectorTranslatedPolygon(5, 1, 2);
+    doc.objects.edit(4).kind = Kind::VectorTranslatedPolygon(5, 1, 2);
     assert_eq!(
         super::super::kind::polygon_vertex_count(&doc.objects, translated),
         None
     );
     doc.objects = valid.clone();
-    doc.objects[3].page = 1;
+    doc.objects.edit(3).page = 1;
     assert_eq!(
         super::super::kind::polygon_vertex_count(&doc.objects, translated),
         None
     );
     doc.objects = valid.clone();
-    doc.objects[3].deleted = true;
+    doc.objects.edit(3).deleted = true;
     assert_eq!(
         super::super::kind::polygon_vertex_count(&doc.objects, translated),
         None
     );
     doc.objects = valid;
-    doc.objects[3].kind = Kind::Unsupported(8);
+    doc.objects.edit(3).kind = Kind::Unsupported(8);
     assert_eq!(
         super::super::kind::polygon_vertex_count(&doc.objects, translated),
         None
@@ -616,7 +616,7 @@ fn legacy_clock_polygon_and_disk_headers_keep_implicit_style_and_rank() {
     let reopened = Document::from_bytes(&edited, None).unwrap();
     assert_eq!(reopened.objects[4].interior_order, None);
     assert_eq!(reopened.polygon_points(5), doc.polygon_points(5));
-    doc.objects[4].interior_order = Some(0);
+    doc.objects.edit(4).interior_order = Some(0);
     assert!(doc.encode().is_err());
 }
 
@@ -701,7 +701,7 @@ fn supported_polygon_transform_families_accept_native_signed_drawing_orders() {
             .collect::<Vec<_>>();
         assert!(polygons.len() >= 2, "{path}");
         for (index, (id, _, _)) in polygons.iter().enumerate() {
-            doc.objects[*id - 1].interior_order = Some(if index == 0 { 7 } else { -3 });
+            doc.objects.edit(*id - 1).interior_order = Some(if index == 0 { 7 } else { -3 });
         }
         doc.dirty = true;
         let saved = doc.encode().unwrap();
