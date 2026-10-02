@@ -598,6 +598,26 @@ impl Document {
         if is_arc_kind(&object.kind) {
             return self.point_on_arc(id, label.geometric_parameter()?);
         }
+        if matches!(
+            object.kind,
+            Kind::FunctionPlot(..)
+                | Kind::ParameterLocus(..)
+                | Kind::SampledMapped(..)
+                | Kind::Locus(..)
+        ) {
+            return self.point_on_curve(id, label.geometric_parameter()?);
+        }
+        if object.kind.is_circle_interior() {
+            let parameter = label.geometric_parameter()?;
+            let (center, radius) = self.circle_interior_geometry(id)?;
+            return Some(Point {
+                x: center.x + radius * parameter.cos(),
+                y: center.y - radius * parameter.sin(),
+            });
+        }
+        if object.kind.is_sector() {
+            return self.point_on_sector(id, label.geometric_parameter()?);
+        }
         self.angle_marker_label_anchor(id)
     }
 

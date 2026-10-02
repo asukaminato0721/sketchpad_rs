@@ -2888,3 +2888,22 @@ on Ctrl+S. Existing multi-picture documents remain structurally read-only; the
 writer admits only new point attachments with verified affine form and bounded
 sequential resource IDs. No standalone test was added or removed. See
 [analysis](tool_prototype_structure_analysis.md).
+
+## Imported curve, region, and derived-object labels
+
+The remaining single-page structural restrictions were native `07d5`/`07d8`
+label pairs on already decoded objects, plus the third supported arc count in
+code-113 angle markers. Function plots, parameter loci, sampled mapped curves,
+colored/transformed disks and sectors, polar coordinate points, transformed
+points and segments now retain their displayed labels. Their anchors reuse the
+live curve, disk, and sector evaluators. Derivative labels feed the existing
+function-name presentation, while code-91 table labels remain owned by the
+strict table parser rather than becoming unrelated canvas labels.
+
+The full 1,599-file scan now has **285,703/285,703** decoded object slots, zero
+unsupported objects, zero failures, and **1,599/1,599** byte-exact round trips.
+Partial views fall **405→374**: exactly 251 multi-page documents and 123
+read-only image-resource documents remain guarded; the unrecognized-record
+category falls **31→0**. Embedded tools remain **5,356/5,356** decoded with
+96 complete and seven image-bearing isolated views. No standalone test case was
+added. Release scan: `/tmp/imported_labels_release_coverage.log`.

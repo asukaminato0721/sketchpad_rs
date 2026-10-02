@@ -540,6 +540,7 @@ impl Document {
                             | 28
                             | 29
                             | 30
+                            | 31
                             | 32
                             | 33
                             | 34
@@ -548,6 +549,7 @@ impl Document {
                             | 67
                             | 68
                             | 69
+                            | 70
                             | 88
                             | 93
                             | 98
@@ -568,6 +570,16 @@ impl Document {
             // presentations.
             let geometric_label =
                 arc_label || labeled_shape && matches!(h[6..8], [1, 0] | [2, 0] | [3, 0]);
+            let curve_label = matches!(code, 72 | 97 | 102)
+                && matches!(h[6..10], [6, 0, 42, 0] | [6, 0, 58, 0] | [6, 0, 90, 0]);
+            // Native exposes names on colored/transformed disks and sectors.
+            // Intrinsic polygon/region groups also contain naming metadata,
+            // but those records are not independently displayed labels.
+            let filled_region_label = (code == 75
+                || matches!(code, 16..=21 | 24 | 27..=30 | 32..=34))
+                && matches!(h[6..10], [5, 0, 16, 0] | [13, 0, 68, 0]);
+            let derivative_label = code == 78 && h[6..10] == [11, 0, 75, 0];
+            let table_internal_label = code == 91;
             let image_internal_label = matches!(code, 99 | 100) && h[6..10] == [16, 0, 78, 0];
             let internal_iteration_label = (matches!(code, 76 | 89) && h[6..10] == [14, 0, 64, 0])
                 || (code == 77 && h[6..10] == [15, 0, 65, 0]);
@@ -646,25 +658,37 @@ impl Document {
                             safe = false;
                         }
                     }
+                    0x07d5 if table_internal_label => {
+                        // TableGroup owns the caption semantics and validates
+                        // the complete record layout below.
+                        if LabelAux::parse(d).is_err() {
+                            safe = false;
+                        }
+                    }
                     0x07d5 if referenced_caption => match LabelAux::parse(d) {
                         Ok(value) => label = Some(value),
                         Err(_) => safe = false,
                     },
                     0x07d5
-                        if matches!(code, 0 | 15 | 92)
+                        if matches!(code, 0 | 15 | 78 | 92)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
                             || arc_label
+                            || curve_label
+                            || filled_region_label
+                            || derivative_label
                             || angle_marker_label
                             || numeric_label =>
                     {
                         match LabelAux::parse(d) {
                             Ok(value)
-                                if matches!(code, 0 | 15 | 92)
+                                if matches!(code, 0 | 15 | 78 | 92)
                                     || (code == 71 && h[6..10] == [11, 0, 57, 0])
                                     || numeric_label
                                     || angle_marker_label
-                                    || geometric_label =>
+                                    || geometric_label
+                                    || curve_label
+                                    || filled_region_label =>
                             {
                                 label = Some(value)
                             }
@@ -675,10 +699,12 @@ impl Document {
                     0x08fc if code == 0 => rich_text = Some(d.to_vec()),
                     0x0898 if code == 0 => text_box = Some(d.to_vec()),
                     0x07d8
-                        if matches!(code, 0 | 15 | 92)
+                        if matches!(code, 0 | 15 | 78 | 92)
                             || (code == 71 && h[6..10] == [11, 0, 57, 0])
                             || labeled_shape
                             || arc_label
+                            || curve_label
+                            || filled_region_label
                             || angle_marker_label
                             || locus_internal_label =>
                     {
@@ -686,6 +712,9 @@ impl Document {
                             && (u16::from_le_bytes([d[0], d[1]]) as usize) < text_style_count;
                         if (labeled_shape
                             || arc_label
+                            || curve_label
+                            || filled_region_label
+                            || derivative_label
                             || angle_marker_label
                             || locus_internal_label
                             || code == 15
@@ -887,6 +916,7 @@ impl Document {
                     && !(matches!(code, 0 | 71) && matches!(r.kind, 0x0907 | 0x08a3))
                     && !(code == 122 && matches!(r.kind, 0x0907 | 0x07d5 | 0x07d8))
                     && !(matches!(code, 48 | 78) && matches!(r.kind, 0x0907 | 0x07d8))
+                    && !(derivative_label && r.kind == 0x07d5)
                     && !(matches!(
                         code,
                         10 | 48
@@ -911,6 +941,7 @@ impl Document {
                         && r.kind == 0x232e
                         && d.is_empty())
                     && !(code == 91 && matches!(r.kind, 0x090d | 0x07d8))
+                    && !(table_internal_label && r.kind == 0x07d5)
                     && !(referenced_caption && matches!(r.kind, 0x07d5 | 0x08fc | 0x07d8))
                     && !(code == 92 && matches!(r.kind, 0x090d | 0x07d8))
                     && !(is_image && matches!(r.kind, 0x090c | 0x08a8 | 0x1f44))
@@ -923,12 +954,14 @@ impl Document {
                         && d.len() == 16)
                     && !(matches!(code, 72 | 126 | 127) && r.kind == 0x0902)
                     && !(matches!(code, 35 | 96 | 97 | 102) && r.kind == 0x0902)
+                    && !(curve_label && matches!(r.kind, 0x07d5 | 0x07d8))
+                    && !(filled_region_label && matches!(r.kind, 0x07d5 | 0x07d8))
                     && !(matches!(code, 76 | 89) && r.kind == 0x090a)
                     && !(angle_marker_label && r.kind == 0x232e && d.is_empty())
                     && !(angle_marker_label
                         && r.kind == 0x090e
                         && d.len() == 12
-                        && matches!(u16::from_le_bytes([d[0], d[1]]), 1 | 2)
+                        && matches!(u16::from_le_bytes([d[0], d[1]]), 1..=3)
                         && (code == 113 || d[0] == 1)
                         && matches!(u16::from_le_bytes([d[2], d[3]]), 0 | 1)
                         && d[4..] == [0, 0, 0, 0, 254, 254, 254, 0])
@@ -3090,6 +3123,7 @@ impl Document {
                 kind,
                 Kind::FunctionDefinition(_)
                     | Kind::ReferencedFunction(_, _)
+                    | Kind::DerivativeFunction(_, _)
                     | Kind::DataFunction { .. }
             ) {
                 label
@@ -3103,6 +3137,7 @@ impl Document {
                 kind,
                 Kind::FunctionDefinition(_)
                     | Kind::ReferencedFunction(_, _)
+                    | Kind::DerivativeFunction(_, _)
                     | Kind::DataFunction { .. }
                     | Kind::Parameter(_)
                     | Kind::LinkUrlButton { .. }
@@ -3115,6 +3150,12 @@ impl Document {
                 && !is_straight_kind(&kind)
                 && !kind.is_circle()
                 && !is_arc_kind(&kind)
+                && !matches!(
+                    kind,
+                    Kind::FunctionPlot(..) | Kind::ParameterLocus(..) | Kind::SampledMapped(..)
+                )
+                && !kind.is_circle_interior()
+                && !kind.is_sector()
                 && kind.numeric_unit().is_none()
                 && !matches!(
                     kind,

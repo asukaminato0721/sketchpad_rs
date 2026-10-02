@@ -1243,3 +1243,16 @@ documents/drawings rise 1,391/1,426→1,401/1,436, unsupported documents fall
 Native and port controls agree on the nested 3/9/18/30/45 pipe progression, and
 Native saves the 5,682-byte source unchanged. Rebuild the frontier from 1,822;
 35 directly ready code-89 roots remain, led by broader Locus outputs.
+
+The final single-page record-admission pass is presentation recovery rather
+than new geometry. Strict native label/style pairs now reach function plots,
+parameter loci, sampled mappings, colored/transformed disks and sectors,
+derived polar points and transformed points/segments. Derivative names and
+table-internal labels stay in their existing semantic owners. Code-113 also
+admits Native's observed third angle-mark arc. All 31 formerly unrecognized-
+record documents become complete, reducing partial views **405→374** and the
+unrecognized-record category **31→0**. The remaining guards are exactly 251
+multi-page files and 123 read-only image-resource files. All 285,703 object
+slots remain decoded and all 1,599 originals remain byte-exact. This completes
+corpus decoding and safe single-page record admission; it does not establish
+full command or interaction parity.
