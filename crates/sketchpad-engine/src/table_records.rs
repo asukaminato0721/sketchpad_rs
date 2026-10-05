@@ -1,6 +1,8 @@
 //! Bounded GSP4 support for numeric parameters and verified snapshot tables.
 //! Unknown layouts and values are refused before writing.
 
+mod calculation_tape;
+pub(crate) use calculation_tape::CalculationTape;
 const TEMPLATE_DOCUMENT: &[u8] =
     include_bytes!("../../../tests/fixtures/table_parameter_tabulated.gsp");
 const DEFAULT_PARAMETER: &[u8] =
@@ -1197,6 +1199,9 @@ struct ParameterProgram {
     expression: ParameterExpr,
     sources: Vec<u32>,
     source_kinds: Vec<CalculationSourceKind>,
+    tape: std::sync::OnceLock<Option<std::sync::Arc<CalculationTape>>>,
+    // Cache one unit signature only; other signatures still use exact inference.
+    units: std::sync::OnceLock<(Vec<NumericUnit>, Option<NumericUnit>)>,
 }
 impl PartialEq for ParameterCalculationGroup {
     fn eq(&self, other: &Self) -> bool {
@@ -1315,64 +1320,12 @@ impl ParameterExpr {
             Self::Literal(value, _) => *value,
             Self::Call(function, argument) => {
                 let value = argument.eval_raw_context(sources, units, radians, functions)?;
-                // Native calculator PI constant, present at executable offset 0x272690.
-                let angle = if radians {
-                    value
-                } else {
-                    value / 180. * CALCULATOR_PI
-                };
-                match function {
-                    0x2000 => angle.sin(),
-                    0x2001 => angle.cos(),
-                    0x2002 => angle.tan(),
-                    0x2003 => {
-                        if radians {
-                            value.asin()
-                        } else {
-                            value.asin() / CALCULATOR_PI * 180.
-                        }
-                    }
-                    0x2004 => {
-                        if radians {
-                            value.acos()
-                        } else {
-                            value.acos() / CALCULATOR_PI * 180.
-                        }
-                    }
-                    0x2005 => {
-                        if radians {
-                            value.atan()
-                        } else {
-                            value.atan() / CALCULATOR_PI * 180.
-                        }
-                    }
-                    0x2006 => value.abs(),
-                    0x2007 => value.sqrt(),
-                    0x2008 => value.ln(),
-                    0x2009 => value.log10(),
-                    0x200a => {
-                        if value == 0. {
-                            0.
-                        } else {
-                            value.signum()
-                        }
-                    }
-                    0x200b => (value + 0.5).floor(),
-                    0x200c => value.trunc(),
-                    _ => return None,
-                }
+                calculation_tape::call(*function, value, radians)?
             }
             Self::Binary(operator, left, right) => {
                 let left = left.eval_raw_context(sources, units, radians, functions)?;
                 let right = right.eval_raw_context(sources, units, radians, functions)?;
-                match operator {
-                    0x1000 => left + right,
-                    0x1001 => left - right,
-                    0x1002 => left * right,
-                    0x1003 => left / right,
-                    0x1004 => left.powf(right),
-                    _ => return None,
-                }
+                calculation_tape::binary(*operator, left, right)?
             }
         };
         Some(value)
@@ -2049,6 +2002,8 @@ impl ParameterCalculationGroup {
                 expression,
                 sources,
                 source_kinds,
+                tape: Default::default(),
+                units: Default::default(),
             }),
             inferred_unit: None,
         })
@@ -2129,6 +2084,34 @@ impl ParameterCalculationGroup {
         tree.source_kinds(&mut vec![None; count])?;
         Ok(tree)
     }
+    fn evaluated_unit(&self, units: &[NumericUnit]) -> Option<NumericUnit> {
+        let (signature, unit) = self
+            .program
+            .units
+            .get_or_init(|| (units.to_vec(), self.expression_tree().units(units).ok()));
+        if signature == units {
+            *unit
+        } else {
+            self.expression_tree().units(units).ok()
+        }
+    }
+    fn calculation_tape(&self) -> Option<&std::sync::Arc<CalculationTape>> {
+        self.program
+            .tape
+            .get_or_init(|| {
+                CalculationTape::compile(self.expression_tree()).map(std::sync::Arc::new)
+            })
+            .as_ref()
+    }
+    pub(crate) fn batch_program(
+        &self,
+        units: &[NumericUnit],
+    ) -> Option<std::sync::Arc<CalculationTape>> {
+        if units.len() != self.program.sources.len() || self.evaluated_unit(units)? != self.unit() {
+            return None;
+        }
+        self.calculation_tape().cloned()
+    }
     pub fn source_kinds(&self) -> Result<Vec<CalculationSourceKind>, String> {
         Ok(self.program.source_kinds.clone())
     }
@@ -2190,17 +2173,21 @@ impl ParameterCalculationGroup {
         radians: bool,
         functions: &dyn Fn(usize, f64, NumericUnit) -> Option<f64>,
     ) -> Option<f64> {
-        if values.len() != self.sources().len()
+        if values.len() != self.program.sources.len()
             || units.len() != values.len()
             || values.iter().any(|value| !value.is_finite())
         {
             return None;
         }
-        let tree = self.expression_tree();
-        if tree.units(units).ok()? != self.unit() {
+        if self.evaluated_unit(units)? != self.unit() {
             return None;
         }
-        tree.eval_raw_context(values, units, radians, functions)
+        if let Some(code) = self.calculation_tape() {
+            code.evaluate_values(values, radians)
+        } else {
+            self.expression_tree()
+                .eval_raw_context(values, units, radians, functions)
+        }
     }
     /// Caption evaluation retains an infinite result from finite inputs.
     /// Geometry and downstream numeric sources still use `value_for_sources`.

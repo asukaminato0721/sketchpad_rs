@@ -26,6 +26,7 @@ mod object_store;
 pub use evaluation_cache::EvaluationCache;
 pub use object_store::{ObjectEdit, ObjectStore};
 mod incremental_graph;
+mod point_program;
 mod sac_evaluation;
 mod sampling_plan;
 pub use evaluation_context::EvaluatedDocument;

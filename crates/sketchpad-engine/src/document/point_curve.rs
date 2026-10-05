@@ -65,6 +65,23 @@ impl<'a> PointCurve<'a> {
     }
 
     pub(super) fn sample_points_uncached(&mut self, intervals: usize) -> Vec<Option<Point>> {
+        if matches!(
+            self.source,
+            Source::Geometric { .. } | Source::Numeric { .. }
+        ) && let Some(points) = self
+            .original
+            .batch_locus_points_at_steps(self.owner, intervals)
+        {
+            return points
+                .into_iter()
+                .map(|point| point.filter(|p| p.x.is_finite() && p.y.is_finite()))
+                .collect();
+        }
+        if let Source::Mapped(evaluator) = &mut self.source
+            && let Some(points) = evaluator.batch_points(intervals)
+        {
+            return points;
+        }
         (0..=intervals)
             .map(|i| self.at(i as f64 / intervals as f64))
             .collect()

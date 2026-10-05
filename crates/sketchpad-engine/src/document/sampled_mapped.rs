@@ -330,6 +330,26 @@ impl SampledMappedEvaluator {
             _ => self.literal_fraction(fraction),
         }
     }
+    pub(super) fn batch_points(&mut self, intervals: usize) -> Option<Vec<Option<Point>>> {
+        let program =
+            super::point_program::PointProgram::get(&self.sample, &[self.seed], &[self.output])?;
+        let batch = program.bind(&self.sample)?;
+        let inputs: Vec<_> = (0..=intervals)
+            .map(|index| {
+                let fraction = self.literal_fraction(index as f64 / intervals as f64)?;
+                self.path.at(self.min + (self.max - self.min) * fraction)
+            })
+            .collect();
+        let mut outputs = batch.evaluate(std::slice::from_ref(&inputs)).remove(0);
+        for (output, input) in outputs.iter_mut().zip(inputs) {
+            if input.is_none() {
+                *output = None;
+            }
+            *output = output.filter(|p| p.x.is_finite() && p.y.is_finite());
+        }
+        Some(outputs)
+    }
+
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
         self.at_with_retention(fraction, false)
     }
@@ -442,9 +462,9 @@ impl Document {
             .clamp(2, 4096)
             .min(d.samples().saturating_sub(1) as usize);
         let mut curve = self.sampled_mapped_evaluator(id)?;
-        let slots = (0..=n)
-            .map(|i| curve.at(i as f64 / n as f64))
-            .collect::<Vec<_>>();
+        let slots = curve
+            .batch_points(n)
+            .unwrap_or_else(|| (0..=n).map(|i| curve.at(i as f64 / n as f64)).collect());
         Some(
             slots
                 .windows(2)

@@ -580,6 +580,201 @@ impl Document {
         Some(values)
     }
 
+    fn batch_locus_points(&self, id: usize, subdivisions: usize) -> Option<Vec<Option<Point>>> {
+        let steps = match self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(_, samples) if samples >= 2 => {
+                subdivisions.clamp(2, 1000).min(samples as usize)
+            }
+            Kind::ParameterLocus(_, _, _, samples) if samples >= 2 => {
+                subdivisions.clamp(2, 4096).min(samples as usize) - 1
+            }
+            _ => return None,
+        };
+        self.batch_locus_points_at_steps(id, steps)
+    }
+
+    pub(super) fn batch_locus_points_at_steps(
+        &self,
+        id: usize,
+        steps: usize,
+    ) -> Option<Vec<Option<Point>>> {
+        match &self.objects.get(id.checked_sub(1)?)?.kind {
+            Kind::Locus(refs, _) => Some(
+                self.batch_locus_outputs(id, steps, &[*refs.first()?])?
+                    .remove(0),
+            ),
+            Kind::ParameterLocus(refs, min, max, samples) => {
+                if steps == 0 || *samples < 2 || !min.is_finite() || !max.is_finite() || min >= max
+                {
+                    return None;
+                }
+                let (&target, &driver) = (refs.first()?, refs.get(1)?);
+                let profile = parameter_locus_driver_profile(&self.objects, driver)?;
+                let program = super::point_program::PointProgram::get(self, &[driver], &[target])?;
+                let mut sample = self.clone_for_evaluation();
+                sample.ensure_evaluation_context(self)?;
+                // Numeric sampling invalidates dependent overrides in the parent
+                // context before evaluating each lane. Do this once before bind.
+                match SamplingPlan::new(self, driver, refs, None) {
+                    Some(plan) => plan.number(&mut sample, 0.)?,
+                    None => sample.set_evaluation_number(driver, 0.)?,
+                }
+                let batch = program.bind(&sample)?;
+                let inputs: Vec<_> = (0..=steps)
+                    .map(|index| {
+                        let fraction = index as f64 / steps as f64;
+                        let value = (min + (max - min) * fraction) / profile.scale();
+                        value.is_finite().then_some(value)
+                    })
+                    .collect();
+                let mut outputs = batch
+                    .evaluate_numbers(std::slice::from_ref(&inputs))
+                    .remove(0);
+                for (output, input) in outputs.iter_mut().zip(inputs) {
+                    if input.is_none() {
+                        *output = None;
+                    }
+                }
+                Some(outputs)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate multiple point roots together so endpoints share their ancestors.
+    fn batch_locus_outputs(
+        &self,
+        id: usize,
+        steps: usize,
+        roots: &[usize],
+    ) -> Option<Vec<Vec<Option<Point>>>> {
+        let Kind::Locus(ref refs, _) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let (&path, &driver) = (refs.get(1)?, refs.get(2)?);
+        let [minimum, maximum] = self.locus_sampling_interval(id)?;
+        let program = super::point_program::PointProgram::get(self, &[driver], roots)?;
+        let plan = SamplingPlan::new(self, driver, refs, Some(path))?;
+        let mut sample = self.clone_for_evaluation();
+        sample.freeze_scoped_evaluation_inputs(self, &plan.external)?;
+        let batch = program.bind(&sample)?;
+        let moving = self.objects.get(driver - 1)?;
+        let transient_driver = !locus_driver_uses_stored_path(&self.objects, driver, path);
+        let mut nested_curve = (matches!(moving.kind, Kind::PointOnCurve(host, _) if host == path)
+            || transient_driver
+                && super::curve_points::free_supported(&self.objects, path, moving.page, driver))
+        .then(|| super::point_curve::PointCurve::new(self, path))
+        .flatten();
+        // The host geometry is fixed within this batch. Straight and circle
+        // drivers can produce all coordinates without constructing sample scopes.
+        // Substituting a later host into an earlier driver can invalidate native
+        // transform references. Keep the original scoped validation in that case.
+        if nested_curve.is_none() && path >= driver {
+            return None;
+        }
+        enum Driver {
+            Straight(Point, Point),
+            Circle(Point, f64),
+            Undefined,
+        }
+        let direct = match self.locus_driver_kind_at(driver, path, minimum) {
+            Some(
+                Kind::PointOnSegment(host, _)
+                | Kind::PointOnLine(host, _)
+                | Kind::PointOnRay(host, _),
+            ) => Some(
+                sample
+                    .point_constraint_line_points(host)
+                    .map_or(Driver::Undefined, |(a, b, _)| Driver::Straight(a, b)),
+            ),
+            Some(Kind::PointOnCircle(host, ..)) => Some(
+                sample
+                    .circle_points(host)
+                    .map_or(Driver::Undefined, |(c, r)| Driver::Circle(c, r)),
+            ),
+            _ => None,
+        };
+        let inputs: Vec<_> = (0..=steps)
+            .map(|step| {
+                let parameter = minimum + (maximum - minimum) * (step as f64 / steps as f64);
+                if let Some(curve) = &mut nested_curve {
+                    return curve.at_literal(parameter);
+                }
+                if let Some(direct) = &direct {
+                    return match *direct {
+                        Driver::Straight(a, b) => Some(Point {
+                            x: a.x + (b.x - a.x) * parameter,
+                            y: a.y + (b.y - a.y) * parameter,
+                        }),
+                        Driver::Circle(c, r) => Some(Point {
+                            x: c.x + r * parameter.cos(),
+                            y: c.y - r * parameter.sin(),
+                        }),
+                        Driver::Undefined => None,
+                    };
+                }
+                let kind = self.locus_driver_kind_at(driver, path, parameter)?;
+                self.with_sac_scope(
+                    &mut sample,
+                    super::sac_evaluation::Scope::Sample {
+                        owner: id,
+                        index: step,
+                        count: steps + 1,
+                    },
+                    |sample| {
+                        plan.kind(sample, kind)?;
+                        sample.position(driver)
+                    },
+                )
+            })
+            .collect();
+        // A non-curve driver with undefined coordinates does not necessarily
+        // invalidate an independent output. Let the scoped evaluator decide.
+        if nested_curve.is_none() && inputs.iter().any(Option::is_none) {
+            return None;
+        }
+        let mut outputs = batch.evaluate(std::slice::from_ref(&inputs));
+        for values in &mut outputs {
+            for (value, input) in values.iter_mut().zip(&inputs) {
+                if input.is_none() {
+                    *value = None;
+                }
+            }
+        }
+        Some(outputs)
+    }
+
+    fn batch_locus_straights(
+        &self,
+        id: usize,
+        subdivisions: usize,
+    ) -> Option<Vec<(Point, Point, LineMode)>> {
+        let Kind::Locus(ref refs, samples) = self.objects.get(id.checked_sub(1)?)?.kind else {
+            return None;
+        };
+        let target = *refs.first()?;
+        let object = self.objects.get(target.checked_sub(1)?)?;
+        if samples < 2 || object.deleted || self.evaluation_straight(target).is_some() {
+            return None;
+        }
+        let (a, b, mode) = match object.kind {
+            Kind::Segment(a, b) => (a, b, LineMode::Segment),
+            Kind::Ray(a, b) => (a, b, LineMode::Ray),
+            Kind::Line(a, b) => (a, b, LineMode::Line),
+            _ => return None,
+        };
+        let steps = subdivisions.clamp(2, 1000).min(samples as usize);
+        let mut outputs = self.batch_locus_outputs(id, steps, &[a, b])?.into_iter();
+        Some(
+            outputs
+                .next()?
+                .into_iter()
+                .zip(outputs.next()?)
+                .filter_map(|(a, b)| Some((a?, b?, mode)))
+                .collect(),
+        )
+    }
+
     fn sample_any_locus<T>(
         &self,
         id: usize,
@@ -821,15 +1016,25 @@ impl Document {
             } else {
                 color
             };
-            let samples = self.sample_any_locus(id, subdivisions, |sample, target| {
-                let point = sample.position(target)?;
-                let color = if sampled_color {
-                    sample.colorized_color(target)?
-                } else {
-                    color
-                };
-                Some((point, color))
-            })?;
+            let batch = (!sampled_color)
+                .then(|| self.batch_locus_points(id, subdivisions))
+                .flatten();
+            let samples = if let Some(points) = batch {
+                points
+                    .into_iter()
+                    .map(|point| point.map(|point| (point, color)))
+                    .collect()
+            } else {
+                self.sample_any_locus(id, subdivisions, |sample, target| {
+                    let point = sample.position(target)?;
+                    let color = if sampled_color {
+                        sample.colorized_color(target)?
+                    } else {
+                        color
+                    };
+                    Some((point, color))
+                })?
+            };
             return Some(
                 samples
                     .windows(2)
@@ -858,6 +1063,19 @@ impl Document {
             self.objects.get(target.checked_sub(1)?)?.kind,
             Kind::Colorized(_)
         );
+        if let Some(strokes) = self.batch_locus_straights(id, subdivisions) {
+            return Some(
+                strokes
+                    .into_iter()
+                    .map(|(start, end, mode)| LocusStroke {
+                        start,
+                        end,
+                        mode,
+                        style,
+                    })
+                    .collect(),
+            );
+        }
         Some(
             self.sample_any_locus(id, subdivisions, |sample, target| {
                 let color = if sampled_color {
@@ -940,6 +1158,9 @@ impl Document {
             );
         }
         if is_locus_straight_kind(target_kind) {
+            if let Some(strokes) = self.batch_locus_straights(id, subdivisions) {
+                return Some(strokes);
+            }
             return Some(
                 self.sample_any_locus(id, subdivisions, |sample, target| {
                     sample.line_points(target)
@@ -982,8 +1203,9 @@ impl Document {
         if !is_point_kind(target_kind) {
             return None;
         }
-        let points =
-            self.sample_any_locus(id, subdivisions, |sample, target| sample.position(target))?;
+        let points = self.batch_locus_points(id, subdivisions).or_else(|| {
+            self.sample_any_locus(id, subdivisions, |sample, target| sample.position(target))
+        })?;
         Some(
             points
                 .windows(2)
@@ -1165,5 +1387,126 @@ impl Document {
                 .map(|(start, end, _)| (start, end))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    #[test]
+    fn parameter_samples_preserve_counts_gaps_units_and_parent_overrides() {
+        use crate::table_records::{NumericUnit, ParameterCalculationGroup, ParameterGroup};
+        let mut doc = Document::new();
+        let driver = doc.add(Kind::Parameter(ParameterGroup::named("n", 0.5).unwrap()));
+        let group =
+            ParameterCalculationGroup::from_expression(driver as u32, "n", "sqrt(n)", (0, 0))
+                .unwrap();
+        let value = doc.add(Kind::ParameterCalculation(driver, group));
+        let group = ParameterCalculationGroup::from_expression_with_source_unit(
+            value as u32,
+            "n",
+            "n*1 cm",
+            (0, 0),
+            NumericUnit::Scalar,
+        )
+        .unwrap();
+        let length = doc.add(Kind::ParameterCalculation(value, group));
+        let source = doc.add(Kind::Free(Point { x: -1.7, y: 2.3 }));
+        let target = doc.add(Kind::RectangularMarkedTranslatedPoint(
+            source, length, length,
+        ));
+        let polar = doc.add(Kind::MarkedDistanceTranslatedPoint(source, length, -37.));
+        for target in [target, polar] {
+            let refs = vec![target, driver, value, length, target];
+            let locus = doc.add(Kind::ParameterLocus(refs, -1., 2., 130));
+            let baseline = doc.clone_for_evaluation();
+            doc.ensure_evaluation_context(&baseline).unwrap();
+            doc.set_evaluation_number(value, 123.).unwrap();
+            for count in [2, 63, 64, 65, 130, 1000] {
+                let actual = doc.batch_locus_points(locus, count).unwrap();
+                let expected = doc
+                    .sample_any_locus(locus, count, |sample, id| sample.position(id))
+                    .unwrap();
+                let bits = |points: Vec<Option<Point>>| {
+                    points
+                        .into_iter()
+                        .map(|p| p.map(|p| (p.x.to_bits(), p.y.to_bits())))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(bits(actual), bits(expected));
+                let mut curve = super::super::point_curve::PointCurve::new(&doc, locus).unwrap();
+                let batch = curve.sample_points_uncached(count);
+                let expected = (0..=count)
+                    .map(|index| curve.at(index as f64 / count as f64))
+                    .collect();
+                assert_eq!(bits(batch), bits(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn transient_forward_host_keeps_recursive_transform_validation() {
+        let mut doc = Document::new();
+        let driver = doc.add(Kind::Free(Point { x: 9., y: -3. }));
+        let a = doc.add(Kind::Free(Point { x: 0., y: 1. }));
+        let b = doc.add(Kind::Free(Point { x: 13., y: -5. }));
+        let path = doc.add(Kind::Segment(a, b));
+        let target = doc.add(Kind::RotatedPoint(driver, a, 37.));
+        let locus = doc.add(Kind::Locus(vec![target, path, driver, target], 500));
+        assert!(doc.batch_locus_points(locus, 65).is_none());
+        assert!(doc.locus_strokes(locus, 65).unwrap().is_empty());
+    }
+
+    #[test]
+    fn batched_endpoints_match_recursive_samples_across_tiles_and_edits() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: -0., y: 1.3 }));
+        let b = doc.add(Kind::Free(Point { x: 13.7, y: -5.9 }));
+        let path = doc.add(Kind::Segment(a, b));
+        let driver = doc.add(Kind::Free(Point { x: 9., y: -3. }));
+        let middle = doc.add(Kind::Midpoint(driver, b));
+        let rotated = doc.add(Kind::RotatedPoint(middle, a, 37.));
+        let target = doc.add(Kind::Segment(middle, rotated));
+        let locus = doc.add(Kind::Locus(
+            vec![target, path, driver, middle, rotated, target],
+            500,
+        ));
+        let bits = |strokes: Vec<(Point, Point, LineMode)>| {
+            strokes
+                .into_iter()
+                .map(|(a, b, mode)| {
+                    (
+                        a.x.to_bits(),
+                        a.y.to_bits(),
+                        b.x.to_bits(),
+                        b.y.to_bits(),
+                        mode,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for kind in [Kind::Segment(a, b), Kind::Line(a, b), Kind::Ray(a, b)] {
+            doc.objects.edit(path - 1).kind = kind;
+            for x in [13.7, -91.2] {
+                doc.objects.edit(b - 1).kind = Kind::Free(Point { x, y: -5.9 });
+                let evaluated = doc.evaluated();
+                for steps in [2, 63, 64, 65, 129] {
+                    let batch = evaluated.batch_locus_straights(locus, steps).unwrap();
+                    let recursive = evaluated
+                        .sample_locus(locus, steps, |sample, target| sample.line_points(target))
+                        .unwrap()
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                    assert_eq!(bits(batch), bits(recursive));
+                }
+            }
+        }
+        doc.objects.edit(a - 1).deleted = true;
+        assert!(
+            doc.locus_strokes(locus, 129)
+                .is_none_or(|strokes| strokes.is_empty())
+        );
     }
 }

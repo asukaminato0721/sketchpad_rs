@@ -19,6 +19,7 @@ struct PlanKey {
 /// retained, never sample documents or values. Bound memory across graph edits.
 #[derive(Clone, Debug)]
 pub(super) struct SamplingPlans {
+    pub(super) points: super::point_program::PointPrograms,
     schedules: Arc<Mutex<LruCache<PlanKey, Arc<SamplingPlan>>>>,
     mapped_inputs: Arc<Mutex<LruCache<MappedInputsKey, MappedInputs>>>,
 }
@@ -39,6 +40,7 @@ struct MappedInputs {
 impl Default for SamplingPlans {
     fn default() -> Self {
         Self {
+            points: Default::default(),
             schedules: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(128).unwrap()))),
             mapped_inputs: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))),
         }

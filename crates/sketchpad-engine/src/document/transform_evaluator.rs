@@ -65,37 +65,7 @@ impl Document {
             .kind
             .transform_definition()
             .ok_or(Error::NotTransform)?;
-        fn validate(
-            document: &Document,
-            id: usize,
-            page: usize,
-            visiting: &mut BTreeSet<usize>,
-            completed: &mut BTreeSet<usize>,
-        ) -> Result<(), Error> {
-            let o = id
-                .checked_sub(1)
-                .and_then(|i| document.objects.get(i))
-                .filter(|o| !o.deleted && o.page == page && !matches!(o.kind, Kind::Unsupported(_)))
-                .ok_or(Error::InvalidReference(id))?;
-            if completed.contains(&id) {
-                return Ok(());
-            }
-            if !visiting.insert(id) {
-                return Err(Error::InvalidReference(id));
-            }
-            for parent in o.kind.dependencies() {
-                if parent == 0 || parent >= id {
-                    return Err(Error::InvalidReference(parent));
-                }
-                validate(document, parent, page, visiting, completed)?;
-            }
-            visiting.remove(&id);
-            completed.insert(id);
-            Ok(())
-        }
-        self.with_validated_dependencies(|completed| {
-            validate(self, id, object.page, &mut BTreeSet::new(), completed)
-        })?;
+        self.validate_transform_dependencies(id)?;
         let source = definition.source();
         let kind = &self.objects[source - 1].kind;
         // Resolve source geometry first: finite target inputs cannot restore an
@@ -263,6 +233,44 @@ impl Document {
             }
         }
         Ok((geometry, matrix))
+    }
+
+    pub(super) fn validate_transform_dependencies(&self, id: usize) -> Result<(), Error> {
+        let object = self
+            .objects
+            .get(id.checked_sub(1).ok_or(Error::InvalidReference(id))?)
+            .ok_or(Error::InvalidReference(id))?;
+        fn validate(
+            document: &Document,
+            id: usize,
+            page: usize,
+            visiting: &mut BTreeSet<usize>,
+            completed: &mut BTreeSet<usize>,
+        ) -> Result<(), Error> {
+            let o = id
+                .checked_sub(1)
+                .and_then(|i| document.objects.get(i))
+                .filter(|o| !o.deleted && o.page == page && !matches!(o.kind, Kind::Unsupported(_)))
+                .ok_or(Error::InvalidReference(id))?;
+            if completed.contains(&id) {
+                return Ok(());
+            }
+            if !visiting.insert(id) {
+                return Err(Error::InvalidReference(id));
+            }
+            for parent in o.kind.dependencies() {
+                if parent == 0 || parent >= id {
+                    return Err(Error::InvalidReference(parent));
+                }
+                validate(document, parent, page, visiting, completed)?;
+            }
+            visiting.remove(&id);
+            completed.insert(id);
+            Ok(())
+        }
+        self.with_validated_dependencies(|completed| {
+            validate(self, id, object.page, &mut BTreeSet::new(), completed)
+        })
     }
 
     /// Evaluate one live affine operation independently of its source geometry.
