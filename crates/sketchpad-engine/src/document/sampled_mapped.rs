@@ -331,14 +331,24 @@ impl SampledMappedEvaluator {
         }
     }
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
+        self.at_with_retention(fraction, false)
+    }
+    pub(super) fn at_with_retention(&mut self, fraction: f64, retain: bool) -> Option<Point> {
         let fraction = self.literal_fraction(fraction)?;
         let value = self.min + (self.max - self.min) * fraction;
         let replacement = self.path.at(value)?;
         self.parent.with_sac_scope(
             &mut self.sample,
-            super::sac_evaluation::Scope::MappedSample {
-                owner: self.owner,
-                fraction: fraction.to_bits(),
+            if retain {
+                super::sac_evaluation::Scope::CurveRefinement {
+                    owner: self.owner,
+                    fraction: fraction.to_bits(),
+                }
+            } else {
+                super::sac_evaluation::Scope::MappedSample {
+                    owner: self.owner,
+                    fraction: fraction.to_bits(),
+                }
             },
             |sample| {
                 sample.set_evaluation_point(self.seed, replacement)?;

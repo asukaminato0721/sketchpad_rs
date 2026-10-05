@@ -96,15 +96,12 @@ pub(super) struct EvaluationContext {
     pub(super) original: Shared<Document>,
 }
 
-#[derive(Debug, Default)]
-struct ValidatedDependencies(
-    std::sync::Mutex<(Option<super::sac_evaluation::Identity>, BTreeSet<usize>)>,
-);
-impl Clone for ValidatedDependencies {
-    fn clone(&self) -> Self {
-        Self(std::sync::Mutex::new(self.0.lock().unwrap().clone()))
-    }
-}
+// Validation contains only structural facts. Sharing the revision-checked set
+// avoids copying it for each sample; old views and parallel readers still check
+// their own identity while holding the same lock.
+type ValidationState = (Option<super::sac_evaluation::Identity>, BTreeSet<usize>);
+#[derive(Clone, Debug, Default)]
+struct ValidatedDependencies(Shared<std::sync::Mutex<ValidationState>>);
 #[derive(Debug, Default)]
 struct FontCache(std::sync::Mutex<BTreeMap<usize, Option<super::FontState>>>);
 impl Clone for FontCache {
@@ -720,6 +717,20 @@ mod tests {
         view.objects.edit(c - 1).kind = Kind::Free(Point { x: 4., y: 0. });
         assert!(view.arc_geometry(arc).is_none());
         assert!(old.arc_geometry(arc).is_some());
+
+        // The structural cache is shared, but each concurrent view must use
+        // its own revision. A negative result in one must not poison another.
+        view.objects.edit(a - 1).deleted = true;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..100 {
+                    assert!(old.plot_arc_host_available(arc));
+                }
+            });
+            for _ in 0..100 {
+                assert!(!view.plot_arc_host_available(arc));
+            }
+        });
     }
 
     #[test]

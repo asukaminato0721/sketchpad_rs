@@ -45,9 +45,16 @@ pub(super) struct PointCurve<'a> {
     original: &'a Document,
     owner: usize,
     source: Source,
+    retain_refinement: bool,
     pub(super) intervals: usize,
 }
 impl<'a> PointCurve<'a> {
+    /// Bisection revisits fractions across nearby intersections. Preserve the
+    /// fine-grained traces for these queries, unlike a sequential point batch.
+    pub(super) fn for_refinement(mut self) -> Self {
+        self.retain_refinement = true;
+        self
+    }
     pub(super) fn sample_points(&mut self) -> Option<Vec<Option<Point>>> {
         self.original.cached_geometry(
             self.owner,
@@ -184,6 +191,7 @@ impl<'a> PointCurve<'a> {
             original: doc,
             owner: id,
             source,
+            retain_refinement: false,
             intervals: intervals.clamp(64, 4096),
         })
     }
@@ -286,8 +294,21 @@ impl<'a> PointCurve<'a> {
         self.at(fraction)
     }
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
+        let scope = if self.retain_refinement {
+            super::sac_evaluation::Scope::CurveRefinement {
+                owner: self.owner,
+                fraction: fraction.to_bits(),
+            }
+        } else {
+            super::sac_evaluation::Scope::MappedSample {
+                owner: self.owner,
+                fraction: fraction.to_bits(),
+            }
+        };
         let point = match &mut self.source {
-            Source::Mapped(evaluator) => evaluator.at(fraction)?,
+            Source::Mapped(evaluator) => {
+                evaluator.at_with_retention(fraction, self.retain_refinement)?
+            }
             Source::Function {
                 definition,
                 frame,
@@ -335,20 +356,13 @@ impl<'a> PointCurve<'a> {
                 scale,
             } => {
                 let value = (*min + (*max - *min) * fraction) / *scale;
-                self.original.with_sac_scope(
-                    sample,
-                    super::sac_evaluation::Scope::MappedSample {
-                        owner: self.owner,
-                        fraction: fraction.to_bits(),
-                    },
-                    |sample| {
-                        match plan {
-                            Some(plan) => plan.number(sample, value)?,
-                            None => sample.set_evaluation_number(*driver, value)?,
-                        }
-                        sample.position(*target)
-                    },
-                )?
+                self.original.with_sac_scope(sample, scope, |sample| {
+                    match plan {
+                        Some(plan) => plan.number(sample, value)?,
+                        None => sample.set_evaluation_number(*driver, value)?,
+                    }
+                    sample.position(*target)
+                })?
             }
             Source::Geometric {
                 sample,
@@ -364,20 +378,13 @@ impl<'a> PointCurve<'a> {
                 let kind = self
                     .original
                     .locus_driver_kind_at(*driver, *path, parameter)?;
-                self.original.with_sac_scope(
-                    sample,
-                    super::sac_evaluation::Scope::MappedSample {
-                        owner: self.owner,
-                        fraction: fraction.to_bits(),
-                    },
-                    |sample| {
-                        match plan {
-                            Some(plan) => plan.kind(sample, kind)?,
-                            None => sample.objects.substitute_kind(*driver - 1, kind)?,
-                        }
-                        sample.position(*target)
-                    },
-                )?
+                self.original.with_sac_scope(sample, scope, |sample| {
+                    match plan {
+                        Some(plan) => plan.kind(sample, kind)?,
+                        None => sample.objects.substitute_kind(*driver - 1, kind)?,
+                    }
+                    sample.position(*target)
+                })?
             }
         };
         (point.x.is_finite() && point.y.is_finite()).then_some(point)

@@ -200,6 +200,10 @@ pub(super) enum Scope {
         owner: usize,
         fraction: u64,
     },
+    CurveRefinement {
+        owner: usize,
+        fraction: u64,
+    },
     ImageSample {
         owner: usize,
         column: usize,
@@ -280,6 +284,9 @@ impl Evaluation {
     }
 
     pub(super) fn child(&self, name: Scope, fallback: Graph) -> Self {
+        // Sequential samples discard their arithmetic after each result.
+        // Root finding revisits fractions, so retain its intermediate traces.
+        let transient = !matches!(name, Scope::CurveRefinement { .. });
         let coalesce = matches!(name, Scope::Iteration { .. } | Scope::Mapping(_));
         let mut path = (*self.path).clone();
         path.push(name);
@@ -289,7 +296,9 @@ impl Evaluation {
             match scope {
                 Scope::Sample { index, .. } => *index = 0,
                 Scope::Iteration { step, .. } => *step = 0,
-                Scope::MappedSample { fraction, .. } => *fraction = 0,
+                Scope::MappedSample { fraction, .. } | Scope::CurveRefinement { fraction, .. } => {
+                    *fraction = 0
+                }
                 Scope::ImageSample { column, row, .. } => {
                     *column = 0;
                     *row = 0;
@@ -328,7 +337,7 @@ impl Evaluation {
             graph,
             path,
             scopes: self.scopes.clone(),
-            transient: coalesce,
+            transient,
         }
     }
     pub(super) fn publish(&self) {
@@ -726,10 +735,14 @@ impl Document {
             key.undefined()
         });
 
-        // Memo hits in child scopes must also expose their underlying reads.
-        let foreign =
-            READS.with_borrow(|frames| frames.last().is_some_and(|frame| frame.scope != scope.id));
-        if foreign {
+        // A transient caller has no retained graph edge, even when it shares
+        // this scope. Both cold queries and memo hits must expose their reads.
+        let forward = READS.with_borrow(|frames| {
+            frames
+                .last()
+                .is_some_and(|frame| frame.scope != scope.id || frame.transient)
+        });
+        if forward {
             READS.with_borrow_mut(|frames| {
                 if let Some(frame) = frames.last_mut()
                     && !scope.graph.visit_input_footprint(&key, |input| {
@@ -748,6 +761,71 @@ impl Document {
 mod tests {
     use super::*;
     use crate::document::{EvaluationCache, Kind};
+
+    #[test]
+    fn transient_callers_track_retained_geometry_on_misses_and_hits_in_the_same_scope() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let fixed = doc.add(Kind::Free(Point { x: 8., y: 2. }));
+        let middle = doc.add(Kind::Midpoint(seed, fixed));
+        let iteration = doc.add(Kind::MappedPointIteration {
+            seeds: vec![seed],
+            branches: vec![vec![middle]],
+            carried: vec![middle],
+            depth: crate::document::IterationDepth::Fixed(2),
+            final_only: false,
+        });
+        let binding = doc.add(Kind::IterationBinding(middle, iteration));
+        let parent = doc.evaluated();
+        let mut sample = parent.clone_for_evaluation();
+        parent.with_sac_scope(
+            &mut sample,
+            Scope::Sample {
+                owner: binding,
+                index: 0,
+                count: 2,
+            },
+            |sample| {
+                let mut previous = None;
+                for x in [8., 12.] {
+                    sample.objects.edit(fixed - 1).kind = Kind::Free(Point { x, y: 2. });
+                    for _ in 0..2 {
+                        let _recording = Recording::transient(sample.sac_evaluation().unwrap().id);
+                        let points = sample.point_iteration_images(binding).unwrap();
+                        assert_eq!(
+                            points,
+                            vec![
+                                Point {
+                                    x: x * 0.75,
+                                    y: 1.5
+                                },
+                                Point {
+                                    x: x * 0.875,
+                                    y: 1.75
+                                }
+                            ]
+                        );
+                        if x == 12. {
+                            assert_ne!(Some(&points), previous.as_ref());
+                        }
+                        READS.with_borrow(|frames| {
+                            assert!(
+                                frames
+                                    .last()
+                                    .unwrap()
+                                    .inputs
+                                    .values
+                                    .contains(&Input::Object(fixed - 1))
+                            );
+                        });
+                        if x == 8. {
+                            previous = Some(points);
+                        }
+                    }
+                }
+            },
+        );
+    }
 
     #[test]
     fn transient_kernels_forward_reads_and_do_not_reuse_changed_seeds() {
@@ -1067,13 +1145,13 @@ mod tests {
         let output = doc.add(Kind::Midpoint(a, b));
         let view = doc.evaluated();
         let mut sample = view.clone_for_evaluation();
+        // Refinement revisits parameters and retains its arithmetic traces.
         for (index, x, executed) in [(0, 2., 3), (1, 4., 2), (0, 2., 0), (0, 6., 2)] {
             view.with_sac_scope(
                 &mut sample,
-                Scope::Sample {
+                Scope::CurveRefinement {
                     owner: output,
-                    index,
-                    count: 2,
+                    fraction: index as u64,
                 },
                 |sample| {
                     sample.set_evaluation_point(a, Point { x, y: 0. }).unwrap();
@@ -1087,6 +1165,17 @@ mod tests {
                     );
                     let after = sample.sac_evaluation().unwrap().graph.statistics().executed;
                     assert_eq!(after - before, executed, "sample {index}, seed {x}");
+                    assert_eq!(
+                        sample.position(output),
+                        Some(Point {
+                            x: (x + 10.) / 2.,
+                            y: 5.
+                        })
+                    );
+                    assert_eq!(
+                        sample.sac_evaluation().unwrap().graph.statistics().executed,
+                        after
+                    );
                 },
             );
         }

@@ -356,7 +356,7 @@ impl Document {
             return self.function_plot_intersections(carrier, curve);
         }
         let carrier = Carrier::new(self, carrier)?;
-        let mut curve = PointCurve::new(self, curve)?;
+        let mut curve = PointCurve::new(self, curve)?.for_refinement();
         let mut hits = Vec::<(f64, Point)>::new();
         let curve_order = matches!(carrier, Carrier::Round { arc: None, .. });
         let include_max = curve.includes_maximum();
