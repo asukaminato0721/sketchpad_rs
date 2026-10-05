@@ -253,6 +253,7 @@ pub(super) struct SampledMappedEvaluator {
     output: usize,
     min: f64,
     max: f64,
+    refinement: Option<super::point_program::PointEvaluator>,
 }
 impl SampledMappedEvaluator {
     pub(super) fn new(doc: &Document, owner: usize, d: &SampledMappedDefinition) -> Option<Self> {
@@ -299,6 +300,7 @@ impl SampledMappedEvaluator {
             output: d.output,
             min: d.minimum(),
             max: d.maximum(),
+            refinement: None,
         })
     }
     /// Native literal child parameters extend straight and polygon paths, wrap circles,
@@ -350,6 +352,13 @@ impl SampledMappedEvaluator {
         Some(outputs)
     }
 
+    pub(super) fn prepare_refinement(&mut self) {
+        self.refinement =
+            super::point_program::PointProgram::get(&self.sample, &[self.seed], &[self.output])
+                .and_then(|program| program.bind(&self.sample))
+                .map(|batch| batch.into_evaluator());
+    }
+
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
         self.at_with_retention(fraction, false)
     }
@@ -357,6 +366,11 @@ impl SampledMappedEvaluator {
         let fraction = self.literal_fraction(fraction)?;
         let value = self.min + (self.max - self.min) * fraction;
         let replacement = self.path.at(value)?;
+        if retain && let Some(evaluator) = &mut self.refinement {
+            return evaluator
+                .point(Some(replacement))
+                .filter(|p| p.x.is_finite() && p.y.is_finite());
+        }
         self.parent.with_sac_scope(
             &mut self.sample,
             if retain {

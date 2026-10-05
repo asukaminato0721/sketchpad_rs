@@ -46,15 +46,65 @@ pub(super) struct PointCurve<'a> {
     owner: usize,
     source: Source,
     retain_refinement: bool,
+    refinement_prepared: bool,
+    refinement: Option<super::point_program::PointEvaluator>,
     pub(super) intervals: usize,
 }
 impl<'a> PointCurve<'a> {
-    /// Bisection revisits fractions across nearby intersections. Preserve the
-    /// fine-grained traces for these queries, unlike a sequential point batch.
+    /// Reuse a bound evaluator during bisection. Unsupported curves retain
+    /// their fine-grained traces across nearby intersections.
     pub(super) fn for_refinement(mut self) -> Self {
         self.retain_refinement = true;
         self
     }
+    fn prepare_refinement(&mut self) -> Option<super::point_program::PointEvaluator> {
+        use super::point_program::PointProgram;
+        let (sample, driver, target) = match &mut self.source {
+            Source::Numeric {
+                sample,
+                plan,
+                driver,
+                target,
+                ..
+            } => {
+                match plan {
+                    Some(plan) => plan.number(sample, 0.)?,
+                    None => sample.set_evaluation_number(*driver, 0.)?,
+                }
+                (sample, *driver, *target)
+            }
+            Source::Geometric {
+                sample,
+                plan: Some(plan),
+                driver,
+                path,
+                target,
+                kind,
+                ..
+            } if *path < *driver
+                // Nested curve drivers benefit from retained intermediate
+                // traces; rebinding their dependencies can cost more than replay.
+                && !matches!(kind, Kind::PointOnCurve(..))
+                && super::locus::locus_driver_uses_stored_path(
+                    &self.original.objects,
+                    *driver,
+                    *path,
+                ) =>
+            {
+                plan.kind(sample, kind.clone())?;
+                (sample, *driver, *target)
+            }
+            Source::Mapped(evaluator) => {
+                evaluator.prepare_refinement();
+                return None;
+            }
+            _ => return None,
+        };
+        PointProgram::get(sample, &[driver], &[target])?
+            .bind(sample)
+            .map(|batch| batch.into_evaluator())
+    }
+
     pub(super) fn sample_points(&mut self) -> Option<Vec<Option<Point>>> {
         self.original.cached_geometry(
             self.owner,
@@ -209,6 +259,8 @@ impl<'a> PointCurve<'a> {
             owner: id,
             source,
             retain_refinement: false,
+            refinement: None,
+            refinement_prepared: false,
             intervals: intervals.clamp(64, 4096),
         })
     }
@@ -311,6 +363,12 @@ impl<'a> PointCurve<'a> {
         self.at(fraction)
     }
     pub(super) fn at(&mut self, fraction: f64) -> Option<Point> {
+        // Most carrier/curve pairs do not cross. Bind only when a bracket
+        // actually needs refinement, after the shared coarse scan.
+        if self.retain_refinement && !self.refinement_prepared {
+            self.refinement = self.prepare_refinement();
+            self.refinement_prepared = true;
+        }
         let scope = if self.retain_refinement {
             super::sac_evaluation::Scope::CurveRefinement {
                 owner: self.owner,
@@ -373,6 +431,13 @@ impl<'a> PointCurve<'a> {
                 scale,
             } => {
                 let value = (*min + (*max - *min) * fraction) / *scale;
+                if let Some(evaluator) = &mut self.refinement {
+                    return value
+                        .is_finite()
+                        .then(|| evaluator.number(value))
+                        .flatten()
+                        .filter(|p| p.x.is_finite() && p.y.is_finite());
+                }
                 self.original.with_sac_scope(sample, scope, |sample| {
                     match plan {
                         Some(plan) => plan.number(sample, value)?,
@@ -400,10 +465,86 @@ impl<'a> PointCurve<'a> {
                         Some(plan) => plan.kind(sample, kind)?,
                         None => sample.objects.substitute_kind(*driver - 1, kind)?,
                     }
-                    sample.position(*target)
+                    match &mut self.refinement {
+                        Some(evaluator) => evaluator.point(sample.position(*driver)),
+                        None => sample.position(*target),
+                    }
                 })?
             }
         };
         (point.x.is_finite() && point.y.is_finite()).then_some(point)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compare(doc: &Document, curve: usize) {
+        let mut reference = PointCurve::new(doc, curve).unwrap();
+        let mut fast = PointCurve::new(doc, curve).unwrap().for_refinement();
+        for fraction in [0., 0.123456789, 0.5, 1., 0.5, 0.9, 0.] {
+            let bits = |p: Option<Point>| p.map(|p| (p.x.to_bits(), p.y.to_bits()));
+            assert_eq!(bits(fast.at(fraction)), bits(reference.at(fraction)));
+            assert!(fast.refinement.is_some() || matches!(fast.source, Source::Mapped(_)));
+        }
+    }
+
+    #[test]
+    fn refinement_reuses_numeric_plan_after_undefined_values_and_parent_overrides() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 1.3, y: -2.7 }));
+        let b = doc.add(Kind::Free(Point { x: 8.9, y: 4.1 }));
+        let n = doc.add_named_parameter("n", 2., (0, 0)).unwrap();
+        let reciprocal = doc.add_parameter_calculation(n, "1/n", (0, 0)).unwrap();
+        let target = doc.add(Kind::CalculatedRatioScaledPoint(b, a, reciprocal));
+        let curve = doc.add(Kind::ParameterLocus(
+            vec![target, n, reciprocal, target],
+            -1.,
+            1.,
+            20,
+        ));
+        let mut parent = doc.evaluated().0;
+        parent.set_evaluation_number(reciprocal, 123.).unwrap();
+        compare(&parent, curve);
+        doc.move_point(b, Point { x: 11., y: -9. });
+        compare(&doc.evaluated(), curve);
+        compare(&parent, curve);
+    }
+
+    #[test]
+    fn refinement_preserves_geometric_and_mapped_frozen_inputs() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 1.3, y: -2.7 }));
+        let b = doc.add(Kind::Free(Point { x: 8.9, y: 4.1 }));
+        let path = doc.add(Kind::Segment(a, b));
+        let seed = doc.add(Kind::PointOnSegment(path, 0.2));
+        let external = doc.add(Kind::Midpoint(seed, a));
+        let target = doc.add(Kind::Midpoint(seed, external));
+        let curve = doc.add(Kind::Locus(vec![target, path, seed, target], 20));
+        let nested_seed = doc.add(Kind::PointOnCurve(curve, 0.2));
+        let nested_target = doc.add(Kind::Midpoint(nested_seed, a));
+        let nested = doc.add(Kind::Locus(
+            vec![nested_target, curve, nested_seed, nested_target],
+            20,
+        ));
+        let view = doc.evaluated();
+        let mut fallback = PointCurve::new(&view, nested).unwrap().for_refinement();
+        let mut reference = PointCurve::new(&view, nested).unwrap();
+        for fraction in [0., 0.25, 0.5, 1., 0.25] {
+            assert_eq!(fallback.at(fraction), reference.at(fraction));
+            assert!(fallback.refinement.is_none());
+        }
+        let mapped = doc
+            .add_sampled_mapped(target, path, seed, &[target], 20)
+            .unwrap();
+        let mut parent = doc.evaluated().0;
+        parent
+            .set_evaluation_point(seed, Point { x: 99., y: -71. })
+            .unwrap();
+        compare(&parent, curve);
+        compare(&parent, mapped);
+        doc.move_point(b, Point { x: 1.3, y: -2.7 });
+        compare(&doc.evaluated(), curve);
     }
 }

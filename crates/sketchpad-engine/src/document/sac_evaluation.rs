@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Query {
     Point(usize),
+    CurveIntersections(usize, usize),
     Number(usize),
     Straight(usize),
     Circle(usize),
@@ -463,7 +464,7 @@ impl Query {
             Self::Polygon(_) => Value::Polygon(None),
             Self::Arc(_) => Value::Arc(None),
             Self::Frame(_) => Value::Frame(None),
-            Self::Geometry(..) => Value::Geometry(None),
+            Self::Geometry(..) | Self::CurveIntersections(..) => Value::Geometry(None),
         }
     }
 }
@@ -619,7 +620,7 @@ impl Drop for Recording {
 
 impl Document {
     pub(super) fn sac_can_inline(&self, key: &Query) -> bool {
-        !matches!(key, Query::Geometry(..))
+        !matches!(key, Query::Geometry(..) | Query::CurveIntersections(..))
             && READS.with_borrow(|frames| {
                 frames.last().is_some_and(|frame| {
                     self.sac_evaluation()
@@ -656,6 +657,10 @@ impl Document {
     pub(super) fn sac_evaluate_body(&self, key: Query) -> Value {
         match key {
             Query::Point(id) => Value::Point(self.position_untracked(id)),
+            Query::CurveIntersections(carrier, curve) => Value::Geometry(
+                self.curve_intersections_uncached(carrier, curve)
+                    .map(|points| Geometry::new(Arc::new(points))),
+            ),
             Query::Number(id) => Value::Number(self.numeric_value_untracked(id)),
             Query::Straight(id) => Value::Straight(self.line_points_untracked(id)),
             Query::Circle(id) => Value::Circle(self.circle_points_untracked(id)),

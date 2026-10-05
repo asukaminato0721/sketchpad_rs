@@ -5,6 +5,7 @@ use super::point_curve::PointCurve;
 use super::{Document, Kind, LineMode, Point};
 use crate::function_records::FunctionPlotMode;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 fn point_curve(objects: &(impl ObjectRead + ?Sized), kind: &Kind) -> bool {
     match kind {
@@ -348,6 +349,26 @@ impl Document {
 
     /// Ordered crossings. Curve tangencies and gaps do not create crossings.
     pub fn curve_intersections(&self, carrier: usize, curve: usize) -> Option<Vec<Point>> {
+        self.shared_curve_intersections(carrier, curve)
+            .map(|points| (*points).clone())
+    }
+
+    fn shared_curve_intersections(&self, carrier: usize, curve: usize) -> Option<Arc<Vec<Point>>> {
+        use super::sac_evaluation::{Query, Value};
+        if let Some(Value::Geometry(value)) =
+            self.sac_query(Query::CurveIntersections(carrier, curve))
+        {
+            return value.and_then(|value| value.get());
+        }
+        self.curve_intersections_uncached(carrier, curve)
+            .map(Arc::new)
+    }
+
+    pub(super) fn curve_intersections_uncached(
+        &self,
+        carrier: usize,
+        curve: usize,
+    ) -> Option<Vec<Point>> {
         let page = self.objects.get(curve.checked_sub(1)?)?.page;
         if !supported(&self.objects, carrier, curve, page, self.objects.len() + 1) {
             return None;
@@ -466,9 +487,96 @@ impl Document {
         curve: usize,
         branch: u32,
     ) -> Option<Point> {
-        let points = self.curve_intersections(carrier, curve)?;
+        let points = self.shared_curve_intersections(carrier, curve)?;
         points
             .get((branch as usize).min(points.len().checked_sub(1)?))
             .copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn branches_share_ordered_roots_and_keep_edits_and_snapshots_isolated() {
+        let mut doc = Document::new();
+        let center = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let edge = doc.add(Kind::Free(Point { x: 10., y: 0. }));
+        let circle = doc.add(Kind::Circle(center, edge));
+        let seed = doc.add(Kind::PointOnCircle(circle, 0.3, 0.));
+        let target = doc.add(Kind::Midpoint(seed, center));
+        let curve = doc.add(Kind::Locus(vec![target, circle, seed, target], 100));
+        let a = doc.add(Kind::Free(Point { x: -20., y: 1. }));
+        let b = doc.add(Kind::Free(Point { x: 20., y: 1. }));
+        let carrier = doc.add(Kind::Line(a, b));
+        let first = doc.add(Kind::CurveIntersection(carrier, curve, 0));
+        let second = doc.add(Kind::CurveIntersection(carrier, curve, 1));
+        let old = doc.evaluated();
+        let first_point = old.position(first).unwrap();
+        let before = old.sac_evaluation().unwrap().graph.statistics().executed;
+        let second_point = old.position(second).unwrap();
+        // Only the second branch point executes; its pair query is already cached.
+        assert_eq!(
+            old.sac_evaluation().unwrap().graph.statistics().executed - before,
+            1
+        );
+        let roots = old.shared_curve_intersections(carrier, curve).unwrap();
+        assert_eq!(first_point, roots[0]);
+        assert_eq!(second_point, roots[1]);
+        assert_eq!(roots.len(), 2);
+        assert!(roots[0].x < roots[1].x);
+        assert_eq!(old.position(first), Some(roots[0]));
+        assert_eq!(old.position(second), Some(roots[1]));
+        assert!(Arc::ptr_eq(
+            &roots,
+            &old.shared_curve_intersections(carrier, curve).unwrap()
+        ));
+        let mut sample = old.clone_for_evaluation();
+        for (fraction, y, count) in [(0, 1., 2), (1, 20., 0), (0, 2., 2)] {
+            old.with_sac_scope(
+                &mut sample,
+                super::super::sac_evaluation::Scope::MappedSample {
+                    owner: curve,
+                    fraction,
+                },
+                |sample| {
+                    sample
+                        .set_evaluation_point(a, Point { x: -20., y })
+                        .unwrap();
+                    sample.set_evaluation_point(b, Point { x: 20., y }).unwrap();
+                    let first = sample.shared_curve_intersections(carrier, curve).unwrap();
+                    let second = sample.shared_curve_intersections(carrier, curve).unwrap();
+                    assert!(Arc::ptr_eq(&first, &second));
+                    assert_eq!(first.len(), count);
+                    assert!(first.iter().all(|point| (point.y - y).abs() < 1e-7));
+                },
+            );
+        }
+        doc.move_point(a, Point { x: -20., y: 20. });
+        doc.move_point(b, Point { x: 20., y: 20. });
+        assert!(
+            doc.evaluated()
+                .shared_curve_intersections(carrier, curve)
+                .unwrap()
+                .is_empty()
+        );
+        doc.move_point(edge, Point { x: 100., y: 0. });
+        let updated = doc.evaluated();
+        assert_eq!(
+            updated
+                .shared_curve_intersections(carrier, curve)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(old.position(first), Some(roots[0]));
+        assert_eq!(old.position(second), Some(roots[1]));
+        doc.move_point(b, Point { x: -20., y: 20. });
+        assert!(
+            doc.evaluated()
+                .shared_curve_intersections(carrier, curve)
+                .is_none()
+        );
     }
 }

@@ -158,6 +158,42 @@ pub(super) struct PointBatch {
     radians: bool,
 }
 
+#[derive(Default)]
+struct PointWorkspace<const LANES: usize> {
+    values: Vec<[Option<Point>; LANES]>,
+    numbers: Vec<[Option<f64>; LANES]>,
+    expression: Vec<f64>,
+}
+
+/// A bound single-seed evaluator. All instruction and expression storage stays
+/// local to this curve evaluation and is reused between refinement parameters.
+pub(super) struct PointEvaluator {
+    batch: PointBatch,
+    workspace: PointWorkspace<1>,
+    points: [Vec<Option<Point>>; 1],
+    numbers: [Vec<Option<f64>>; 1],
+}
+impl PointEvaluator {
+    pub(super) fn point(&mut self, value: Option<Point>) -> Option<Point> {
+        self.points[0][0] = value;
+        self.evaluate()
+    }
+    pub(super) fn number(&mut self, value: f64) -> Option<Point> {
+        self.numbers[0][0] = Some(value);
+        self.evaluate()
+    }
+    fn evaluate(&mut self) -> Option<Point> {
+        let mut result = None;
+        self.batch.run_tiles(
+            &self.points,
+            &self.numbers,
+            &mut self.workspace,
+            |_, point, _| result = point,
+        );
+        result
+    }
+}
+
 impl PointProgram {
     pub(super) fn get(doc: &Document, seeds: &[usize], roots: &[usize]) -> Option<Arc<Self>> {
         super::sac_evaluation::observe(super::sac_evaluation::Input::Validation);
@@ -638,6 +674,15 @@ impl PointProgram {
 }
 
 impl PointBatch {
+    pub(super) fn into_evaluator(self) -> PointEvaluator {
+        debug_assert_eq!(self.outputs.len(), 1);
+        PointEvaluator {
+            batch: self,
+            workspace: PointWorkspace::default(),
+            points: [vec![None]],
+            numbers: [vec![None]],
+        }
+    }
     /// Each output keeps its undefined lanes. Shared ancestors execute once per
     /// lane, with no document queries, dependency tracking or hashes in the loop.
     pub(super) fn evaluate(&self, inputs: &[Vec<Option<Point>>]) -> Vec<Vec<Option<Point>>> {
@@ -722,21 +767,47 @@ impl PointBatch {
             .map(Vec::len)
             .or_else(|| numeric_inputs.first().map(Vec::len))
             .unwrap_or(0);
-        assert!(inputs.iter().all(|input| input.len() == count));
-        assert!(numeric_inputs.iter().all(|input| input.len() == count));
-        let mut values = vec![[None; LANES]; self.ops.len()];
-        let numeric_slots = self
-            .ops
-            .iter()
-            .rposition(|op| matches!(op, BoundOp::Number(_)))
-            .map_or(0, |i| i + 1);
-        let mut numbers = vec![[None; LANES]; numeric_slots];
-        let mut scratch = Vec::new();
         let mut outputs: Vec<Vec<T>> = self
             .outputs
             .iter()
             .map(|_| Vec::with_capacity(count))
             .collect();
+        self.run_tiles::<LANES>(
+            inputs,
+            numeric_inputs,
+            &mut PointWorkspace::default(),
+            |index, point, number| {
+                outputs[index].push(output_value(point, number));
+            },
+        );
+        outputs
+    }
+    fn run_tiles<const LANES: usize>(
+        &self,
+        inputs: &[Vec<Option<Point>>],
+        numeric_inputs: &[Vec<Option<f64>>],
+        workspace: &mut PointWorkspace<LANES>,
+        mut emit: impl FnMut(usize, Option<Point>, Option<f64>),
+    ) {
+        let count = inputs
+            .first()
+            .map(Vec::len)
+            .or_else(|| numeric_inputs.first().map(Vec::len))
+            .unwrap_or(0);
+        assert!(inputs.iter().all(|input| input.len() == count));
+        assert!(numeric_inputs.iter().all(|input| input.len() == count));
+        let PointWorkspace {
+            values,
+            numbers,
+            expression: scratch,
+        } = workspace;
+        values.resize(self.ops.len(), [None; LANES]);
+        let numeric_slots = self
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, BoundOp::Number(_)))
+            .map_or(0, |i| i + 1);
+        numbers.resize(numeric_slots, [None; LANES]);
         for offset in (0..count).step_by(LANES) {
             let length = (count - offset).min(LANES);
             for (slot, op) in self.ops.iter().enumerate() {
@@ -783,7 +854,7 @@ impl PointBatch {
                                     code.evaluate(
                                         |source| numbers[sources[source]][index],
                                         self.radians,
-                                        &mut scratch,
+                                        scratch,
                                     )
                                     .filter(|v| v.is_finite())
                                 }
@@ -889,17 +960,16 @@ impl PointBatch {
                 }
                 values[slot] = result;
             }
-            for (output, &slot) in outputs.iter_mut().zip(&self.outputs) {
-                output.extend((0..length).map(|index| {
+            for (output, &slot) in self.outputs.iter().enumerate() {
+                for index in 0..length {
                     if matches!(self.ops[slot], BoundOp::Number(_)) {
-                        output_value(None, numbers[slot][index])
+                        emit(output, None, numbers[slot][index]);
                     } else {
-                        output_value(values[slot][index], None)
+                        emit(output, values[slot][index], None);
                     }
-                }));
+                }
             }
         }
-        outputs
     }
 }
 
