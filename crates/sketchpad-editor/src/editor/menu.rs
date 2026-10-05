@@ -318,9 +318,12 @@ impl Editor {
                             .copied()
                             .filter(|id| self.doc.selected.contains(id))
                             .collect::<Vec<_>>();
-                        (ordered.len() == 2
-                            && self.doc.can_merge_points(ordered[0], ordered[1]))
-                        .then_some((ordered[0], ordered[1]))
+                        match ordered.as_slice() {
+                            &[source, target] if self.doc.can_merge_points(source, target) => {
+                                Some((source, target))
+                            }
+                            _ => None,
+                        }
                     };
                     if ui
                         .add_enabled(merge_points.is_some(), egui::Button::new("Merge Points"))
@@ -1372,5 +1375,85 @@ impl Editor {
                 });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, FullOutput, PointerButton, Pos2};
+    use sketchpad_engine::document::Point;
+
+    fn text_center(output: &FullOutput, label: &str) -> Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Missing menu item: {label}"))
+    }
+
+    fn frame(editor: &mut Editor, ctx: &egui::Context, events: Vec<Event>) -> FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| editor.menu_ui(ui),
+        );
+        // This test exercises input and layout without a renderer.
+        output.textures_delta.clear();
+        output
+    }
+
+    fn click(editor: &mut Editor, ctx: &egui::Context, pos: Pos2) -> FullOutput {
+        for pressed in [true, false] {
+            frame(
+                editor,
+                ctx,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+            );
+        }
+        frame(editor, ctx, vec![])
+    }
+
+    #[test]
+    fn edit_menu_opens_with_zero_one_or_multiple_selected_objects() {
+        for count in 0..=3 {
+            let mut editor = Editor::new(Document::new());
+            for index in 0..count {
+                let id = editor.doc.add(Kind::Free(Point {
+                    x: index as f64,
+                    y: 0.,
+                }));
+                editor.doc.selected.insert(id);
+                editor.selection_order.push(id);
+            }
+            let ctx = egui::Context::default();
+            let output = frame(&mut editor, &ctx, vec![]);
+            let output = click(&mut editor, &ctx, text_center(&output, "Edit"));
+            let merge = text_center(&output, "Merge Points");
+            text_center(&output, "Preferences…");
+            click(&mut editor, &ctx, merge);
+            if count == 2 {
+                assert!(editor.doc.objects[0].deleted);
+                assert_eq!(editor.selection_order, vec![2]);
+            } else {
+                assert_eq!(editor.doc.selected.len(), count);
+                assert!(editor.doc.objects.iter().all(|object| !object.deleted));
+            }
+        }
     }
 }
