@@ -266,6 +266,7 @@ impl Document {
             id: usize,
             page: usize,
             visiting: &mut BTreeSet<usize>,
+            available: &mut BTreeSet<usize>,
         ) -> bool {
             let Some(object) = id
                 .checked_sub(1)
@@ -273,27 +274,33 @@ impl Document {
             else {
                 return false;
             };
-            if object.deleted
-                || object.page != page
-                || matches!(object.kind, Kind::Unsupported(_))
-                || !visiting.insert(id)
+            if object.deleted || object.page != page || matches!(object.kind, Kind::Unsupported(_))
             {
                 return false;
             }
-            let available = object
-                .kind
-                .dependencies()
-                .into_iter()
-                .all(|parent| dependencies_available(document, parent, page, visiting));
+            if available.contains(&id) {
+                return true;
+            }
+            if !visiting.insert(id) {
+                return false;
+            }
+            let valid =
+                object.kind.dependencies().into_iter().all(|parent| {
+                    dependencies_available(document, parent, page, visiting, available)
+                });
             visiting.remove(&id);
-            available
+            if valid {
+                available.insert(id);
+            }
+            valid
         }
-        if !host
-            .kind
-            .dependencies()
-            .into_iter()
-            .all(|id| dependencies_available(self, id, host.page, &mut BTreeSet::new()))
-        {
+        // A shared ancestor needs structural validation only once. Rewalking
+        // every path through a construction DAG can be exponential.
+        if !self.with_available_arc_dependencies(|available| {
+            host.kind.dependencies().into_iter().all(|id| {
+                dependencies_available(self, id, host.page, &mut BTreeSet::new(), available)
+            })
+        }) {
             return false;
         }
         let point_available = |id: usize| {

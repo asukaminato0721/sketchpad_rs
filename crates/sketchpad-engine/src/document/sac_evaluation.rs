@@ -2,12 +2,12 @@
 //! local; values and traces belong to each immutable evaluated scope.
 pub(super) use super::incremental_graph::Graph;
 use super::{Document, LineMode, Point};
-use rustc_hash::FxHashSet;
-use std::cell::RefCell;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Query {
     Point(usize),
     Number(usize),
@@ -74,6 +74,11 @@ impl<T: ExactEq> ExactEq for Vec<T> {
         self.len() == other.len() && self.iter().zip(other).all(|(a, b)| a.exact_eq(b))
     }
 }
+impl<T: ExactEq> ExactEq for Arc<T> {
+    fn exact_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(self, other) || self.as_ref().exact_eq(other.as_ref())
+    }
+}
 macro_rules! exact_fields {
     ($ty:ty; $($field:tt),+) => {
         impl ExactEq for $ty {
@@ -103,6 +108,7 @@ macro_rules! exact_plain {
 }
 exact_plain!(
     bool,
+    usize,
     LineMode,
     crate::style_records::VisualStyle,
     crate::style_records::RgbColor,
@@ -243,14 +249,16 @@ pub(super) struct Evaluation {
     pub(super) graph: Graph,
     path: ScopePath,
     scopes: Arc<Mutex<Scopes>>,
+    transient: bool,
 }
 impl Default for Evaluation {
     fn default() -> Self {
         Self {
             id: NEXT_SCOPE.fetch_add(1, Ordering::Relaxed),
-            graph: Graph::new(4096.try_into().unwrap()),
+            graph: Graph::new(65536.try_into().unwrap()),
             path: Arc::new(Vec::new()),
             scopes: Arc::new(Mutex::new(Scopes::default())),
+            transient: false,
         }
     }
 }
@@ -261,6 +269,7 @@ impl Clone for Evaluation {
             graph: self.graph.clone(),
             path: self.path.clone(),
             scopes: self.scopes.clone(),
+            transient: self.transient,
         }
     }
 }
@@ -319,25 +328,207 @@ impl Evaluation {
             graph,
             path,
             scopes: self.scopes.clone(),
+            transient: coalesce,
         }
     }
     pub(super) fn publish(&self) {
+        if self.graph.len() == 0 {
+            return;
+        }
         let snapshot = self.graph.snapshot_current();
         self.scopes
             .lock()
             .unwrap()
             .publish(self.path.clone(), snapshot);
     }
+
+    fn transient_query(&self, doc: &Document, key: Query) -> Value {
+        if KERNEL.is_set() && KERNEL.with(|kernel| kernel.matches(doc)) {
+            return KERNEL.with(|kernel| kernel.query(doc, key));
+        }
+        // Retain precise reads without storing versioned arithmetic records.
+        let _recording = Recording::transient(self.id);
+        let kernel = Kernel::new(doc);
+        KERNEL.set(&kernel, || kernel.query(doc, key))
+    }
+}
+
+pub(super) fn evaluate_scope<T>(
+    sample: &mut Document,
+    evaluate: impl FnOnce(&mut Document) -> T,
+) -> T {
+    let scope = sample.sac_evaluation().unwrap();
+    if !scope.transient {
+        return evaluate(sample);
+    }
+    let _recording = Recording::transient(scope.id);
+    let kernel = Kernel::new(sample);
+    KERNEL.set(&kernel, || evaluate(sample))
+}
+
+scoped_tls::scoped_thread_local!(static KERNEL: Kernel);
+type KernelMap = FxHashMap<Query, Option<Value>>;
+thread_local! {
+    static KERNEL_MAPS: RefCell<Vec<KernelMap>> = const { RefCell::new(Vec::new()) };
+}
+struct Kernel {
+    document: *const Document,
+    recording_depth: usize,
+    running: Cell<usize>,
+    epoch: RefCell<Option<((u64, u64), Identity)>>,
+    values: RefCell<KernelMap>,
+}
+impl Kernel {
+    fn new(doc: &Document) -> Self {
+        Self {
+            document: doc,
+            recording_depth: READS.with_borrow(Vec::len),
+            running: Cell::new(0),
+            epoch: RefCell::default(),
+            values: RefCell::new(
+                KERNEL_MAPS.with_borrow_mut(|maps| maps.pop().unwrap_or_default()),
+            ),
+        }
+    }
+    fn matches(&self, doc: &Document) -> bool {
+        std::ptr::eq(self.document, doc)
+            && READS.with_borrow(|frames| {
+                frames.len() == self.recording_depth
+                    && frames.last().is_some_and(|frame| frame.transient)
+            })
+    }
+    fn query(&self, doc: &Document, key: Query) -> Value {
+        if self.running.get() == 0 {
+            let epoch = (
+                doc.sac_evaluation().unwrap().input_revision(),
+                doc.objects.sac_identity(None),
+            );
+            if self.epoch.borrow().as_ref() != Some(&epoch) {
+                self.values.borrow_mut().clear();
+                *self.epoch.borrow_mut() = Some(epoch);
+            }
+        }
+        if let Some(value) = self.values.borrow().get(&key) {
+            return value.clone().unwrap_or_else(|| {
+                observe(Input::Objects);
+                observe(Input::Scope);
+                key.undefined()
+            });
+        }
+        self.values.borrow_mut().insert(key, None);
+        struct Running<'a>(&'a Cell<usize>);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() - 1);
+            }
+        }
+        self.running.set(self.running.get() + 1);
+        let _running = Running(&self.running);
+        let value = doc.sac_evaluate_body(key);
+        self.values.borrow_mut().insert(key, Some(value.clone()));
+        value
+    }
+}
+
+impl Drop for Kernel {
+    fn drop(&mut self) {
+        let mut values = self.values.take();
+        if values.capacity() <= 8192 {
+            values.clear();
+            KERNEL_MAPS.with_borrow_mut(|maps| {
+                if maps.len() < 32 {
+                    maps.push(values);
+                }
+            });
+        }
+    }
+}
+
+impl Query {
+    fn undefined(self) -> Value {
+        match self {
+            Self::Point(_) => Value::Point(None),
+            Self::Number(_) => Value::Number(None),
+            Self::Straight(_) => Value::Straight(None),
+            Self::Circle(_) => Value::Circle(None),
+            Self::Polygon(_) => Value::Polygon(None),
+            Self::Arc(_) => Value::Arc(None),
+            Self::Frame(_) => Value::Frame(None),
+            Self::Geometry(..) => Value::Geometry(None),
+        }
+    }
 }
 
 struct Reads {
     scope: u64,
-    inputs: FxHashSet<Input>,
+    transient: bool,
+    inputs: InputSet,
+}
+
+/// Object IDs are dense in ordinary sketches. Record repeated reads with a bit
+/// per input kind, while retaining a compact list for stamping and clearing.
+/// Sparse or invalid IDs use a hash set without allocating up to that ID.
+#[derive(Default)]
+struct InputSet {
+    masks: Vec<u16>,
+    values: Vec<Input>,
+    sparse: FxHashSet<Input>,
+}
+
+impl Input {
+    fn bit(self) -> (usize, u16) {
+        match self {
+            Self::Validation => (0, 1),
+            Self::CoordinateSystems => (0, 1 << 1),
+            Self::Object(id) => (id, 1 << 2),
+            Self::Objects => (0, 1 << 3),
+            Self::Length => (0, 1 << 4),
+            Self::Point(id) => (id, 1 << 5),
+            Self::Number(id) => (id, 1 << 6),
+            Self::Straight(id) => (id, 1 << 7),
+            Self::Circle(id) => (id, 1 << 8),
+            Self::Polygon(id) => (id, 1 << 9),
+            Self::Arc(id) => (id, 1 << 10),
+            Self::Frame(id) => (id, 1 << 11),
+            Self::Frozen(id) => (id, 1 << 12),
+            Self::Scope => (0, 1 << 13),
+            Self::MappedElementValidity(id) => (id, 1 << 14),
+        }
+    }
+}
+
+impl InputSet {
+    fn insert(&mut self, input: Input) {
+        let (index, bit) = input.bit();
+        let fresh = if index < 16384 {
+            if index >= self.masks.len() {
+                self.masks.resize(index + 1, 0);
+            }
+            let fresh = self.masks[index] & bit == 0;
+            self.masks[index] |= bit;
+            fresh
+        } else {
+            self.sparse.insert(input)
+        };
+        if fresh {
+            self.values.push(input);
+        }
+    }
+
+    fn clear(&mut self) {
+        for input in self.values.drain(..) {
+            let (index, bit) = input.bit();
+            if let Some(mask) = self.masks.get_mut(index) {
+                *mask &= !bit;
+            }
+        }
+        self.sparse.clear();
+    }
 }
 thread_local! {
     static READS: RefCell<Vec<Reads>> = const { RefCell::new(Vec::new()) };
     // Reuse recording allocations across the many short-lived sample scopes.
-    static INPUT_SETS: RefCell<Vec<FxHashSet<Input>>> = const { RefCell::new(Vec::new()) };
+    static INPUT_SETS: RefCell<Vec<InputSet>> = const { RefCell::new(Vec::new()) };
     static STRUCTURAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
@@ -370,24 +561,46 @@ pub(super) fn observe(input: Input) {
 struct Recording;
 impl Recording {
     fn new(scope: u64) -> Self {
+        Self::with_mode(scope, false)
+    }
+    fn transient(scope: u64) -> Self {
+        Self::with_mode(scope, true)
+    }
+    fn with_mode(scope: u64, transient: bool) -> Self {
         let inputs = INPUT_SETS.with_borrow_mut(|sets| sets.pop().unwrap_or_default());
-        READS.with_borrow_mut(|frames| frames.push(Reads { scope, inputs }));
+        READS.with_borrow_mut(|frames| {
+            frames.push(Reads {
+                scope,
+                transient,
+                inputs,
+            })
+        });
         Self
     }
     fn record_inputs(&self, graph: &Graph, document: &Document) {
         // Document::input_stamp reads raw slots and never invokes observation.
         READS.with_borrow(|frames| {
-            graph.read_unique_inputs(document, &frames.last().unwrap().inputs);
+            graph.read_unique_inputs(document, &frames.last().unwrap().inputs.values);
         });
     }
 }
 impl Drop for Recording {
     fn drop(&mut self) {
-        let mut inputs = READS.with_borrow_mut(|frames| frames.pop().unwrap().inputs);
-        if inputs.capacity() <= 256 {
+        let mut inputs = READS.with_borrow_mut(|frames| {
+            let frame = frames.pop().unwrap();
+            if frame.transient
+                && let Some(parent) = frames.last_mut()
+            {
+                for &input in &frame.inputs.values {
+                    parent.inputs.insert(input);
+                }
+            }
+            frame.inputs
+        });
+        if inputs.values.capacity() <= 8192 && inputs.sparse.capacity() <= 8192 {
             inputs.clear();
             INPUT_SETS.with_borrow_mut(|sets| {
-                if sets.len() < 32 {
+                if sets.len() < 64 {
                     sets.push(inputs);
                 }
             });
@@ -452,6 +665,9 @@ impl Document {
                     G::ColorizedPolygons => self
                         .colorized_polygon_iteration_images_uncached(id)
                         .map(Geometry::new),
+                    G::ColorizedPolygonBatch => self
+                        .colorized_polygon_iteration_batch_uncached(id)
+                        .map(Geometry::new),
                     G::Disks => self
                         .circle_interior_iteration_images_uncached(id)
                         .map(Geometry::new),
@@ -492,21 +708,22 @@ impl Document {
 
     pub(super) fn sac_query(&self, key: Query) -> Option<Value> {
         let scope = self.sac_evaluation()?;
+        if scope.transient
+            && !matches!(key, Query::Geometry(..))
+            && READS.with_borrow(|frames| {
+                frames
+                    .last()
+                    .is_none_or(|frame| frame.scope != scope.id || frame.transient)
+            })
+        {
+            return Some(scope.transient_query(self, key));
+        }
         let result = scope.graph.query(self, key).unwrap_or_else(|_| {
             // A cycle has no published child edge. Keep its undefined fallback
             // sensitive to both structural edits and temporary seed changes.
             observe(Input::Objects);
             observe(Input::Scope);
-            match key {
-                Query::Point(_) => Value::Point(None),
-                Query::Number(_) => Value::Number(None),
-                Query::Straight(_) => Value::Straight(None),
-                Query::Circle(_) => Value::Circle(None),
-                Query::Polygon(_) => Value::Polygon(None),
-                Query::Arc(_) => Value::Arc(None),
-                Query::Frame(_) => Value::Frame(None),
-                Query::Geometry(..) => Value::Geometry(None),
-            }
+            key.undefined()
         });
 
         // Memo hits in child scopes must also expose their underlying reads.
@@ -531,6 +748,115 @@ impl Document {
 mod tests {
     use super::*;
     use crate::document::{EvaluationCache, Kind};
+
+    #[test]
+    fn transient_kernels_forward_reads_and_do_not_reuse_changed_seeds() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 2., y: 4. }));
+        let middle = doc.add(Kind::Midpoint(seed, seed));
+        let parent = doc.evaluated();
+        let mut sample = parent.clone_for_evaluation();
+        parent.with_sac_scope(&mut sample, Scope::Mapping(middle), |sample| {
+            for x in [4., 8., -2.] {
+                sample
+                    .set_evaluation_point(seed, Point { x, y: 4. })
+                    .unwrap();
+                let _recording = Recording::new(parent.sac_evaluation().unwrap().id);
+                assert_eq!(sample.position(middle), Some(Point { x, y: 4. }));
+                READS.with_borrow(|frames| {
+                    let inputs = &frames.last().unwrap().inputs.values;
+                    assert!(inputs.contains(&Input::Point(seed)));
+                    assert!(inputs.contains(&Input::Object(middle - 1)));
+                    assert!(!inputs.contains(&Input::Objects));
+                });
+            }
+            let old = sample.clone_for_evaluation();
+            sample.objects.edit(middle - 1).deleted = true;
+            assert_eq!(sample.position(middle), None);
+            assert_eq!(old.position(middle), Some(Point { x: -2., y: 4. }));
+        });
+    }
+
+    #[test]
+    fn transient_cycles_and_unwinding_do_not_poison_later_queries() {
+        let mut doc = Document::new();
+        let point = doc.add(Kind::Free(Point { x: 2., y: 4. }));
+        let parent = doc.evaluated();
+        let mut sample = parent.clone_for_evaluation();
+        parent.with_sac_scope(&mut sample, Scope::Mapping(point), |sample| {
+            sample.objects.edit(point - 1).kind = Kind::Midpoint(point, point);
+            assert_eq!(sample.position(point), None);
+            sample.objects.edit(point - 1).kind = Kind::Free(Point { x: 6., y: 8. });
+            assert_eq!(sample.position(point), Some(Point { x: 6., y: 8. }));
+            let outer_kernel = KERNEL.with(|kernel| kernel as *const Kernel);
+            let outcome = std::panic::catch_unwind(|| {
+                let _recording = Recording::transient(sample.sac_evaluation().unwrap().id);
+                let kernel = Kernel::new(sample);
+                KERNEL.set(&kernel, || {
+                    kernel.values.borrow_mut().insert(Query::Point(point), None);
+                    panic!("interrupted kernel");
+                });
+            });
+            assert!(outcome.is_err());
+            assert!(KERNEL.with(|kernel| std::ptr::eq(kernel, outer_kernel)));
+            assert_eq!(sample.position(point), Some(Point { x: 6., y: 8. }));
+        });
+    }
+
+    #[test]
+    fn dense_input_sets_preserve_kinds_sparse_ids_and_reuse() {
+        let mut inputs = vec![
+            Input::Validation,
+            Input::CoordinateSystems,
+            Input::Objects,
+            Input::Length,
+            Input::Scope,
+        ];
+        for id in [0, 1, 99, 16383, 16384, usize::MAX] {
+            inputs.extend([
+                Input::Object(id),
+                Input::Point(id),
+                Input::Number(id),
+                Input::Straight(id),
+                Input::Circle(id),
+                Input::Polygon(id),
+                Input::Arc(id),
+                Input::Frame(id),
+                Input::Frozen(id),
+                Input::MappedElementValidity(id),
+            ]);
+        }
+        let mut set = InputSet::default();
+        for _ in 0..3 {
+            for &input in inputs.iter().chain(inputs.iter().rev()) {
+                set.insert(input);
+            }
+            assert_eq!(set.values, inputs);
+            assert!(set.masks.len() <= 16384);
+            set.clear();
+            assert!(set.values.is_empty() && set.sparse.is_empty());
+            assert!(set.masks.iter().all(|mask| *mask == 0));
+        }
+    }
+
+    #[test]
+    fn rejected_geometry_keeps_the_parent_read_dependency() {
+        let mut doc = Document::new();
+        let id = doc.add(Kind::Free(Point { x: 1., y: 2. }));
+        let mut view = doc.evaluated().clone_for_evaluation();
+        let input = Input::Object(id - 1);
+        let before = view.sac_input_stamp(&input);
+        {
+            let _parent = Recording::new(view.sac_evaluation().unwrap().id);
+            assert!(view.point_iteration_images(id).is_none());
+            READS.with_borrow(|frames| {
+                assert!(frames.last().unwrap().inputs.values.contains(&input))
+            });
+        }
+        view.objects.edit(id - 1).kind =
+            Kind::PointIteration(id, id, crate::document::IterationDepth::Value(1));
+        assert_ne!(view.sac_input_stamp(&input), before);
+    }
 
     #[test]
     fn shared_mapping_validation_tracks_edits_and_preserves_old_snapshots() {
@@ -577,7 +903,7 @@ mod tests {
         observe(Input::Number(56));
         READS.with_borrow(|frames| {
             assert_eq!(frames.len(), 1);
-            assert_eq!(frames[0].inputs, FxHashSet::from_iter([Input::Number(56)]));
+            assert_eq!(frames[0].inputs.values, [Input::Number(56)]);
         });
     }
 

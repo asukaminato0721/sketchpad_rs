@@ -81,6 +81,7 @@ pub(super) struct EvaluationContext {
     sac: super::sac_evaluation::Evaluation,
     sampling_baseline: std::sync::OnceLock<Shared<Document>>,
     validated: ValidatedDependencies,
+    arc_dependencies: ValidatedDependencies,
     fonts: FontCache,
     points: BTreeMap<usize, Option<Point>>,
     numbers: BTreeMap<usize, Option<f64>>,
@@ -117,6 +118,7 @@ impl EvaluationContext {
             sac: Default::default(),
             sampling_baseline: std::sync::OnceLock::new(),
             validated: ValidatedDependencies::default(),
+            arc_dependencies: ValidatedDependencies::default(),
             fonts: FontCache::default(),
             points: BTreeMap::new(),
             numbers: BTreeMap::new(),
@@ -148,7 +150,7 @@ impl Document {
                 super::sac_evaluation::Graph::new(4096.try_into().unwrap()),
             );
             context.sac = parent.child(name, fallback);
-            let result = evaluate(sample);
+            let result = super::sac_evaluation::evaluate_scope(sample, evaluate);
             sample.sac_evaluation().unwrap().publish();
             result
         } else {
@@ -209,6 +211,11 @@ impl Document {
         evaluate: impl FnOnce() -> Option<T>,
     ) -> Option<T> {
         use super::sac_evaluation::{Query, Value};
+        // Keep this read tracked: a parent query that sees an unsupported kind
+        // must be invalidated when an edit makes that kind applicable.
+        if !query.accepts(&self.objects.get(id.checked_sub(1)?)?.kind) {
+            return None;
+        }
         if let Some(Value::Geometry(value)) = self.sac_query(Query::Geometry(id, query, resolution))
         {
             return value.and_then(|value| value.get::<T>());
@@ -249,6 +256,25 @@ impl Document {
             if let Some(context) = &self.evaluation_context {
                 let identity = self.objects.sac_validation_identity();
                 let mut cached = context.validated.0.lock().unwrap();
+                if cached.0.as_ref() != Some(&identity) {
+                    cached.0 = Some(identity);
+                    cached.1.clear();
+                }
+                validate(&mut cached.1)
+            } else {
+                validate(&mut BTreeSet::new())
+            }
+        })
+    }
+
+    pub(super) fn with_available_arc_dependencies<T>(
+        &self,
+        validate: impl FnOnce(&mut BTreeSet<usize>) -> T,
+    ) -> T {
+        super::sac_evaluation::structural_validation(|| {
+            if let Some(context) = &self.evaluation_context {
+                let identity = self.objects.sac_validation_identity();
+                let mut cached = context.arc_dependencies.0.lock().unwrap();
                 if cached.0.as_ref() != Some(&identity) {
                     cached.0 = Some(identity);
                     cached.1.clear();
@@ -426,6 +452,7 @@ impl Document {
             && let Some(parent) = &original.evaluation_context
         {
             context.validated = parent.validated.clone();
+            context.arc_dependencies = parent.arc_dependencies.clone();
         }
         for &id in external_ids {
             let object = context.original.objects.get(id.checked_sub(1)?)?;
@@ -663,6 +690,135 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arc_dependency_cache_handles_shared_ancestors_and_structural_edits() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 2., y: 0. }));
+        let c = doc.add(Kind::Free(Point { x: 0., y: 2. }));
+        let mut shared = a;
+        for _ in 0..20 {
+            shared = doc.add(Kind::Midpoint(shared, shared));
+        }
+        let arc = doc.add(Kind::ThreePointArc(shared, b, c));
+        let mut view = doc.evaluated().0;
+        assert!(view.plot_arc_host_available(arc));
+        let old = view.clone_for_evaluation();
+        view.objects.edit(a - 1).deleted = true;
+        assert!(!view.plot_arc_host_available(arc));
+        view.objects.edit(a - 1).deleted = false;
+        assert!(view.plot_arc_host_available(arc));
+        view.objects.edit(a - 1).page = 1;
+        assert!(!view.plot_arc_host_available(arc));
+        view.objects.edit(a - 1).page = 0;
+        view.objects.edit(a - 1).kind = Kind::Midpoint(shared, shared);
+        assert!(!view.plot_arc_host_available(arc));
+        assert!(old.plot_arc_host_available(arc));
+        view.objects.edit(a - 1).kind = Kind::Free(Point { x: 0., y: 0. });
+        assert!(view.arc_geometry(arc).is_some());
+        view.objects.edit(c - 1).kind = Kind::Free(Point { x: 4., y: 0. });
+        assert!(view.arc_geometry(arc).is_none());
+        assert!(old.arc_geometry(arc).is_some());
+    }
+
+    #[test]
+    fn a_working_set_larger_than_capacity_stays_cached_across_views() {
+        let mut doc = Document::new();
+        let mut outputs = Vec::new();
+        for i in 0..24 {
+            let seed = doc.add(Kind::Free(Point { x: i as f64, y: 2. }));
+            outputs.push((seed, doc.add(Kind::Midpoint(seed, seed))));
+        }
+        let mut view = doc.evaluated().0;
+        view.evaluation_context_mut().unwrap().sac.graph =
+            super::super::incremental_graph::Graph::new(8.try_into().unwrap());
+        let check = |view: &Document, offset: f64| {
+            for (i, &(_, output)) in outputs.iter().enumerate() {
+                assert_eq!(
+                    view.position(output),
+                    Some(Point {
+                        x: i as f64 + offset,
+                        y: 2.
+                    })
+                );
+            }
+            let graph = &view.sac_evaluation().unwrap().graph;
+            assert_eq!(graph.len(), outputs.len() * 2);
+            let executed = graph.statistics().executed;
+            for &(_, output) in outputs.iter().rev() {
+                view.position(output);
+            }
+            assert_eq!(graph.statistics().executed, executed);
+        };
+        check(&view, 0.);
+        let old = view.clone_for_evaluation();
+        view.evaluation_context_mut();
+        for (i, &(seed, _)) in outputs.iter().enumerate() {
+            view.objects.edit(seed - 1).kind = Kind::Free(Point {
+                x: i as f64 + 10.,
+                y: 2.,
+            });
+        }
+        check(&view, 10.);
+        check(&old, 0.);
+        check(&view, 10.);
+    }
+
+    #[test]
+    fn inactive_history_is_reclaimed_without_splitting_dependencies() {
+        let mut doc = Document::new();
+        let mut outputs = Vec::new();
+        for i in 0..160 {
+            let seed = doc.add(Kind::Free(Point { x: i as f64, y: 2. }));
+            outputs.push(doc.add(Kind::Midpoint(seed, seed)));
+        }
+        let mut view = doc.evaluated().0;
+        view.evaluation_context_mut().unwrap().sac.graph =
+            super::super::incremental_graph::Graph::new(8.try_into().unwrap());
+        for batch in outputs.chunks(16) {
+            view.evaluation_context_mut();
+            for &output in batch {
+                assert_eq!(view.position(output), doc.position(output));
+            }
+            let graph = &view.sac_evaluation().unwrap().graph;
+            assert!(
+                graph.len() <= 72,
+                "inactive records accumulated: {}",
+                graph.len()
+            );
+            for &output in batch {
+                assert!(
+                    graph
+                        .input_footprint(&super::super::sac_evaluation::Query::Point(output))
+                        .is_some()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_geometry_does_not_cache_and_tracks_type_changes() {
+        let doc = Document::from_bytes(
+            include_bytes!("../../../../tests/fixtures/numeric_ratio_measured_iteration_port.gsp"),
+            None,
+        )
+        .unwrap();
+        let output = 6;
+        let iteration = doc.objects[output - 1].kind.clone();
+        let mut view = doc.evaluated().0;
+        view.objects.edit(output - 1).kind = Kind::Free(Point { x: 5., y: 6. });
+        assert_eq!(view.point_iteration_images(output), None);
+        assert_eq!(view.sac_evaluation().unwrap().graph.len(), 0);
+        view.objects.edit(output - 1).kind = iteration;
+        assert_eq!(
+            view.point_iteration_images(output),
+            view.point_iteration_images_uncached(output)
+        );
+        assert!(view.point_iteration_images(output).is_some());
+        view.objects.edit(output - 1).kind = Kind::Free(Point { x: 5., y: 6. });
+        assert_eq!(view.point_iteration_images(output), None);
+    }
 
     #[test]
     fn evaluated_views_match_recursive_geometry_and_sampled_scopes() {

@@ -15,6 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) const MAX_MAPPED_ITERATION_DEPTH: u32 = 4096;
 
+type ColoredPolygons = Vec<(Vec<Point>, RgbColor)>;
+type ColoredPolygonBatch = std::sync::Arc<Vec<(usize, ColoredPolygons)>>;
+
 fn point_iteration_definition(
     objects: &[Object],
     seed: usize,
@@ -974,7 +977,7 @@ impl Document {
         }
     }
 
-    pub(super) fn mapped_external_inputs(
+    pub(super) fn mapped_external_inputs_uncached(
         &self,
         seeds: &[usize],
         branches: &[Vec<usize>],
@@ -1632,12 +1635,49 @@ impl Document {
         {
             return None;
         }
-        self.mapped_iteration_images(source, iteration, |sample, id| {
-            Some((
-                sample.filled_region_points(id)?,
-                sample.colorized_color(id)?,
-            ))
-        })
+        let batch: ColoredPolygonBatch = self.cached_geometry(
+            iteration,
+            super::geometry_cache::GeometryQuery::ColorizedPolygonBatch,
+            0,
+            || self.colorized_polygon_iteration_batch_uncached(iteration),
+        )?;
+        batch
+            .iter()
+            .find(|(id, _)| *id == source)
+            .map(|(_, images)| images.clone())
+    }
+
+    /// Bindings of the same root share its state sequence and arithmetic reads.
+    /// Keep undefined outputs independent: one invalid surface must not suppress
+    /// the other surfaces at that state.
+    pub(super) fn colorized_polygon_iteration_batch_uncached(
+        &self,
+        iteration: usize,
+    ) -> Option<ColoredPolygonBatch> {
+        let Kind::MappedPointIteration { carried, .. } =
+            &self.objects.get(iteration.checked_sub(1)?)?.kind
+        else {
+            return None;
+        };
+        let mut sources: Vec<_> = carried.iter().copied().filter(|id| {
+            matches!(self.objects.get(id.saturating_sub(1)).map(|o| &o.kind),
+                Some(Kind::Colorized(definition)) if matches!(definition.element(), ElementType::Polygon | ElementType::Sector))
+        }).collect();
+        sources.sort_unstable();
+        sources.dedup();
+        let mut output: Vec<_> = sources.iter().map(|id| (*id, Vec::new())).collect();
+        self.mapped_iteration_images(*sources.first()?, iteration, |sample, _| {
+            for (id, images) in &mut output {
+                if let Some(image) = sample
+                    .filled_region_points(*id)
+                    .and_then(|points| sample.colorized_color(*id).map(|color| (points, color)))
+                {
+                    images.push(image);
+                }
+            }
+            Some(())
+        })?;
+        Some(std::sync::Arc::new(output))
     }
 
     pub fn polygon_iteration_images(&self, id: usize) -> Option<Vec<(Vec<Point>, f64)>> {
@@ -2278,5 +2318,110 @@ impl Document {
                 .map(|pair| (pair[0], pair[1]))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use crate::document::colorized::{ColorBinding, ColorRangeBehavior, ColorizedDefinition};
+
+    #[test]
+    fn colored_batch_matches_individual_sequences_and_keeps_invalid_outputs_separate() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 4., y: 0. }));
+        let c = doc.add(Kind::Free(Point { x: 0., y: 4. }));
+        let first = doc.add(Kind::Midpoint(seed, b));
+        let second = doc.add(Kind::Midpoint(seed, c));
+        let color = doc.add(Kind::Parameter(
+            crate::table_records::ParameterGroup::named("color", 0.5).unwrap(),
+        ));
+        let polygon = doc.add(Kind::Polygon(vec![seed, b, c]));
+        let sources: Vec<_> = (0..2)
+            .map(|_| {
+                doc.add(Kind::Colorized(
+                    ColorizedDefinition::new(
+                        polygon,
+                        ElementType::Polygon,
+                        ColorBinding::Grayscale { value: color },
+                        0.,
+                        1.,
+                        ColorRangeBehavior::Clamp,
+                    )
+                    .unwrap(),
+                ))
+            })
+            .collect();
+        let root = doc.add(Kind::MappedPointIteration {
+            seeds: vec![seed],
+            branches: vec![vec![first], vec![second]],
+            carried: vec![first, second, polygon, sources[0], sources[1]],
+            depth: IterationDepth::Fixed(3),
+            final_only: false,
+        });
+        let bindings: Vec<_> = sources
+            .iter()
+            .map(|source| doc.add(Kind::IterationBinding(*source, root)))
+            .collect();
+        let mut view = doc.evaluated().0;
+        let check = |view: &Document| {
+            for (&source, &binding) in sources.iter().zip(&bindings) {
+                let reference = view.mapped_iteration_images(source, root, |sample, id| {
+                    Some((
+                        sample.filled_region_points(id)?,
+                        sample.colorized_color(id)?,
+                    ))
+                });
+                assert_eq!(view.colorized_polygon_iteration_images(binding), reference);
+            }
+        };
+        check(&view);
+        let original = view
+            .colorized_polygon_iteration_images(bindings[0])
+            .unwrap();
+        assert!(original.len() > 3);
+        let old = view.clone_for_evaluation();
+        let original_kind = view.objects[sources[0] - 1].kind.clone();
+        // A finite range with an overflowing normalization leaves only this
+        // output undefined, without invalidating the iteration's structure.
+        view.objects.edit(sources[0] - 1).kind = Kind::Colorized(
+            ColorizedDefinition::new(
+                polygon,
+                ElementType::Polygon,
+                ColorBinding::Grayscale { value: color },
+                0.,
+                f64::from_bits(1),
+                ColorRangeBehavior::Clamp,
+            )
+            .unwrap(),
+        );
+        check(&view);
+        assert!(
+            view.colorized_polygon_iteration_images(bindings[0])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            view.colorized_polygon_iteration_images(bindings[1])
+                .unwrap(),
+            original
+        );
+        view.objects.edit(sources[0] - 1).kind = original_kind;
+        view.objects.edit(seed - 1).kind = Kind::Free(Point { x: 1., y: 1. });
+        if let Kind::MappedPointIteration { final_only, .. } = &mut view.objects.edit(root - 1).kind
+        {
+            *final_only = true;
+        }
+        check(&view);
+        assert_ne!(
+            view.colorized_polygon_iteration_images(bindings[0])
+                .unwrap(),
+            original
+        );
+        assert_eq!(
+            old.colorized_polygon_iteration_images(bindings[0]).unwrap(),
+            original
+        );
     }
 }

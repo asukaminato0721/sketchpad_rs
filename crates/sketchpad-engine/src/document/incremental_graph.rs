@@ -41,6 +41,7 @@ struct Record {
 #[derive(Clone, Default)]
 struct Snapshot {
     records: Arc<Map<Query, Arc<Record>>>,
+    retention_limit: usize,
     touched: Set<Query>,
     statistics: Statistics,
     footprints: Map<Query, Arc<Vec<(Input, Stamp)>>>,
@@ -75,6 +76,7 @@ impl Clone for Graph {
             capacity: self.capacity,
             snapshot: Mutex::new(Snapshot {
                 records: snapshot.records.clone(),
+                retention_limit: snapshot.retention_limit,
                 ..Snapshot::default()
             }),
         }
@@ -190,7 +192,7 @@ impl Graph {
             .then_some(inputs)
     }
 
-    pub(super) fn read_unique_inputs(&self, document: &Document, inputs: &Set<Input>) {
+    pub(super) fn read_unique_inputs(&self, document: &Document, inputs: &[Input]) {
         ACTIVE.with(|live| {
             let mut frames = live.frames.borrow_mut();
             let frame = frames.last_mut().unwrap();
@@ -332,11 +334,12 @@ impl Graph {
         snapshot.epoch = Some(epoch);
         snapshot.touched.insert(key);
         snapshot.statistics = live.statistics.get();
-        if snapshot.records.len() > self.capacity {
-            // Keep a complete demanded subgraph. Splitting its dependency
-            // records would make rehydration and cross-scope reads ambiguous.
+        if snapshot.records.len() > self.capacity.max(snapshot.retention_limit) {
+            // Capacity limits inactive history, not the current working set.
+            // Retain every demanded root and its complete dependency subgraph;
+            // evicting other roots in the same epoch makes large drawings thrash.
             let mut retained = Map::default();
-            let mut pending = vec![key];
+            let mut pending: Vec<_> = snapshot.touched.iter().copied().collect();
             while let Some(key) = pending.pop() {
                 if retained.contains_key(&key) {
                     continue;
@@ -346,6 +349,9 @@ impl Graph {
                     retained.insert(key, record.clone());
                 }
             }
+            // Amortise collection when the active working set itself exceeds
+            // capacity. Re-scanning it after each query would be quadratic.
+            snapshot.retention_limit = retained.len().saturating_add(self.capacity);
             if retained.len() < snapshot.records.len() {
                 snapshot.records = Arc::new(retained);
                 snapshot.footprints.clear();
@@ -615,7 +621,7 @@ impl Live {
         }
         let guard = Pop(&self.frames);
         let value = document.sac_execute_query(&key);
-        let (inputs, children) = {
+        let (mut inputs, mut children) = {
             let mut frames = self.frames.borrow_mut();
             let frame = frames.last_mut().unwrap();
             (
@@ -623,6 +629,12 @@ impl Live {
                 std::mem::take(&mut frame.children),
             )
         };
+        // Store canonical edge lists once, instead of allocating four hash sets
+        // to compare the old and new dependencies at every sampled evaluation.
+        inputs.sort_unstable_by_key(|(input, _)| *input);
+        inputs.dedup_by_key(|(input, _)| *input);
+        children.sort_unstable_by_key(|(query, _)| *query);
+        children.dedup_by_key(|(query, _)| *query);
         let previous = self.records.borrow().get(&key).cloned();
         let equal = previous.as_ref().is_some_and(|r| r.value == value);
         let changed = if equal {
@@ -631,10 +643,14 @@ impl Live {
             NEXT_CHANGE.fetch_add(1, Ordering::Relaxed)
         };
         let same_edges = previous.as_ref().is_some_and(|r| {
-            r.inputs.iter().map(|(i, _)| i).collect::<Set<_>>()
-                == inputs.iter().map(|(i, _)| i).collect()
-                && r.children.iter().map(|(q, _)| q).collect::<Set<_>>()
-                    == children.iter().map(|(q, _)| q).collect()
+            r.inputs
+                .iter()
+                .map(|(i, _)| i)
+                .eq(inputs.iter().map(|(i, _)| i))
+                && r.children
+                    .iter()
+                    .map(|(q, _)| q)
+                    .eq(children.iter().map(|(q, _)| q))
         });
         Arc::make_mut(&mut self.records.borrow_mut()).insert(
             key,

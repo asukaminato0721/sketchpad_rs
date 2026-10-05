@@ -126,11 +126,16 @@ impl Tracking {
         }
     }
 
-    fn reconnect(&mut self, slot: usize, object: &Object, validity: (bool, bool)) {
+    fn reconnect(
+        &mut self,
+        slot: usize,
+        object: &Object,
+        validity: (bool, std::mem::Discriminant<Kind>),
+    ) {
         if !self.graph.matches_at(slot, object) {
             Arc::make_mut(&mut self.graph).reconnect(slot, object);
             self.validation_revision = Arc::new(());
-        } else if validity != (object.deleted, matches!(object.kind, Kind::Unsupported(_))) {
+        } else if validity != (object.deleted, std::mem::discriminant(&object.kind)) {
             self.validation_revision = Arc::new(());
         }
         self.coordinate_membership(slot, matches!(object.kind, Kind::CoordinateSystem(..)));
@@ -269,7 +274,7 @@ impl ObjectStore {
             revision: Arc::new(()),
         });
         let object = Arc::make_mut(&mut entry.object);
-        let validity = (object.deleted, matches!(object.kind, Kind::Unsupported(_)));
+        let validity = (object.deleted, std::mem::discriminant(&object.kind));
         object.kind = kind;
         let tracking = self.tracking.get_mut().unwrap();
         tracking.reconnect(slot, object, validity);
@@ -370,10 +375,7 @@ impl ObjectStore {
     pub fn get_mut(&mut self, slot: usize) -> Option<ObjectEdit<'_>> {
         self.materialize();
         let object = Arc::make_mut(&mut self.objects).get_mut(slot)?;
-        let validity = (
-            object.deleted,
-            matches!(object.kind, super::Kind::Unsupported(_)),
-        );
+        let validity = (object.deleted, std::mem::discriminant(&object.kind));
         Some(ObjectEdit {
             object,
             validity,
@@ -388,10 +390,7 @@ impl ObjectStore {
             .iter_mut()
             .enumerate()
             .map(|(slot, object)| ObjectEdit {
-                validity: (
-                    object.deleted,
-                    matches!(object.kind, super::Kind::Unsupported(_)),
-                ),
+                validity: (object.deleted, std::mem::discriminant(&object.kind)),
                 object,
                 slot,
                 tracking: &self.tracking,
@@ -479,7 +478,7 @@ impl IntoIterator for ObjectStore {
 
 /// A scoped edit. The store cannot be evaluated while this guard is borrowed.
 pub struct ObjectEdit<'a> {
-    validity: (bool, bool),
+    validity: (bool, std::mem::Discriminant<Kind>),
     object: &'a mut Object,
     slot: usize,
     tracking: &'a Mutex<Tracking>,

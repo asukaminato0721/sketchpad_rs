@@ -151,7 +151,7 @@ impl Document {
                 return false;
             }
         }
-        !self.objects.iter().any(|frame| {
+        !self.objects.coordinate_systems().any(|frame| {
             let Kind::CoordinateSystem(x_axis, y_axis) = frame.kind else {
                 return false;
             };

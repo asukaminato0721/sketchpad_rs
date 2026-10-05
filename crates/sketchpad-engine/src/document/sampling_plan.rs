@@ -18,13 +18,30 @@ struct PlanKey {
 /// Shared by a document and its evaluated views. Only immutable schedules are
 /// retained, never sample documents or values. Bound memory across graph edits.
 #[derive(Clone, Debug)]
-pub(super) struct SamplingPlans(Arc<Mutex<LruCache<PlanKey, Arc<SamplingPlan>>>>);
+pub(super) struct SamplingPlans {
+    schedules: Arc<Mutex<LruCache<PlanKey, Arc<SamplingPlan>>>>,
+    mapped_inputs: Arc<Mutex<LruCache<MappedInputsKey, MappedInputs>>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct MappedInputsKey {
+    seeds: Vec<usize>,
+    branches: Vec<Vec<usize>>,
+    carried: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct MappedInputs {
+    revision: super::sac_evaluation::Identity,
+    external: Option<Arc<[usize]>>,
+}
 
 impl Default for SamplingPlans {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(LruCache::new(
-            NonZeroUsize::new(128).unwrap(),
-        ))))
+        Self {
+            schedules: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(128).unwrap()))),
+            mapped_inputs: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))),
+        }
     }
 }
 
@@ -50,7 +67,7 @@ impl SamplingPlan {
         };
         let cached = doc
             .sampling_plans
-            .0
+            .schedules
             .lock()
             .ok()
             .and_then(|mut cache| cache.get(&key).cloned());
@@ -58,7 +75,7 @@ impl SamplingPlan {
             return Some(plan);
         }
         let plan = Arc::new(Self::build(doc, driver, roots, path)?);
-        if let Ok(mut cache) = doc.sampling_plans.0.lock() {
+        if let Ok(mut cache) = doc.sampling_plans.schedules.lock() {
             cache.put(key, plan.clone());
         }
         Some(plan)
@@ -98,9 +115,74 @@ impl SamplingPlan {
     }
 }
 
+impl Document {
+    /// Mapping boundaries depend on structure, never on substituted coordinates.
+    /// Share these small plans across states while keeping all values local.
+    pub(super) fn mapped_external_inputs(
+        &self,
+        seeds: &[usize],
+        branches: &[Vec<usize>],
+        carried: &[usize],
+    ) -> Option<Arc<[usize]>> {
+        super::sac_evaluation::structural_validation(|| {
+            let key = MappedInputsKey {
+                seeds: seeds.to_vec(),
+                branches: branches.to_vec(),
+                carried: carried.to_vec(),
+            };
+            let revision = self.objects.sac_validation_identity();
+            let cached = self
+                .sampling_plans
+                .mapped_inputs
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned();
+            if let Some(cached) = cached.filter(|cached| cached.revision == revision) {
+                return cached.external;
+            }
+            let external = self
+                .mapped_external_inputs_uncached(seeds, branches, carried)
+                .map(Arc::from);
+            self.sampling_plans.mapped_inputs.lock().unwrap().put(
+                key,
+                MappedInputs {
+                    revision,
+                    external: external.clone(),
+                },
+            );
+            external
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapping_boundaries_reuse_coordinates_but_track_types_deletion_and_old_views() {
+        let mut doc = Document::new();
+        let a = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let b = doc.add(Kind::Free(Point { x: 2., y: 0. }));
+        let output = doc.add(Kind::Midpoint(a, b));
+        let inputs = |doc: &Document| doc.mapped_external_inputs(&[], &[vec![output]], &[]);
+        let initial = inputs(&doc).unwrap();
+        assert_eq!(&*initial, &[output]);
+        doc.objects.edit(a - 1).kind = Kind::Free(Point { x: 3., y: 0. });
+        assert!(Arc::ptr_eq(&initial, &inputs(&doc).unwrap()));
+        let old = doc.clone_for_evaluation();
+        let edges = doc.objects[output - 1].construction_dependencies();
+        doc.objects.edit(output - 1).kind = Kind::IterationBinding(a, b);
+        assert_eq!(doc.objects[output - 1].construction_dependencies(), edges);
+        assert_eq!(&*inputs(&doc).unwrap(), &[a, b]);
+        assert_eq!(&*inputs(&old).unwrap(), &[output]);
+        assert_eq!(&*inputs(&doc).unwrap(), &[a, b]);
+        doc.objects.edit(a - 1).deleted = true;
+        assert!(inputs(&doc).is_none());
+        doc.objects.edit(a - 1).deleted = false;
+        assert_eq!(&*inputs(&doc).unwrap(), &[a, b]);
+    }
 
     #[test]
     fn plans_survive_coordinate_edits_but_rebuild_for_changed_dependencies() {
