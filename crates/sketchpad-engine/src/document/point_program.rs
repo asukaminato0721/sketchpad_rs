@@ -1,6 +1,7 @@
 //! Compile stable point constructions into a shared, topologically ordered tape.
 //! Values and matrices are bound once per batch, never retained across frames.
 use super::geometry::{marked_rotation_theta, ratio_of_points};
+use super::iteration::MappedValue;
 use super::sac_evaluation::Identity;
 use super::transform_model::{DisplacementExpr, ElementType, NumericExpr, Transform};
 use super::{Document, Kind, Point};
@@ -44,6 +45,11 @@ enum Op {
     Cartesian(usize, Operand, Operand),
     Polar(usize, Operand, Operand),
     Number(NumberOp),
+    Mapping {
+        inputs: Vec<usize>,
+        external: Arc<[usize]>,
+        program: Arc<PointProgram>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -144,6 +150,7 @@ enum BoundOp {
     Cartesian(usize, Operand, Operand),
     Polar(usize, Operand, Operand),
     Number(NumberOp),
+    Mapping(Vec<usize>, Arc<PointBatch>),
 }
 pub(super) struct PointBatch {
     ops: Vec<BoundOp>,
@@ -180,7 +187,7 @@ impl PointProgram {
             return compiled.program.clone();
         }
         let mut guards = Vec::new();
-        let program = Self::compile(doc, seeds, roots, &mut guards).map(Arc::new);
+        let program = Self::compile(doc, seeds, roots, &mut guards, 0).map(Arc::new);
         cache.lock().unwrap().put(
             key,
             Arc::new(Compiled {
@@ -197,7 +204,11 @@ impl PointProgram {
         seeds: &[usize],
         roots: &[usize],
         guards: &mut Vec<(usize, Identity)>,
+        nesting: usize,
     ) -> Option<Self> {
+        if nesting >= 16 {
+            return None;
+        }
         let graph = doc.objects.dependency_graph();
         let mut all = roots.to_vec();
         all.extend(seeds);
@@ -213,8 +224,17 @@ impl PointProgram {
             nodes: Vec<Node>,
             guards: &'a mut Vec<(usize, Identity)>,
             depth: usize,
+            nesting: usize,
         }
         impl Builder<'_> {
+            fn value(&mut self, id: usize) -> Option<usize> {
+                if self.doc.objects.get(id.checked_sub(1)?)?.kind.is_point() {
+                    self.point(id)
+                } else {
+                    self.number(id)
+                }
+            }
+
             fn number(&mut self, id: usize) -> Option<usize> {
                 if let Some(&slot) = self.number_slots.get(&id) {
                     return Some(slot);
@@ -388,6 +408,35 @@ impl PointProgram {
                     self.guards
                         .push((id, self.doc.objects.sac_identity(Some(id - 1))));
                     match &object.kind {
+                        Kind::MappedElement(d) => {
+                            let external = self.doc.mapped_external_inputs(
+                                &[d.seed()],
+                                &[vec![d.replacement()]],
+                                d.carried(),
+                            )?;
+                            let mut seeds = vec![d.seed()];
+                            let mut inputs = vec![self.point(d.replacement())?];
+                            for &id in external.iter() {
+                                if self.affected.contains(&id) {
+                                    seeds.push(id);
+                                    // Whole curves/frames require their own frozen value.
+                                    // Keep those mappings on the ordinary evaluator.
+                                    inputs.push(self.value(id)?);
+                                }
+                            }
+                            let program = PointProgram::compile(
+                                self.doc,
+                                &seeds,
+                                &[d.output()],
+                                self.guards,
+                                self.nesting + 1,
+                            )?;
+                            Op::Mapping {
+                                inputs,
+                                external,
+                                program: Arc::new(program),
+                            }
+                        }
                         Kind::Midpoint(a, b) if object.midpoint_host.is_none() => {
                             Op::Midpoint(self.point(*a)?, self.point(*b)?)
                         }
@@ -461,10 +510,11 @@ impl PointProgram {
             nodes: Vec::new(),
             guards,
             depth: 0,
+            nesting,
         };
         let outputs = roots
             .iter()
-            .map(|&id| builder.point(id))
+            .map(|&id| builder.value(id))
             .collect::<Option<Vec<_>>>()?;
         Some(Self {
             nodes: builder.nodes,
@@ -513,6 +563,21 @@ impl PointProgram {
             } else {
                 match node.op {
                     Op::Seed(_) | Op::Number(_) => unreachable!(),
+                    Op::Mapping {
+                        ref inputs,
+                        ref external,
+                        ref program,
+                    } => {
+                        super::sac_evaluation::observe(
+                            super::sac_evaluation::Input::MappedElementValidity(node.id),
+                        );
+                        if !doc.objects.mapped_element_validity(node.id) {
+                            return None;
+                        }
+                        let mut sample = doc.clone_for_evaluation();
+                        sample.freeze_scoped_evaluation_inputs(doc, external)?;
+                        BoundOp::Mapping(inputs.clone(), Arc::new(program.bind(&sample)?))
+                    }
                     Op::External => BoundOp::Constant(doc.position(node.id)),
                     Op::Midpoint(a, b) => BoundOp::Midpoint(a, b),
                     Op::Copy(a) => BoundOp::Copy(a),
@@ -576,16 +641,82 @@ impl PointBatch {
     /// Each output keeps its undefined lanes. Shared ancestors execute once per
     /// lane, with no document queries, dependency tracking or hashes in the loop.
     pub(super) fn evaluate(&self, inputs: &[Vec<Option<Point>>]) -> Vec<Vec<Option<Point>>> {
-        self.evaluate_inputs(inputs, &[])
+        self.evaluate_inputs(inputs, &[], |point, _| point)
     }
     pub(super) fn evaluate_numbers(&self, inputs: &[Vec<Option<f64>>]) -> Vec<Vec<Option<Point>>> {
-        self.evaluate_inputs(&[], inputs)
+        self.evaluate_inputs(&[], inputs, |point, _| point)
     }
-    fn evaluate_inputs(
+    pub(super) fn evaluate_mapped(
+        &self,
+        inputs: &[Vec<Option<MappedValue>>],
+    ) -> Vec<Vec<Option<MappedValue>>> {
+        let mut outputs = self.evaluate_values(inputs);
+        for value in outputs.iter_mut().flatten() {
+            *value = value.filter(|value| match value {
+                MappedValue::Point(p) => p.x.is_finite() && p.y.is_finite(),
+                MappedValue::Number(n) => n.is_finite(),
+            });
+        }
+        outputs
+    }
+    pub(super) fn evaluate_values(
+        &self,
+        inputs: &[Vec<Option<MappedValue>>],
+    ) -> Vec<Vec<Option<MappedValue>>> {
+        let points: Vec<Vec<_>> = inputs
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|value| match value {
+                        Some(MappedValue::Point(point)) => Some(*point),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect();
+        let numbers: Vec<Vec<_>> = inputs
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|value| match value {
+                        Some(MappedValue::Number(number)) => Some(*number),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect();
+        self.evaluate_inputs(&points, &numbers, |point, number| {
+            point
+                .map(MappedValue::Point)
+                .or_else(|| number.map(MappedValue::Number))
+        })
+    }
+
+    fn evaluate_inputs<T>(
         &self,
         inputs: &[Vec<Option<Point>>],
         numeric_inputs: &[Vec<Option<f64>>],
-    ) -> Vec<Vec<Option<Point>>> {
+        output_value: impl Fn(Option<Point>, Option<f64>) -> T,
+    ) -> Vec<Vec<T>> {
+        let count = inputs
+            .first()
+            .map(Vec::len)
+            .or_else(|| numeric_inputs.first().map(Vec::len))
+            .unwrap_or(0);
+        if count == 1 {
+            self.evaluate_tiles::<T, 1>(inputs, numeric_inputs, output_value)
+        } else {
+            self.evaluate_tiles::<T, 64>(inputs, numeric_inputs, output_value)
+        }
+    }
+    fn evaluate_tiles<T, const LANES: usize>(
+        &self,
+        inputs: &[Vec<Option<Point>>],
+        numeric_inputs: &[Vec<Option<f64>>],
+        output_value: impl Fn(Option<Point>, Option<f64>) -> T,
+    ) -> Vec<Vec<T>> {
         let count = inputs
             .first()
             .map(Vec::len)
@@ -593,7 +724,6 @@ impl PointBatch {
             .unwrap_or(0);
         assert!(inputs.iter().all(|input| input.len() == count));
         assert!(numeric_inputs.iter().all(|input| input.len() == count));
-        const LANES: usize = 64;
         let mut values = vec![[None; LANES]; self.ops.len()];
         let numeric_slots = self
             .ops
@@ -602,7 +732,7 @@ impl PointBatch {
             .map_or(0, |i| i + 1);
         let mut numbers = vec![[None; LANES]; numeric_slots];
         let mut scratch = Vec::new();
-        let mut outputs: Vec<Vec<Option<Point>>> = self
+        let mut outputs: Vec<Vec<T>> = self
             .outputs
             .iter()
             .map(|_| Vec::with_capacity(count))
@@ -663,9 +793,39 @@ impl PointBatch {
                     }
                     continue;
                 }
+                if let BoundOp::Mapping(inputs, batch) = op {
+                    let columns: Vec<Vec<_>> = inputs
+                        .iter()
+                        .map(|&slot| {
+                            (0..length)
+                                .map(|index| {
+                                    if matches!(self.ops[slot], BoundOp::Number(_)) {
+                                        numbers[slot][index].map(MappedValue::Number)
+                                    } else {
+                                        values[slot][index].map(MappedValue::Point)
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let mapped = batch.evaluate_values(&columns);
+                    for (index, value) in mapped[0].iter().enumerate() {
+                        // An undefined replacement invalidates the mapping even
+                        // when its output does not depend on the inner seed.
+                        values[slot][index] = match (columns[0][index], value) {
+                            (Some(MappedValue::Point(p)), Some(MappedValue::Point(value)))
+                                if p.x.is_finite() && p.y.is_finite() =>
+                            {
+                                Some(*value)
+                            }
+                            _ => None,
+                        };
+                    }
+                    continue;
+                }
                 let lane = |index: usize| -> Option<Point> {
                     match *op {
-                        BoundOp::Number(_) => unreachable!(),
+                        BoundOp::Number(_) | BoundOp::Mapping(..) => unreachable!(),
                         BoundOp::Cartesian(source, a, b) | BoundOp::Polar(source, a, b) => {
                             let source = values[source][index]?;
                             let a =
@@ -730,7 +890,13 @@ impl PointBatch {
                 values[slot] = result;
             }
             for (output, &slot) in outputs.iter_mut().zip(&self.outputs) {
-                output.extend_from_slice(&values[slot][..length]);
+                output.extend((0..length).map(|index| {
+                    if matches!(self.ops[slot], BoundOp::Number(_)) {
+                        output_value(None, numbers[slot][index])
+                    } else {
+                        output_value(values[slot][index], None)
+                    }
+                }));
             }
         }
         outputs
@@ -740,6 +906,125 @@ impl PointBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_mappings_freeze_omitted_constructions_in_each_parent_lane() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 8., y: -6. }));
+        let driver = doc.add(Kind::Free(Point { x: 2., y: 4. }));
+        // This omitted construction depends on both the inner seed and the
+        // outer driver. It must use the parent seed, before substitution.
+        let external = doc.add(Kind::Midpoint(seed, driver));
+        let output = doc.add(Kind::Midpoint(seed, external));
+        let mapped = doc
+            .add_mapped_element(output, seed, driver, &[output])
+            .unwrap();
+        let twice = doc
+            .add_mapped_element(mapped, driver, external, &[mapped])
+            .unwrap();
+        let inputs: Vec<_> = (0..131)
+            .map(|i| {
+                (i != 63).then_some(Point {
+                    x: i as f64 / 3.,
+                    y: -(i as f64) / 7.,
+                })
+            })
+            .collect();
+        let reference = |doc: &Document, id: usize| {
+            let Kind::MappedElement(d) = &doc.objects[id - 1].kind else {
+                panic!()
+            };
+            let point = doc.position(d.replacement())?;
+            if !point.x.is_finite() || !point.y.is_finite() {
+                return None;
+            }
+            let external =
+                doc.mapped_external_inputs(&[d.seed()], &[vec![d.replacement()]], d.carried())?;
+            let mut sample = doc.clone_for_evaluation();
+            sample.freeze_scoped_evaluation_inputs(doc, &external)?;
+            sample.set_evaluation_point(d.seed(), point)?;
+            sample.position(d.output())
+        };
+        for revision in 0..2 {
+            if revision == 1 {
+                doc.objects.edit(external - 1).kind = Kind::Midpoint(driver, driver);
+            }
+            let mut parent = doc.evaluated().0;
+            parent
+                .set_evaluation_point(seed, Point { x: 19., y: -17. })
+                .unwrap();
+            let batch = PointProgram::get(&parent, &[driver], &[mapped, twice])
+                .unwrap()
+                .bind(&parent)
+                .unwrap();
+            let columns = batch.evaluate(std::slice::from_ref(&inputs));
+            for (lane, value) in inputs.iter().enumerate() {
+                for (column, id) in [mapped, twice].into_iter().enumerate() {
+                    let expected = value.and_then(|value| {
+                        let mut sample = parent.clone_for_evaluation();
+                        sample.set_evaluation_point(driver, value)?;
+                        reference(&sample, id)
+                    });
+                    exact(columns[column][lane], expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_state_tape_matches_scoped_branch_replay_across_tiles() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 1., y: 2. }));
+        let fixed = doc.add(Kind::Free(Point { x: 10., y: 20. }));
+        let number = doc.add_named_parameter("n", 1., (0, 0)).unwrap();
+        let next_number = doc
+            .add_parameter_calculation(number, "n+1", (0, 0))
+            .unwrap();
+        let midpoint = doc.add(Kind::Midpoint(seed, fixed));
+        let scaled = doc.add(Kind::CalculatedRatioScaledPoint(midpoint, fixed, number));
+        let mut sample = doc.clone_for_evaluation();
+        sample.freeze_evaluation_inputs(&doc, &[fixed]).unwrap();
+        let roots = [midpoint, next_number, scaled, number];
+        let batch = PointProgram::get(&sample, &[seed, number], &roots)
+            .unwrap()
+            .bind(&sample)
+            .unwrap();
+        let points: Vec<_> = (0..137)
+            .map(|i| {
+                Some(MappedValue::Point(Point {
+                    x: i as f64,
+                    y: i as f64 / 7.,
+                }))
+            })
+            .collect();
+        let numbers: Vec<_> = (0..137)
+            .map(|i| Some(MappedValue::Number(i as f64 / 3.)))
+            .collect();
+        let actual = batch.evaluate_mapped(&[points.clone(), numbers.clone()]);
+        for lane in 0..points.len() {
+            sample.clear_evaluation_results();
+            points[lane].unwrap().substitute(&mut sample, seed).unwrap();
+            numbers[lane]
+                .unwrap()
+                .substitute(&mut sample, number)
+                .unwrap();
+            for (column, &root) in roots.iter().enumerate() {
+                match (actual[column][lane], MappedValue::read(&sample, root)) {
+                    (Some(MappedValue::Point(a)), Some(MappedValue::Point(b))) => {
+                        exact(Some(a), Some(b))
+                    }
+                    (Some(MappedValue::Number(a)), Some(MappedValue::Number(b))) => {
+                        assert_eq!(a.to_bits(), b.to_bits())
+                    }
+                    (None, None) => (),
+                    _ => panic!("different value types"),
+                }
+            }
+        }
+        let invalid =
+            batch.evaluate_mapped(&[vec![None], vec![Some(MappedValue::Number(f64::NAN))]]);
+        assert!(invalid.iter().all(|column| column[0].is_none()));
+    }
 
     fn exact(a: Option<Point>, b: Option<Point>) {
         assert_eq!(

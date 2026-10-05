@@ -596,6 +596,16 @@ impl Document {
         context.frames.retain(|id, _| frozen.contains(id));
     }
 
+    /// Install derived batch results after seeding one iteration state. These
+    /// are ordinary cached values and are cleared before the next state.
+    pub(super) fn cache_evaluation_points(
+        &mut self,
+        values: impl Iterator<Item = (usize, Option<Point>)>,
+    ) -> Option<()> {
+        self.evaluation_context_mut()?.points.extend(values);
+        Some(())
+    }
+
     pub(super) fn set_evaluation_point(&mut self, id: usize, point: Point) -> Option<()> {
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted

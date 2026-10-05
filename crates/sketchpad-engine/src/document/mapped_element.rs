@@ -280,6 +280,18 @@ impl Document {
             &mut sample,
             super::sac_evaluation::Scope::Mapping(id),
             |sample| {
+                if let Some(batch) = super::point_program::PointProgram::get(
+                    sample,
+                    &[definition.seed],
+                    &[definition.output],
+                )
+                .and_then(|program| program.bind(sample))
+                {
+                    let MappedValue::Point(point) = value else {
+                        return None;
+                    };
+                    return batch.evaluate(&[vec![Some(point)]]).remove(0)[0];
+                }
                 value.substitute(sample, definition.seed)?;
                 sample.position(definition.output)
             },

@@ -1340,40 +1340,92 @@ impl Document {
                 sample.invalidate_evaluation_dependents(id);
             }
         }
+        // Bind the frozen entry environment once. States at one depth share
+        // this tape; branch outputs share their common ancestors as well.
+        if retain_parent {
+            sample.clear_evaluation_seed_ids(seeds);
+        } else {
+            sample.clear_evaluation_seeds();
+        }
+        let roots: Vec<_> = branches.iter().flatten().copied().collect();
+        let rectangular =
+            !seeds.is_empty() && branches.iter().all(|branch| branch.len() == seeds.len());
+        let transition = if rectangular {
+            super::point_program::PointProgram::get(&sample, seeds, &roots)
+                .and_then(|program| program.bind(&sample))
+        } else {
+            None
+        };
+        // Mapped outputs can be consumed by several polygons, measurements and
+        // colors. Evaluate them once per level using the same frozen environment.
+        let output_roots: Vec<_> = carried
+            .iter()
+            .copied()
+            .filter(|&id| {
+                sample.objects.get(id - 1).is_some_and(|object| {
+                    matches!(object.kind, Kind::MappedElement(_))
+                        || (id == source && is_point_kind(&object.kind))
+                })
+            })
+            .collect();
+        let output_batch = (rectangular && !output_roots.is_empty())
+            .then(|| {
+                super::point_program::PointProgram::get(&sample, seeds, &output_roots)
+                    .and_then(|program| program.bind(&sample))
+            })
+            .flatten();
         let mut result = Vec::new();
         let mut generated = 0;
         for step in 0..depth {
             let mut next = Vec::new();
             let mut seen = BTreeSet::new();
-            for (path, state) in &level {
-                let mapped = self.with_sac_scope(
-                    &mut sample,
-                    super::sac_evaluation::Scope::Iteration {
-                        owner: iteration,
-                        step,
-                        branch: path.clone(),
-                    },
-                    |sample| {
-                        sample.clear_evaluation_results();
-                        if retain_parent {
-                            sample.clear_evaluation_seed_ids(seeds);
-                        } else {
-                            sample.clear_evaluation_seeds();
-                        }
-                        for (id, value) in seeds.iter().zip(state) {
-                            value.seed_cleared_state(sample, *id)?;
-                        }
-                        branches
-                            .iter()
-                            .map(|branch| {
-                                branch
-                                    .iter()
-                                    .map(|id| MappedValue::read(sample, *id))
-                                    .collect::<Option<Vec<_>>>()
-                            })
-                            .collect::<Option<Vec<_>>>()
-                    },
-                )?;
+            let columns = transition.as_ref().map(|batch| {
+                let inputs: Vec<Vec<_>> = (0..seeds.len())
+                    .map(|seed| level.iter().map(|(_, state)| Some(state[seed])).collect())
+                    .collect();
+                batch.evaluate_mapped(&inputs)
+            });
+            for (lane, (path, state)) in level.iter().enumerate() {
+                let mapped = if let Some(columns) = &columns {
+                    columns
+                        .chunks(seeds.len())
+                        .map(|branch| {
+                            branch
+                                .iter()
+                                .map(|column| column[lane])
+                                .collect::<Option<Vec<_>>>()
+                        })
+                        .collect::<Option<Vec<_>>>()?
+                } else {
+                    self.with_sac_scope(
+                        &mut sample,
+                        super::sac_evaluation::Scope::Iteration {
+                            owner: iteration,
+                            step,
+                            branch: path.clone(),
+                        },
+                        |sample| {
+                            sample.clear_evaluation_results();
+                            if retain_parent {
+                                sample.clear_evaluation_seed_ids(seeds);
+                            } else {
+                                sample.clear_evaluation_seeds();
+                            }
+                            for (id, value) in seeds.iter().zip(state) {
+                                value.seed_cleared_state(sample, *id)?;
+                            }
+                            branches
+                                .iter()
+                                .map(|branch| {
+                                    branch
+                                        .iter()
+                                        .map(|id| MappedValue::read(sample, *id))
+                                        .collect::<Option<Vec<_>>>()
+                                })
+                                .collect::<Option<Vec<_>>>()
+                        },
+                    )?
+                };
                 for (branch, mapped) in mapped.into_iter().enumerate() {
                     let key: Vec<_> = mapped.iter().map(|value| value.key()).collect();
                     if seen.insert(key) {
@@ -1391,7 +1443,13 @@ impl Document {
             }
             generated += next.len();
             if (!terminal_only && !*final_only) || step + 1 == depth {
-                for (path, state) in &next {
+                let output_columns = output_batch.as_ref().map(|batch| {
+                    let inputs: Vec<Vec<_>> = (0..seeds.len())
+                        .map(|seed| next.iter().map(|(_, state)| Some(state[seed])).collect())
+                        .collect();
+                    batch.evaluate_values(&inputs)
+                });
+                for (lane, (path, state)) in next.iter().enumerate() {
                     let value = self.with_sac_scope(
                         &mut sample,
                         super::sac_evaluation::Scope::Iteration {
@@ -1408,6 +1466,19 @@ impl Document {
                             }
                             for (id, value) in seeds.iter().zip(state) {
                                 value.seed_cleared_state(sample, *id)?;
+                            }
+                            if let Some(columns) = &output_columns {
+                                sample.cache_evaluation_points(
+                                    output_roots.iter().zip(columns).map(|(&id, column)| {
+                                        (
+                                            id,
+                                            match column[lane] {
+                                                Some(MappedValue::Point(p)) => Some(p),
+                                                _ => None,
+                                            },
+                                        )
+                                    }),
+                                )?;
                             }
                             Some(evaluate(sample, source))
                         },
@@ -2325,6 +2396,83 @@ impl Document {
 mod batch_tests {
     use super::*;
     use crate::document::colorized::{ColorBinding, ColorRangeBehavior, ColorizedDefinition};
+
+    #[test]
+    fn mixed_branches_keep_order_deduplicate_states_and_keep_undefined_outputs() {
+        let mut doc = Document::new();
+        let seed = doc.add(Kind::Free(Point { x: 0., y: 0. }));
+        let fixed = doc.add(Kind::Free(Point { x: 8., y: 0. }));
+        let number = doc.add_named_parameter("n", 0., (0, 0)).unwrap();
+        let plus_one = doc
+            .add_parameter_calculation(number, "n+1", (0, 0))
+            .unwrap();
+        let plus_two = doc
+            .add_parameter_calculation(number, "n+2", (0, 0))
+            .unwrap();
+        let next = doc.add(Kind::Midpoint(seed, fixed));
+        let inner_seed = doc.add(Kind::Free(Point { x: 100., y: 0. }));
+        let inner_output = doc.add(Kind::Midpoint(inner_seed, fixed));
+        let mapped = doc
+            .add_mapped_element(inner_output, inner_seed, seed, &[inner_output])
+            .unwrap();
+        let ratio = doc
+            .add_parameter_calculation(number, "1/(n-2)", (0, 0))
+            .unwrap();
+        let source = doc.add(Kind::CalculatedRatioScaledPoint(mapped, fixed, ratio));
+        let iteration = doc.add(Kind::MappedPointIteration {
+            seeds: vec![seed, number],
+            branches: vec![
+                vec![next, plus_one],
+                vec![next, plus_two],
+                vec![next, plus_one],
+            ],
+            carried: vec![next, plus_one, plus_two, mapped, ratio, source],
+            depth: IterationDepth::Fixed(2),
+            final_only: false,
+        });
+        let view = doc.evaluated();
+        let actual = view
+            .mapped_iteration_outputs_with_steps(source, iteration, false, false, |sample, id| {
+                Some((sample.position(id), sample.numeric_value(number)?))
+            })
+            .unwrap();
+        assert_eq!(
+            actual,
+            vec![
+                (1, Some((Some(Point { x: 10., y: 0. }), 1.))),
+                (1, Some((None, 2.))),
+                (2, Some((None, 2.))),
+                (2, Some((Some(Point { x: 7., y: 0. }), 3.))),
+                (2, Some((Some(Point { x: 7.5, y: 0. }), 4.))),
+            ]
+        );
+        let terminal = view
+            .mapped_iteration_outputs_with_steps(source, iteration, true, true, |sample, id| {
+                Some((sample.position(id), sample.numeric_value(number)?))
+            })
+            .unwrap();
+        assert_eq!(terminal, actual[2..]);
+        // Rebinding an edited external must not mutate the older evaluated view.
+        doc.move_point(fixed, Point { x: 16., y: 0. });
+        let changed = doc
+            .evaluated()
+            .mapped_iteration_outputs_with_steps(source, iteration, false, false, |sample, id| {
+                Some((sample.position(id), sample.numeric_value(number)?))
+            })
+            .unwrap();
+        assert_ne!(changed, actual);
+        assert_eq!(
+            view.mapped_iteration_outputs_with_steps(
+                source,
+                iteration,
+                false,
+                false,
+                |sample, id| Some((sample.position(id), sample.numeric_value(number)?))
+            )
+            .unwrap(),
+            actual
+        );
+    }
 
     #[test]
     fn colored_batch_matches_individual_sequences_and_keeps_invalid_outputs_separate() {
