@@ -143,6 +143,19 @@ To carry a circle through an iteration, select a free center point, its directly
 
 Removing a page leaves Page Links to that page visible with an unavailable destination, as in Sketchpad 5. The confirmation names affected links.
 
+## MCP debugging
+
+Start the editor with `--mcp` to expose its live document through MCP over
+stdin/stdout. For example, configure an MCP client to run
+`target/debug/sketchpad_rs --mcp --demo` after `cargo build --bin sketchpad_rs`.
+The client starts a visible editor window. Tools use that window's document,
+including unsaved changes and the same undo history as the Edit menu.
+
+The interface provides state inspection, paginated object lists, dependency and
+value inspection, selection, point movement, parameter editing, undo, redo, and
+SVG export. See [MCP setup and tool reference](dev/MCP.md) for client configuration,
+coordinate conventions, and tests.
+
 ## Current scope
 
 Construct > Locus accepts a selected point constrained to a segment, circle,

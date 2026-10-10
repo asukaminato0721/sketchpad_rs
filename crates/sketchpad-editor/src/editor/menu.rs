@@ -395,26 +395,14 @@ impl Editor {
                         .add_enabled(!self.doc.undo.is_empty(), egui::Button::new("Undo"))
                         .clicked()
                     {
-                        self.clear_animation_tracks();
-                        self.movements.clear();
-                        self.presentations.clear();
-                        self.stop_all_sounds();
-                        self.doc.undo();
-                        self.reset_custom_tool_after_history();
-                        self.image_textures.clear();
+                        self.apply_history(false);
                         ui.close();
                     }
                     if ui
                         .add_enabled(!self.doc.redo.is_empty(), egui::Button::new("Redo"))
                         .clicked()
                     {
-                        self.clear_animation_tracks();
-                        self.movements.clear();
-                        self.presentations.clear();
-                        self.stop_all_sounds();
-                        self.doc.redo();
-                        self.reset_custom_tool_after_history();
-                        self.image_textures.clear();
+                        self.apply_history(true);
                         ui.close();
                     }
                     if ui.button("Cut").clicked() {

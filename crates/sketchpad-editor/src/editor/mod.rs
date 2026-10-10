@@ -14,6 +14,7 @@ mod document_dialogs;
 mod files;
 pub(crate) mod fonts;
 mod function_dialogs;
+mod mcp;
 mod measurements;
 mod menu;
 mod panels;
@@ -416,6 +417,20 @@ struct Editor {
     exit_requested: bool,
 }
 impl Editor {
+    fn apply_history(&mut self, redo: bool) {
+        self.clear_animation_tracks();
+        self.movements.clear();
+        self.presentations.clear();
+        self.stop_all_sounds();
+        if redo {
+            self.doc.redo();
+        } else {
+            self.doc.undo();
+        }
+        self.reset_custom_tool_after_history();
+        self.image_textures.clear();
+    }
+
     fn evaluated_document(&self) -> std::sync::Arc<sketchpad_engine::document::EvaluatedDocument> {
         self.evaluation_cache.borrow_mut().evaluate(&self.doc)
     }

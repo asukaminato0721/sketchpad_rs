@@ -1,4 +1,4 @@
-use super::{Editor, PendingAction};
+use super::{Editor, PendingAction, mcp};
 use crate::render::{GeometryRenderer, RenderPreferences};
 use sketchpad_engine::document::Document;
 use std::path::PathBuf;
@@ -278,7 +278,25 @@ struct Application {
     graphics: Option<GraphicsState>,
 }
 
-impl ApplicationHandler for Application {
+impl ApplicationHandler<mcp::Event> for Application {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: mcp::Event) {
+        match event {
+            mcp::Event::Call { call, reply } => {
+                let _ = reply.send(self.editor.mcp_call(call));
+            }
+            mcp::Event::Disconnected => {
+                if self.editor.doc.dirty {
+                    self.editor.pending_action = Some(PendingAction::Quit);
+                } else {
+                    event_loop.exit();
+                }
+            }
+        }
+        if let Some(graphics) = &self.graphics {
+            graphics.window.request_redraw();
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.graphics.is_none() {
             self.graphics = Some(GraphicsState::new(event_loop));
@@ -328,8 +346,32 @@ impl ApplicationHandler for Application {
 }
 
 pub(crate) fn run() {
-    let args: Vec<_> = std::env::args_os().collect();
-    let (doc, untitled_name) = match args.get(1).map(PathBuf::from) {
+    let mut mcp_enabled = false;
+    let mut source = None;
+    let mut positional = false;
+    for arg in std::env::args_os().skip(1) {
+        if !positional && arg == "--" {
+            positional = true;
+        } else if !positional && arg == "--mcp" {
+            mcp_enabled = true;
+        } else if !positional && (arg == "--help" || arg == "-h") {
+            eprintln!(
+                "Usage: sketchpad_rs [--mcp] [--demo | FILE.gsp]\n--mcp: Serve MCP over stdin/stdout for this editor window."
+            );
+            return;
+        } else if source.is_none()
+            && (positional || arg == "--demo" || !arg.to_string_lossy().starts_with('-'))
+        {
+            source = Some(PathBuf::from(arg));
+        } else {
+            eprintln!(
+                "Invalid argument: {}. Use --help for usage.",
+                arg.to_string_lossy()
+            );
+            return;
+        }
+    }
+    let (doc, untitled_name) = match source {
         Some(path) if path.as_os_str() == "--demo" => {
             match sketchpad_engine::demo::geometry_document(sketchpad_engine::demo::GEOMETRY_STEPS)
             {
@@ -349,8 +391,13 @@ pub(crate) fn run() {
         },
         None => (Document::new(), "Untitled"),
     };
-    let event_loop = EventLoop::new().expect("event loop");
+    let event_loop = EventLoop::<mcp::Event>::with_user_event()
+        .build()
+        .expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
+    if mcp_enabled {
+        mcp::start(event_loop.create_proxy());
+    }
     let mut editor = Editor::new(doc);
     editor.untitled_name = untitled_name;
     let mut application = Application {

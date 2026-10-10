@@ -1458,7 +1458,14 @@ impl Document {
         )
     }
     pub fn move_point(&mut self, id: usize, p: Point) -> bool {
-        if !p.x.is_finite() || !p.y.is_finite() {
+        self.move_point_inner(id, p, false)
+    }
+    /// Move a point in one undo step. A rejected move does not change history.
+    pub fn move_point_with_history(&mut self, id: usize, p: Point) -> bool {
+        self.move_point_inner(id, p, true)
+    }
+    fn move_point_inner(&mut self, id: usize, p: Point, checkpoint: bool) -> bool {
+        if id == 0 || !p.x.is_finite() || !p.y.is_finite() {
             return false;
         }
         let kind = match self.objects.get(id.saturating_sub(1)).map(|o| &o.kind) {
@@ -1571,6 +1578,9 @@ impl Document {
             }
             _ => return false,
         };
+        if checkpoint {
+            self.checkpoint();
+        }
         self.objects.edit(id - 1).kind = kind;
         self.last_moved_object = Some(id);
         self.dirty = true;
