@@ -205,38 +205,58 @@ impl Document {
         &self,
         id: usize,
     ) -> Option<Vec<super::referenced_text::ReferencedNode>> {
+        self.text_math_nodes_inner(id, &mut std::collections::BTreeMap::new(), 0)
+    }
+
+    fn text_math_nodes_inner(
+        &self,
+        id: usize,
+        memo: &mut std::collections::BTreeMap<
+            usize,
+            Option<Vec<super::referenced_text::ReferencedNode>>,
+        >,
+        depth: usize,
+    ) -> Option<Vec<super::referenced_text::ReferencedNode>> {
+        use super::referenced_text::ReferencedNode;
+        if depth > 128 {
+            return None;
+        }
+        if let Some(nodes) = memo.get(&id) {
+            return nodes.clone();
+        }
         let object = self.objects.get(id.checked_sub(1)?)?;
         if object.deleted {
             return None;
         }
-        match &object.kind {
+        let mut resolve = |source, role| {
+            self.text_math_nodes_inner(source, memo, depth + 1)
+                .or_else(|| {
+                    self.referenced_source_text(source, role, None)
+                        .map(|text| vec![ReferencedNode::Literal(text)])
+                })
+        };
+        let nodes = match &object.kind {
             Kind::PlainText { .. } => self.text_rich_template(id)?.math_nodes(),
-            Kind::ReferencedText { parents, text }
-                if text
-                    .nodes()
-                    .iter()
-                    .any(super::referenced_text::ReferencedNode::has_math_layout) =>
-            {
-                Some(text.resolved_nodes(|slot, role| {
-                    self.referenced_source_text(*parents.get(slot - 1)?, role, None)
+            Kind::ReferencedText { parents, text } => {
+                Some(text.resolved_node_tree(|slot, role| {
+                    resolve(*parents.get(slot.checked_sub(1)?)?, role)
                 }))
             }
             Kind::PointReferencedText {
                 point,
                 source,
                 text,
-            } if text
-                .nodes()
-                .iter()
-                .any(super::referenced_text::ReferencedNode::has_math_layout) =>
-            {
+            } => {
                 let parents = [*point, *source];
-                Some(text.resolved_nodes(|slot, role| {
-                    self.referenced_source_text(*parents.get(slot - 1)?, role, None)
+                Some(text.resolved_node_tree(|slot, role| {
+                    resolve(*parents.get(slot.checked_sub(1)?)?, role)
                 }))
             }
             _ => None,
         }
+        .filter(|nodes| nodes.iter().any(ReferencedNode::has_math_layout));
+        memo.insert(id, nodes.clone());
+        nodes
     }
 
     pub fn referenced_text_runs(&self, id: usize) -> Option<Vec<Vec<ReferencedRun>>> {

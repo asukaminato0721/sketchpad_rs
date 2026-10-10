@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn combined_caption_components_stay_suppressed_and_keep_live_math() {
+    let mut doc = Document::new();
+    let parameter = doc.add_named_parameter("a", 2., (10, 10)).unwrap();
+    let literal = doc.add_text("y=", Point { x: 20., y: 100. }).unwrap();
+    let square = doc
+        .add_referenced_text(vec![], "<+<T1xx><T1x2>>", (50, 100))
+        .unwrap();
+    let product = doc
+        .add_referenced_text(vec![parameter, square], "<H<?x1><?x2>>", (70, 100))
+        .unwrap();
+    let caption = doc
+        .add_referenced_text(vec![literal, product], "<H<?x1><?x2>>", (200, 100))
+        .unwrap();
+    let mut bytes = doc.encode().unwrap();
+    let parsed = Document::from_bytes(&bytes, None).unwrap();
+    for id in [literal, square, product] {
+        bytes[parsed.objects[id - 1].header_offset.unwrap() + 2] |= 4;
+    }
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    assert_eq!(doc.encode().unwrap(), bytes);
+    for id in [literal, square, product] {
+        assert!(doc.objects[id - 1].visible);
+        assert!(!doc.is_displayed(id));
+        assert!(doc.text_content(id).is_some());
+    }
+    assert!(doc.is_displayed(caption));
+    assert_eq!(doc.text_content(caption).unwrap().0, "y=2.0x2");
+    assert!(
+        doc.text_math_nodes(caption)
+            .unwrap()
+            .iter()
+            .any(super::super::referenced_text::ReferencedNode::has_math_layout)
+    );
+    doc.show_all_hidden();
+    assert!(!doc.is_displayed(product));
+    doc.set_parameter_value(parameter, 3.).unwrap();
+    assert_eq!(doc.text_content(caption).unwrap().0, "y=3.0x2");
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    for id in [literal, square, product] {
+        assert!(!reopened.is_displayed(id));
+    }
+    assert!(reopened.text_math_nodes(caption).is_some());
+}
+
+#[test]
 fn source_point_style_undoes_and_survives_save() {
     let mut document = Document::from_bytes(
         include_bytes!("../../../../../tests/fixtures/style_blue_point.gsp"),

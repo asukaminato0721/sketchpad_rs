@@ -2,6 +2,77 @@ use super::*;
 
 #[test]
 #[ignore = "Set SKETCHPAD_MATH_SAMPLE to the junior mathematics teaching sample"]
+fn external_quadratic_captions_hide_components_and_preserve_exponents() {
+    let bytes = std::fs::read(std::env::var("SKETCHPAD_MATH_SAMPLE").unwrap()).unwrap();
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    doc.active_page = 22;
+    let mut editor = Editor::new(doc);
+    let viewport = Viewport {
+        rect: egui::Rect::from_min_size(egui::pos2(44., 23.), egui::vec2(1056., 681.)),
+        scale: editor.scale,
+        center: editor.center,
+    };
+    let evaluated = editor.evaluated_document();
+    let ctx = crate::render::math_text::font_context(&evaluated);
+    editor.font_context = Some(ctx.clone());
+    for id in [
+        3397, 3399, 3400, 3401, 3402, 3403, 3404, 3405, 3406, 3407, 3414, 3419, 3420, 3421, 3422,
+        3423, 3424, 3443, 3444, 3445, 3446, 3447, 3448, 3449, 3450, 3451, 3452, 3456, 3457, 3458,
+    ] {
+        assert!(
+            !evaluated.is_displayed(id),
+            "Caption component {id} must not be painted separately"
+        );
+    }
+    for id in [3434, 3438, 3453, 3459] {
+        assert!(evaluated.is_displayed(id));
+        let layout = crate::render::math_text::measured_layout(&evaluated, id, &ctx).unwrap();
+        let exponent = layout
+            .runs
+            .iter()
+            .find(|run| run.text == "2" && run.size < 16.)
+            .unwrap();
+        let base = layout
+            .runs
+            .iter()
+            .find(|run| run.text.contains('x'))
+            .unwrap();
+        assert!(exponent.position.y + exponent.baseline < base.position.y + base.baseline);
+        let rect = if let Some((_, saved)) = evaluated.text_content(id) {
+            egui::Rect::from_min_size(
+                viewport.screen(Point {
+                    x: saved.left.into(),
+                    y: saved.top.into(),
+                }),
+                egui::vec2(layout.width, layout.height()),
+            )
+        } else {
+            let (point, _) = evaluated.point_numeric_label(id).unwrap();
+            egui::Rect::from_center_size(
+                viewport.screen(point),
+                egui::vec2(layout.width, layout.height()),
+            )
+        };
+        assert!(
+            viewport.rect.contains_rect(rect),
+            "Formula {id} is outside the fitted page: {rect:?}"
+        );
+        assert_eq!(editor.hit(&viewport, rect.center()), Some(id));
+    }
+    let before = evaluated.text_content(3453).unwrap().0;
+    assert!(editor.doc.set_parameter_value(3387, 4.).is_ok());
+    let after = editor.evaluated_document();
+    assert_ne!(after.text_content(3453).unwrap().0, before);
+    assert!(after.text_math_nodes(3453).is_some());
+    let svg = crate::render::svg_page(&after, &viewport).unwrap();
+    assert!(!svg.contains("对称轴"));
+    let reopened = Document::from_bytes(&editor.doc.encode().unwrap(), None).unwrap();
+    assert!(!reopened.is_displayed(3445));
+    assert_eq!(reopened.text_content(3453), after.text_content(3453));
+}
+
+#[test]
+#[ignore = "Set SKETCHPAD_MATH_SAMPLE to the junior mathematics teaching sample"]
 fn external_bisector_animation_updates_table_values() {
     let bytes = std::fs::read(std::env::var("SKETCHPAD_MATH_SAMPLE").unwrap()).unwrap();
     let mut doc = Document::from_bytes(&bytes, None).unwrap();

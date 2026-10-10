@@ -635,14 +635,45 @@ impl Editor {
             .filter_map(|o| doc.position(o.id))
             .collect();
         for object in doc.objects.iter().filter(|o| doc.is_displayed(o.id)) {
-            if let Kind::PlainText { rect, .. } = &object.kind {
+            if let Some((text, rect)) = doc.text_content(object.id) {
+                // Combined captions save only their origin, not a bounding box.
+                let size = if matches!(object.kind, Kind::ReferencedText { .. }) {
+                    doc.text_font_state(object.id)
+                        .map_or(16., |font| f64::from(font.size_code))
+                } else {
+                    0.
+                };
+                let width = text
+                    .lines()
+                    .map(|line| line.chars().count())
+                    .max()
+                    .unwrap_or(0) as f64
+                    * size
+                    * 0.65;
+                let height = text.lines().count().max(1) as f64 * size * 1.2;
                 pts.push(Point {
                     x: rect.left.into(),
                     y: rect.top.into(),
                 });
                 pts.push(Point {
-                    x: rect.right.into(),
-                    y: rect.bottom.into(),
+                    x: f64::from(rect.right).max(f64::from(rect.left) + width),
+                    y: f64::from(rect.bottom).max(f64::from(rect.top) + height),
+                });
+            }
+            if matches!(object.kind, Kind::PointReferencedText { .. })
+                && let Some((point, text)) = doc.point_numeric_label(object.id)
+            {
+                let size = doc
+                    .numeric_label_font_state(object.id)
+                    .map_or(16., |font| f64::from(font.size_code));
+                let half_width = text.chars().count() as f64 * size * 0.325;
+                pts.push(Point {
+                    x: point.x - half_width,
+                    y: point.y - size,
+                });
+                pts.push(Point {
+                    x: point.x + half_width,
+                    y: point.y + size,
                 });
             }
             if let Some((anchor, _)) = crate::render::number_lines_for_object(doc, object.id) {

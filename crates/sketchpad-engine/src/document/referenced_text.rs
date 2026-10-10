@@ -124,9 +124,10 @@ impl ReferencedNode {
             Self::Styled { style, children } => {
                 style.geometry_decoration.is_some() || children.iter().any(Self::has_math_layout)
             }
-            Self::FrameMetrics(_) | Self::Literal(_) | Self::PiSuffix | Self::Reference { .. } => {
-                false
-            }
+            Self::Reference { cached, .. } => cached
+                .as_ref()
+                .is_some_and(|nodes| nodes.iter().any(Self::has_math_layout)),
+            Self::FrameMetrics(_) | Self::Literal(_) | Self::PiSuffix => false,
         }
     }
 }
@@ -310,15 +311,26 @@ impl ReferencedText {
         &self,
         mut resolver: impl FnMut(usize, ReferenceRole) -> Option<String>,
     ) -> Vec<ReferencedNode> {
+        self.resolved_node_tree(|slot, role| {
+            resolver(slot, role).map(|text| vec![ReferencedNode::Literal(text)])
+        })
+    }
+
+    /// Resolve live references without flattening nested mathematical layout.
+    pub(crate) fn resolved_node_tree(
+        &self,
+        mut resolver: impl FnMut(usize, ReferenceRole) -> Option<Vec<ReferencedNode>>,
+    ) -> Vec<ReferencedNode> {
         fn resolve(
             node: &mut ReferencedNode,
-            resolver: &mut dyn FnMut(usize, ReferenceRole) -> Option<String>,
+            resolver: &mut dyn FnMut(usize, ReferenceRole) -> Option<Vec<ReferencedNode>>,
         ) {
             match node {
                 ReferencedNode::Reference { slot, role, cached } => {
-                    *cached = Some(vec![ReferencedNode::Literal(
-                        resolver(*slot, *role).unwrap_or_else(|| "undefined".into()),
-                    )]);
+                    *cached = Some(
+                        resolver(*slot, *role)
+                            .unwrap_or_else(|| vec![ReferencedNode::Literal("undefined".into())]),
+                    );
                 }
                 ReferencedNode::Horizontal(children)
                 | ReferencedNode::Vertical(children)

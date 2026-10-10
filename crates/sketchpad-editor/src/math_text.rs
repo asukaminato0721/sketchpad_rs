@@ -329,7 +329,7 @@ fn node_layout(
             cached.as_deref().unwrap_or_default(),
             style,
             families,
-            Some(*slot),
+            reference.or(Some(*slot)),
             measure,
         ),
         ReferencedNode::Vertical(children) | ReferencedNode::VerticalCentered(children) => {

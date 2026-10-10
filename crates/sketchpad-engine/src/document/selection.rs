@@ -116,13 +116,23 @@ impl Document {
         Ok(())
     }
 
-    // Native auxiliary objects have defined geometry while flag 2 suppresses
-    // presentation. Ordinary hide/show leaves this independent flag intact.
+    // Native flag 2 suppresses auxiliary objects. Flag 4 suppresses text
+    // components used inside combined captions. Both retain their live values.
+    // Ordinary hide/show leaves these independent flags intact.
     // Clipboard copies convert suppressed prerequisites to ordinary hidden.
     fn is_presentation_suppressed(&self, id: usize) -> bool {
         id.checked_sub(1)
             .and_then(|index| self.objects.get(index))
-            .is_some_and(|object| object.presentation_suppressed)
+            .is_some_and(|object| {
+                object.presentation_suppressed
+                    || (matches!(
+                        object.kind,
+                        Kind::PlainText { .. } | Kind::ReferencedText { .. }
+                    ) && object
+                        .header_offset
+                        .and_then(|offset| self.original.get(offset + 2))
+                        .is_some_and(|flags| flags & 4 != 0))
+            })
     }
 
     pub fn is_displayed(&self, id: usize) -> bool {
