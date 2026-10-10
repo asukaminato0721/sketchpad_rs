@@ -116,5 +116,12 @@ mod tests {
             .unwrap();
         editor.sync_document_fonts(&ctx);
         assert!(editor.loaded_fonts.contains_key("Test Run Font"));
+
+        ctx.begin_pass(Default::default());
+        ctx.fonts_mut(|fonts| {
+            let font = editor.canvas_font_id(Some("Test Run Font"), 16.0);
+            assert!(fonts.has_glyphs(&font, "中文界面与文档"));
+        });
+        ctx.end_pass().textures_delta.clear();
     }
 }

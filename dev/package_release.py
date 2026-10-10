@@ -64,6 +64,12 @@ def main():
             shutil.copy2(binary_dir / output.name, output)
             output.chmod(0o755)
         shutil.copy2(ROOT / "README.md", package / "README.md")
+        notices = package / "licenses" / "NotoSansCJK"
+        notices.mkdir(parents=True)
+        for notice in ("README.md", "OFL.txt"):
+            shutil.copy2(ROOT / "assets" / "fonts" / notice, notices / notice)
+        if macos:
+            shutil.copytree(package / "licenses", contents / "Resources" / "licenses")
         (package / "BUILD-INFO.json").write_text(
             json.dumps({"version": version, "commit": args.commit, "target": args.target}, indent=2) + "\n",
             encoding="utf-8",

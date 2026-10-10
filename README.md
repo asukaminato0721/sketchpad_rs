@@ -14,7 +14,7 @@ Extract the archive before use. Start `sketchpad_rs.exe` on Windows,
 The macOS builds are unsigned and are not notarized.
 Linux builds target Ubuntu 24.04 and require glibc 2.39 or newer.
 Linux also needs system graphics libraries, ALSA, and an X11 or Wayland session.
-Install fontconfig and CJK fonts for Chinese text. See the font requirements below.
+Chinese text uses an embedded font. See the font details below.
 Windows and macOS builds are experimental. Linux remains the main development platform.
 
 Each push to `master` builds all four packages. The workflow updates the `rolling`
@@ -25,13 +25,16 @@ The workflow uses `GITHUB_TOKEN`. It does not need a separate release secret.
 
 ## CJK text
 
-Chinese (simplified and traditional), Japanese, and Korean text use system font
-fallbacks in the interface, text fields, and canvas, including captions with an
-explicit font family. Font lookup uses `fc-match` from fontconfig at startup;
-install CJK fonts such as Noto Sans CJK and restart the editor after installing
-fonts. The Nix development shell supplies fontconfig but uses your installed
-system fonts. Without fontconfig or suitable fonts, the editor still starts,
-but unsupported characters may appear as missing-glyph boxes.
+The editor embeds Noto Sans CJK SC Regular as a fallback for the interface,
+text fields, and canvas, including captions with an explicit font family.
+Chinese text works without fontconfig, a Chinese language pack, or a font download.
+The font uses simplified Chinese glyph forms when no system font supplies a glyph.
+See the [font notice and license](assets/fonts/README.md).
+
+Where fontconfig is available, `fc-match` supplies system fonts before the embedded
+fallback. Install additional fonts and restart the editor to use other typefaces
+or regional glyph forms. The Nix development shell supplies fontconfig and uses
+your installed system fonts.
 
 Text fields use the desktop input method through egui/winit. Configure and start
 your desktop IME (for example, Fcitx5 or IBus) to compose CJK text. Captions and

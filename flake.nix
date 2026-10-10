@@ -116,6 +116,11 @@
             buildInputs = [ pkgs.alsa-lib ];
             cargoBuildFlags = [ "--bin" "sketchpad_rs" ];
 
+            postInstall = ''
+              install -Dm644 assets/fonts/OFL.txt "$out/share/licenses/sketchpad-rs/NotoSansCJK/OFL.txt"
+              install -Dm644 assets/fonts/README.md "$out/share/licenses/sketchpad-rs/NotoSansCJK/README.md"
+            '';
+
             postFixup = ''
               wrapProgram "$out/bin/sketchpad_rs" \
                 --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath (runtimeLibraries pkgs)}" \

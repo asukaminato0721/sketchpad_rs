@@ -75,6 +75,18 @@ fn append_fallback(fonts: &mut egui::FontDefinitions, key: String, data: egui::F
     }
 }
 
+fn add_bundled_cjk_fallback(fonts: &mut egui::FontDefinitions) {
+    // Keep this in the executable. Windows installations need neither
+    // fontconfig nor an installed Chinese language pack to display the UI.
+    append_fallback(
+        fonts,
+        "bundled:NotoSansCJKsc".into(),
+        egui::FontData::from_static(include_bytes!(
+            "../../../../assets/fonts/NotoSansCJKsc-Regular.otf"
+        )),
+    );
+}
+
 pub(crate) fn add_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
     let mut seen = HashSet::new();
     for pattern in CJK_PATTERNS {
@@ -87,6 +99,7 @@ pub(crate) fn add_cjk_fallbacks(fonts: &mut egui::FontDefinitions) {
         let Some(data) = font.data() else { continue };
         append_fallback(fonts, format!("cjk:{pattern}"), data);
     }
+    add_bundled_cjk_fallback(fonts);
 }
 
 #[cfg(test)]
@@ -114,5 +127,47 @@ mod tests {
             assert_eq!(&chain[..chain.len() - 1], original[&family]);
             assert_eq!(chain.last().unwrap(), "test-cjk");
         }
+    }
+
+    #[test]
+    fn bundled_font_covers_chinese_ui_without_system_fonts() {
+        let mut definitions = egui::FontDefinitions::default();
+        add_bundled_cjk_fallback(&mut definitions);
+        // Document-specific fonts inherit the same fallback chain.
+        let document_family = egui::FontFamily::Name("Document font".into());
+        definitions.families.insert(
+            document_family.clone(),
+            definitions.families[&egui::FontFamily::Proportional].clone(),
+        );
+        let ctx = egui::Context::default();
+        ctx.set_fonts(definitions);
+        ctx.begin_pass(Default::default());
+        let catalog = include_str!("i18n/zh-CN.json");
+        ctx.fonts_mut(|fonts| {
+            for family in [
+                egui::FontFamily::Proportional,
+                egui::FontFamily::Monospace,
+                document_family,
+            ] {
+                let font = egui::FontId::new(16.0, family);
+                for text in [
+                    catalog,
+                    "中文简体繁體變化，。！？教学积件二次函数中垂线偏振光",
+                ] {
+                    // Check CJK characters and full-width punctuation. Latin
+                    // glyphs come from egui's existing default fonts.
+                    for ch in text.chars().filter(|ch| *ch >= '\u{2e80}') {
+                        assert!(fonts.has_glyph(&font, ch), "Missing glyph: {ch} ({font:?})");
+                    }
+                }
+                let galley = fonts.layout_no_wrap(
+                    "中文界面：文件、编辑、构造、度量".into(),
+                    font,
+                    egui::Color32::BLACK,
+                );
+                assert!(galley.size().x > 0.0 && galley.size().y > 0.0);
+            }
+        });
+        ctx.end_pass().textures_delta.clear();
     }
 }
