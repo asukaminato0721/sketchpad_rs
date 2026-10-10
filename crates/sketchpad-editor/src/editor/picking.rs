@@ -302,8 +302,13 @@ impl Editor {
         }
         if let Some(object) = doc.objects.iter().rev().find(|object| {
             doc.is_displayed(object.id)
-                && (crate::render::number_screen_rect_for_object(v, doc, object.id)
-                    .is_some_and(|rect| rect.contains(p))
+                && (crate::render::number_screen_rect_with_fonts(
+                    v,
+                    doc,
+                    object.id,
+                    self.font_context.as_ref(),
+                )
+                .is_some_and(|rect| rect.contains(p))
                     || crate::render::point_parameter_iteration_label_hit(v, doc, object.id, p))
         }) {
             return Some(object.id);

@@ -506,7 +506,12 @@ impl Editor {
                             );
                         }
                     }
-                    if let Some((_, lines)) = crate::render::number_lines_for_object(doc, object.id)
+                    if let Some(table) =
+                        crate::render::table_layout::layout(&vp, doc, object.id, ui.ctx())
+                    {
+                        table.paint(ui.painter());
+                    } else if let Some((_, lines)) =
+                        crate::render::number_lines_for_object(doc, object.id)
                         && let Some(number_rect) =
                             crate::render::number_screen_rect_for_object(&vp, doc, object.id)
                     {

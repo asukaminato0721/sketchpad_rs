@@ -520,7 +520,7 @@ pub(crate) fn measured_nodes(
     })
 }
 
-fn measure(
+pub(super) fn measure(
     ctx: &egui::Context,
     text: &str,
     font: &FontState,

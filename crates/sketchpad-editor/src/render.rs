@@ -2,6 +2,8 @@
 pub(crate) mod math_text;
 #[path = "editor/system_fonts.rs"]
 pub(crate) mod system_fonts;
+#[path = "table_layout.rs"]
+pub(crate) mod table_layout;
 
 use crate::document::{Document, Kind, LineMode, Point};
 use crate::graph::GridForm;
@@ -457,6 +459,26 @@ pub fn point_parameter_iteration_label_hit(
 }
 
 pub fn number_screen_rect_for_object(vp: &Viewport, doc: &Document, id: usize) -> Option<Rect> {
+    number_screen_rect_with_fonts(vp, doc, id, None)
+}
+
+pub(crate) fn number_screen_rect_with_fonts(
+    vp: &Viewport,
+    doc: &Document,
+    id: usize,
+    ctx: Option<&egui::Context>,
+) -> Option<Rect> {
+    if table_layout::is_table(doc, id) {
+        let fallback;
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => {
+                fallback = math_text::font_context(doc);
+                &fallback
+            }
+        };
+        return Some(table_layout::layout(vp, doc, id, ctx)?.rect);
+    }
     if let Some((point, text)) = doc.point_numeric_label(id) {
         return Some(numeric_label_rect(vp, point, &text));
     }
@@ -2149,7 +2171,12 @@ fn svg_page_with_layout(
                 xml_text(&text)).unwrap();
             }
         }
-        if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
+        if table_layout::is_table(doc, object.id) {
+            let ctx = math_fonts.get_or_insert_with(|| math_text::font_context(doc));
+            if let Some(table) = table_layout::layout(vp, doc, object.id, ctx) {
+                table.write_svg(&mut svg, object.id);
+            }
+        } else if let Some((anchor, lines)) = number_lines_for_object(doc, object.id) {
             let at = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
             for (line, content) in lines.iter().enumerate() {
                 writeln!(

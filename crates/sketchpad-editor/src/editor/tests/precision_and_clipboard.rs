@@ -41,7 +41,23 @@ fn external_bisector_animation_updates_table_values() {
         );
     }
     let svg = crate::render::svg_page(&evaluated, &viewport).unwrap();
-    assert!(svg.contains(after.1.last().unwrap()));
+    let table_svg = svg
+        .split("<g data-table-id=\"1496\">")
+        .nth(1)
+        .unwrap()
+        .split("</g>")
+        .next()
+        .unwrap();
+    assert_eq!(table_svg.matches("<text ").count(), 8);
+    assert_eq!(table_svg.matches("<line ").count(), 4);
+    for id in [1488, 1489, 1473, 1474] {
+        assert!(table_svg.contains(&evaluated.numeric_value_text(id).unwrap()));
+    }
+    let rect = crate::render::number_screen_rect_for_object(&viewport, &evaluated, 1496).unwrap();
+    assert_eq!(
+        editor.hit(&viewport, rect.right_bottom() - egui::vec2(3., 3.)),
+        Some(1496)
+    );
     editor.click(&viewport, click, false);
     assert!(editor.animations.is_empty());
     editor.tick_animation(0.5);
