@@ -333,7 +333,14 @@ fn authored_curve_defaults_match_native_templates_and_sweeps_keep_their_layout()
                 "../../../../../tests/fixtures/locus_vector_polygon_target_original.gsp"
             )
             .as_slice(),
-            None,
+            Some(VisualStyle::Polygon {
+                color: RgbColor {
+                    red: 255,
+                    green: 178,
+                    blue: 102,
+                },
+                opacity: 32767,
+            }),
         ),
     ] {
         let mut doc = Document::from_bytes(bytes, None).unwrap();
@@ -366,6 +373,19 @@ fn authored_curve_defaults_match_native_templates_and_sweeps_keep_their_layout()
                         green: 150,
                         blue: 210
                     }
+                })
+            );
+        } else if let Some(VisualStyle::Polygon { opacity, .. }) = expected {
+            let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+            assert_eq!(
+                reopened.objects[id - 1].visual_style,
+                Some(VisualStyle::Polygon {
+                    color: RgbColor {
+                        red: 14,
+                        green: 150,
+                        blue: 210
+                    },
+                    opacity,
                 })
             );
         } else {

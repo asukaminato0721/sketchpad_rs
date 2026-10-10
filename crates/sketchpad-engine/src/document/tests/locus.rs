@@ -1,6 +1,111 @@
 use super::*;
 
 #[test]
+#[ignore = "Set SKETCHPAD_POLARIZATION_SAMPLE to the physics teaching sample"]
+fn external_physics_polarization_loci() {
+    let bytes = std::fs::read(std::env::var("SKETCHPAD_POLARIZATION_SAMPLE").unwrap()).unwrap();
+    let mut doc = Document::from_bytes(&bytes, None).unwrap();
+    doc.active_page = 24;
+    assert!(
+        matches!(&doc.objects[5051].kind, Kind::PlainText { text, .. } if text == "偏振光的起偏过程")
+    );
+    for phase in [1486.08, 1696.21, 0.] {
+        doc.animate_parameter_value(5074, phase).unwrap();
+        for (id, color) in [
+            (
+                5266,
+                RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0,
+                },
+            ),
+            (
+                5276,
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 128,
+                },
+            ),
+        ] {
+            let polygons = doc.locus_polygons(id, 384).unwrap();
+            let surfaces = doc.locus_surfaces(id, 384).unwrap();
+            assert!(!surfaces.is_empty() || phase == 0.);
+            assert!(surfaces.len() <= 31);
+            assert_eq!(surfaces.len(), polygons.len());
+            for (surface, polygon) in surfaces.iter().zip(polygons) {
+                assert_eq!(surface.points, polygon);
+                assert_eq!(
+                    surface.style,
+                    VisualStyle::Polygon {
+                        color,
+                        opacity: 49151
+                    }
+                );
+            }
+        }
+    }
+    doc.verify_roundtrip().unwrap();
+}
+
+#[test]
+fn polygon_locus_keeps_separate_samples_and_its_own_fill() {
+    let bytes =
+        include_bytes!("../../../../../tests/fixtures/locus_vector_polygon_target_original.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    // The target can use a different style from its locus, as in the physics sample.
+    doc.objects.edit(9).visual_style = Some(VisualStyle::Polygon {
+        color: RgbColor {
+            red: 0,
+            green: 0,
+            blue: 0,
+        },
+        opacity: 65535,
+    });
+    let polygons = doc.locus_polygons(11, 2).unwrap();
+    let surfaces = doc.locus_surfaces(11, 2).unwrap();
+    assert_eq!(surfaces.len(), 3);
+    for (surface, polygon) in surfaces.iter().zip(&polygons) {
+        assert_eq!(&surface.points, polygon);
+        assert_eq!(
+            surface.style,
+            VisualStyle::Polygon {
+                color: RgbColor {
+                    red: 255,
+                    green: 178,
+                    blue: 102
+                },
+                opacity: 32767,
+            }
+        );
+    }
+    doc.selected.insert(11);
+    doc.set_selected_color(RgbColor {
+        red: 255,
+        green: 0,
+        blue: 0,
+    })
+    .unwrap();
+    doc.set_object_polygon_opacity(11, 49151).unwrap();
+    doc.verify_roundtrip().unwrap();
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    for surface in reopened.locus_surfaces(11, 2).unwrap() {
+        assert_eq!(
+            surface.style,
+            VisualStyle::Polygon {
+                color: RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0
+                },
+                opacity: 49151,
+            }
+        );
+    }
+}
+
+#[test]
 fn locus_evaluation_ignores_later_objects_and_retains_forward_reference_fallback() {
     let bytes = include_bytes!("../../../../../tests/fixtures/locus_midpoint_original.gsp");
     let mut doc = Document::from_bytes(bytes, None).unwrap();
@@ -846,12 +951,9 @@ fn locus_object_families_skip_undefined_members() {
         );
         if family == 3 {
             assert_eq!(doc.locus_polygons(locus, 8).unwrap().len(), 8);
-            // Six adjacent valid pairs, each contributing three swept faces.
-            // The two pairs bordering the missing sample must add no faces.
-            assert_eq!(
-                doc.locus_polygon_surfaces(locus, 8).unwrap().len(),
-                8 + 6 * 3
-            );
+            // Each defined polygon is a separate member, with no connecting faces.
+            assert_eq!(doc.locus_polygon_surfaces(locus, 8).unwrap().len(), 8);
+            assert_eq!(doc.locus_surfaces(locus, 8).unwrap().len(), 8);
         }
         let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
         assert!(!reopened.partial_view);

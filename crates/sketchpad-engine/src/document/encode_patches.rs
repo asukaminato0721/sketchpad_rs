@@ -634,6 +634,11 @@ impl Document {
                         &mut bytes[record.data.clone()],
                         style,
                     )
+                } else if super::locus::is_mapped_polygon_locus(&self.objects, &object.kind) {
+                    style_records::set_locus_polygon_visual_style(
+                        &mut bytes[record.data.clone()],
+                        style,
+                    )
                 } else {
                     style_records::set_visual_style(&mut bytes[record.data.clone()], style)
                 };

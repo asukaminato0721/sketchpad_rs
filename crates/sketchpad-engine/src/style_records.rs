@@ -484,6 +484,39 @@ pub fn set_locus_straight_visual_style(
     Ok(())
 }
 
+/// Polygon and straight loci share class 43. The resolved target selects the style.
+pub fn locus_polygon_visual_style(payload: &[u8]) -> Option<VisualStyle> {
+    if payload.len() != 28
+        || !matches!(u16::from_le_bytes([payload[0], payload[1]]), 35 | 97)
+        || payload[6..10] != [6, 0, 43, 0]
+    {
+        return None;
+    }
+    Some(VisualStyle::Polygon {
+        color: RgbColor {
+            red: payload[12],
+            green: payload[13],
+            blue: payload[14],
+        },
+        opacity: u16::from_le_bytes([payload[16], payload[17]]),
+    })
+}
+
+pub fn set_locus_polygon_visual_style(
+    payload: &mut [u8],
+    style: VisualStyle,
+) -> Result<(), String> {
+    if locus_polygon_visual_style(payload).is_none() {
+        return Err("Expected a polygon locus header".into());
+    }
+    let VisualStyle::Polygon { color, opacity } = style else {
+        return Err("Expected a polygon locus fill style".into());
+    };
+    payload[12..15].copy_from_slice(&[color.red, color.green, color.blue]);
+    payload[16..18].copy_from_slice(&opacity.to_le_bytes());
+    Ok(())
+}
+
 pub fn set_visual_style(payload: &mut [u8], style: VisualStyle) -> Result<(), String> {
     match style {
         VisualStyle::Point { shape, color } if point_style(payload).is_some() => {

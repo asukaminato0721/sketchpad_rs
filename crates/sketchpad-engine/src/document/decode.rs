@@ -3218,6 +3218,8 @@ impl Document {
                 )
             } else if super::kind::is_straight_locus(&objects, &kind) {
                 style_records::locus_straight_visual_style(h)
+            } else if super::locus::is_mapped_polygon_locus(&objects, &kind) {
+                style_records::locus_polygon_visual_style(h)
             } else {
                 style_records::visual_style(h)
             };

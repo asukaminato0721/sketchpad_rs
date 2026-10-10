@@ -1073,6 +1073,12 @@ impl Document {
                     .get(source.saturating_sub(1))
                     .and_then(|object| object.visual_style)
                     .or_else(|| default_style(&kind))
+            } else if locus::is_mapped_polygon_locus(&self.objects, &kind) {
+                let target = match &kind {
+                    Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => refs[0],
+                    _ => unreachable!(),
+                };
+                self.objects[target - 1].visual_style
             } else if let Kind::Locus(refs, _) = &kind {
                 refs.first()
                     .and_then(|id| id.checked_sub(1))

@@ -1245,33 +1245,9 @@ impl Document {
         id: usize,
         subdivisions: usize,
     ) -> Option<Vec<Vec<Point>>> {
-        let target = match &self.objects.get(id.checked_sub(1)?)?.kind {
-            Kind::Locus(refs, _) | Kind::ParameterLocus(refs, ..) => *refs.first()?,
-            _ => return None,
-        };
-        let polygons = self.sampled_locus_polygons(id, subdivisions)?;
-        let mut surfaces: Vec<_> = polygons.iter().flatten().cloned().collect();
-        if self
-            .objects
-            .get(target.checked_sub(1)?)?
-            .kind
-            .is_circle_interior()
-        {
-            return Some(surfaces);
-        }
-        for pair in polygons.windows(2) {
-            let (Some(before), Some(after)) = (&pair[0], &pair[1]) else {
-                continue;
-            };
-            if before.len() != after.len() {
-                return None;
-            }
-            for index in 0..before.len() {
-                let next = (index + 1) % before.len();
-                surfaces.push(vec![before[index], before[next], after[next], after[index]]);
-            }
-        }
-        Some(surfaces)
+        // Native displays polygon samples independently. Connecting their edges
+        // fills gaps that belong between arrowheads and other small interiors.
+        self.locus_polygons(id, subdivisions)
     }
 
     pub fn locus_surfaces(&self, id: usize, subdivisions: usize) -> Option<Vec<LocusSurface>> {
@@ -1304,43 +1280,23 @@ impl Document {
                 .collect(),
             );
         }
-        let samples = self.sample_any_locus(id, subdivisions, |sample, target| {
-            let points = sample.filled_region_points(target)?;
-            let style = sample.effective_visual_style(target)?;
-            matches!(style, VisualStyle::Polygon { .. }).then_some((points, style))
-        })?;
-        let mut surfaces = samples
-            .iter()
+        let locus_style = self.effective_visual_style(id);
+        Some(
+            self.sample_any_locus(id, subdivisions, |sample, target| {
+                let points = sample.filled_region_points(target)?;
+                let mut style = locus_style.or_else(|| sample.effective_visual_style(target))?;
+                if matches!(sample.objects[target - 1].kind, Kind::Colorized(_))
+                    && let VisualStyle::Polygon { color, .. } = &mut style
+                {
+                    *color = sample.colorized_color(target)?;
+                }
+                matches!(style, VisualStyle::Polygon { .. })
+                    .then_some(LocusSurface { points, style })
+            })?
+            .into_iter()
             .flatten()
-            .map(|(points, style)| LocusSurface {
-                points: points.clone(),
-                style: *style,
-            })
-            .collect::<Vec<_>>();
-        if self
-            .objects
-            .get(target.checked_sub(1)?)?
-            .kind
-            .is_circle_interior()
-        {
-            return Some(surfaces);
-        }
-        for pair in samples.windows(2) {
-            let (Some((before, _)), Some((after, style))) = (&pair[0], &pair[1]) else {
-                continue;
-            };
-            if before.len() != after.len() {
-                return None;
-            }
-            for index in 0..before.len() {
-                let next = (index + 1) % before.len();
-                surfaces.push(LocusSurface {
-                    points: vec![before[index], before[next], after[next], after[index]],
-                    style: *style,
-                });
-            }
-        }
-        Some(surfaces)
+            .collect(),
+        )
     }
 
     pub fn mapped_collection_surfaces(
