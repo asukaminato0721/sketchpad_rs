@@ -602,7 +602,7 @@ impl Editor {
                             egui::StrokeKind::Inside,
                         );
                         ui.painter().text(
-                            box_rect.min + egui::vec2(8., 5.),
+                            box_rect.min + egui::vec2(5., 2.),
                             egui::Align2::LEFT_TOP,
                             label,
                             egui::FontId::proportional(14.),

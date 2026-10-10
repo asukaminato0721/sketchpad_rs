@@ -183,10 +183,9 @@ impl Editor {
             .get(id.saturating_sub(1))
             .map(|object| &object.kind)
         {
-            Some(Kind::AnimationButton { targets, .. }) => self
-                .animations
-                .iter()
-                .any(|track| targets.contains(&track.id)),
+            Some(Kind::AnimationButton { .. }) => {
+                self.animations.iter().any(|track| track.button == Some(id))
+            }
             Some(Kind::SoundButton { .. }) => self.sound_is_running(id),
             Some(Kind::MovementButton { .. }) => {
                 self.movements.iter().any(|track| track.button == id)
@@ -208,9 +207,8 @@ impl Editor {
             .get(id.saturating_sub(1))
             .map(|object| &object.kind)
         {
-            Some(Kind::AnimationButton { targets, .. }) => {
-                let targets = targets.clone();
-                self.retain_animation_tracks(|track| !targets.contains(&track.id));
+            Some(Kind::AnimationButton { .. }) => {
+                self.retain_animation_tracks(|track| track.button != Some(id));
             }
             Some(Kind::SoundButton { .. }) => self.stop_sound_button(id),
             Some(Kind::MovementButton { .. }) => {
@@ -234,7 +232,7 @@ impl Editor {
         viewport: &Viewport,
         depth: usize,
     ) -> Result<(), String> {
-        self.activate_action(id, viewport, depth, false)
+        self.activate_action(id, viewport, depth, true)
     }
 
     pub(super) fn activate_referenced_action(
@@ -271,7 +269,7 @@ impl Editor {
             Kind::AnimationButton {
                 targets, settings, ..
             } => {
-                self.animate_button_targets(&targets, &settings);
+                self.animate_button_targets(id, &targets, &settings);
                 Ok(())
             }
             Kind::SoundButton { .. } => self.activate_sound_button(id),
@@ -289,7 +287,7 @@ impl Editor {
                 ..
             } => self.activate_link_page(target_page, target_button_ordinal, viewport, depth + 1),
             Kind::PresentationButton { .. } => {
-                self.activate_presentation_button(id, viewport, depth + 1)
+                self.activate_presentation_button_impl(id, viewport, depth + 1, !indirect)
             }
             _ => Err("Object is not an action button".into()),
         }
@@ -325,6 +323,16 @@ impl Editor {
         viewport: &Viewport,
         depth: usize,
     ) -> Result<(), String> {
+        self.activate_presentation_button_impl(id, viewport, depth, true)
+    }
+
+    fn activate_presentation_button_impl(
+        &mut self,
+        id: usize,
+        viewport: &Viewport,
+        depth: usize,
+        require_visible: bool,
+    ) -> Result<(), String> {
         if depth > 32 {
             return Err("Presentation buttons are nested too deeply".into());
         }
@@ -346,7 +354,10 @@ impl Editor {
         else {
             return Err("Invalid button ID".into());
         };
-        if object.deleted || !object.visible || object.page != self.doc.active_page {
+        if object.deleted
+            || (require_visible && !object.visible)
+            || object.page != self.doc.active_page
+        {
             return Err("Presentation button is unavailable".into());
         }
         let Kind::PresentationButton {

@@ -148,6 +148,8 @@ impl Editor {
             return;
         }
         egui::Panel::bottom("page_tabs").show(root, |ui| {
+            // Reserve space for the bar so it cannot cover short page tabs.
+            ui.spacing_mut().scroll.floating = false;
             egui::ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for page in 0..self.doc.page_count {

@@ -42,14 +42,14 @@ fn animation_button_direction_speed_once_and_second_click_control_motion() {
             once: false,
             ..AnimationSettings::default()
         };
-        editor
+        let button = editor
             .doc
             .add_animation_button_with_settings(4, settings)
             .unwrap();
-        editor.animate_button_targets(&[4], &[settings]);
+        editor.animate_button_targets(button, &[4], &[settings]);
         editor.tick_animation(0.1);
         assert!((editor.animations[0].phase - expected_phase).abs() < 1e-9);
-        editor.animate_button_targets(&[4], &[settings]);
+        editor.animate_button_targets(button, &[4], &[settings]);
         assert!(editor.animations.is_empty());
     }
     let mut editor = Editor::new(Document::from_bytes(base, None).unwrap());
@@ -59,7 +59,11 @@ fn animation_button_direction_speed_once_and_second_click_control_motion() {
         once: true,
         ..AnimationSettings::default()
     };
-    editor.animate_button_targets(&[4], &[settings]);
+    let button = editor
+        .doc
+        .add_animation_button_with_settings(4, settings)
+        .unwrap();
+    editor.animate_button_targets(button, &[4], &[settings]);
     for _ in 0..8 {
         editor.tick_animation(0.1);
     }
@@ -303,7 +307,7 @@ fn custom_parameter_button_uses_rate_domain_and_discrete_step() {
         assert!(
             matches!(&reopened.objects[button - 1].kind, Kind::AnimationButton { settings: actual, .. } if actual == &[settings])
         );
-        editor.animate_button_targets(&[1], &[settings]);
+        editor.animate_button_targets(button, &[1], &[settings]);
         assert_eq!(editor.animations[0].parameter_domain, Some((-3., 7.)));
         editor.tick_animation(0.1);
         let Kind::Parameter(group) = &editor.doc.objects[0].kind else {

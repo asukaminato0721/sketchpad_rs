@@ -166,7 +166,13 @@ impl Document {
         value: f64,
         checkpoint: bool,
     ) -> Result<(), String> {
-        self.update_parameter(id, checkpoint, |group| group.set_value(value))
+        self.update_parameter(id, checkpoint, |group| {
+            if checkpoint {
+                group.set_value(value)
+            } else {
+                group.set_animated_value(value)
+            }
+        })
     }
     fn update_parameter(
         &mut self,
@@ -177,8 +183,7 @@ impl Document {
         if id == 0
             || (self.page_count == 1 && (self.partial_view || !self.safe_structure))
             || (self.page_count > 1
-                && (self.image_read_only
-                    || self.source_count != self.objects.len()
+                && (self.source_count != self.objects.len()
                     || self.objects.iter().any(|object| {
                         object.deleted || matches!(object.kind, Kind::Unsupported(_))
                     })))
@@ -241,7 +246,10 @@ impl Document {
             candidate.objects.edit(index).kind = Kind::ValueTablePair(first, second, table);
         }
         candidate.dirty = true;
-        if self.page_count > 1 {
+        // Animation changes typed values only. Keep serialization and full-file
+        // validation at explicit edits and save, rather than on every frame.
+        // The existing-state writer preserves opaque image records.
+        if checkpoint && self.page_count > 1 {
             let bytes = candidate.encode()?;
             candidate.validate_reparsed_document(&Self::from_bytes(&bytes, None)?)?;
         }

@@ -48,6 +48,34 @@ coordinates. This also preserves type labels when source geometry is undefined.
 Evaluating geometry for each label previously blocked the inspector on large
 documents, including the 38-page physics teaching sample with 7,752 objects.
 
+## Action button input
+
+Action buttons use compact caption widths. Their canvas, SVG, and hit rectangles
+share the same dimensions. Buttons receive clicks before caption and image bounds.
+Page tabs reserve space below the labels for their horizontal scroll bar.
+
+Each animation track records its source button. Clicking that button again stops
+its tracks. A different button replaces tracks for shared targets immediately.
+This lets **Reset** replace **Start** without a second click.
+Parameter buttons convert native lengths and angles to displayed units. Large
+bidirectional steps stay within their range. Animation preserves cached caption
+boxes, including narrow boxes on hidden parameters. Existing parameters can run
+in multi-page documents with opaque images. Save still validates the full file.
+
+Presentation buttons can execute hidden child buttons, including nested
+presentations. Deleted children and children on another page remain unavailable.
+
+To check local animation, visibility, movement, and presentation buttons on every
+page of a sample, run:
+
+```sh
+SKETCHPAD_ACTION_SAMPLE=/path/to/sample.gsp cargo test -p sketchpad-editor external_sample_action_buttons --lib -- --ignored --nocapture
+```
+
+The check validates caption and center hits, activation, continued animation,
+parameter ranges, and a parameter save round trip that preserves images.
+It does not execute URL or sound buttons.
+
 ## Translations
 
 `editor/i18n.rs` selects English or Simplified Chinese on the UI thread.

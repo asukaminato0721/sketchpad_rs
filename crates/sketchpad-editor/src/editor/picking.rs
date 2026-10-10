@@ -165,6 +165,21 @@ impl Editor {
     pub(super) fn hit(&self, v: &Viewport, p: egui::Pos2) -> Option<usize> {
         let evaluated = self.evaluated_document();
         let doc = &*evaluated;
+        // Action controls take clicks before caption and image bounding boxes.
+        if let Some(object) = doc.objects.iter().rev().find(|object| {
+            doc.is_displayed(object.id)
+                && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
+                    | Kind::AnimationButton { label, anchor, .. }
+                    | Kind::SoundButton { label, anchor, .. }
+                    | Kind::MovementButton { label, anchor, .. }
+                    | Kind::ScrollButton { label, anchor, .. }
+                    | Kind::PresentationButton { label, anchor, .. }
+                    | Kind::LinkUrlButton { label, anchor, .. }
+                    | Kind::LinkPageButton { label, anchor, .. }
+                    if self.action_button_rect(v, *anchor, label).contains(p))
+        }) {
+            return Some(object.id);
+        }
         let radius = self.geometry_hit_radius();
         if let Some(object) = doc.objects.iter().rev().find(|object| {
             doc.is_displayed(object.id)
@@ -309,20 +324,6 @@ impl Editor {
             .map(|(_, entry)| entry)
         {
             return Some(*id);
-        }
-        if let Some(object) = doc.objects.iter().rev().find(|object| {
-            doc.is_displayed(object.id)
-                && matches!(&object.kind, Kind::HideShowButton { label, anchor, .. }
-                    | Kind::AnimationButton { label, anchor, .. }
-                    | Kind::SoundButton { label, anchor, .. }
-                    | Kind::MovementButton { label, anchor, .. }
-                    | Kind::ScrollButton { label, anchor, .. }
-                    | Kind::PresentationButton { label, anchor, .. }
-                    | Kind::LinkUrlButton { label, anchor, .. }
-                    | Kind::LinkPageButton { label, anchor, .. }
-                    if self.action_button_rect(v, *anchor, label).contains(p))
-        }) {
-            return Some(object.id);
         }
         let mapped_numeric_labels = doc.visible_mapped_numeric_label_images();
         if let Some(object) = doc.objects.iter().rev().find(|object| {

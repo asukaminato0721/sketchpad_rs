@@ -1838,16 +1838,26 @@ impl Document {
             }
             let numeric_replacement = match (&saved.kind, &current.kind) {
                 (Kind::Parameter(before), Kind::Parameter(after)) if before != after => {
-                    let mut changed = before.clone();
-                    changed.set_value(after.value())?;
-                    if changed != *after && after.precision() >= before.precision() {
+                    let value_only = [false, true].into_iter().any(|animated| {
+                        let set = |group: &mut crate::table_records::ParameterGroup, value| {
+                            if animated {
+                                group.set_animated_value(value)
+                            } else {
+                                group.set_value(value)
+                            }
+                        };
+                        let mut changed = before.clone();
+                        if set(&mut changed, after.value()).is_ok() && changed == *after {
+                            return true;
+                        }
                         // A previous fractional edit can raise precision permanently.
-                        // Reproduce only effects of the existing typed value setter.
                         changed = before.clone();
-                        changed.set_value(10_f64.powi(-(after.precision() as i32)))?;
-                        changed.set_value(after.value())?;
-                    }
-                    if changed != *after {
+                        after.precision() >= before.precision()
+                            && set(&mut changed, 10_f64.powi(-(after.precision() as i32))).is_ok()
+                            && set(&mut changed, after.value()).is_ok()
+                            && changed == *after
+                    });
+                    if !value_only {
                         return Err("Multi-page parameter edit changes more than its value".into());
                     }
                     expected.kind = current.kind.clone();

@@ -156,8 +156,13 @@ impl Viewport {
 }
 pub fn action_button_rect(vp: &Viewport, anchor: (i16, i16), label: &str) -> Rect {
     let min = vp.rect.min + egui::vec2(anchor.0 as f32, anchor.1 as f32);
-    let width = (label.chars().count() as f32 * 8. + 20.).max(88.);
-    Rect::from_min_size(min, egui::vec2(width, 24.))
+    // Native sketches often place short captions 40 pixels apart. A fixed
+    // minimum width covers the next button. Keep CJK captions full width.
+    let text_width: f32 = label
+        .chars()
+        .map(|c| if c.is_ascii() { 7. } else { 14. })
+        .sum();
+    Rect::from_min_size(min, egui::vec2((text_width + 10.).max(24.), 20.))
 }
 fn display_parameter_indices(text: &str) -> String {
     let mut output = String::new();
@@ -2278,7 +2283,7 @@ fn svg_page_with_layout(
         {
             let box_rect = action_button_rect(vp, *anchor, label).translate(button_offset);
             writeln!(svg, "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"3\" fill=\"#e7e9ed\" stroke=\"#5e6672\"/>", box_rect.min.x, box_rect.min.y, box_rect.width(), box_rect.height()).unwrap();
-            writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 8., box_rect.min.y + 17., xml_text(label)).unwrap();
+            writeln!(svg, "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"14\" fill=\"#20242a\">{}</text>", box_rect.min.x + 5., box_rect.min.y + 15., xml_text(label)).unwrap();
         }
     }
     for (at, label, vertical) in trigonometric_axis_labels(doc, vp) {

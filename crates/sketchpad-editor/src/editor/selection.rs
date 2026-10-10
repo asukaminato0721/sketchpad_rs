@@ -156,7 +156,7 @@ impl Editor {
                 {
                     let targets = targets.clone();
                     let settings = settings.clone();
-                    self.animate_button_targets(&targets, &settings);
+                    self.animate_button_targets(id, &targets, &settings);
                     self.selection_order.clear();
                     return;
                 }

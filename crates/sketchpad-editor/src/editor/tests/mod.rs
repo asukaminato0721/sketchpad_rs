@@ -20,6 +20,7 @@ mod measurements;
 mod multi_page_construction;
 mod page_actions;
 mod precision_and_clipboard;
+mod sample_actions;
 mod translations;
 
 mod iteration_bindings;

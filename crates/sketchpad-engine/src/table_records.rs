@@ -764,7 +764,8 @@ impl ParameterGroup {
             _ => NumericUnit::Scalar,
         }
     }
-    pub(crate) fn native_unit_scale(&self) -> f64 {
+    /// Native units per displayed unit, including button animation ranges and rates.
+    pub fn native_unit_scale(&self) -> f64 {
         match self.unit() {
             NumericUnit::Length => 37.79527559055118,
             NumericUnit::Degrees => CALCULATOR_PI / 180.,
@@ -875,6 +876,14 @@ impl ParameterGroup {
     }
 
     pub fn set_value(&mut self, value: f64) -> Result<(), String> {
+        self.set_value_impl(value, true)
+    }
+    pub(crate) fn set_animated_value(&mut self, value: f64) -> Result<(), String> {
+        // Native hidden parameters can have a caption box only a few pixels wide.
+        // Keep that cached box during animation instead of resizing it for each value.
+        self.set_value_impl(value, false)
+    }
+    fn set_value_impl(&mut self, value: f64, resize_caption: bool) -> Result<(), String> {
         if self.evaluation_value.is_none() && value == self.value() {
             return Ok(());
         }
@@ -934,8 +943,9 @@ impl ParameterGroup {
         let changed = records(&updated, 0)?;
         let right = changed.iter().find(|r| r.kind == 0x08a3).unwrap().payload + 4;
         let old_right = i16::from_le_bytes(updated[right..right + 2].try_into().unwrap());
-        let new_right = i16::try_from(i32::from(old_right) + width_delta)
-            .map_err(|_| "Parameter box coordinate overflow")?;
+        let new_right =
+            i16::try_from(i32::from(old_right) + if resize_caption { width_delta } else { 0 })
+                .map_err(|_| "Parameter box coordinate overflow")?;
         updated[right..right + 2].copy_from_slice(&new_right.to_le_bytes());
         Self::parse(&updated)?;
         self.bytes = updated;
@@ -4818,6 +4828,29 @@ mod tests {
         let output = append_default_parameter(blank, (140, 95)).unwrap();
         assert_eq!(object_group(&output, 1), parameter.as_bytes());
         assert!(append_default_parameter(&output, (10, 5)).is_err());
+    }
+
+    #[test]
+    fn animation_preserves_a_narrow_native_caption_box() {
+        let mut parameter = ParameterGroup::default_value();
+        parameter.set_value(486.).unwrap();
+        let rs = records(&parameter.bytes, 0).unwrap();
+        let right = rs
+            .iter()
+            .find(|record| record.kind == 0x08a3)
+            .unwrap()
+            .payload
+            + 4;
+        let edge = parameter.anchor().0 + 8;
+        parameter.bytes[right..right + 2].copy_from_slice(&edge.to_le_bytes());
+        let mut parameter = ParameterGroup::parse(parameter.as_bytes()).unwrap();
+        let bbox = parameter.bbox();
+        for value in [0., 486., -100., 0.] {
+            parameter.set_animated_value(value).unwrap();
+            assert_eq!(parameter.value(), value);
+            assert_eq!(parameter.bbox(), bbox);
+            ParameterGroup::parse(parameter.as_bytes()).unwrap();
+        }
     }
 
     #[test]

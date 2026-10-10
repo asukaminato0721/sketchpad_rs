@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn parameter_animation_preserves_existing_state_in_image_restricted_pages() {
+    let bytes = include_bytes!("../../../../../tests/fixtures/two_page_parameter_tables_port.gsp");
+    let mut doc = Document::from_bytes(bytes, None).unwrap();
+    doc.active_page = 0;
+    doc.image_read_only = true;
+    doc.partial_view = true;
+    doc.animate_parameter_value(1, 2.).unwrap();
+    doc.animate_parameter_value(1, 3.).unwrap();
+    assert_eq!(doc.numeric_value(1), Some(3.));
+    assert!(doc.undo.is_empty());
+    doc.verify_roundtrip().unwrap();
+    let reopened = Document::from_bytes(&doc.encode().unwrap(), None).unwrap();
+    assert_eq!(reopened.numeric_value(1), Some(3.));
+    assert_eq!(&reopened.objects[4..], &doc.objects[4..]);
+    let state = doc.objects.clone();
+    assert!(doc.animate_parameter_value(5, 2.).is_err());
+    assert!(doc.animate_parameter_value(1, f64::NAN).is_err());
+    assert_eq!(doc.objects, state);
+}
+
+#[test]
 fn multi_page_paste_remaps_dependencies_on_same_and_earlier_pages() {
     fn pasted(base: &[u8], selected: usize, destination: usize, expected: &[u8], count: usize) {
         let mut document = Document::from_bytes(base, None).unwrap();

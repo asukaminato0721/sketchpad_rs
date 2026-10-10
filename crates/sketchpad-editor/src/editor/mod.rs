@@ -192,6 +192,7 @@ enum ShapeMeasure {
 #[derive(Clone, Copy)]
 struct AnimationTrack {
     id: usize,
+    button: Option<usize>,
     allow_hidden: bool,
     transient_point: bool,
     phase: f64,

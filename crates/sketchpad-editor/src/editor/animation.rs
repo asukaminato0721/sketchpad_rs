@@ -133,6 +133,7 @@ impl Editor {
             let angle = Self::next_animation_random(&mut random_state) * std::f64::consts::TAU;
             return Some(AnimationTrack {
                 id,
+                button: None,
                 allow_hidden,
                 transient_point,
                 phase: 0.,
@@ -169,6 +170,7 @@ impl Editor {
             }
             return Some(AnimationTrack {
                 id,
+                button: None,
                 allow_hidden,
                 transient_point: false,
                 phase: phase.clamp(0., 1.),
@@ -221,6 +223,7 @@ impl Editor {
         };
         phase.is_finite().then_some(AnimationTrack {
             id,
+            button: None,
             allow_hidden,
             transient_point: false,
             phase: phase.clamp(0., 1.),
@@ -364,33 +367,42 @@ impl Editor {
     }
     pub(super) fn animate_button_targets(
         &mut self,
+        button: usize,
         targets: &[usize],
         settings: &[AnimationSettings],
     ) {
-        if targets
+        if self
+            .animations
             .iter()
-            .any(|target| self.animations.iter().any(|track| track.id == *target))
+            .any(|track| track.button == Some(button))
         {
-            self.retain_animation_tracks(|track| !targets.contains(&track.id));
+            self.retain_animation_tracks(|track| track.button != Some(button));
             self.status = "Stopped animation".into();
             return;
         }
+        // A different button can replace the motion of the same source.
+        self.retain_animation_tracks(|track| !targets.contains(&track.id));
         self.animate_targets(targets, false);
         for (&target, &setting) in targets.iter().zip(settings) {
             if let Some(track) = self.animations.iter_mut().find(|track| track.id == target) {
+                track.button = Some(button);
                 track.button_settings = Some(setting);
                 track.direction = if setting.direction == AnimationDirection::Backward {
                     -1.
                 } else {
                     1.
                 };
-                if let Some(parameter) = setting.parameter {
-                    let (min, max) = (f64::from(parameter.min), f64::from(parameter.max));
-                    if let Kind::Parameter(group) = &self.doc.objects[target - 1].kind {
-                        track.parameter_domain = Some((min, max));
-                        track.phase = ((group.value() - min) / (max - min)).clamp(0., 1.);
-                        track.start_phase = track.phase;
-                    }
+                if let Some(parameter) = setting.parameter
+                    && let Kind::Parameter(group) = &self.doc.objects[target - 1].kind
+                {
+                    let scale = group.native_unit_scale();
+                    let (min, max) = (
+                        f64::from(parameter.min) / scale,
+                        f64::from(parameter.max) / scale,
+                    );
+                    track.parameter_domain = Some((min, max));
+                    track.phase = (group.value() - min) / (max - min);
+                    track.start_phase = track.phase;
                 }
             }
         }
@@ -491,14 +503,18 @@ impl Editor {
             let step = if let Some((min, max)) = track.parameter_domain {
                 let elapsed = elapsed_seconds.clamp(0., 0.1) * self.animation_speed;
                 let amount = if let Some(settings) = track.button_settings {
+                    let scale = match kind {
+                        Kind::Parameter(group) => group.native_unit_scale(),
+                        _ => 1.,
+                    };
                     let amount = elapsed * f64::from(settings.speed);
                     if let Some(parameter) = settings.parameter.filter(|value| value.discrete) {
                         track.discrete_remainder += amount;
                         let count = (track.discrete_remainder + 1e-9).floor();
                         track.discrete_remainder = (track.discrete_remainder - count).max(0.);
-                        count * f64::from(parameter.step)
+                        count * f64::from(parameter.step) / scale
                     } else {
-                        amount
+                        amount / scale
                     }
                 } else if let Some(settings) = track.parameter_settings {
                     if settings.discrete {
@@ -589,28 +605,46 @@ impl Editor {
                     | Kind::PointOnSector(_, _)
                     | Kind::PointOnCircularSegment(_, _)
             );
-            match track.button_settings.map(|settings| settings.direction) {
-                Some(AnimationDirection::Forward) => {
-                    track.phase = (track.phase + step).rem_euclid(1.);
-                    track.distance_travelled += step;
+            // Some native buttons use a very narrow domain as a destination.
+            // Approach it at the configured rate before cycling inside it.
+            if track.parameter_domain.is_some() && !(0. ..=1.).contains(&track.phase) {
+                if track.phase < 0. {
+                    track.phase = (track.phase + step).min(1.);
+                    track.direction = 1.;
+                } else {
+                    track.phase = (track.phase - step).max(0.);
+                    track.direction = -1.;
                 }
-                Some(AnimationDirection::Backward) => {
-                    track.phase = (track.phase - step).rem_euclid(1.);
-                    track.distance_travelled += step;
-                }
-                Some(AnimationDirection::Random) => {
-                    track.phase = Self::next_animation_random(&mut track.random_state);
-                }
-                Some(AnimationDirection::Bidirectional) | None => {
-                    track.phase += track.direction * step;
-                    if circular {
-                        track.phase = track.phase.rem_euclid(1.);
-                    } else if track.phase > 1. {
-                        track.phase = 2. - track.phase;
-                        track.direction = -1.;
-                    } else if track.phase < 0. {
-                        track.phase = -track.phase;
-                        track.direction = 1.;
+            } else {
+                match track.button_settings.map(|settings| settings.direction) {
+                    Some(AnimationDirection::Forward) => {
+                        track.phase = (track.phase + step).rem_euclid(1.);
+                        track.distance_travelled += step;
+                    }
+                    Some(AnimationDirection::Backward) => {
+                        track.phase = (track.phase - step).rem_euclid(1.);
+                        track.distance_travelled += step;
+                    }
+                    Some(AnimationDirection::Random) => {
+                        track.phase = Self::next_animation_random(&mut track.random_state);
+                    }
+                    Some(AnimationDirection::Bidirectional) | None => {
+                        if circular {
+                            track.phase = (track.phase + track.direction * step).rem_euclid(1.);
+                        } else {
+                            // A reset button can cross its tiny range many times in one frame.
+                            let unfolded = if track.direction < 0. {
+                                2. - track.phase
+                            } else {
+                                track.phase
+                            };
+                            let phase = (unfolded + step).rem_euclid(2.);
+                            (track.phase, track.direction) = if phase < 1. {
+                                (phase, 1.)
+                            } else {
+                                (2. - phase, -1.)
+                            };
+                        }
                     }
                 }
             }
@@ -635,8 +669,13 @@ impl Editor {
                     return false;
                 };
                 let value = min + (max - min) * track.phase;
-                let moved = self.doc.animate_parameter_value(track.id, value).is_ok();
-                return moved && !once_complete;
+                return match self.doc.animate_parameter_value(track.id, value) {
+                    Ok(()) => !once_complete,
+                    Err(error) => {
+                        self.status = format!("Animation stopped: {error}");
+                        false
+                    }
+                };
             }
             let destination = match *kind {
                 Kind::PointOnSegment(host, _) => self
